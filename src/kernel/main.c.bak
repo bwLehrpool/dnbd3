@@ -1,0 +1,322 @@
+#include <linux/fs.h>
+#include <linux/module.h>
+#include <linux/blkdev.h>
+
+// Own
+#include "config.h"
+#include "include/types.h"
+
+// Network
+#include <net/sock.h>
+//#include <linux/net.h>
+//#include <net/ip.h>
+
+static int major;
+static struct gendisk *disk;
+static struct request_queue *dnbd3_queue;
+
+DEFINE_SPINLOCK( dnbd3_lock);
+
+struct socket *sock;
+struct dnbd3_request r;
+struct dnbd3_reply rp;
+
+uint64_t filesize;
+
+char* host;
+char* port;
+
+// TODO: schauen obs nicht eine fertige gibt
+static unsigned int inet_addr(char *str)
+{
+	int a, b, c, d;
+	char arr[4];
+	sscanf(str, "%d.%d.%d.%d", &a, &b, &c, &d);
+	arr[0] = a;
+	arr[1] = b;
+	arr[2] = c;
+	arr[3] = d;
+	return *(unsigned int*) arr;
+}
+
+static void connect()
+{
+	if (!host || !port)
+	{
+		printk("ERROR: Host or port not set.");
+		return;
+	}
+
+	// Init kernel-socket
+//	static unsigned char address[4] =
+//	{ 132, 230, 4, 29 };
+
+	struct sockaddr_in sin;
+
+	if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
+	{
+		printk("DNBD3: Couldn't create socket.\n");
+	}
+	sin.sin_family = AF_INET;
+	//memcpy(&sin.sin_addr.s_addr, address, 4);
+	sin.sin_addr.s_addr = inet_addr(host);
+	sin.sin_port = htons(simple_strtol(port, NULL, 10));
+	if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
+	{
+		printk("DNBD3: Couldn't connect.\n");
+		return;
+	}
+
+	// Ask for filesize
+	struct msghdr msg;
+	struct kvec iov;
+	int size, result;
+	void *buf = &r;
+	r.cmd = CMD_GET_SIZE;
+	size = sizeof(r);
+	do
+	{
+		sock->sk->sk_allocation = GFP_NOIO; // GFP_NOIO: blocking is possible, but no I/O will be performed.
+		iov.iov_base = (char *) buf;
+		iov.iov_len = size;
+		msg.msg_name = NULL;
+		msg.msg_namelen = 0;
+		msg.msg_control = NULL;
+		msg.msg_controllen = 0;
+		msg.msg_flags = MSG_NOSIGNAL; // No SIGPIPE
+
+		result = kernel_sendmsg(sock, &msg, &iov, 1, size);
+
+		if (result <= 0)
+		{
+			if (result == 0)
+				result = -EPIPE; /* short read */
+			break;
+		}
+		size -= result;
+		buf += result;
+	} while (size > 0);
+	buf = &rp;
+	size = sizeof(rp);
+	do
+	{
+		sock->sk->sk_allocation = GFP_NOIO; // GFP_NOIO: blocking is possible, but no I/O will be performed.
+		iov.iov_base = (char *) buf;
+		iov.iov_len = size;
+		msg.msg_name = NULL;
+		msg.msg_namelen = 0;
+		msg.msg_control = NULL;
+		msg.msg_controllen = 0;
+		msg.msg_flags = MSG_NOSIGNAL; // No SIGPIPE
+
+		result = kernel_recvmsg(sock, &msg, &iov, 1, size, msg.msg_flags);
+
+		if (result <= 0)
+		{
+			if (result == 0)
+				result = -EPIPE; /* short read */
+			break;
+		}
+		size -= result;
+		buf += result;
+	} while (size > 0);
+
+	filesize = rp.num;
+	printk("Filesize: %llu\n", filesize);
+
+	//filesize = 721127424;
+	set_capacity(disk, filesize >> 9); /* 512 Byte blocks */
+
+}
+
+static void dnbd3_request(struct request_queue *q)
+{
+	if (!sock)
+		return;
+
+	struct request *req;
+	unsigned long start, to_copy;
+	int size, result;
+	void *buf;
+	struct msghdr msg;
+	struct kvec iov;
+
+	while ((req = blk_fetch_request(q)) != NULL)
+	{
+		if (req->cmd_type != REQ_TYPE_FS)
+		{
+			if (!__blk_end_request_cur(req, 0))
+				req = blk_fetch_request(q);
+			continue;
+		}
+		start = blk_rq_pos(req) << 9; // *512
+
+		//to_copy = blk_rq_cur_bytes(req);	// Returns bytes left to complete in the current segment
+		to_copy = blk_rq_bytes(req); // blk_rq_bytes() Returns bytes left to complete in the entire request
+
+		spin_unlock_irq(q->queue_lock);
+		if ((start + to_copy) <= filesize)
+		{
+			if (rq_data_dir(req) == READ)
+			{
+				// Send msg
+				//printk("Send...\n");
+				buf = &r;
+				r.cmd = CMD_GET_BLOCK;
+				r.num = start;
+				r.to_copy = to_copy;
+				size = sizeof(r);
+				do
+				{
+					sock->sk->sk_allocation = GFP_NOIO; // GFP_NOIO: blocking is possible, but no I/O will be performed.
+					iov.iov_base = (char *) buf;
+					iov.iov_len = size;
+					msg.msg_name = NULL;
+					msg.msg_namelen = 0;
+					msg.msg_control = NULL;
+					msg.msg_controllen = 0;
+					msg.msg_flags = MSG_WAITALL | MSG_NOSIGNAL; // No SIGPIPE
+
+					result = kernel_sendmsg(sock, &msg, &iov, 1, size);
+
+					if (result <= 0)
+					{
+						if (result == 0)
+							result = -EPIPE; /* short read */
+						break;
+					}
+					size -= result;
+					buf += result;
+				} while (size > 0);
+
+				// Test - receive msg
+				struct req_iterator iter;
+				struct bio_vec *bvec;
+				rq_for_each_segment(bvec, req, iter)
+					{
+						void *kaddr = kmap(bvec->bv_page);
+						buf = kaddr + bvec->bv_offset;
+						size = bvec->bv_len;
+						do
+						{
+							sock->sk->sk_allocation = GFP_NOIO; // GFP_NOIO: blocking is possible, but no I/O will be performed.
+							iov.iov_base = buf;
+							iov.iov_len = size;
+							msg.msg_name = NULL;
+							msg.msg_namelen = 0;
+							msg.msg_control = NULL;
+							msg.msg_controllen = 0;
+							msg.msg_flags = MSG_WAITALL | MSG_NOSIGNAL; // No SIGPIPE
+
+							result = kernel_recvmsg(sock, &msg, &iov, 1, size,
+									msg.msg_flags);
+
+							if (result <= 0)
+							{
+								if (result == 0)
+									result = -EPIPE; /* short read */
+								break;
+							}
+							size -= result;
+							buf += result;
+
+							if (size > 0)
+								printk("SIZE > 0\n");
+
+						} while (size > 0);
+
+						kunmap(bvec->bv_page);
+					}
+
+			}
+			else
+			{
+				printk("ERROR: Write not supported.");
+			}
+		}
+		else
+		{
+			printk("ERROR: %ld not in range...\n", start + to_copy);
+		}
+		spin_lock_irq(q->queue_lock);
+		__blk_end_request_all(req, 0);
+	}
+}
+
+static int dnbd3_ioctl(struct block_device *bdev, fmode_t mode,
+		unsigned int cmd, unsigned long arg)
+{
+	switch (cmd)
+	{
+
+	case IOCTL_SET_HOST:
+		host = (char *) arg;
+		break;
+
+	case IOCTL_SET_PORT:
+		port = (char *) arg;
+		break;
+
+	case IOCTL_CONNECT:
+		connect();
+		break;
+
+	default:
+		return -1;
+
+	}
+	return 0;
+}
+
+static struct block_device_operations dnbd3_ops =
+{ .owner = THIS_MODULE, .ioctl = dnbd3_ioctl, };
+
+static int __init dnbd3_init(void)
+{
+
+	// Init blkdev
+	if ((major = register_blkdev(0, "dnbd")) == 0)
+	{
+		printk("dnbd3: can't get majornumber\n");
+		return -EIO;
+	}
+	printk("major: %d\n", major);
+	if (!(disk = alloc_disk(1)))
+	{
+		printk("alloc_disk failed ...\n");
+		goto out;
+	}
+	disk->major = major;
+	disk->first_minor = 0;
+	sprintf(disk->disk_name, "dnbd0");
+	//set_capacity(disk, filesize >> 9); /* 512 Byte blocks */
+	set_capacity(disk, 0);
+	disk->fops = &dnbd3_ops;
+
+	if ((dnbd3_queue = blk_init_queue(&dnbd3_request, &dnbd3_lock)) == NULL)
+		goto out;
+
+	blk_queue_logical_block_size(dnbd3_queue, DNBD3_BLOCK_SIZE); // set logical block size for the queue
+//	blk_queue_max_hw_sectors(dnbd3_queue, DNBD3_BLOCK_SIZE / KERNEL_SECTOR_SIZE); // set max sectors for a request for this queue, min 8
+//	blk_queue_max_segments(dnbd3_queue, 1); // set max hw segments for a request for this queue
+//	blk_queue_max_segment_size(dnbd3_queue, DNBD3_BLOCK_SIZE); // set max segment size for blk_rq_map_sg, min 4096
+	disk->queue = dnbd3_queue;
+
+	add_disk(disk);
+	return 0;
+	out: return -EIO;
+}
+
+static void __exit dnbd3_exit(void)
+{
+	if (sock)
+		sock_release(sock);
+	unregister_blkdev(major, "dnbd");
+	del_gendisk(disk);
+	put_disk(disk);
+	blk_cleanup_queue(dnbd3_queue);
+}
+
+module_init( dnbd3_init);
+module_exit( dnbd3_exit);
+MODULE_LICENSE("GPL");

@@ -1,0 +1,2 @@
+obj-m := ${MODULE_NAME}.o
+${MODULE_NAME}-objs += main.o
