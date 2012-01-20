@@ -71,7 +71,6 @@ void dnbd3_net_connect(void)
 	kernel_recvmsg(_sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
 
 	// set filesize
-	// FIXME: files > 4GB
 	printk("INFO: dnbd3 filesize: %llu\n", dnbd3_reply.filesize);
 	set_capacity(disk, dnbd3_reply.filesize >> 9); /* 512 Byte blocks */
 
@@ -145,7 +144,7 @@ int dnbd3_net_receive(void *data)
 	sigset_t blocked, oldset;
 	struct request *tmp_request, *received_request;
 	void *kaddr;
-	int size;
+	unsigned int size;
 
 	msg.msg_name = NULL;
 	msg.msg_namelen = 0;

@@ -20,6 +20,7 @@
 #include "../version.h"
 
 int file;
+off_t filesize;
 
 void print_help(char* argv_0)
 {
@@ -50,10 +51,6 @@ void *handle_query(void *client_socket)
 	struct dnbd3_request request;
 	struct dnbd3_reply reply;
 	uint16_t cmd;
-	off_t filesize;
-	struct stat st;
-	fstat(file, &st);
-	filesize = st.st_size;
 
 	while (recv(sock, &request, sizeof(struct dnbd3_request), MSG_WAITALL) > 0)
 	{
@@ -107,6 +104,9 @@ int main(int argc, char* argv[])
 		{
 		case 'f':
 			file = open(optarg, O_RDONLY);
+			struct stat st;
+			fstat(file, &st);
+			filesize = st.st_size;
 			break;
 		case 'h':
 			print_help(argv[0]);
@@ -154,6 +154,7 @@ int main(int argc, char* argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	printf("INFO: Filesize: %llu bytes\n", filesize);
 	printf("INFO: Server is ready...\n");
 
 	while (1)
