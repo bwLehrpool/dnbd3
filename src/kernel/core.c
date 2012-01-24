@@ -28,8 +28,9 @@ struct request_queue *dnbd3_queue;
 spinlock_t dnbd3_lock;
 
 // network
-char* _host;
-char* _port;
+char* _host = NULL;
+char* _port = NULL;
+char* _image_id = NULL;
 struct socket *_sock;
 
 // process

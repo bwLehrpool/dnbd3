@@ -31,7 +31,7 @@ void dnbd3_net_connect(void)
 	struct task_struct *thread_send;
 	struct task_struct *thread_receive;
 
-	if (!_host || !_port)
+	if (!_host || !_port || !_image_id)
 	{
 		printk("ERROR: Host or port not set.");
 		return;
@@ -55,6 +55,7 @@ void dnbd3_net_connect(void)
 
 	// prepare message and send request
 	dnbd3_request.cmd = CMD_GET_SIZE;
+	strcpy(dnbd3_request.image_id, _image_id);
 	msg.msg_name = NULL;
 	msg.msg_namelen = 0;
 	msg.msg_control = NULL;
@@ -71,6 +72,12 @@ void dnbd3_net_connect(void)
 	kernel_recvmsg(_sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
 
 	// set filesize
+	if (dnbd3_reply.filesize <= 0)
+	{
+		printk("ERROR: File size returned by server is < 0.\n");
+		return;
+	}
+
 	printk("INFO: dnbd3 filesize: %llu\n", dnbd3_reply.filesize);
 	set_capacity(disk, dnbd3_reply.filesize >> 9); /* 512 Byte blocks */
 

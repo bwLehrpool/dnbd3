@@ -36,6 +36,7 @@ extern spinlock_t dnbd3_lock;
 // network
 extern char* _host;
 extern char* _port;
+extern char* _image_id;
 extern struct socket *_sock;
 
 // process

@@ -36,7 +36,9 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd,
 	case IOCTL_SET_PORT:
 		_port = (char *) arg;
 		break;
-
+	case IOCTL_SET_IMAGE:
+		_image_id = (char *) arg;
+		break;
 	case IOCTL_CONNECT:
 		dnbd3_net_connect();
 		break;
