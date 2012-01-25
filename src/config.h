@@ -27,12 +27,12 @@
 // block device
 #define KERNEL_SECTOR_SIZE 512
 #define DNBD3_BLOCK_SIZE 4096
+#define MAX_NUMBER_DEVICES 8
 
 // configuration file
 #define DEFAULT_CONFIG_FILE "/etc/dnbd3-server.conf"
 #define MAX_NUMBER_IMAGES 1024
 #define MAX_FILE_NAME 4096
 #define MAX_FILE_ID 8
-
 
 #endif /* CONFIG_H_ */

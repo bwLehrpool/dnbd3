@@ -105,7 +105,8 @@ void *handle_query(void *client_socket)
 			memcpy(reply.handle, request.handle, sizeof(request.handle));
 			send(sock, (char *) &reply, sizeof(struct dnbd3_reply), 0);
 
-			if (sendfile(sock, image_file, (off_t *) &request.offset, request.size) <0)
+			if (sendfile(sock, image_file, (off_t *) &request.offset,
+					request.size) < 0)
 				printf("ERROR: sendfile returned -1\n");
 
 			break;
@@ -118,7 +119,7 @@ void *handle_query(void *client_socket)
 	}
 	close(sock);
 	printf("Client exit.\n");
-	pthread_exit((void *)0);
+	pthread_exit((void *) 0);
 }
 
 int main(int argc, char* argv[])
@@ -157,7 +158,7 @@ int main(int argc, char* argv[])
 
 	// parse config file
 	ht_create();
-	FILE *config_file = fopen(config_file_name , "r");
+	FILE *config_file = fopen(config_file_name, "r");
 	if (config_file == NULL)
 	{
 		printf("ERROR: Config file not found: %s\n", config_file_name);
@@ -166,9 +167,9 @@ int main(int argc, char* argv[])
 	char line[MAX_FILE_NAME + 1 + MAX_FILE_ID];
 	char* image_name = NULL;
 	char* image_id = NULL;
-	while (fgets (line , sizeof(line) , config_file) != NULL )
+	while (fgets(line, sizeof(line), config_file) != NULL)
 	{
-		sscanf (line, "%as %as", &image_name, &image_id);
+		sscanf(line, "%as %as", &image_name, &image_id);
 		if (ht_insert(image_id, image_name) < 0)
 		{
 			printf("ERROR: Image name or ID is too big\n");

@@ -35,7 +35,8 @@
 #define CMD_GET_SIZE    2
 
 #pragma pack(1)
-typedef struct dnbd3_request {
+typedef struct dnbd3_request
+{
 	uint16_t cmd;
 	uint64_t offset;
 	uint64_t size;
@@ -45,7 +46,8 @@ typedef struct dnbd3_request {
 #pragma pack(0)
 
 #pragma pack(1)
-typedef struct dnbd3_reply {
+typedef struct dnbd3_reply
+{
 	uint16_t cmd;
 	uint64_t filesize;
 	char handle[8];

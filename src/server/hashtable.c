@@ -67,4 +67,3 @@ char* ht_search(char* key)
 	else
 		return NULL;
 }
-

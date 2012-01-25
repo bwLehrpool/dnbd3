@@ -23,7 +23,7 @@
 
 #include "dnbd3.h"
 
-void dnbd3_net_connect(void);
+void dnbd3_net_connect(struct dnbd3_device *lo);
 
 int dnbd3_net_send(void *data);
 

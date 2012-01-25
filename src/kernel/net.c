@@ -21,7 +21,7 @@
 #include "net.h"
 #include "utils.h"
 
-void dnbd3_net_connect(void)
+void dnbd3_net_connect(struct dnbd3_device *lo)
 {
 	struct sockaddr_in sin;
 	struct msghdr msg;
@@ -31,23 +31,23 @@ void dnbd3_net_connect(void)
 	struct task_struct *thread_send;
 	struct task_struct *thread_receive;
 
-	if (!_host || !_port || !_image_id)
+	if (!lo->host || !lo->port || !lo->image_id)
 	{
 		printk("ERROR: Host or port not set.");
 		return;
 	}
 
 	// initialize socket
-	if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &_sock) < 0)
+	if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &lo->sock) < 0)
 	{
 		printk("ERROR: dnbd3 couldn't create socket.\n");
 		return;
 	}
-	_sock->sk->sk_allocation = GFP_NOIO;
+	lo->sock->sk->sk_allocation = GFP_NOIO;
 	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = inet_addr(_host);
-	sin.sin_port = htons(simple_strtol(_port, NULL, 10));
-	if (kernel_connect(_sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
+	sin.sin_addr.s_addr = inet_addr(lo->host);
+	sin.sin_port = htons(simple_strtol(lo->port, NULL, 10));
+	if (kernel_connect(lo->sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
 	{
 		printk("ERROR: dnbd3 couldn't connect to given host.\n");
 		return;
@@ -55,7 +55,7 @@ void dnbd3_net_connect(void)
 
 	// prepare message and send request
 	dnbd3_request.cmd = CMD_GET_SIZE;
-	strcpy(dnbd3_request.image_id, _image_id);
+	strcpy(dnbd3_request.image_id, lo->image_id);
 	msg.msg_name = NULL;
 	msg.msg_namelen = 0;
 	msg.msg_control = NULL;
@@ -64,12 +64,12 @@ void dnbd3_net_connect(void)
 
 	iov.iov_base = &dnbd3_request;
 	iov.iov_len = sizeof(dnbd3_request);
-	kernel_sendmsg(_sock, &msg, &iov, 1, sizeof(dnbd3_request));
+	kernel_sendmsg(lo->sock, &msg, &iov, 1, sizeof(dnbd3_request));
 
 	// receive replay
 	iov.iov_base = &dnbd3_reply;
 	iov.iov_len = sizeof(dnbd3_reply);
-	kernel_recvmsg(_sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
+	kernel_recvmsg(lo->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
 
 	// set filesize
 	if (dnbd3_reply.filesize <= 0)
@@ -79,19 +79,20 @@ void dnbd3_net_connect(void)
 	}
 
 	printk("INFO: dnbd3 filesize: %llu\n", dnbd3_reply.filesize);
-	set_capacity(disk, dnbd3_reply.filesize >> 9); /* 512 Byte blocks */
+	set_capacity(lo->disk, dnbd3_reply.filesize >> 9); /* 512 Byte blocks */
 
 	// start sending thread
-	thread_send = kthread_create(dnbd3_net_send, NULL, "none");
+	thread_send = kthread_create(dnbd3_net_send, lo, lo->disk->disk_name);
 	wake_up_process(thread_send);
 
 	// start receiving thread
-	thread_receive = kthread_create(dnbd3_net_receive, NULL, "none");
+	thread_receive = kthread_create(dnbd3_net_receive, lo, lo->disk->disk_name);
 	wake_up_process(thread_receive);
 }
 
 int dnbd3_net_send(void *data)
 {
+	struct dnbd3_device *lo = data;
 	struct dnbd3_request dnbd3_request;
 	struct request *blk_request;
 	struct msghdr msg;
@@ -105,19 +106,19 @@ int dnbd3_net_send(void *data)
 
 	set_user_nice(current, -20);
 
-	while (!kthread_should_stop() || !list_empty(&_request_queue_send))
+	while (!kthread_should_stop() || !list_empty(&lo->request_queue_send))
 	{
-		wait_event_interruptible(_process_queue_send,
-				kthread_should_stop() || !list_empty(&_request_queue_send));
+		wait_event_interruptible(lo->process_queue_send,
+				kthread_should_stop() || !list_empty(&lo->request_queue_send));
 
-		if (list_empty(&_request_queue_send))
+		if (list_empty(&lo->request_queue_send))
 			continue;
 
 		// extract block request
-		spin_lock_irq(&dnbd3_lock);
-		blk_request = list_entry(_request_queue_send.next, struct request, queuelist);
+		spin_lock_irq(&lo->blk_lock);
+		blk_request = list_entry(lo->request_queue_send.next, struct request, queuelist);
 		list_del_init(&blk_request->queuelist);
-		spin_unlock_irq(&dnbd3_lock);
+		spin_unlock_irq(&lo->blk_lock);
 
 		// prepare net request
 		dnbd3_request.cmd = CMD_GET_BLOCK;
@@ -128,19 +129,20 @@ int dnbd3_net_send(void *data)
 		iov.iov_len = sizeof(dnbd3_request);
 
 		// send net request
-		if (kernel_sendmsg(_sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
+		if (kernel_sendmsg(lo->sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
 			printk("ERROR: kernel_sendmsg\n");
 
-		spin_lock_irq(&dnbd3_lock);
-		list_add_tail(&blk_request->queuelist, &_request_queue_receive);
-		spin_unlock_irq(&dnbd3_lock);
-		wake_up(&_process_queue_receive);
+		spin_lock_irq(&lo->blk_lock);
+		list_add_tail(&blk_request->queuelist, &lo->request_queue_receive);
+		spin_unlock_irq(&lo->blk_lock);
+		wake_up(&lo->process_queue_receive);
 	}
 	return 0;
 }
 
 int dnbd3_net_receive(void *data)
 {
+	struct dnbd3_device *lo = data;
 	struct dnbd3_reply dnbd3_reply;
 	struct request *blk_request;
 	struct msghdr msg;
@@ -161,22 +163,20 @@ int dnbd3_net_receive(void *data)
 
 	set_user_nice(current, -20);
 
-	while (!kthread_should_stop() || !list_empty(&_request_queue_receive))
+	while (!kthread_should_stop() || !list_empty(&lo->request_queue_receive))
 	{
-		wait_event_interruptible(_process_queue_receive,
-				kthread_should_stop() || !list_empty(&_request_queue_receive));
+		wait_event_interruptible(lo->process_queue_receive, kthread_should_stop() || !list_empty(&lo->request_queue_receive));
 
 		// receive net replay
 		iov.iov_base = &dnbd3_reply;
 		iov.iov_len = sizeof(dnbd3_reply);
-		kernel_recvmsg(_sock, &msg, &iov, 1, sizeof(dnbd3_reply),
+		kernel_recvmsg(lo->sock, &msg, &iov, 1, sizeof(dnbd3_reply),
 				msg.msg_flags);
 
 		// search for replied request in queue
 		received_request = *(struct request **) dnbd3_reply.handle;
-		spin_lock_irq(&dnbd3_lock);
-		list_for_each_entry_safe(blk_request, tmp_request,
-				&_request_queue_receive, queuelist)
+		spin_lock_irq(&lo->blk_lock);
+		list_for_each_entry_safe(blk_request, tmp_request, &lo->request_queue_receive, queuelist)
 		{
 			if (blk_request != received_request)
 				continue;
@@ -184,7 +184,7 @@ int dnbd3_net_receive(void *data)
 			list_del_init(&blk_request->queuelist);
 			break;
 		}
-		spin_unlock_irq(&dnbd3_lock);
+		spin_unlock_irq(&lo->blk_lock);
 
 		// receive data and answer to block layer
 		rq_for_each_segment(bvec, blk_request, iter)
@@ -196,17 +196,16 @@ int dnbd3_net_receive(void *data)
 				size = bvec->bv_len;
 				iov.iov_base = kaddr;
 				iov.iov_len = size;
-				kernel_recvmsg(_sock, &msg, &iov, 1, size, msg.msg_flags);
+				kernel_recvmsg(lo->sock, &msg, &iov, 1, size, msg.msg_flags);
 				kunmap(bvec->bv_page);
 
 				sigprocmask(SIG_SETMASK, &oldset, NULL);
 			}
 
-		spin_lock_irqsave(&dnbd3_lock, flags);
+		spin_lock_irqsave(&lo->blk_lock, flags);
 		__blk_end_request_all(blk_request, 0);
-		spin_unlock_irqrestore(&dnbd3_lock, flags);
+		spin_unlock_irqrestore(&lo->blk_lock, flags);
 	}
 
 	return 0;
 }
-

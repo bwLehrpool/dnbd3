@@ -29,20 +29,27 @@
 #include "config.h"
 #include "types.h"
 
-// block
-extern struct gendisk *disk;
-extern spinlock_t dnbd3_lock;
+extern int major;
 
-// network
-extern char* _host;
-extern char* _port;
-extern char* _image_id;
-extern struct socket *_sock;
+struct dnbd3_device
+{
 
-// process
-extern wait_queue_head_t _process_queue_send;
-extern wait_queue_head_t _process_queue_receive;
-extern struct list_head _request_queue_send;
-extern struct list_head _request_queue_receive;
+	// block
+	struct gendisk *disk;
+	spinlock_t blk_lock;
+
+	// network
+	char* host;
+	char* port;
+	char* image_id;
+	struct socket *sock;
+
+	// process
+	wait_queue_head_t process_queue_send;
+	wait_queue_head_t process_queue_receive;
+	struct list_head request_queue_send;
+	struct list_head request_queue_receive;
+
+};
 
 #endif /* DNBD_H_ */
