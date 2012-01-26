@@ -35,6 +35,13 @@ void ht_create()
 	(void) hcreate(MAX_NUMBER_IMAGES);
 }
 
+void ht_destroy()
+{
+	key_ptr = key_buf;
+	val_ptr = value_buf;
+	hdestroy();
+}
+
 int ht_insert(char* key, char* value)
 {
 	if (strlen(key) > MAX_FILE_ID) return -1;

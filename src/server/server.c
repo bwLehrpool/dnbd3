@@ -39,14 +39,22 @@
 #include "../types.h"
 #include "../version.h"
 
+#include "utils.h"
 #include "hashtable.h"
+
+int _sock;
+pthread_spinlock_t spinlock;
+char *config_file_name = DEFAULT_CONFIG_FILE;
 
 void print_help(char* argv_0)
 {
 
 	printf("Usage: %s [OPTIONS]...\n", argv_0);
 	printf("Start the DNBD3 server\n");
-	printf("-f or --file \t\t Configuration file\n \t\t\t (default /etc/dnbd3-server.conf)\n");
+	printf("-f or --file \t\t Configuration file (default /etc/dnbd3-server.conf)\n");
+	printf("-n or --nodaemon \t\t Start server in foreground\n");
+	printf("-r or --reload \t\t Reload configuration file\n");
+	printf("-s or --stop \t\t Stop running dnbd3-server\n");
 	printf("-h or --help \t\t Show this help text and quit\n");
 	printf("-v or --version \t Show version and quit\n");
 	exit(0);
@@ -64,6 +72,24 @@ void handle_sigpipe(int signum)
 	return;
 }
 
+void handle_sighup(int signum)
+{
+	printf("INFO: SIGHUP received!\n");
+	printf("INFO: Reloading configuration...\n");
+	pthread_spin_lock(&spinlock);
+	reload_config(config_file_name);
+	pthread_spin_unlock(&spinlock);
+	// TODO: stop handle_query or use mutex before image_file = open(ht_search(request.image_id), O_RDONLY);
+}
+
+void handle_sigterm(int signum)
+{
+	printf("INFO: SIGTERM or SIGINT received!\n");
+	close(_sock);
+	delete_pid_file();
+	exit(EXIT_SUCCESS);
+}
+
 void *handle_query(void *client_socket)
 {
 	int image_file = -1;
@@ -79,7 +105,9 @@ void *handle_query(void *client_socket)
 		switch (cmd)
 		{
 		case CMD_GET_SIZE:
+			pthread_spin_lock(&spinlock); // because of reloading config
 			image_file = open(ht_search(request.image_id), O_RDONLY);
+			pthread_spin_unlock(&spinlock);
 			if (image_file < 0)
 			{
 				printf("ERROR: Client requested an unknown image id.\n");
@@ -124,14 +152,16 @@ void *handle_query(void *client_socket)
 
 int main(int argc, char* argv[])
 {
-	char *config_file_name = DEFAULT_CONFIG_FILE;
-
+	int demonize = 1;
 	int opt = 0;
 	int longIndex = 0;
-	static const char *optString = "f:hv?";
+	static const char *optString = "f:nrshv?";
 	static const struct option longOpts[] =
 	{
 	{ "file", required_argument, NULL, 'f' },
+	{ "nodaemon", no_argument, NULL, 'n' },
+	{ "reload", no_argument, NULL, 'r' },
+	{ "stop", no_argument, NULL, 's' },
 	{ "help", no_argument, NULL, 'h' },
 	{ "version", no_argument, NULL, 'v' } };
 
@@ -144,6 +174,17 @@ int main(int argc, char* argv[])
 		case 'f':
 			config_file_name = optarg;
 			break;
+		case 'n':
+			demonize = 0;
+			break;
+		case 'r':
+			printf("INFO: Reloading configuration file...\n");
+			send_signal(SIGHUP);
+			return EXIT_SUCCESS;
+		case 's':
+			printf("INFO: Stopping running server...\n");
+			send_signal(SIGTERM);
+			return EXIT_SUCCESS;
 		case 'h':
 			print_help(argv[0]);
 			break;
@@ -156,38 +197,27 @@ int main(int argc, char* argv[])
 		opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
 	}
 
-	// parse config file
-	ht_create();
-	FILE *config_file = fopen(config_file_name, "r");
-	if (config_file == NULL)
-	{
-		printf("ERROR: Config file not found: %s\n", config_file_name);
-		exit(EXIT_FAILURE);
-	}
-	char line[MAX_FILE_NAME + 1 + MAX_FILE_ID];
-	char* image_name = NULL;
-	char* image_id = NULL;
-	while (fgets(line, sizeof(line), config_file) != NULL)
-	{
-		sscanf(line, "%as %as", &image_name, &image_id);
-		if (ht_insert(image_id, image_name) < 0)
-		{
-			printf("ERROR: Image name or ID is too big\n");
-			exit(EXIT_FAILURE);
-		}
-	}
+	if (demonize)
+		daemon(1,0);
+
+	pthread_spin_init(&spinlock, PTHREAD_PROCESS_PRIVATE);
+	load_config(config_file_name);
+
+	// setup signal handler
+	signal(SIGPIPE, handle_sigpipe);
+	signal(SIGHUP, handle_sighup);
+	signal(SIGTERM, handle_sigterm);
+	signal(SIGINT, handle_sigterm);
 
 	// setup network
-	signal(SIGPIPE, handle_sigpipe);
-
 	struct sockaddr_in server;
 	struct sockaddr_in client;
-	int sock, fd;
+	int fd;
 	unsigned int len;
 
 	// Create socket
-	sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (sock < 0)
+	_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (_sock < 0)
 	{
 		printf("ERROR: Socket failure\n");
 		exit(EXIT_FAILURE);
@@ -199,25 +229,26 @@ int main(int argc, char* argv[])
 	server.sin_port = htons(PORT); // set port number
 
 	// Bind to socket
-	if (bind(sock, (struct sockaddr*) &server, sizeof(server)) < 0)
+	if (bind(_sock, (struct sockaddr*) &server, sizeof(server)) < 0)
 	{
 		printf("ERROR: Bind failure\n");
 		exit(EXIT_FAILURE);
 	}
 
 	// Listen on socket
-	if (listen(sock, 50) == -1)
+	if (listen(_sock, 50) == -1)
 	{
 		printf("ERROR: Listen failure\n");
 		exit(EXIT_FAILURE);
 	}
 
+	write_pid_file(getpid());
 	printf("INFO: Server is ready...\n");
 
 	while (1)
 	{
 		len = sizeof(client);
-		fd = accept(sock, (struct sockaddr*) &client, &len);
+		fd = accept(_sock, (struct sockaddr*) &client, &len);
 		if (fd < 0)
 		{
 			printf("ERROR: Accept failure\n");
@@ -230,5 +261,8 @@ int main(int argc, char* argv[])
 		pthread_create(&(thread), NULL, handle_query, (void *) fd);
 		pthread_detach(thread);
 	}
+
+	close(_sock);
+	delete_pid_file();
 	return EXIT_SUCCESS;
 }

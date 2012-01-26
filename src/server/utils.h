@@ -18,24 +18,21 @@
  *
  */
 
-#ifndef CONFIG_H_
-#define CONFIG_H_
+#include <unistd.h>
+#include <sys/types.h>
 
-// network
-#define PORT 5003
+#include "../config.h"
 
-// block device
-#define KERNEL_SECTOR_SIZE 512
-#define DNBD3_BLOCK_SIZE 4096
-#define MAX_NUMBER_DEVICES 8
+#ifndef UTILS_H_
+#define UTILS_H_
 
-// configuration file
-#define DEFAULT_CONFIG_FILE "/etc/dnbd3-server.conf"
-#define MAX_NUMBER_IMAGES 1024
-#define MAX_FILE_NAME 4096
-#define MAX_FILE_ID 8
+void write_pid_file(pid_t pid);
+pid_t read_pid_file();
+void delete_pid_file();
 
-// misc
-#define SERVER_PID_FILE "/tmp/dnbd3-server.pid"
+void load_config(char* config_file_name);
+void reload_config(char* config_file_name);
 
-#endif /* CONFIG_H_ */
+void send_signal(int signum);
+
+#endif /* UTILS_H_ */
