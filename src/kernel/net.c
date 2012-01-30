@@ -28,14 +28,15 @@ void dnbd3_net_connect(struct dnbd3_device *lo)
 	struct kvec iov;
 	struct dnbd3_request dnbd3_request;
 	struct dnbd3_reply dnbd3_reply;
-	struct task_struct *thread_send;
-	struct task_struct *thread_receive;
 
 	if (!lo->host || !lo->port || !lo->image_id)
 	{
 		printk("ERROR: Host or port not set.");
 		return;
 	}
+
+	// FIXME: check if allready connected
+	printk("INFO: Connecting device %s\n", lo->disk->disk_name);
 
 	// initialize socket
 	if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &lo->sock) < 0)
@@ -49,7 +50,7 @@ void dnbd3_net_connect(struct dnbd3_device *lo)
 	sin.sin_port = htons(simple_strtol(lo->port, NULL, 10));
 	if (kernel_connect(lo->sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
 	{
-		printk("ERROR: dnbd3 couldn't connect to given host.\n");
+		printk("ERROR: dnbd3 couldn't connect to host %s:%s\n", lo->host, lo->port);
 		return;
 	}
 
@@ -82,12 +83,42 @@ void dnbd3_net_connect(struct dnbd3_device *lo)
 	set_capacity(lo->disk, dnbd3_reply.filesize >> 9); /* 512 Byte blocks */
 
 	// start sending thread
-	thread_send = kthread_create(dnbd3_net_send, lo, lo->disk->disk_name);
-	wake_up_process(thread_send);
+	lo->thread_send = kthread_create(dnbd3_net_send, lo, lo->disk->disk_name);
+	wake_up_process(lo->thread_send);
 
 	// start receiving thread
-	thread_receive = kthread_create(dnbd3_net_receive, lo, lo->disk->disk_name);
-	wake_up_process(thread_receive);
+	lo->thread_receive = kthread_create(dnbd3_net_receive, lo, lo->disk->disk_name);
+	wake_up_process(lo->thread_receive);
+}
+
+void dnbd3_net_disconnect(struct dnbd3_device *lo)
+{
+	struct request *blk_request, *tmp_request;
+	printk("INFO: Disconnecting device %s\n", lo->disk->disk_name);
+
+	// kill sending and receiving threads
+	kthread_stop(lo->thread_send);
+	kthread_stop(lo->thread_receive);
+
+	// clear sock
+	if (lo->sock)
+	{
+		sock_release(lo->sock);
+		lo->sock = NULL;
+	}
+
+	// move already send requests to request_queue_send
+	if (!list_empty(&lo->request_queue_receive))
+	{
+		printk("WARN: Request queue was not empty on %s\n", lo->disk->disk_name);
+		spin_lock_irq(&lo->blk_lock);
+		list_for_each_entry_safe(blk_request, tmp_request, &lo->request_queue_receive, queuelist)
+		{
+			list_del_init(&blk_request->queuelist);
+			list_add_tail(&blk_request->queuelist, &lo->request_queue_send);
+		}
+		spin_unlock_irq(&lo->blk_lock);
+	}
 }
 
 int dnbd3_net_send(void *data)
@@ -167,6 +198,9 @@ int dnbd3_net_receive(void *data)
 	{
 		wait_event_interruptible(lo->process_queue_receive, kthread_should_stop() || !list_empty(&lo->request_queue_receive));
 
+		if (list_empty(&lo->request_queue_receive))
+			continue;
+
 		// receive net replay
 		iov.iov_base = &dnbd3_reply;
 		iov.iov_len = sizeof(dnbd3_reply);
@@ -206,6 +240,5 @@ int dnbd3_net_receive(void *data)
 		__blk_end_request_all(blk_request, 0);
 		spin_unlock_irqrestore(&lo->blk_lock, flags);
 	}
-
 	return 0;
 }

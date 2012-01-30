@@ -25,6 +25,8 @@
 
 void dnbd3_net_connect(struct dnbd3_device *lo);
 
+void dnbd3_net_disconnect(struct dnbd3_device *lo);
+
 int dnbd3_net_send(void *data);
 
 int dnbd3_net_receive(void *data);

@@ -64,7 +64,10 @@ int dnbd3_blk_add_device(struct dnbd3_device *dev, int minor)
 int dnbd3_blk_del_device(struct dnbd3_device *dev)
 {
 	if (dev->sock)
+	{
 		sock_release(dev->sock);
+		dev->sock = NULL;
+	}
 
 	del_gendisk(dev->disk);
 	put_disk(dev->disk);
@@ -83,17 +86,23 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd,
 	switch (cmd)
 	{
 	case IOCTL_SET_HOST:
-		lo->host = (char *) arg;
+		strcpy(lo->host, (char *) arg);
 		break;
 
 	case IOCTL_SET_PORT:
-		lo->port = (char *) arg;
+		strcpy(lo->port, (char *) arg);
 		break;
 	case IOCTL_SET_IMAGE:
-		lo->image_id = (char *) arg;
+		strcpy(lo->image_id, (char *) arg);
 		break;
 	case IOCTL_CONNECT:
-		dnbd3_net_connect(lo);
+		if (lo->host && lo->port && lo->image_id)
+			dnbd3_net_connect(lo);
+		else
+			return -1;
+		break;
+	case IOCTL_DISCONNECT:
+		dnbd3_net_disconnect(lo);
 		break;
 	case BLKFLSBUF:
 		break;

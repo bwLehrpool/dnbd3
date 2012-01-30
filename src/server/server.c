@@ -79,7 +79,6 @@ void handle_sighup(int signum)
 	pthread_spin_lock(&spinlock);
 	reload_config(config_file_name);
 	pthread_spin_unlock(&spinlock);
-	// TODO: stop handle_query or use mutex before image_file = open(ht_search(request.image_id), O_RDONLY);
 }
 
 void handle_sigterm(int signum)
@@ -94,7 +93,7 @@ void *handle_query(void *client_socket)
 {
 	int image_file = -1;
 	off_t filesize = 0;
-	int sock = (int) client_socket;
+	int sock = (int)(uintptr_t) client_socket;
 	struct dnbd3_request request;
 	struct dnbd3_reply reply;
 	uint16_t cmd;
@@ -258,7 +257,7 @@ int main(int argc, char* argv[])
 
 		// FIXME: catch SIGKILL/SIGTERM and close all socket before exit
 		pthread_t thread;
-		pthread_create(&(thread), NULL, handle_query, (void *) fd);
+		pthread_create(&(thread), NULL, handle_query, (void *)(uintptr_t) fd);
 		pthread_detach(thread);
 	}
 
