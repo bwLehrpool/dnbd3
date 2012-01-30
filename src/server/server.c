@@ -66,6 +66,13 @@ void print_version()
 	exit(0);
 }
 
+void cleanup()
+{
+	close(_sock);
+	dnbd3_delete_pid_file();
+	exit(EXIT_SUCCESS);
+}
+
 void handle_sigpipe(int signum)
 {
 	printf("ERROR: Received signal SIGPIPE, Broken pipe (errno: %i)\n", errno);
@@ -77,16 +84,14 @@ void handle_sighup(int signum)
 	printf("INFO: SIGHUP received!\n");
 	printf("INFO: Reloading configuration...\n");
 	pthread_spin_lock(&spinlock);
-	reload_config(config_file_name);
+	dnbd3_reload_config(config_file_name);
 	pthread_spin_unlock(&spinlock);
 }
 
 void handle_sigterm(int signum)
 {
 	printf("INFO: SIGTERM or SIGINT received!\n");
-	close(_sock);
-	delete_pid_file();
-	exit(EXIT_SUCCESS);
+	cleanup();
 }
 
 void *handle_query(void *client_socket)
@@ -105,7 +110,7 @@ void *handle_query(void *client_socket)
 		{
 		case CMD_GET_SIZE:
 			pthread_spin_lock(&spinlock); // because of reloading config
-			image_file = open(ht_search(request.image_id), O_RDONLY);
+			image_file = open(dnbd3_ht_search(request.image_id), O_RDONLY);
 			pthread_spin_unlock(&spinlock);
 			if (image_file < 0)
 			{
@@ -145,7 +150,7 @@ void *handle_query(void *client_socket)
 
 	}
 	close(sock);
-	printf("Client exit.\n");
+	printf("INFO: Client exit.\n");
 	pthread_exit((void *) 0);
 }
 
@@ -178,11 +183,11 @@ int main(int argc, char* argv[])
 			break;
 		case 'r':
 			printf("INFO: Reloading configuration file...\n");
-			send_signal(SIGHUP);
+			dnbd3_send_signal(SIGHUP);
 			return EXIT_SUCCESS;
 		case 's':
 			printf("INFO: Stopping running server...\n");
-			send_signal(SIGTERM);
+			dnbd3_send_signal(SIGTERM);
 			return EXIT_SUCCESS;
 		case 'h':
 			print_help(argv[0]);
@@ -200,7 +205,7 @@ int main(int argc, char* argv[])
 		daemon(1,0);
 
 	pthread_spin_init(&spinlock, PTHREAD_PROCESS_PRIVATE);
-	load_config(config_file_name);
+	dnbd3_load_config(config_file_name);
 
 	// setup signal handler
 	signal(SIGPIPE, handle_sigpipe);
@@ -241,7 +246,7 @@ int main(int argc, char* argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	write_pid_file(getpid());
+	dnbd3_write_pid_file(getpid());
 	printf("INFO: Server is ready...\n");
 
 	while (1)
@@ -261,7 +266,5 @@ int main(int argc, char* argv[])
 		pthread_detach(thread);
 	}
 
-	close(_sock);
-	delete_pid_file();
-	return EXIT_SUCCESS;
+	cleanup();
 }

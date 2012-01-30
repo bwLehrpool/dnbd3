@@ -30,19 +30,19 @@ char value_buf[MAX_NUMBER_IMAGES * MAX_FILE_NAME];
 char *key_ptr = key_buf;
 char *val_ptr = value_buf;
 
-void ht_create()
+void dnbd3_ht_create()
 {
 	(void) hcreate(MAX_NUMBER_IMAGES);
 }
 
-void ht_destroy()
+void dnbd3_ht_destroy()
 {
 	key_ptr = key_buf;
 	val_ptr = value_buf;
 	hdestroy();
 }
 
-int ht_insert(char* key, char* value)
+int dnbd3_ht_insert(char* key, char* value)
 {
 	if (strlen(key) > MAX_FILE_ID) return -1;
 	if (strlen(value) > MAX_FILE_NAME) return -2;
@@ -62,7 +62,7 @@ int ht_insert(char* key, char* value)
 	return 0;
 }
 
-char* ht_search(char* key)
+char* dnbd3_ht_search(char* key)
 {
 	ENTRY *result;
 

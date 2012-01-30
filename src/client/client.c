@@ -60,7 +60,7 @@ int main(int argc, char *argv[])
 
 	int opt = 0;
 	int longIndex = 0;
-	static const char *optString = "H:p:i:d:D:c:hv?";
+	static const char *optString = "H:p:i:d:c:hv?";
 	static const struct option longOpts[] =
 	{
 	{ "host", required_argument, NULL, 'H' },

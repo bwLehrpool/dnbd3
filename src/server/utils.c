@@ -25,7 +25,7 @@
 #include <stdlib.h>
 #include <signal.h>
 
-void write_pid_file(pid_t pid)
+void dnbd3_write_pid_file(pid_t pid)
 {
 	FILE *f = fopen(SERVER_PID_FILE, "w");
 	if(f != NULL)
@@ -39,7 +39,7 @@ void write_pid_file(pid_t pid)
 	}
 }
 
-pid_t read_pid_file()
+pid_t dnbd3_read_pid_file()
 {
 	pid_t pid = 0;
 
@@ -57,7 +57,7 @@ pid_t read_pid_file()
 	return pid;
 }
 
-void delete_pid_file()
+void dnbd3_delete_pid_file()
 {
 	 if (unlink(SERVER_PID_FILE) != 0)
 	 {
@@ -66,9 +66,9 @@ void delete_pid_file()
 }
 
 
-void load_config(char* config_file_name)
+void dnbd3_load_config(char* config_file_name)
 {
-	ht_create();
+	dnbd3_ht_create();
 	FILE *config_file = fopen(config_file_name, "r");
 
 	if (config_file == NULL)
@@ -84,7 +84,7 @@ void load_config(char* config_file_name)
 	while (fgets(line, sizeof(line), config_file) != NULL)
 	{
 		sscanf(line, "%as %as", &image_name, &image_id);
-		if (ht_insert(image_id, image_name) < 0)
+		if (dnbd3_ht_insert(image_id, image_name) < 0)
 		{
 			printf("ERROR: Image name or ID is too big\n");
 			exit(EXIT_FAILURE);
@@ -93,21 +93,21 @@ void load_config(char* config_file_name)
 	fclose(config_file);
 }
 
-void reload_config(char* config_file_name)
+void dnbd3_reload_config(char* config_file_name)
 {
-	ht_destroy();
-	load_config(config_file_name);
+	dnbd3_ht_destroy();
+	dnbd3_load_config(config_file_name);
 }
 
-void send_signal(int signum)
+void dnbd3_send_signal(int signum)
 {
-	pid_t pid = read_pid_file();
+	pid_t pid = dnbd3_read_pid_file();
 	if (pid != 0)
 	{
 		if (kill(pid, signum) != 0)
 		{
 			printf("ERROR: dnbd3-server is not running\n");
-			delete_pid_file();
+			dnbd3_delete_pid_file();
 		}
 	}
 	else

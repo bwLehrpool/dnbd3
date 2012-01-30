@@ -26,13 +26,13 @@
 #ifndef UTILS_H_
 #define UTILS_H_
 
-void write_pid_file(pid_t pid);
-pid_t read_pid_file();
-void delete_pid_file();
+void dnbd3_write_pid_file(pid_t pid);
+pid_t dnbd3_read_pid_file();
+void dnbd3_delete_pid_file();
 
-void load_config(char* config_file_name);
-void reload_config(char* config_file_name);
+void dnbd3_load_config(char* config_file_name);
+void dnbd3_reload_config(char* config_file_name);
 
-void send_signal(int signum);
+void dnbd3_send_signal(int signum);
 
 #endif /* UTILS_H_ */

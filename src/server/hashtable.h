@@ -21,12 +21,12 @@
 #ifndef HASHTABLE_H_
 #define HASHTABLE_H_
 
-void ht_create ();
+void dnbd3_ht_create ();
 
-void ht_destroy();
+void dnbd3_ht_destroy();
 
-int ht_insert(char* key, char* value);
+int dnbd3_ht_insert(char* key, char* value);
 
-char* ht_search(char* key);
+char* dnbd3_ht_search(char* key);
 
 #endif /* HASHTABLE_H_ */
