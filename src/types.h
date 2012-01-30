@@ -39,20 +39,20 @@
 #pragma pack(1)
 typedef struct dnbd3_request
 {
-	uint16_t cmd;
-	uint64_t offset;
-	uint64_t size;
-	char image_id[MAX_FILE_ID];
-	char handle[8];
+    uint16_t cmd;
+    uint64_t offset;
+    uint64_t size;
+    char image_id[MAX_FILE_ID];
+    char handle[8];
 } dnbd3_request_t;
 #pragma pack(0)
 
 #pragma pack(1)
 typedef struct dnbd3_reply
 {
-	uint16_t cmd;
-	uint64_t filesize;
-	char handle[8];
+    uint16_t cmd;
+    uint64_t filesize;
+    char handle[8];
 } dnbd3_reply_t;
 #pragma pack(0)
 

@@ -31,117 +31,119 @@
 
 void print_help(char* argv_0)
 {
-	printf("Usage: %s -H <host> -p <port> -i <image-id> -d <device> || -c <host> -d <device>\n", argv_0);
-	printf("Start the DNBD3 client.\n");
-	printf("-H or --host \t\t Host running dnbd3-server.\n");
-	printf("-p or --port \t\t Port used by server.\n");
-	printf("-i or --image \t\t Exported image ID.\n");
-	printf("-d or --device \t\t DNBD3 device name.\n");
-	printf("-c or --changehost \t Change dnbd3-server on device (DEBUG).\n");
-	printf("-h or --help \t\t Show this help text and quit.\n");
-	printf("-v or --version \t Show version and quit.\n");
-	exit(EXIT_SUCCESS);
+    printf("Usage: %s -H <host> -p <port> -i <image-id> -d <device>\n", argv_0);
+    printf("Start the DNBD3 client.\n");
+    printf("-H or --host \t\t Host running dnbd3-server.\n");
+    printf("-p or --port \t\t Port used by server.\n");
+    printf("-i or --image \t\t Exported image ID.\n");
+    printf("-d or --device \t\t DNBD3 device name.\n");
+    printf("-c or --changehost \t Change dnbd3-server on device (DEBUG).\n");
+    printf("-h or --help \t\t Show this help text and quit.\n");
+    printf("-v or --version \t Show version and quit.\n");
+    exit(EXIT_SUCCESS);
 }
 
 void print_version()
 {
-	printf("Version: %s\n", VERSION_STRING);
-	exit(EXIT_SUCCESS);
+    printf("Version: %s\n", VERSION_STRING);
+    exit(EXIT_SUCCESS);
 }
 
 int main(int argc, char *argv[])
 {
-	int fd;
-	char *host = NULL;
-	char *port = NULL;
-	char *image_id = NULL;
-	char *dev = NULL;
-	int change_host = 0;
+    int fd;
+    char *host = NULL;
+    char *port = NULL;
+    char *image_id = NULL;
+    char *dev = NULL;
+    int change_host = 0;
 
-	int opt = 0;
-	int longIndex = 0;
-	static const char *optString = "H:p:i:d:c:hv?";
-	static const struct option longOpts[] =
-	{
-	{ "host", required_argument, NULL, 'H' },
-	{ "port", required_argument, NULL, 'p' },
-	{ "image", required_argument, NULL, 'i' },
-	{ "device", required_argument, NULL, 'd' },
-	{ "changehost", required_argument, NULL, 'c' },
-	{ "help", no_argument, NULL, 'h' },
-	{ "version", no_argument, NULL, 'v' }, };
+    int opt = 0;
+    int longIndex = 0;
+    static const char *optString = "H:p:i:d:c:hv?";
+    static const struct option longOpts[] =
+    {
+    { "host", required_argument, NULL, 'H' },
+    { "port", required_argument, NULL, 'p' },
+    { "image", required_argument, NULL, 'i' },
+    { "device", required_argument, NULL, 'd' },
+    { "changehost", required_argument, NULL, 'c' },
+    { "help", no_argument, NULL, 'h' },
+    { "version", no_argument, NULL, 'v' }, };
 
-	opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
+    opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
 
-	while (opt != -1)
-	{
-		switch (opt)
-		{
-		case 'H':
-			host = optarg;
-			break;
-		case 'p':
-			port = optarg;
-			break;
-		case 'i':
-			image_id = optarg;
-			break;
-		case 'd':
-			dev = optarg;
-			break;
-		case 'c':
-			host = optarg;
-			change_host = 1;
-			break;
-		case 'h':
-			print_help(argv[0]);
-			break;
-		case 'v':
-			print_version();
-			break;
-		case '?':
-			print_help(argv[0]);
-		}
-		opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
-	}
+    while (opt != -1)
+    {
+        switch (opt)
+        {
+        case 'H':
+            host = optarg;
+            break;
+        case 'p':
+            port = optarg;
+            break;
+        case 'i':
+            image_id = optarg;
+            break;
+        case 'd':
+            dev = optarg;
+            break;
+        case 'c':
+            host = optarg;
+            change_host = 1;
+            break;
+        case 'h':
+            print_help(argv[0]);
+            break;
+        case 'v':
+            print_version();
+            break;
+        case '?':
+            print_help(argv[0]);
+        }
+        opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
+    }
 
-	if (change_host && host && dev && !port && !image_id)
-	{
-		fd = open(dev, O_RDONLY);
+    // change host
+    if (change_host && host && dev && !port && !image_id)
+    {
+        fd = open(dev, O_RDONLY);
 
-		if (ioctl(fd, IOCTL_DISCONNECT) < 0)
-			printf("ERROR: ioctl not successful\n");
+        if (ioctl(fd, IOCTL_DISCONNECT) < 0)
+            printf("ERROR: ioctl not successful\n");
 
-		if (ioctl(fd, IOCTL_SET_HOST, host) < 0)
-			printf("ERROR: ioctl not successful\n");
+        if (ioctl(fd, IOCTL_SET_HOST, host) < 0)
+            printf("ERROR: ioctl not successful\n");
 
-		if (ioctl(fd, IOCTL_CONNECT) < 0)
-			printf("ERROR: ioctl not successful\n");
+        if (ioctl(fd, IOCTL_CONNECT) < 0)
+            printf("ERROR: ioctl not successful\n");
 
-		close(fd);
-		exit(EXIT_SUCCESS);
-	}
+        close(fd);
+        exit(EXIT_SUCCESS);
+    }
 
-	if (host && port && dev && image_id)
-	{
-		fd = open(dev, O_RDONLY);
+    // connect
+    if (host && port && dev && image_id)
+    {
+        fd = open(dev, O_RDONLY);
 
-		if (ioctl(fd, IOCTL_SET_HOST, host) < 0)
-			printf("ERROR: ioctl not successful\n");
+        if (ioctl(fd, IOCTL_SET_HOST, host) < 0)
+            printf("ERROR: ioctl not successful\n");
 
-		if (ioctl(fd, IOCTL_SET_PORT, port) < 0)
-			printf("ERROR: ioctl not successful\n");
+        if (ioctl(fd, IOCTL_SET_PORT, port) < 0)
+            printf("ERROR: ioctl not successful\n");
 
-		if (ioctl(fd, IOCTL_SET_IMAGE, image_id) < 0)
-			printf("ERROR: ioctl not successful\n");
+        if (ioctl(fd, IOCTL_SET_IMAGE, image_id) < 0)
+            printf("ERROR: ioctl not successful\n");
 
-		if (ioctl(fd, IOCTL_CONNECT) < 0)
-			printf("ERROR: ioctl not successful\n");
+        if (ioctl(fd, IOCTL_CONNECT) < 0)
+            printf("ERROR: ioctl not successful\n");
 
-		close(fd);
-		exit(EXIT_SUCCESS);
-	}
+        close(fd);
+        exit(EXIT_SUCCESS);
+    }
 
-	print_help(argv[0]);
-	exit(EXIT_FAILURE);
+    print_help(argv[0]);
+    exit(EXIT_FAILURE);
 }

@@ -32,45 +32,47 @@ char *val_ptr = value_buf;
 
 void dnbd3_ht_create()
 {
-	(void) hcreate(MAX_NUMBER_IMAGES);
+    (void) hcreate(MAX_NUMBER_IMAGES);
 }
 
 void dnbd3_ht_destroy()
 {
-	key_ptr = key_buf;
-	val_ptr = value_buf;
-	hdestroy();
+    key_ptr = key_buf;
+    val_ptr = value_buf;
+    hdestroy();
 }
 
 int dnbd3_ht_insert(char* key, char* value)
 {
-	if (strlen(key) > MAX_FILE_ID) return -1;
-	if (strlen(value) > MAX_FILE_NAME) return -2;
+    if (strlen(key) > MAX_FILE_ID)
+        return -1;
+    if (strlen(value) > MAX_FILE_NAME)
+        return -2;
 
-	strcpy(key_ptr, key);
-	strcpy(val_ptr, value);
+    strcpy(key_ptr, key);
+    strcpy(val_ptr, value);
 
-	ENTRY item;
-	item.key = key_ptr;
-	item.data = val_ptr;
+    ENTRY item;
+    item.key = key_ptr;
+    item.data = val_ptr;
 
-	(void) hsearch(item, ENTER);
+    (void) hsearch(item, ENTER);
 
-	key_ptr += strlen(key) + 1;
-	val_ptr += strlen(value) + 1;
+    key_ptr += strlen(key) + 1;
+    val_ptr += strlen(value) + 1;
 
-	return 0;
+    return 0;
 }
 
 char* dnbd3_ht_search(char* key)
 {
-	ENTRY *result;
+    ENTRY *result;
 
-	ENTRY item;
-	item.key = key;
+    ENTRY item;
+    item.key = key;
 
-	if ((result = hsearch(item, FIND)) != NULL)
-		return result->data;
-	else
-		return NULL;
+    if ((result = hsearch(item, FIND)) != NULL)
+        return result->data;
+    else
+        return NULL;
 }

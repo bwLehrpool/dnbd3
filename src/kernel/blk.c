@@ -23,123 +23,122 @@
 
 int dnbd3_blk_add_device(struct dnbd3_device *dev, int minor)
 {
-	struct gendisk *disk;
-	struct request_queue *blk_queue;
+    struct gendisk *disk;
+    struct request_queue *blk_queue;
 
-	init_waitqueue_head(&dev->process_queue_send);
-	init_waitqueue_head(&dev->process_queue_receive);
-	INIT_LIST_HEAD(&dev->request_queue_send);
-	INIT_LIST_HEAD(&dev->request_queue_receive);
+    init_waitqueue_head(&dev->process_queue_send);
+    init_waitqueue_head(&dev->process_queue_receive);
+    INIT_LIST_HEAD(&dev->request_queue_send);
+    INIT_LIST_HEAD(&dev->request_queue_receive);
 
-	if (!(disk = alloc_disk(1)))
-	{
-		printk("ERROR: dnbd3 alloc_disk failed.\n");
-		return -EIO;
-	}
+    if (!(disk = alloc_disk(1)))
+    {
+        printk("ERROR: dnbd3 alloc_disk failed.\n");
+        return -EIO;
+    }
 
-	disk->major = major;
-	disk->first_minor = minor;
-	sprintf(disk->disk_name, "dnbd%d", minor);
-	set_capacity(disk, 0);
-	set_disk_ro(disk, 1);
-	disk->fops = &dnbd3_blk_ops;
+    disk->major = major;
+    disk->first_minor = minor;
+    sprintf(disk->disk_name, "dnbd%d", minor);
+    set_capacity(disk, 0);
+    set_disk_ro(disk, 1);
+    disk->fops = &dnbd3_blk_ops;
 
-	spin_lock_init(&dev->blk_lock);
-	if ((blk_queue = blk_init_queue(&dnbd3_blk_request, &dev->blk_lock)) == NULL)
-	{
-		printk("ERROR: dnbd3 blk_init_queue failed.\n");
-		return -EIO;
-	}
+    spin_lock_init(&dev->blk_lock);
+    if ((blk_queue = blk_init_queue(&dnbd3_blk_request, &dev->blk_lock)) == NULL)
+    {
+        printk("ERROR: dnbd3 blk_init_queue failed.\n");
+        return -EIO;
+    }
 
-	blk_queue_logical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
-	disk->queue = blk_queue;
-	disk->private_data = dev;
-	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
-	dev->disk = disk;
+    blk_queue_logical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
+    disk->queue = blk_queue;
+    disk->private_data = dev;
+    queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
+    dev->disk = disk;
 
-	dev->hb_request.cmd_type = REQ_TYPE_SPECIAL;
+    dev->hb_request.cmd_type = REQ_TYPE_SPECIAL;
 
-	add_disk(disk); // must be last
-	return 0;
+    add_disk(disk); // must be last
+    return 0;
 }
 
 int dnbd3_blk_del_device(struct dnbd3_device *dev)
 {
-	if (dev->sock)
-	{
-		sock_release(dev->sock);
-		dev->sock = NULL;
-	}
+    if (dev->sock)
+    {
+        sock_release(dev->sock);
+        dev->sock = NULL;
+    }
 
-	if (&dev->hb_timer)
-		del_timer(&dev->hb_timer);
+    if (&dev->hb_timer)
+        del_timer(&dev->hb_timer);
 
-	del_gendisk(dev->disk);
-	put_disk(dev->disk);
-	blk_cleanup_queue(dev->disk->queue);
-	return 0;
+    del_gendisk(dev->disk);
+    put_disk(dev->disk);
+    blk_cleanup_queue(dev->disk->queue);
+    return 0;
 }
 
 struct block_device_operations dnbd3_blk_ops =
 { .owner = THIS_MODULE, .ioctl = dnbd3_blk_ioctl, };
 
-int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd,
-		unsigned long arg)
+int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
-	struct dnbd3_device *lo = bdev->bd_disk->private_data;
+    struct dnbd3_device *lo = bdev->bd_disk->private_data;
 
-	switch (cmd)
-	{
-	case IOCTL_SET_HOST:
-		strcpy(lo->host, (char *) arg);
-		break;
+    switch (cmd)
+    {
+    case IOCTL_SET_HOST:
+        strcpy(lo->host, (char *) arg);
+        break;
 
-	case IOCTL_SET_PORT:
-		strcpy(lo->port, (char *) arg);
-		break;
-	case IOCTL_SET_IMAGE:
-		strcpy(lo->image_id, (char *) arg);
-		break;
-	case IOCTL_CONNECT:
-		if (lo->host && lo->port && lo->image_id)
-			dnbd3_net_connect(lo);
-		else
-			return -1;
-		break;
-	case IOCTL_DISCONNECT:
-		dnbd3_net_disconnect(lo);
-		break;
-	case BLKFLSBUF:
-		break;
+    case IOCTL_SET_PORT:
+        strcpy(lo->port, (char *) arg);
+        break;
+    case IOCTL_SET_IMAGE:
+        strcpy(lo->image_id, (char *) arg);
+        break;
+    case IOCTL_CONNECT:
+        if (lo->host && lo->port && lo->image_id)
+            dnbd3_net_connect(lo);
+        else
+            return -1;
+        break;
+    case IOCTL_DISCONNECT:
+        dnbd3_net_disconnect(lo);
+        break;
+    case BLKFLSBUF:
+        break;
 
-	default:
-		return -1;
+    default:
+        return -1;
 
-	}
-	return 0;
+    }
+    return 0;
 }
 
 void dnbd3_blk_request(struct request_queue *q)
 {
-	struct request *req;
-	struct dnbd3_device *lo;
+    struct request *req;
+    struct dnbd3_device *lo;
 
-	while ((req = blk_fetch_request(q)) != NULL)
-	{
-		lo = req->rq_disk->private_data;
+    while ((req = blk_fetch_request(q)) != NULL)
+    {
+        lo = req->rq_disk->private_data;
 
-		if (req->cmd_type != REQ_TYPE_FS)
-		{
-			__blk_end_request_all(req, 0);
-			continue;
-		}
+        if (req->cmd_type != REQ_TYPE_FS)
+        {
+            __blk_end_request_all(req, 0);
+            continue;
+        }
 
-		if (rq_data_dir(req) == READ)
-		{
-			list_add_tail(&req->queuelist, &lo->request_queue_send);
-			spin_unlock_irq(q->queue_lock);
-			wake_up(&lo->process_queue_send);
-			spin_lock_irq(q->queue_lock);
-		}
-	}
+        if (rq_data_dir(req) == READ)
+        {
+            list_add_tail(&req->queuelist, &lo->request_queue_send);
+            spin_unlock_irq(q->queue_lock);
+            wake_up(&lo->process_queue_send);
+            spin_lock_irq(q->queue_lock);
+        }
+    }
 }

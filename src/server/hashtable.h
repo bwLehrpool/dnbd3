@@ -21,7 +21,7 @@
 #ifndef HASHTABLE_H_
 #define HASHTABLE_H_
 
-void dnbd3_ht_create ();
+void dnbd3_ht_create();
 
 void dnbd3_ht_destroy();
 

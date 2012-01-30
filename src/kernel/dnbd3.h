@@ -33,25 +33,25 @@ extern int major;
 
 struct dnbd3_device
 {
-	// block
-	struct gendisk *disk;
-	spinlock_t blk_lock;
+    // block
+    struct gendisk *disk;
+    spinlock_t blk_lock;
 
-	// network
-	char host[16];
-	char port[6];
-	char image_id[MAX_FILE_NAME];
-	struct socket *sock;
-	struct timer_list hb_timer;
-	struct request hb_request;
+    // network
+    char host[16];
+    char port[6];
+    char image_id[MAX_FILE_NAME];
+    struct socket *sock;
+    struct timer_list hb_timer;
+    struct request hb_request;
 
-	// process
-	struct task_struct *thread_send;
-	struct task_struct *thread_receive;
-	wait_queue_head_t process_queue_send;
-	wait_queue_head_t process_queue_receive;
-	struct list_head request_queue_send;
-	struct list_head request_queue_receive;
+    // process
+    struct task_struct *thread_send;
+    struct task_struct *thread_receive;
+    wait_queue_head_t process_queue_send;
+    wait_queue_head_t process_queue_receive;
+    struct list_head request_queue_send;
+    struct list_head request_queue_receive;
 
 };
 
