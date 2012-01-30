@@ -57,6 +57,8 @@ int dnbd3_blk_add_device(struct dnbd3_device *dev, int minor)
 	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
 	dev->disk = disk;
 
+	dev->hb_request.cmd_type = REQ_TYPE_SPECIAL;
+
 	add_disk(disk); // must be last
 	return 0;
 }
@@ -68,6 +70,9 @@ int dnbd3_blk_del_device(struct dnbd3_device *dev)
 		sock_release(dev->sock);
 		dev->sock = NULL;
 	}
+
+	if (&dev->hb_timer)
+		del_timer(&dev->hb_timer);
 
 	del_gendisk(dev->disk);
 	put_disk(dev->disk);

@@ -35,7 +35,7 @@ void dnbd3_net_connect(struct dnbd3_device *lo)
 		return;
 	}
 
-	// FIXME: check if allready connected
+	// TODO: check if allready connected
 	printk("INFO: Connecting device %s\n", lo->disk->disk_name);
 
 	// initialize socket
@@ -89,6 +89,13 @@ void dnbd3_net_connect(struct dnbd3_device *lo)
 	// start receiving thread
 	lo->thread_receive = kthread_create(dnbd3_net_receive, lo, lo->disk->disk_name);
 	wake_up_process(lo->thread_receive);
+
+	// Add heartbeat timer
+	init_timer(&lo->hb_timer);
+	lo->hb_timer.data = (unsigned long)lo;
+	lo->hb_timer.function = dnbd3_net_heartbeat;
+	lo->hb_timer.expires = jiffies + HB_INTERVAL;
+	add_timer(&lo->hb_timer);
 }
 
 void dnbd3_net_disconnect(struct dnbd3_device *lo)
@@ -106,6 +113,9 @@ void dnbd3_net_disconnect(struct dnbd3_device *lo)
 		sock_release(lo->sock);
 		lo->sock = NULL;
 	}
+	// clear heartbeat timer
+	if (&lo->hb_timer)
+		del_timer(&lo->hb_timer);
 
 	// move already send requests to request_queue_send
 	if (!list_empty(&lo->request_queue_receive))
@@ -151,10 +161,23 @@ int dnbd3_net_send(void *data)
 		list_del_init(&blk_request->queuelist);
 		spin_unlock_irq(&lo->blk_lock);
 
-		// prepare net request
-		dnbd3_request.cmd = CMD_GET_BLOCK;
-		dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
-		dnbd3_request.size = blk_rq_bytes(blk_request); // blk_rq_bytes() Returns bytes left to complete in the entire request
+		switch (blk_request->cmd_type)
+		{
+		case REQ_TYPE_SPECIAL:
+			dnbd3_request.cmd = CMD_PING;
+			break;
+
+		case REQ_TYPE_FS:
+			dnbd3_request.cmd = CMD_GET_BLOCK;
+			dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
+			dnbd3_request.size = blk_rq_bytes(blk_request); // blk_rq_bytes() Returns bytes left to complete in the entire request
+			break;
+
+		default:
+			printk("ERROR: Unknown command\n");
+			break;
+		}
+
 		memcpy(dnbd3_request.handle, &blk_request, sizeof(blk_request));
 		iov.iov_base = &dnbd3_request;
 		iov.iov_len = sizeof(dnbd3_request);
@@ -220,8 +243,15 @@ int dnbd3_net_receive(void *data)
 		}
 		spin_unlock_irq(&lo->blk_lock);
 
-		// receive data and answer to block layer
-		rq_for_each_segment(bvec, blk_request, iter)
+		switch (dnbd3_reply.cmd)
+		{
+		case CMD_PING:
+			// TODO: use for rtt?
+			break;
+
+		case CMD_GET_BLOCK:
+			// receive data and answer to block layer
+			rq_for_each_segment(bvec, blk_request, iter)
 			{
 				siginitsetinv(&blocked, sigmask(SIGKILL));
 				sigprocmask(SIG_SETMASK, &blocked, &oldset);
@@ -235,10 +265,25 @@ int dnbd3_net_receive(void *data)
 
 				sigprocmask(SIG_SETMASK, &oldset, NULL);
 			}
+			spin_lock_irqsave(&lo->blk_lock, flags);
+			__blk_end_request_all(blk_request, 0);
+			spin_unlock_irqrestore(&lo->blk_lock, flags);
+			break;
 
-		spin_lock_irqsave(&lo->blk_lock, flags);
-		__blk_end_request_all(blk_request, 0);
-		spin_unlock_irqrestore(&lo->blk_lock, flags);
+		default:
+			printk("ERROR: Unknown command\n");
+			break;
+		}
+
 	}
 	return 0;
+}
+
+void dnbd3_net_heartbeat(unsigned long arg)
+{
+	struct dnbd3_device *lo = (struct dnbd3_device *) arg;
+	list_add(&lo->hb_request.queuelist, &lo->request_queue_send);
+	wake_up(&lo->process_queue_send);
+	lo->hb_timer.expires = jiffies + HB_INTERVAL;
+	add_timer(&lo->hb_timer);
 }

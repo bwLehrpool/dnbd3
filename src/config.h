@@ -23,6 +23,8 @@
 
 // network
 #define PORT 5003
+#define SERVER_SOCKET_TIMEOUT 30
+#define HB_INTERVAL 20*HZ
 
 // block device
 #define KERNEL_SECTOR_SIZE 512

@@ -27,13 +27,13 @@ struct dnbd3_device dnbd3_device[MAX_NUMBER_DEVICES];
 static int __init dnbd3_init(void)
 {
 	int i;
-
 	// initialize block device
 	if ((major = register_blkdev(0, "dnbd3")) == 0)
 	{
 		printk("ERROR: dnbd3 register_blkdev failed.\n");
 		return -EIO;
 	}
+	// add MAX_NUMBER_DEVICES devices
 	for (i = 0; i < MAX_NUMBER_DEVICES; i++)
 	{
 		if (dnbd3_blk_add_device(&dnbd3_device[i], i) != 0)
@@ -42,7 +42,6 @@ static int __init dnbd3_init(void)
 			return -EIO;
 		}
 	}
-
 	printk("INFO: dnbd3 init successful.\n");
 	return 0;
 }
@@ -54,7 +53,6 @@ static void __exit dnbd3_exit(void)
 	{
 		dnbd3_blk_del_device(&dnbd3_device[i]);
 	}
-
 	unregister_blkdev(major, "dnbd3");
 	printk("INFO: dnbd3 exit.\n");
 }

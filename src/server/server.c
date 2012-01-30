@@ -108,6 +108,12 @@ void *handle_query(void *client_socket)
 		cmd = request.cmd;
 		switch (cmd)
 		{
+		case CMD_PING:
+			reply.cmd = request.cmd;
+			memcpy(reply.handle, request.handle, sizeof(request.handle));
+			send(sock, (char *) &reply, sizeof(struct dnbd3_reply), 0);
+			break;
+
 		case CMD_GET_SIZE:
 			pthread_spin_lock(&spinlock); // because of reloading config
 			image_file = open(dnbd3_ht_search(request.image_id), O_RDONLY);
@@ -249,6 +255,11 @@ int main(int argc, char* argv[])
 	dnbd3_write_pid_file(getpid());
 	printf("INFO: Server is ready...\n");
 
+	struct timeval timeout;
+	timeout.tv_sec = SERVER_SOCKET_TIMEOUT;
+	timeout.tv_usec = 0;
+
+
 	while (1)
 	{
 		len = sizeof(client);
@@ -259,6 +270,9 @@ int main(int argc, char* argv[])
 			exit(EXIT_FAILURE);
 		}
 		printf("INFO: Client: %s connected\n", inet_ntoa(client.sin_addr));
+
+	    setsockopt (fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+	    setsockopt (fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
 
 		// FIXME: catch SIGKILL/SIGTERM and close all socket before exit
 		pthread_t thread;

@@ -34,6 +34,7 @@
 // network
 #define CMD_GET_BLOCK   1
 #define CMD_GET_SIZE    2
+#define CMD_PING    3
 
 #pragma pack(1)
 typedef struct dnbd3_request

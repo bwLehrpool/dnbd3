@@ -33,7 +33,6 @@ extern int major;
 
 struct dnbd3_device
 {
-
 	// block
 	struct gendisk *disk;
 	spinlock_t blk_lock;
@@ -43,6 +42,8 @@ struct dnbd3_device
 	char port[6];
 	char image_id[MAX_FILE_NAME];
 	struct socket *sock;
+	struct timer_list hb_timer;
+	struct request hb_request;
 
 	// process
 	struct task_struct *thread_send;
