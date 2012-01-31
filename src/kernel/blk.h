@@ -29,8 +29,8 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 
 void dnbd3_blk_request(struct request_queue *q);
 
-int dnbd3_blk_add_device(struct dnbd3_device *dev, int minor);
+int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor);
 
-int dnbd3_blk_del_device(struct dnbd3_device *dev);
+int dnbd3_blk_del_device(dnbd3_device_t *dev);
 
 #endif /* BLK_H_ */

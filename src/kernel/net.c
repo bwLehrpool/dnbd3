@@ -21,13 +21,13 @@
 #include "net.h"
 #include "utils.h"
 
-void dnbd3_net_connect(struct dnbd3_device *lo)
+void dnbd3_net_connect(dnbd3_device_t *lo)
 {
     struct sockaddr_in sin;
     struct msghdr msg;
     struct kvec iov;
-    struct dnbd3_request dnbd3_request;
-    struct dnbd3_reply dnbd3_reply;
+    dnbd3_request_t dnbd3_request;
+    dnbd3_reply_t dnbd3_reply;
 
     if (!lo->host || !lo->port || !lo->image_id)
     {
@@ -98,7 +98,7 @@ void dnbd3_net_connect(struct dnbd3_device *lo)
     add_timer(&lo->hb_timer);
 }
 
-void dnbd3_net_disconnect(struct dnbd3_device *lo)
+void dnbd3_net_disconnect(dnbd3_device_t *lo)
 {
     struct request *blk_request, *tmp_request;
     printk("INFO: Disconnecting device %s\n", lo->disk->disk_name);
@@ -133,8 +133,8 @@ void dnbd3_net_disconnect(struct dnbd3_device *lo)
 
 int dnbd3_net_send(void *data)
 {
-    struct dnbd3_device *lo = data;
-    struct dnbd3_request dnbd3_request;
+    dnbd3_device_t *lo = data;
+    dnbd3_request_t dnbd3_request;
     struct request *blk_request;
     struct msghdr msg;
     struct kvec iov;
@@ -196,8 +196,8 @@ int dnbd3_net_send(void *data)
 
 int dnbd3_net_receive(void *data)
 {
-    struct dnbd3_device *lo = data;
-    struct dnbd3_reply dnbd3_reply;
+    dnbd3_device_t *lo = data;
+    dnbd3_reply_t dnbd3_reply;
     struct request *blk_request;
     struct msghdr msg;
     struct kvec iov;
@@ -281,7 +281,7 @@ int dnbd3_net_receive(void *data)
 
 void dnbd3_net_heartbeat(unsigned long arg)
 {
-    struct dnbd3_device *lo = (struct dnbd3_device *) arg;
+    dnbd3_device_t *lo = (dnbd3_device_t *) arg;
     list_add(&lo->hb_request.queuelist, &lo->request_queue_send);
     wake_up(&lo->process_queue_send);
     lo->hb_timer.expires = jiffies + HB_INTERVAL;

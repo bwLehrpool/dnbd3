@@ -21,7 +21,7 @@
 #include "blk.h"
 #include "net.h"
 
-int dnbd3_blk_add_device(struct dnbd3_device *dev, int minor)
+int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
     struct gendisk *disk;
     struct request_queue *blk_queue;
@@ -63,7 +63,7 @@ int dnbd3_blk_add_device(struct dnbd3_device *dev, int minor)
     return 0;
 }
 
-int dnbd3_blk_del_device(struct dnbd3_device *dev)
+int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
     if (dev->sock)
     {
@@ -85,7 +85,7 @@ struct block_device_operations dnbd3_blk_ops =
 
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
-    struct dnbd3_device *lo = bdev->bd_disk->private_data;
+    dnbd3_device_t *lo = bdev->bd_disk->private_data;
 
     switch (cmd)
     {
@@ -121,7 +121,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 void dnbd3_blk_request(struct request_queue *q)
 {
     struct request *req;
-    struct dnbd3_device *lo;
+    dnbd3_device_t *lo;
 
     while ((req = blk_fetch_request(q)) != NULL)
     {

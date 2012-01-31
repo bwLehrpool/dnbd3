@@ -18,41 +18,17 @@
  *
  */
 
-#ifndef DNBD_H_
-#define DNBD_H_
+#ifndef SERVER_H_
+#define SERVER_H_
 
-#include <linux/kthread.h>
-#include <linux/module.h>
-#include <linux/blkdev.h>
-#include <net/sock.h>
+#include <stdint.h>
 
 #include "config.h"
-#include "types.h"
+#include "../types.h"
 
-extern int major;
+extern pthread_spinlock_t _spinlock;
+extern char *_config_file_name;
 
-typedef struct
-{
-    // block
-    struct gendisk *disk;
-    spinlock_t blk_lock;
+void dnbd3_cleanup();
 
-    // network
-    char host[16];
-    char port[6];
-    char image_id[MAX_FILE_NAME];
-    struct socket *sock;
-    struct timer_list hb_timer;
-    struct request hb_request;
-
-    // process
-    struct task_struct *thread_send;
-    struct task_struct *thread_receive;
-    wait_queue_head_t process_queue_send;
-    wait_queue_head_t process_queue_receive;
-    struct list_head request_queue_send;
-    struct list_head request_queue_receive;
-
-} dnbd3_device_t;
-
-#endif /* DNBD_H_ */
+#endif /* SERVER_H_ */

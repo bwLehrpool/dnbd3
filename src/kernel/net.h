@@ -23,9 +23,9 @@
 
 #include "dnbd3.h"
 
-void dnbd3_net_connect(struct dnbd3_device *lo);
+void dnbd3_net_connect(dnbd3_device_t *lo);
 
-void dnbd3_net_disconnect(struct dnbd3_device *lo);
+void dnbd3_net_disconnect(dnbd3_device_t *lo);
 
 int dnbd3_net_send(void *data);
 

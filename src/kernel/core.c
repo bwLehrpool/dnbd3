@@ -22,7 +22,7 @@
 #include "blk.h"
 
 int major;
-struct dnbd3_device dnbd3_device[MAX_NUMBER_DEVICES];
+dnbd3_device_t dnbd3_device[MAX_NUMBER_DEVICES];
 
 static int __init dnbd3_init(void)
 {

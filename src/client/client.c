@@ -29,7 +29,7 @@
 #include "../types.h"
 #include "../version.h"
 
-void print_help(char* argv_0)
+void dnbd3_print_help(char* argv_0)
 {
     printf("Usage: %s -H <host> -p <port> -i <image-id> -d <device>\n", argv_0);
     printf("Start the DNBD3 client.\n");
@@ -43,7 +43,7 @@ void print_help(char* argv_0)
     exit(EXIT_SUCCESS);
 }
 
-void print_version()
+void dnbd3_print_version()
 {
     printf("Version: %s\n", VERSION_STRING);
     exit(EXIT_SUCCESS);
@@ -94,13 +94,13 @@ int main(int argc, char *argv[])
             change_host = 1;
             break;
         case 'h':
-            print_help(argv[0]);
+            dnbd3_print_help(argv[0]);
             break;
         case 'v':
-            print_version();
+            dnbd3_print_version();
             break;
         case '?':
-            print_help(argv[0]);
+            dnbd3_print_help(argv[0]);
         }
         opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
     }
@@ -144,6 +144,6 @@ int main(int argc, char *argv[])
         exit(EXIT_SUCCESS);
     }
 
-    print_help(argv[0]);
+    dnbd3_print_help(argv[0]);
     exit(EXIT_FAILURE);
 }

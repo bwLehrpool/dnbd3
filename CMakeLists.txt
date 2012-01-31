@@ -11,9 +11,14 @@ SET(CMAKE_C_FLAGS_RELEASE "-O2 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64")
 SET(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -Wall -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64")
 SET(CMAKE_CXX_FLAGS_RELEASE "-O2 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64" )
 
-INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR})
+FIND_PACKAGE(Threads REQUIRED)
+FIND_PACKAGE(PkgConfig REQUIRED)
 
-FIND_PACKAGE(Threads)
+PKG_CHECK_MODULES(GLIB glib-2.0)
+
+INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${GLIB_INCLUDE_DIRS})
+
+
 
 ################################################################################
 # CLIENT                                                                       #
@@ -30,7 +35,7 @@ ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
 
 FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
 ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
-TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT})
+TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${GLIB_LDFLAGS})
 
 
 ################################################################################

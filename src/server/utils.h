@@ -26,8 +26,8 @@
 #ifndef UTILS_H_
 #define UTILS_H_
 
-void dnbd3_write_pid_file(pid_t pid);
 pid_t dnbd3_read_pid_file();
+void dnbd3_write_pid_file(pid_t pid);
 void dnbd3_delete_pid_file();
 
 void dnbd3_load_config(char* config_file_name);
