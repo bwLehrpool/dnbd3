@@ -22,12 +22,21 @@
 #define SERVER_H_
 
 #include <stdint.h>
+#include <glib-2.0/glib.h>
 
 #include "config.h"
 #include "../types.h"
 
+typedef struct
+{
+    int sock;
+    char ip[16];
+    pthread_t *thread;
+} dnbd3_client_t;
+
 extern pthread_spinlock_t _spinlock;
 extern char *_config_file_name;
+extern GSList *_dnbd3_clients;
 
 void dnbd3_cleanup();
 

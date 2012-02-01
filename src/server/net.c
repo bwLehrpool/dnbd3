@@ -19,6 +19,7 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -33,16 +34,16 @@
 #include "server.h"
 #include "hashtable.h"
 
-void *dnbd3_handle_query(void *client_socket)
+void *dnbd3_handle_query(void *dnbd3_client)
 {
+    dnbd3_client_t *client = (dnbd3_client_t *) (uintptr_t) dnbd3_client;
     int image_file = -1;
     off_t filesize = 0;
-    int sock = (int) (uintptr_t) client_socket;
     dnbd3_request_t request;
     dnbd3_reply_t reply;
     uint16_t cmd;
 
-    while (recv(sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
+    while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
     {
         cmd = request.cmd;
         switch (cmd)
@@ -50,7 +51,7 @@ void *dnbd3_handle_query(void *client_socket)
         case CMD_PING:
             reply.cmd = request.cmd;
             memcpy(reply.handle, request.handle, sizeof(request.handle));
-            send(sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
             break;
 
         case CMD_GET_SIZE:
@@ -70,7 +71,7 @@ void *dnbd3_handle_query(void *client_socket)
             }
             reply.cmd = request.cmd;
             reply.filesize = filesize;
-            send(sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
             break;
 
         case CMD_GET_BLOCK:
@@ -79,9 +80,9 @@ void *dnbd3_handle_query(void *client_socket)
 
             reply.cmd = request.cmd;
             memcpy(reply.handle, request.handle, sizeof(request.handle));
-            send(sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 
-            if (sendfile(sock, image_file, (off_t *) &request.offset, request.size) < 0)
+            if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
                 printf("ERROR: sendfile returned -1\n");
 
             break;
@@ -92,8 +93,10 @@ void *dnbd3_handle_query(void *client_socket)
         }
 
     }
-    close(sock);
-    printf("INFO: Client exit.\n");
+    close(client->sock);
+    _dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
+    free(client);
+    printf("INFO: Client %s exit\n", client->ip);
     pthread_exit((void *) 0);
 }
 

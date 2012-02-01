@@ -24,6 +24,7 @@
 #include <signal.h>
 #include <getopt.h>
 #include <pthread.h>
+#include <string.h>
 
 #include "../types.h"
 #include "../version.h"
@@ -38,6 +39,7 @@ int _sock;
 
 pthread_spinlock_t _spinlock;
 char *_config_file_name = DEFAULT_CONFIG_FILE;
+GSList *_dnbd3_clients = NULL;
 
 void dnbd3_print_help(char* argv_0)
 {
@@ -60,6 +62,17 @@ void dnbd3_print_version()
 
 void dnbd3_cleanup()
 {
+    printf("INFO: Cleanup...\n");
+    GSList *iterator = NULL;
+    for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
+    {
+        dnbd3_client_t *client =  iterator->data;
+        shutdown(client->sock, SHUT_RDWR);
+        pthread_join(*client->thread, NULL);
+    }
+
+    g_slist_free(_dnbd3_clients);
+
     close(_sock);
     dnbd3_delete_pid_file();
     exit(EXIT_SUCCESS);
@@ -148,15 +161,20 @@ int main(int argc, char* argv[])
             printf("ERROR: Accept failure\n");
             continue;
         }
-        printf("INFO: Client: %s connected\n", inet_ntoa(client.sin_addr));
+        printf("INFO: Client %s connected\n", inet_ntoa(client.sin_addr));
 
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
 
-        // FIXME: catch SIGKILL/SIGTERM and close all socket before exit
         pthread_t thread;
-        pthread_create(&(thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) fd);
-        pthread_detach(thread);
+        dnbd3_client_t *dnbd3_client = (dnbd3_client_t *) malloc(sizeof(dnbd3_client_t));
+        strcpy(dnbd3_client->ip, inet_ntoa(client.sin_addr));
+        dnbd3_client->sock = fd;
+        dnbd3_client->thread = &thread;
+
+        _dnbd3_clients = g_slist_append (_dnbd3_clients, dnbd3_client);
+
+        pthread_create(&(thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client);
     }
 
     dnbd3_cleanup();
