@@ -18,28 +18,15 @@
  *
  */
 
-#include <stdio.h>
-#include <pthread.h>
+#ifndef IPC_H_
+#define IPC_H_
 
-#include "server.h"
-#include "utils.h"
+#define IPC_EXIT 0
+#define IPC_RELOAD 1
+#define IPC_INFO 2
 
-void dnbd3_handle_sigpipe(int signum)
-{
-    printf("ERROR: SIGPIPE received!\n");
-}
+void* dnbd3_ipc_receive();
 
-void dnbd3_handle_sighup(int signum)
-{
-    printf("INFO: SIGHUP received!\n");
-    printf("INFO: Reloading configuration...\n");
-    pthread_spin_lock(&_spinlock);
-    dnbd3_reload_config(_config_file_name);
-    pthread_spin_unlock(&_spinlock);
-}
+void dnbd3_ipc_send(int cmd);
 
-void dnbd3_handle_sigterm(int signum)
-{
-    printf("INFO: SIGTERM or SIGINT received!\n");
-    dnbd3_cleanup();
-}
+#endif /* IPC_H_ */

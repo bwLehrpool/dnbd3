@@ -18,72 +18,12 @@
  *
  */
 
-#include "server.h"
-#include "utils.h"
-
-#include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 
-
-void dnbd3_write_pid_file(pid_t pid)
-{
-    FILE *f = fopen(SERVER_PID_FILE, "w");
-    if (f != NULL)
-    {
-        fprintf(f, "%i", pid);
-        fclose(f);
-    }
-    else
-    {
-        printf("ERROR: Couldn't write pid file (%s).\n", SERVER_PID_FILE);
-    }
-}
-
-pid_t dnbd3_read_pid_file()
-{
-    pid_t pid = 0;
-
-    FILE *f = fopen(SERVER_PID_FILE, "r");
-    if (f != NULL)
-    {
-        fscanf(f, "%i", &pid);
-        fclose(f);
-    }
-    else
-    {
-        printf("ERROR: Couldn't read pid file (%s).\n", SERVER_PID_FILE);
-    }
-
-    return pid;
-}
-
-void dnbd3_delete_pid_file()
-{
-    if (unlink(SERVER_PID_FILE) != 0)
-    {
-        printf("ERROR: Couldn't delete pid file (%s).\n", SERVER_PID_FILE);
-    }
-}
-
-void dnbd3_send_signal(int signum)
-{
-    pid_t pid = dnbd3_read_pid_file();
-    if (pid != 0)
-    {
-        if (kill(pid, signum) != 0)
-        {
-            printf("ERROR: dnbd3-server is not running\n");
-            dnbd3_delete_pid_file();
-        }
-    }
-    else
-    {
-        printf("ERROR: dnbd3-server is not running\n");
-    }
-}
+#include "server.h"
+#include "utils.h"
 
 void dnbd3_load_config(char *file)
 {
@@ -124,7 +64,7 @@ void dnbd3_load_config(char *file)
     }
 
     g_strfreev(groups);
-    g_key_file_free (gkf);
+    g_key_file_free(gkf);
 }
 
 void dnbd3_reload_config(char* config_file_name)
@@ -139,10 +79,22 @@ dnbd3_image_t* dnbd3_get_image(int vid, int rid)
     // TODO: find better data structure
     dnbd3_image_t *result = NULL;
     int i;
-    for (i = 0; i < _num_images; ++i) {
+    for (i = 0; i < _num_images; ++i)
+    {
         if (_images[i].vid == vid && _images[i].rid == rid)
             result = &_images[i];
 
     }
     return result;
+}
+
+void dnbd3_handle_sigpipe(int signum)
+{
+    printf("ERROR: SIGPIPE received!\n");
+}
+
+void dnbd3_handle_sigterm(int signum)
+{
+    printf("INFO: SIGTERM or SIGINT received!\n");
+    dnbd3_cleanup();
 }

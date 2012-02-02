@@ -30,13 +30,6 @@
 
 typedef struct
 {
-    int sock;
-    char ip[16];
-    pthread_t *thread;
-} dnbd3_client_t;
-
-typedef struct
-{
     char *file;
     off_t filesize;
     char **servers;
@@ -45,12 +38,19 @@ typedef struct
     int rid;
 } dnbd3_image_t;
 
+typedef struct
+{
+    int sock;
+    char ip[16];
+    pthread_t *thread;
+    dnbd3_image_t *image;
+} dnbd3_client_t;
+
 extern GSList *_dnbd3_clients;
 extern pthread_spinlock_t _spinlock;
 extern char *_config_file_name;
 extern dnbd3_image_t *_images;
 extern size_t _num_images;
-
 
 void dnbd3_cleanup();
 

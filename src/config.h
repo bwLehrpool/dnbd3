@@ -33,6 +33,6 @@
 
 // misc
 #define DEFAULT_CONFIG_FILE "/etc/dnbd3-server.conf"
-#define SERVER_PID_FILE "/tmp/dnbd3-server.pid"
+#define UNIX_SOCKET "/tmp/dnbd3-server.sock"
 
 #endif /* CONFIG_H_ */

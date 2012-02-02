@@ -31,8 +31,8 @@
 
 #include "server.h"
 #include "utils.h"
-#include "signal.h"
 #include "net.h"
+#include "ipc.h"
 
 int _sock;
 
@@ -47,9 +47,10 @@ void dnbd3_print_help(char* argv_0)
     printf("Usage: %s [OPTIONS]...\n", argv_0);
     printf("Start the DNBD3 server\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-server.conf)\n");
-    printf("-n or --nodaemon \t\t Start server in foreground\n");
+    printf("-n or --nodaemon \t Start server in foreground\n");
     printf("-r or --reload \t\t Reload configuration file\n");
     printf("-s or --stop \t\t Stop running dnbd3-server\n");
+    printf("-i or --info \t\t Print connected clients and used images\n");
     printf("-h or --help \t\t Show this help text and quit\n");
     printf("-v or --version \t Show version and quit\n");
     exit(0);
@@ -76,7 +77,7 @@ void dnbd3_cleanup()
 
     close(_sock);
     free(_images);
-    dnbd3_delete_pid_file();
+    unlink(UNIX_SOCKET);
     exit(EXIT_SUCCESS);
 }
 
@@ -85,13 +86,14 @@ int main(int argc, char* argv[])
     int demonize = 1;
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "f:nrshv?";
+    static const char *optString = "f:nrsihv?";
     static const struct option longOpts[] =
     {
     { "file", required_argument, NULL, 'f' },
     { "nodaemon", no_argument, NULL, 'n' },
     { "reload", no_argument, NULL, 'r' },
     { "stop", no_argument, NULL, 's' },
+    { "info", no_argument, NULL, 'i' },
     { "help", no_argument, NULL, 'h' },
     { "version", no_argument, NULL, 'v' } };
 
@@ -109,11 +111,15 @@ int main(int argc, char* argv[])
             break;
         case 'r':
             printf("INFO: Reloading configuration file...\n");
-            dnbd3_send_signal(SIGHUP);
+            dnbd3_ipc_send(IPC_RELOAD);
             return EXIT_SUCCESS;
         case 's':
             printf("INFO: Stopping running server...\n");
-            dnbd3_send_signal(SIGTERM);
+            dnbd3_ipc_send(IPC_EXIT);
+            return EXIT_SUCCESS;
+        case 'i':
+            printf("INFO: Requesting information...\n");
+            dnbd3_ipc_send(IPC_INFO);
             return EXIT_SUCCESS;
         case 'h':
             dnbd3_print_help(argv[0]);
@@ -136,7 +142,6 @@ int main(int argc, char* argv[])
 
     // setup signal handler
     signal(SIGPIPE, dnbd3_handle_sigpipe);
-    signal(SIGHUP, dnbd3_handle_sighup);
     signal(SIGTERM, dnbd3_handle_sigterm);
     signal(SIGINT, dnbd3_handle_sigterm);
 
@@ -151,7 +156,10 @@ int main(int argc, char* argv[])
     timeout.tv_sec = SERVER_SOCKET_TIMEOUT;
     timeout.tv_usec = 0;
 
-    dnbd3_write_pid_file(getpid());
+    // setup icp
+    pthread_t thread_ipc;
+    pthread_create(&(thread_ipc), NULL, dnbd3_ipc_receive, NULL);
+
     printf("INFO: Server is ready...\n");
 
     // main loop
@@ -173,6 +181,7 @@ int main(int argc, char* argv[])
         strcpy(dnbd3_client->ip, inet_ntoa(client.sin_addr));
         dnbd3_client->sock = fd;
         dnbd3_client->thread = &thread;
+        dnbd3_client->image = NULL;
 
         _dnbd3_clients = g_slist_append(_dnbd3_clients, dnbd3_client);
 

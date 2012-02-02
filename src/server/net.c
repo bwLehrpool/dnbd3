@@ -60,6 +60,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
             {
                 image_file = open(image->file, O_RDONLY);
                 reply.filesize = image->filesize;
+                client->image = image;
             }
             else
             {
