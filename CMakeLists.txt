@@ -14,7 +14,7 @@ SET(CMAKE_CXX_FLAGS_RELEASE "-O2 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64" )
 FIND_PACKAGE(Threads REQUIRED)
 FIND_PACKAGE(PkgConfig REQUIRED)
 
-PKG_CHECK_MODULES(GLIB glib-2.0)
+PKG_CHECK_MODULES(GLIB glib-2.0 REQUIRED)
 
 INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${GLIB_INCLUDE_DIRS})
 
@@ -36,6 +36,7 @@ ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
 FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
 ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
 TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${GLIB_LDFLAGS})
+
 
 
 ################################################################################
@@ -72,3 +73,18 @@ ADD_CUSTOM_COMMAND(
 )
 
 ADD_CUSTOM_TARGET(${MODULE_NAME} ALL DEPENDS ${CMAKE_BINARY_DIR}/${MODULE_FILE})
+
+
+
+################################################################################
+# INSTALL                                                                      #
+################################################################################
+
+INSTALL(TARGETS dnbd3-server dnbd3-client RUNTIME DESTINATION sbin)
+
+INSTALL(FILES ${CMAKE_BINARY_DIR}/${MODULE_NAME}.ko
+        DESTINATION /lib/modules/${CMAKE_SYSTEM_VERSION}/kernel/drivers/block
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+)
+
+INSTALL(CODE "EXECUTE_PROCESS(COMMAND depmod -a)")
