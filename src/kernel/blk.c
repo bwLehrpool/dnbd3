@@ -31,6 +31,9 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     INIT_LIST_HEAD(&dev->request_queue_send);
     INIT_LIST_HEAD(&dev->request_queue_receive);
 
+    dev->vid = 0;
+    dev->rid = 0;
+
     if (!(disk = alloc_disk(1)))
     {
         printk("ERROR: dnbd3 alloc_disk failed.\n");
@@ -92,18 +95,17 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     case IOCTL_SET_HOST:
         strcpy(lo->host, (char *) arg);
         break;
-
     case IOCTL_SET_PORT:
         strcpy(lo->port, (char *) arg);
         break;
-    case IOCTL_SET_IMAGE:
-        strcpy(lo->image_id, (char *) arg);
+    case IOCTL_SET_VID:
+        lo->vid = arg;
+        break;
+    case IOCTL_SET_RID:
+        lo->rid = arg;
         break;
     case IOCTL_CONNECT:
-        if (lo->host && lo->port && lo->image_id)
-            dnbd3_net_connect(lo);
-        else
-            return -1;
+        dnbd3_net_connect(lo);
         break;
     case IOCTL_DISCONNECT:
         dnbd3_net_disconnect(lo);

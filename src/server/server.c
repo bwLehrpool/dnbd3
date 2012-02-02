@@ -31,15 +31,16 @@
 
 #include "server.h"
 #include "utils.h"
-#include "hashtable.h"
 #include "signal.h"
 #include "net.h"
 
 int _sock;
 
+GSList *_dnbd3_clients = NULL;
 pthread_spinlock_t _spinlock;
 char *_config_file_name = DEFAULT_CONFIG_FILE;
-GSList *_dnbd3_clients = NULL;
+dnbd3_image_t *_images;
+size_t _num_images = 0;
 
 void dnbd3_print_help(char* argv_0)
 {
@@ -66,7 +67,7 @@ void dnbd3_cleanup()
     GSList *iterator = NULL;
     for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
     {
-        dnbd3_client_t *client =  iterator->data;
+        dnbd3_client_t *client = iterator->data;
         shutdown(client->sock, SHUT_RDWR);
         pthread_join(*client->thread, NULL);
     }
@@ -74,6 +75,7 @@ void dnbd3_cleanup()
     g_slist_free(_dnbd3_clients);
 
     close(_sock);
+    free(_images);
     dnbd3_delete_pid_file();
     exit(EXIT_SUCCESS);
 }
@@ -172,7 +174,7 @@ int main(int argc, char* argv[])
         dnbd3_client->sock = fd;
         dnbd3_client->thread = &thread;
 
-        _dnbd3_clients = g_slist_append (_dnbd3_clients, dnbd3_client);
+        _dnbd3_clients = g_slist_append(_dnbd3_clients, dnbd3_client);
 
         pthread_create(&(thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client);
     }

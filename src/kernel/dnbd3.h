@@ -40,7 +40,8 @@ typedef struct
     // network
     char host[16];
     char port[6];
-    char image_id[MAX_FILE_NAME];
+    int vid;
+    int rid;
     struct socket *sock;
     struct timer_list hb_timer;
     struct request hb_request;

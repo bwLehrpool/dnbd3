@@ -30,9 +30,10 @@ pid_t dnbd3_read_pid_file();
 void dnbd3_write_pid_file(pid_t pid);
 void dnbd3_delete_pid_file();
 
-void dnbd3_load_config(char* config_file_name);
-void dnbd3_reload_config(char* config_file_name);
-
 void dnbd3_send_signal(int signum);
+
+void dnbd3_load_config(char *file);
+void dnbd3_reload_config(char* config_file_name);
+dnbd3_image_t* dnbd3_get_image(int vid, int rid);
 
 #endif /* UTILS_H_ */

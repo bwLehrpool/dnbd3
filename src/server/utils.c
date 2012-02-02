@@ -18,12 +18,15 @@
  *
  */
 
+#include "server.h"
 #include "utils.h"
-#include "hashtable.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+
 
 void dnbd3_write_pid_file(pid_t pid)
 {
@@ -65,39 +68,6 @@ void dnbd3_delete_pid_file()
     }
 }
 
-void dnbd3_load_config(char* config_file_name)
-{
-    dnbd3_ht_create();
-    FILE *config_file = fopen(config_file_name, "r");
-
-    if (config_file == NULL)
-    {
-        printf("ERROR: Config file not found: %s\n", config_file_name);
-        exit(EXIT_FAILURE);
-    }
-
-    char line[MAX_FILE_NAME + 1 + MAX_FILE_ID];
-    char* image_name = NULL;
-    char* image_id = NULL;
-
-    while (fgets(line, sizeof(line), config_file) != NULL)
-    {
-        sscanf(line, "%as %as", &image_name, &image_id);
-        if (dnbd3_ht_insert(image_id, image_name) < 0)
-        {
-            printf("ERROR: Image name or ID is too big\n");
-            exit(EXIT_FAILURE);
-        }
-    }
-    fclose(config_file);
-}
-
-void dnbd3_reload_config(char* config_file_name)
-{
-    dnbd3_ht_destroy();
-    dnbd3_load_config(config_file_name);
-}
-
 void dnbd3_send_signal(int signum)
 {
     pid_t pid = dnbd3_read_pid_file();
@@ -113,4 +83,66 @@ void dnbd3_send_signal(int signum)
     {
         printf("ERROR: dnbd3-server is not running\n");
     }
+}
+
+void dnbd3_load_config(char *file)
+{
+    int fd;
+    gint i;
+    GKeyFile* gkf;
+
+    gkf = g_key_file_new();
+    if (!g_key_file_load_from_file(gkf, file, G_KEY_FILE_NONE, NULL))
+    {
+        printf("ERROR: Config file not found: %s\n", file);
+        exit(EXIT_FAILURE);
+    }
+
+    gchar **groups = NULL;
+    groups = g_key_file_get_groups(gkf, &_num_images);
+    _images = calloc(_num_images, sizeof(dnbd3_image_t));
+
+    for (i = 0; i < _num_images; i++)
+    {
+        _images[i].file = g_key_file_get_string(gkf, groups[i], "file", NULL);
+        _images[i].servers = g_key_file_get_string_list(gkf, groups[i], "servers", &_images[i].num, NULL);
+        _images[i].vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
+        _images[i].rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
+
+        fd = open(_images[i].file, O_RDONLY);
+        if (fd > 0)
+        {
+            struct stat st;
+            fstat(fd, &st);
+            _images[i].filesize = st.st_size;
+        }
+        else
+        {
+            printf("ERROR: Image not found: %s\n", _images[i].file);
+        }
+        close(fd);
+    }
+
+    g_strfreev(groups);
+    g_key_file_free (gkf);
+}
+
+void dnbd3_reload_config(char* config_file_name)
+{
+    free(_images);
+    _num_images = 0;
+    dnbd3_load_config(config_file_name);
+}
+
+dnbd3_image_t* dnbd3_get_image(int vid, int rid)
+{
+    // TODO: find better data structure
+    dnbd3_image_t *result = NULL;
+    int i;
+    for (i = 0; i < _num_images; ++i) {
+        if (_images[i].vid == vid && _images[i].rid == rid)
+            result = &_images[i];
+
+    }
+    return result;
 }

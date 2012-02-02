@@ -24,7 +24,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/sendfile.h>
@@ -32,13 +31,12 @@
 #include <netinet/in.h>
 
 #include "server.h"
-#include "hashtable.h"
+#include "utils.h"
 
 void *dnbd3_handle_query(void *dnbd3_client)
 {
     dnbd3_client_t *client = (dnbd3_client_t *) (uintptr_t) dnbd3_client;
     int image_file = -1;
-    off_t filesize = 0;
     dnbd3_request_t request;
     dnbd3_reply_t reply;
     uint16_t cmd;
@@ -56,21 +54,19 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
         case CMD_GET_SIZE:
             pthread_spin_lock(&_spinlock); // because of reloading config
-            image_file = open(dnbd3_ht_search(request.image_id), O_RDONLY);
+            dnbd3_image_t *image = dnbd3_get_image(request.vid, request.rid);
             pthread_spin_unlock(&_spinlock);
-            if (image_file < 0)
+            if (image)
             {
-                printf("ERROR: Client requested an unknown image id.\n");
-                filesize = 0;
+                image_file = open(image->file, O_RDONLY);
+                reply.filesize = image->filesize;
             }
             else
             {
-                struct stat st;
-                fstat(image_file, &st);
-                filesize = st.st_size;
+                printf("ERROR: Client requested an unknown image id.\n");
+                reply.filesize = 0;
             }
             reply.cmd = request.cmd;
-            reply.filesize = filesize;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
             break;
 
@@ -94,6 +90,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
     }
     close(client->sock);
+    close(image_file);
     _dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
     free(client);
     printf("INFO: Client %s exit\n", client->ip);

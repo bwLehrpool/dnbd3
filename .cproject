@@ -345,6 +345,7 @@
 		<pathentry include="/usr/include/c++/4.5/backward" kind="inc" path="" system="true"/>
 		<pathentry include="/usr/include" kind="inc" path="" system="true"/>
 		<pathentry include="/lib/modules/3.0.0-12-generic-pae/build/include" kind="inc" path="" system="true"/>
+		<pathentry include="/usr/include/glib-2.0" kind="inc" path="" system="true"/>
 		<pathentry excluding="**/CMakeFiles/" kind="out" path=""/>
 		<pathentry kind="src" path=""/>
 	</storageModule>

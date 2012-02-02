@@ -31,15 +31,16 @@
 
 void dnbd3_print_help(char* argv_0)
 {
-    printf("Usage: %s -H <host> -p <port> -i <image-id> -d <device>\n", argv_0);
+    printf("Usage: %s -h <host> -p <port> -v <vid> -r <rid> -d <device>\n", argv_0);
     printf("Start the DNBD3 client.\n");
-    printf("-H or --host \t\t Host running dnbd3-server.\n");
+    printf("-h or --host \t\t Host running dnbd3-server.\n");
     printf("-p or --port \t\t Port used by server.\n");
-    printf("-i or --image \t\t Exported image ID.\n");
+    printf("-v or --vid \t\t Volume-ID of exported image.\n");
+    printf("-r or --rid \t\t Release-ID of exported image.\n");
     printf("-d or --device \t\t DNBD3 device name.\n");
     printf("-c or --changehost \t Change dnbd3-server on device (DEBUG).\n");
-    printf("-h or --help \t\t Show this help text and quit.\n");
-    printf("-v or --version \t Show version and quit.\n");
+    printf("-H or --help \t\t Show this help text and quit.\n");
+    printf("-V or --version \t Show version and quit.\n");
     exit(EXIT_SUCCESS);
 }
 
@@ -54,22 +55,24 @@ int main(int argc, char *argv[])
     int fd;
     char *host = NULL;
     char *port = NULL;
-    char *image_id = NULL;
+    int vid = 0;
+    int rid = 0;
     char *dev = NULL;
     int change_host = 0;
 
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "H:p:i:d:c:hv?";
+    static const char *optString = "h:p:v:r:d:c:HV?";
     static const struct option longOpts[] =
     {
-    { "host", required_argument, NULL, 'H' },
+    { "host", required_argument, NULL, 'h' },
     { "port", required_argument, NULL, 'p' },
-    { "image", required_argument, NULL, 'i' },
+    { "vid", required_argument, NULL, 'v' },
+    { "rid", required_argument, NULL, 'r' },
     { "device", required_argument, NULL, 'd' },
     { "changehost", required_argument, NULL, 'c' },
-    { "help", no_argument, NULL, 'h' },
-    { "version", no_argument, NULL, 'v' }, };
+    { "help", no_argument, NULL, 'H' },
+    { "version", no_argument, NULL, 'V' }, };
 
     opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
 
@@ -77,14 +80,17 @@ int main(int argc, char *argv[])
     {
         switch (opt)
         {
-        case 'H':
+        case 'h':
             host = optarg;
             break;
         case 'p':
             port = optarg;
             break;
-        case 'i':
-            image_id = optarg;
+        case 'v':
+            vid = atoi(optarg);
+            break;
+        case 'r':
+            rid = atoi(optarg);
             break;
         case 'd':
             dev = optarg;
@@ -93,10 +99,10 @@ int main(int argc, char *argv[])
             host = optarg;
             change_host = 1;
             break;
-        case 'h':
+        case 'H':
             dnbd3_print_help(argv[0]);
             break;
-        case 'v':
+        case 'V':
             dnbd3_print_version();
             break;
         case '?':
@@ -106,7 +112,7 @@ int main(int argc, char *argv[])
     }
 
     // change host
-    if (change_host && host && dev && !port && !image_id)
+    if (change_host && host && dev && !port && (vid == 0) && (rid == 0))
     {
         fd = open(dev, O_RDONLY);
 
@@ -124,7 +130,7 @@ int main(int argc, char *argv[])
     }
 
     // connect
-    if (host && port && dev && image_id)
+    if (host && port && dev && (vid != 0) && (rid != 0))
     {
         fd = open(dev, O_RDONLY);
 
@@ -134,7 +140,10 @@ int main(int argc, char *argv[])
         if (ioctl(fd, IOCTL_SET_PORT, port) < 0)
             printf("ERROR: ioctl not successful\n");
 
-        if (ioctl(fd, IOCTL_SET_IMAGE, image_id) < 0)
+        if (ioctl(fd, IOCTL_SET_VID, vid) < 0)
+            printf("ERROR: ioctl not successful\n");
+
+        if (ioctl(fd, IOCTL_SET_RID, rid) < 0)
             printf("ERROR: ioctl not successful\n");
 
         if (ioctl(fd, IOCTL_CONNECT) < 0)

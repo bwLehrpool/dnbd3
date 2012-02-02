@@ -22,7 +22,8 @@
 #define SERVER_H_
 
 #include <stdint.h>
-#include <glib-2.0/glib.h>
+#include <stdio.h>
+#include <glib.h>
 
 #include "config.h"
 #include "../types.h"
@@ -34,9 +35,22 @@ typedef struct
     pthread_t *thread;
 } dnbd3_client_t;
 
+typedef struct
+{
+    char *file;
+    off_t filesize;
+    char **servers;
+    size_t num;
+    int vid;
+    int rid;
+} dnbd3_image_t;
+
+extern GSList *_dnbd3_clients;
 extern pthread_spinlock_t _spinlock;
 extern char *_config_file_name;
-extern GSList *_dnbd3_clients;
+extern dnbd3_image_t *_images;
+extern size_t _num_images;
+
 
 void dnbd3_cleanup();
 

@@ -29,14 +29,14 @@ void dnbd3_net_connect(dnbd3_device_t *lo)
     dnbd3_request_t dnbd3_request;
     dnbd3_reply_t dnbd3_reply;
 
-    if (!lo->host || !lo->port || !lo->image_id)
+    if (!lo->host || !lo->port || (lo->vid == 0) || (lo->rid == 0))
     {
-        printk("ERROR: Host or port not set.");
+        printk("ERROR: Host, port, vid or rid not set.\n");
         return;
     }
 
-    // TODO: check if allready connected
-    printk("INFO: Connecting device %s\n", lo->disk->disk_name);
+    // TODO: check if already connected
+    printk("INFO: Connecting device %s to %s\n", lo->disk->disk_name, lo->host);
 
     // initialize socket
     if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &lo->sock) < 0)
@@ -54,15 +54,17 @@ void dnbd3_net_connect(dnbd3_device_t *lo)
         return;
     }
 
-    // prepare message and send request
+    // prepare message
     dnbd3_request.cmd = CMD_GET_SIZE;
-    strcpy(dnbd3_request.image_id, lo->image_id);
+    dnbd3_request.vid = lo->vid;
+    dnbd3_request.rid = lo->rid;
     msg.msg_name = NULL;
     msg.msg_namelen = 0;
     msg.msg_control = NULL;
     msg.msg_controllen = 0;
     msg.msg_flags = MSG_WAITALL | MSG_NOSIGNAL; // No SIGPIPE
 
+    // send message
     iov.iov_base = &dnbd3_request;
     iov.iov_len = sizeof(dnbd3_request);
     kernel_sendmsg(lo->sock, &msg, &iov, 1, sizeof(dnbd3_request));
@@ -78,9 +80,8 @@ void dnbd3_net_connect(dnbd3_device_t *lo)
         printk("ERROR: File size returned by server is < 0.\n");
         return;
     }
-
-    printk("INFO: dnbd3 filesize: %llu\n", dnbd3_reply.filesize);
     set_capacity(lo->disk, dnbd3_reply.filesize >> 9); /* 512 Byte blocks */
+    printk("INFO: dnbd3 filesize: %llu\n", dnbd3_reply.filesize);
 
     // start sending thread
     lo->thread_send = kthread_create(dnbd3_net_send, lo, lo->disk->disk_name);
@@ -104,8 +105,11 @@ void dnbd3_net_disconnect(dnbd3_device_t *lo)
     printk("INFO: Disconnecting device %s\n", lo->disk->disk_name);
 
     // kill sending and receiving threads
-    kthread_stop(lo->thread_send);
-    kthread_stop(lo->thread_receive);
+    if (lo->thread_send && lo->thread_receive)
+    {
+        kthread_stop(lo->thread_send);
+        kthread_stop(lo->thread_receive);
+    }
 
     // clear sock
     if (lo->sock)
@@ -117,7 +121,7 @@ void dnbd3_net_disconnect(dnbd3_device_t *lo)
     if (&lo->hb_timer)
         del_timer(&lo->hb_timer);
 
-    // move already send requests to request_queue_send
+    // move already send requests to request_queue_send again
     if (!list_empty(&lo->request_queue_receive))
     {
         printk("WARN: Request queue was not empty on %s\n", lo->disk->disk_name);
