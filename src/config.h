@@ -32,7 +32,8 @@
 #define MAX_NUMBER_DEVICES 8
 
 // misc
-#define DEFAULT_CONFIG_FILE "/etc/dnbd3-server.conf"
+#define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3-server.conf"
+#define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3-client.conf"
 #define UNIX_SOCKET "/tmp/dnbd3-server.sock"
 
 #endif /* CONFIG_H_ */

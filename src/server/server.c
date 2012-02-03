@@ -38,7 +38,7 @@ int _sock;
 
 GSList *_dnbd3_clients = NULL;
 pthread_spinlock_t _spinlock;
-char *_config_file_name = DEFAULT_CONFIG_FILE;
+char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 dnbd3_image_t *_images;
 size_t _num_images = 0;
 
@@ -51,8 +51,8 @@ void dnbd3_print_help(char* argv_0)
     printf("-r or --reload \t\t Reload configuration file\n");
     printf("-s or --stop \t\t Stop running dnbd3-server\n");
     printf("-i or --info \t\t Print connected clients and used images\n");
-    printf("-h or --help \t\t Show this help text and quit\n");
-    printf("-v or --version \t Show version and quit\n");
+    printf("-H or --help \t\t Show this help text and quit\n");
+    printf("-V or --version \t Show version and quit\n");
     exit(0);
 }
 
@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
     int demonize = 1;
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "f:nrsihv?";
+    static const char *optString = "f:nrsiHV?";
     static const struct option longOpts[] =
     {
     { "file", required_argument, NULL, 'f' },
@@ -94,8 +94,8 @@ int main(int argc, char* argv[])
     { "reload", no_argument, NULL, 'r' },
     { "stop", no_argument, NULL, 's' },
     { "info", no_argument, NULL, 'i' },
-    { "help", no_argument, NULL, 'h' },
-    { "version", no_argument, NULL, 'v' } };
+    { "help", no_argument, NULL, 'H' },
+    { "version", no_argument, NULL, 'V' } };
 
     opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
 
@@ -121,10 +121,10 @@ int main(int argc, char* argv[])
             printf("INFO: Requesting information...\n");
             dnbd3_ipc_send(IPC_INFO);
             return EXIT_SUCCESS;
-        case 'h':
+        case 'H':
             dnbd3_print_help(argv[0]);
             break;
-        case 'v':
+        case 'V':
             dnbd3_print_version();
             break;
         case '?':
