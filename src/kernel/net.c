@@ -35,13 +35,19 @@ void dnbd3_net_connect(dnbd3_device_t *lo)
         return;
     }
 
-    // TODO: check if already connected
+    if (lo->sock)
+    {
+        printk("ERROR: Device %s already connected to %s.\n", lo->disk->disk_name, lo->host);
+        return;
+    }
+
     printk("INFO: Connecting device %s to %s\n", lo->disk->disk_name, lo->host);
 
     // initialize socket
     if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &lo->sock) < 0)
     {
-        printk("ERROR: dnbd3 couldn't create socket.\n");
+        printk("ERROR: Couldn't create socket.\n");
+        lo->sock = NULL;
         return;
     }
     lo->sock->sk->sk_allocation = GFP_NOIO;
@@ -50,7 +56,8 @@ void dnbd3_net_connect(dnbd3_device_t *lo)
     sin.sin_port = htons(simple_strtol(lo->port, NULL, 10));
     if (kernel_connect(lo->sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
     {
-        printk("ERROR: dnbd3 couldn't connect to host %s:%s\n", lo->host, lo->port);
+        printk("ERROR: Couldn't connect to host %s:%s\n", lo->host, lo->port);
+        lo->sock = NULL;
         return;
     }
 
@@ -78,10 +85,13 @@ void dnbd3_net_connect(dnbd3_device_t *lo)
     if (dnbd3_reply.filesize <= 0)
     {
         printk("ERROR: File size returned by server is < 0.\n");
+        sock_release(lo->sock);
+        lo->sock = NULL;
         return;
     }
+
     set_capacity(lo->disk, dnbd3_reply.filesize >> 9); /* 512 Byte blocks */
-    printk("INFO: dnbd3 filesize: %llu\n", dnbd3_reply.filesize);
+    printk("INFO: Filesize %s: %llu\n", lo->disk->disk_name, dnbd3_reply.filesize);
 
     // start sending thread
     lo->thread_send = kthread_create(dnbd3_net_send, lo, lo->disk->disk_name);
@@ -109,6 +119,8 @@ void dnbd3_net_disconnect(dnbd3_device_t *lo)
     {
         kthread_stop(lo->thread_send);
         kthread_stop(lo->thread_receive);
+        lo->thread_send = NULL;
+        lo->thread_receive = NULL;
     }
 
     // clear sock

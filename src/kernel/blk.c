@@ -33,6 +33,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
     dev->vid = 0;
     dev->rid = 0;
+    dev->sock = NULL;
 
     if (!(disk = alloc_disk(1)))
     {
@@ -89,34 +90,41 @@ struct block_device_operations dnbd3_blk_ops =
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
     dnbd3_device_t *lo = bdev->bd_disk->private_data;
+    int minor = lo->disk->first_minor;
+
+    dnbd3_ioctl_t *msg = kmalloc(sizeof(dnbd3_ioctl_t), GFP_KERNEL);
+    copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
 
     switch (cmd)
     {
-    case IOCTL_SET_HOST:
-        strcpy(lo->host, (char *) arg);
-        break;
-    case IOCTL_SET_PORT:
-        strcpy(lo->port, (char *) arg);
-        break;
-    case IOCTL_SET_VID:
-        lo->vid = arg;
-        break;
-    case IOCTL_SET_RID:
-        lo->rid = arg;
-        break;
-    case IOCTL_CONNECT:
+    case IOCTL_OPEN:
+        strcpy(lo->host, msg->host);
+        strcpy(lo->port, msg->port);
+        lo->vid = msg->vid;
+        lo->rid = msg->rid;
         dnbd3_net_connect(lo);
         break;
-    case IOCTL_DISCONNECT:
+
+    case IOCTL_CLOSE:
         dnbd3_net_disconnect(lo);
+        dnbd3_blk_del_device(lo);
+        dnbd3_blk_add_device(lo, minor);
         break;
+
+    case IOCTL_SWITCH:
+        dnbd3_net_disconnect(lo);
+        strcpy(lo->host, msg->host);
+        dnbd3_net_connect(lo);
+        break;
+
     case BLKFLSBUF:
         break;
 
     default:
         return -1;
-
     }
+
+    kfree(msg);
     return 0;
 }
 

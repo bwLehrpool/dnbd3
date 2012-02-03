@@ -24,13 +24,18 @@
 #include "config.h"
 
 // ioctl
-#define DNBD3_MAGIC  'd'
-#define IOCTL_SET_HOST		_IO(0xab, 1)
-#define IOCTL_SET_PORT		_IO(0xab, 2)
-#define IOCTL_SET_VID		_IO(0xab, 3)
-#define IOCTL_SET_RID       _IO(0xab, 4)
-#define IOCTL_CONNECT		_IO(0xab, 5)
-#define IOCTL_DISCONNECT	_IO(0xab, 6)
+#define DNBD3_MAGIC     'd'
+#define IOCTL_OPEN      _IO(0xab, 1)
+#define IOCTL_CLOSE     _IO(0xab, 2)
+#define IOCTL_SWITCH    _IO(0xab, 3)
+
+typedef struct
+{
+    char *host;
+    char *port;
+    int vid;
+    int rid;
+} dnbd3_ioctl_t;
 
 // network
 #define CMD_GET_BLOCK   1

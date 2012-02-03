@@ -34,7 +34,9 @@ char *_config_file_name = DEFAULT_CLIENT_CONFIG_FILE;
 
 void dnbd3_print_help(char* argv_0)
 {
-    printf("Usage: %s -h <host> -p <port> -v <vid> -r <rid> -d <device> || -f file\n", argv_0);
+    printf(
+            "Usage: %s -h <host> -p <port> -v <vid> -r <rid> -d <device> || -f <file> || -c <device>\n",
+            argv_0);
     printf("Start the DNBD3 client.\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
     printf("-h or --host \t\t Host running dnbd3-server.\n");
@@ -42,7 +44,8 @@ void dnbd3_print_help(char* argv_0)
     printf("-v or --vid \t\t Volume-ID of exported image.\n");
     printf("-r or --rid \t\t Release-ID of exported image.\n");
     printf("-d or --device \t\t DNBD3 device name.\n");
-    printf("-c or --changehost \t Change dnbd3-server on device (DEBUG).\n");
+    printf("-c or --close \t\t Disconnect and close device.\n");
+    printf("-s or --switch \t Switch dnbd3-server on device (DEBUG).\n");
     printf("-H or --help \t\t Show this help text and quit.\n");
     printf("-V or --version \t Show version and quit.\n");
     exit(EXIT_SUCCESS);
@@ -54,43 +57,23 @@ void dnbd3_print_version()
     exit(EXIT_SUCCESS);
 }
 
-void dnbd3_connect(char *host, char *port, int vid, int rid, char *dev)
-{
-    int fd = open(dev, O_WRONLY);
-
-    printf("Connecting %s to %s:%s vid:%i rid:%i\n", dev, host, port, vid, rid);
-
-    if (ioctl(fd, IOCTL_SET_HOST, host) < 0)
-        printf("ERROR: ioctl not successful\n");
-
-    if (ioctl(fd, IOCTL_SET_PORT, port) < 0)
-        printf("ERROR: ioctl not successful\n");
-
-    if (ioctl(fd, IOCTL_SET_VID, vid) < 0)
-        printf("ERROR: ioctl not successful\n");
-
-    if (ioctl(fd, IOCTL_SET_RID, rid) < 0)
-        printf("ERROR: ioctl not successful\n");
-
-    if (ioctl(fd, IOCTL_CONNECT) < 0)
-        printf("ERROR: ioctl not successful\n");
-
-    close(fd);
-}
-
 int main(int argc, char *argv[])
 {
     int fd;
-    char *host = NULL;
-    char *port = NULL;
-    int vid = 0;
-    int rid = 0;
     char *dev = NULL;
-    int change_host = 0;
+
+    int close_dev = 0;
+    int switch_host = 0;
+
+    dnbd3_ioctl_t msg;
+    msg.host = NULL;
+    msg.port = NULL;
+    msg.vid = 0;
+    msg.rid = 0;
 
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "f:h:p:v:r:d:c:HV?";
+    static const char *optString = "f:h:p:v:r:d:c:s:HV?";
     static const struct option longOpts[] =
     {
     { "file", required_argument, NULL, 'f' },
@@ -99,7 +82,8 @@ int main(int argc, char *argv[])
     { "vid", required_argument, NULL, 'v' },
     { "rid", required_argument, NULL, 'r' },
     { "device", required_argument, NULL, 'd' },
-    { "changehost", required_argument, NULL, 'c' },
+    { "close", required_argument, NULL, 'c' },
+    { "switch", required_argument, NULL, 's' },
     { "help", no_argument, NULL, 'H' },
     { "version", no_argument, NULL, 'V' }, };
 
@@ -113,23 +97,27 @@ int main(int argc, char *argv[])
             _config_file_name = optarg;
             break;
         case 'h':
-            host = optarg;
+            msg.host = optarg;
             break;
         case 'p':
-            port = optarg;
+            msg.port = optarg;
             break;
         case 'v':
-            vid = atoi(optarg);
+            msg.vid = atoi(optarg);
             break;
         case 'r':
-            rid = atoi(optarg);
+            msg.rid = atoi(optarg);
             break;
         case 'd':
             dev = optarg;
             break;
         case 'c':
-            host = optarg;
-            change_host = 1;
+            dev = optarg;
+            close_dev = 1;
+            break;
+        case 's':
+            msg.host = optarg;
+            switch_host = 1;
             break;
         case 'H':
             dnbd3_print_help(argv[0]);
@@ -143,18 +131,26 @@ int main(int argc, char *argv[])
         opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
     }
 
-    // change host
-    if (change_host && host && dev && !port && (vid == 0) && (rid == 0))
+    // close device
+    if (close_dev && !msg.host && dev && !msg.port && (msg.vid == 0) && (msg.rid == 0))
     {
         fd = open(dev, O_WRONLY);
+        printf("INFO: Closing device %s\n", dev);
 
-        if (ioctl(fd, IOCTL_DISCONNECT) < 0)
+        if (ioctl(fd, IOCTL_CLOSE, &msg) < 0)
             printf("ERROR: ioctl not successful\n");
 
-        if (ioctl(fd, IOCTL_SET_HOST, host) < 0)
-            printf("ERROR: ioctl not successful\n");
+        close(fd);
+        exit(EXIT_SUCCESS);
+    }
 
-        if (ioctl(fd, IOCTL_CONNECT) < 0)
+    // switch host
+    if (switch_host && msg.host && dev && !msg.port && (msg.vid == 0) && (msg.rid == 0))
+    {
+        fd = open(dev, O_WRONLY);
+        printf("INFO: Switching device %s to %s\n", dev, msg.host);
+
+        if (ioctl(fd, IOCTL_SWITCH, &msg) < 0)
             printf("ERROR: ioctl not successful\n");
 
         close(fd);
@@ -162,9 +158,15 @@ int main(int argc, char *argv[])
     }
 
     // connect
-    if (host && port && dev && (vid != 0) && (rid != 0))
+    if (msg.host && msg.port && dev && (msg.vid != 0) && (msg.rid != 0))
     {
-        dnbd3_connect(host, port, vid, rid, dev);
+        fd = open(dev, O_WRONLY);
+        printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);
+
+        if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
+            printf("ERROR: ioctl not successful\n");
+
+        close(fd);
         exit(EXIT_SUCCESS);
     }
 
@@ -182,12 +184,19 @@ int main(int argc, char *argv[])
 
         for (i = 0; i < j; i++)
         {
-            host = g_key_file_get_string(gkf, groups[i], "server", NULL);
-            port = g_key_file_get_string(gkf, groups[i], "port", NULL);
-            vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
-            rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
+            msg.host = g_key_file_get_string(gkf, groups[i], "server", NULL);
+            msg.port = g_key_file_get_string(gkf, groups[i], "port", NULL);
+            msg.vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
+            msg.rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
             dev = g_key_file_get_string(gkf, groups[i], "device", NULL);
-            dnbd3_connect(host, port, vid, rid, dev);
+
+            fd = open(dev, O_WRONLY);
+            printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);
+
+            if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
+                printf("ERROR: ioctl not successful\n");
+
+            close(fd);
         }
 
         g_strfreev(groups);
