@@ -35,17 +35,17 @@ char *_config_file_name = DEFAULT_CLIENT_CONFIG_FILE;
 void dnbd3_print_help(char* argv_0)
 {
     printf(
-            "Usage: %s -h <host> -p <port> -v <vid> -r <rid> -d <device> || -f <file> || -c <device>\n",
+            "Usage: %s -h <host> -p <port> -v <vid> [-r <rid>] -d <device> || -f <file> || -c <device>\n",
             argv_0);
     printf("Start the DNBD3 client.\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
     printf("-h or --host \t\t Host running dnbd3-server.\n");
     printf("-p or --port \t\t Port used by server.\n");
     printf("-v or --vid \t\t Volume-ID of exported image.\n");
-    printf("-r or --rid \t\t Release-ID of exported image.\n");
+    printf("-r or --rid \t\t Release-ID of exported image (if 0 latest available rid will be used).\n");
     printf("-d or --device \t\t DNBD3 device name.\n");
     printf("-c or --close \t\t Disconnect and close device.\n");
-    printf("-s or --switch \t Switch dnbd3-server on device (DEBUG).\n");
+    printf("-s or --switch \t\t Switch dnbd3-server on device (DEBUG).\n");
     printf("-H or --help \t\t Show this help text and quit.\n");
     printf("-V or --version \t Show version and quit.\n");
     exit(EXIT_SUCCESS);
@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
     }
 
     // close device
-    if (close_dev && !msg.host && dev && !msg.port && (msg.vid == 0) && (msg.rid == 0))
+    if (close_dev && !msg.host && dev && !msg.port && (msg.vid == 0))
     {
         fd = open(dev, O_WRONLY);
         printf("INFO: Closing device %s\n", dev);
@@ -145,7 +145,7 @@ int main(int argc, char *argv[])
     }
 
     // switch host
-    if (switch_host && msg.host && dev && !msg.port && (msg.vid == 0) && (msg.rid == 0))
+    if (switch_host && msg.host && dev && !msg.port && (msg.vid == 0))
     {
         fd = open(dev, O_WRONLY);
         printf("INFO: Switching device %s to %s\n", dev, msg.host);
@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
     }
 
     // connect
-    if (msg.host && msg.port && dev && (msg.vid != 0) && (msg.rid != 0))
+    if (msg.host && msg.port && dev && (msg.vid != 0))
     {
         fd = open(dev, O_WRONLY);
         printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);

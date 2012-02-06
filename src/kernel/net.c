@@ -29,9 +29,9 @@ void dnbd3_net_connect(dnbd3_device_t *lo)
     dnbd3_request_t dnbd3_request;
     dnbd3_reply_t dnbd3_reply;
 
-    if (!lo->host || !lo->port || (lo->vid == 0) || (lo->rid == 0))
+    if (!lo->host || !lo->port || (lo->vid == 0))
     {
-        printk("ERROR: Host, port, vid or rid not set.\n");
+        printk("ERROR: Host, port or vid not set.\n");
         return;
     }
 

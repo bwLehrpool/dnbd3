@@ -76,14 +76,23 @@ void dnbd3_reload_config(char* config_file_name)
 
 dnbd3_image_t* dnbd3_get_image(int vid, int rid)
 {
-    // TODO: find better data structure
+    int i, max = 0;
     dnbd3_image_t *result = NULL;
-    int i;
     for (i = 0; i < _num_images; ++i)
     {
-        if (_images[i].vid == vid && _images[i].rid == rid)
-            result = &_images[i];
-
+        if (rid != 0) // rid was specified
+        {
+            if (_images[i].vid == vid && _images[i].rid == rid)
+                result = &_images[i];
+        }
+        else // search max. rid available
+        {
+            if (_images[i].vid == vid && _images[i].rid > max)
+            {
+                result = &_images[i];
+                max = _images[i].rid;
+            }
+        }
     }
     return result;
 }
