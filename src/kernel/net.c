@@ -119,8 +119,6 @@ void dnbd3_net_disconnect(dnbd3_device_t *lo)
     {
         kthread_stop(lo->thread_send);
         kthread_stop(lo->thread_receive);
-        lo->thread_send = NULL;
-        lo->thread_receive = NULL;
     }
 
     // clear sock
