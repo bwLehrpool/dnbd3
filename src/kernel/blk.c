@@ -91,8 +91,8 @@ struct block_device_operations dnbd3_blk_ops =
 
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
-    dnbd3_device_t *lo = bdev->bd_disk->private_data;
-    int minor = lo->disk->first_minor;
+    dnbd3_device_t *dev = bdev->bd_disk->private_data;
+    int minor = dev->disk->first_minor;
 
     dnbd3_ioctl_t *msg = kmalloc(sizeof(dnbd3_ioctl_t), GFP_KERNEL);
     copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
@@ -100,23 +100,23 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     switch (cmd)
     {
     case IOCTL_OPEN:
-        strcpy(lo->host, msg->host);
-        strcpy(lo->port, msg->port);
-        lo->vid = msg->vid;
-        lo->rid = msg->rid;
-        dnbd3_net_connect(lo);
+        strcpy(dev->host, msg->host);
+        strcpy(dev->port, msg->port);
+        dev->vid = msg->vid;
+        dev->rid = msg->rid;
+        dnbd3_net_connect(dev);
         break;
 
     case IOCTL_CLOSE:
-        dnbd3_net_disconnect(lo);
-        dnbd3_blk_del_device(lo);
-        dnbd3_blk_add_device(lo, minor);
+        dnbd3_net_disconnect(dev);
+        dnbd3_blk_del_device(dev);
+        dnbd3_blk_add_device(dev, minor);
         break;
 
     case IOCTL_SWITCH:
-        dnbd3_net_disconnect(lo);
-        strcpy(lo->host, msg->host);
-        dnbd3_net_connect(lo);
+        dnbd3_net_disconnect(dev);
+        strcpy(dev->host, msg->host);
+        dnbd3_net_connect(dev);
         break;
 
     case BLKFLSBUF:
@@ -133,11 +133,11 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 void dnbd3_blk_request(struct request_queue *q)
 {
     struct request *req;
-    dnbd3_device_t *lo;
+    dnbd3_device_t *dev;
 
     while ((req = blk_fetch_request(q)) != NULL)
     {
-        lo = req->rq_disk->private_data;
+        dev = req->rq_disk->private_data;
 
         if (req->cmd_type != REQ_TYPE_FS)
         {
@@ -147,9 +147,9 @@ void dnbd3_blk_request(struct request_queue *q)
 
         if (rq_data_dir(req) == READ)
         {
-            list_add_tail(&req->queuelist, &lo->request_queue_send);
+            list_add_tail(&req->queuelist, &dev->request_queue_send);
             spin_unlock_irq(q->queue_lock);
-            wake_up(&lo->process_queue_send);
+            wake_up(&dev->process_queue_send);
             spin_lock_irq(q->queue_lock);
         }
     }

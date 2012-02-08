@@ -40,26 +40,26 @@ typedef struct
 // network
 #define CMD_GET_BLOCK   1
 #define CMD_GET_SIZE    2
-#define CMD_PING        3
+#define CMD_GET_SERVERS 3
 
 #pragma pack(1)
 typedef struct
 {
-    uint16_t cmd;
-    uint16_t vid;
-    uint16_t rid;
-    uint64_t offset;
-    uint64_t size;
-    char handle[8];
+    uint16_t cmd;       // 2byte
+    uint16_t vid;       // 2byte
+    uint16_t rid;       // 2byte
+    uint64_t offset;    // 8byte
+    uint64_t size;      // 8byte
+    char handle[8];     // 8byte
 } dnbd3_request_t;
 #pragma pack(0)
 
 #pragma pack(1)
 typedef struct
 {
-    uint16_t cmd;
-    uint64_t filesize;
-    char handle[8];
+    uint16_t cmd;   // 2byte
+    uint64_t size;  // 8byte
+    char handle[8]; // 8byte
 } dnbd3_reply_t;
 #pragma pack(0)
 

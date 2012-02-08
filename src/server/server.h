@@ -31,9 +31,9 @@
 typedef struct
 {
     char *file;
-    off_t filesize;
+    uint64_t filesize;
+    size_t num_servers;
     char **servers;
-    size_t num;
     int vid;
     int rid;
 } dnbd3_image_t;

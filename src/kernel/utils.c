@@ -20,6 +20,8 @@
 
 #include <linux/kernel.h>
 
+#include "utils.h"
+
 unsigned int inet_addr(char *str)
 {
     int a, b, c, d;
@@ -30,4 +32,10 @@ unsigned int inet_addr(char *str)
     arr[2] = c;
     arr[3] = d;
     return *(unsigned int*) arr;
+}
+
+void inet_ntoa(struct in_addr addr, char* str)
+{
+    unsigned char *ptr = (unsigned char *) &addr;
+    sprintf(str, "%d.%d.%d.%d", ptr[0] & 0xff, ptr[1] & 0xff, ptr[2] & 0xff, ptr[3] & 0xff);
 }

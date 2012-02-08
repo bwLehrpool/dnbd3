@@ -110,8 +110,10 @@ int main(int argc, char* argv[])
             demonize = 0;
             break;
         case 'r':
-            printf("INFO: Reloading configuration file...\n");
-            dnbd3_ipc_send(IPC_RELOAD);
+            printf("ERROR: Buggy, do not use...\n");
+            // FIXME: segfault in dnbd3_handle_query because of free(_images)
+            // printf("INFO: Reloading configuration file...\n");
+            // dnbd3_ipc_send(IPC_RELOAD);
             return EXIT_SUCCESS;
         case 's':
             printf("INFO: Stopping running server...\n");

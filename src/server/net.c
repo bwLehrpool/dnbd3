@@ -29,6 +29,7 @@
 #include <sys/sendfile.h>
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "server.h"
 #include "utils.h"
@@ -36,20 +37,36 @@
 void *dnbd3_handle_query(void *dnbd3_client)
 {
     dnbd3_client_t *client = (dnbd3_client_t *) (uintptr_t) dnbd3_client;
-    int image_file = -1;
     dnbd3_request_t request;
     dnbd3_reply_t reply;
-    uint16_t cmd;
+
+    int image_file = -1;
+
+    struct in_addr server;
+    int i = 0;
 
     while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
     {
-        cmd = request.cmd;
-        switch (cmd)
+        reply.cmd = request.cmd;
+        memcpy(reply.handle, request.handle, sizeof(request.handle));
+
+        // TODO: lock CMD_GET_SERVERS and CMD_GET_SIZE because of reloading cfg...
+
+        switch (request.cmd)
         {
-        case CMD_PING:
-            reply.cmd = request.cmd;
-            memcpy(reply.handle, request.handle, sizeof(request.handle));
+        case CMD_GET_SERVERS:
+            if (client->image->num_servers < MAX_NUMBER_SERVERS)
+                reply.size = client->image->num_servers * sizeof(struct in_addr);
+            else
+                reply.size = MAX_NUMBER_SERVERS * sizeof(struct in_addr);
+
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+
+            for (i = 0; i < client->image->num_servers && i < MAX_NUMBER_SERVERS; i++)
+            {
+                inet_aton(client->image->servers[i], &server);
+                send(client->sock, (char *) &server, sizeof(struct in_addr), 0);
+            }
             break;
 
         case CMD_GET_SIZE:
@@ -59,24 +76,23 @@ void *dnbd3_handle_query(void *dnbd3_client)
             if (image)
             {
                 image_file = open(image->file, O_RDONLY);
-                reply.filesize = image->filesize;
+                reply.size = sizeof(uint64_t);
                 client->image = image;
             }
             else
             {
                 printf("ERROR: Client requested an unknown image id.\n");
-                reply.filesize = 0;
+                reply.size = 0;
             }
-            reply.cmd = request.cmd;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+            send(client->sock, &image->filesize, sizeof(uint64_t), 0);
             break;
 
         case CMD_GET_BLOCK:
             if (image_file < 0)
                 break;
 
-            reply.cmd = request.cmd;
-            memcpy(reply.handle, request.handle, sizeof(request.handle));
+            reply.size = request.size;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 
             if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)

@@ -46,6 +46,10 @@ typedef struct
     struct timer_list hb_timer;
     struct request hb_request;
 
+    int num_servers;
+    struct in_addr servers[MAX_NUMBER_SERVERS];
+
+
     // process
     struct task_struct *thread_send;
     struct task_struct *thread_receive;

@@ -21,6 +21,9 @@
 #ifndef UTILS_H_
 #define UTILS_H_
 
+#include <linux/in.h>
+
 unsigned int inet_addr(char *str);
+void inet_ntoa(struct in_addr addr, char* str);
 
 #endif /* UTILS_H_ */
