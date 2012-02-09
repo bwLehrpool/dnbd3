@@ -26,6 +26,8 @@
 #include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <glib.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 #include "../types.h"
 #include "../version.h"
@@ -34,13 +36,11 @@ char *_config_file_name = DEFAULT_CLIENT_CONFIG_FILE;
 
 void dnbd3_print_help(char* argv_0)
 {
-    printf(
-            "Usage: %s -h <host> -p <port> -v <vid> [-r <rid>] -d <device> || -f <file> || -c <device>\n",
-            argv_0);
+    printf("Usage: %s -h <host> [-p <port>] -v <vid> [-r <rid>] -d <device> || -f <file> || -c <device>\n", argv_0);
     printf("Start the DNBD3 client.\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
     printf("-h or --host \t\t Host running dnbd3-server.\n");
-    printf("-p or --port \t\t Port used by server.\n");
+    printf("-p or --port \t\t Port used by server (default %i).\n", PORT);
     printf("-v or --vid \t\t Volume-ID of exported image.\n");
     printf("-r or --rid \t\t Release-ID of exported image (if 0 latest available rid will be used).\n");
     printf("-d or --device \t\t DNBD3 device name.\n");
@@ -57,6 +57,19 @@ void dnbd3_print_version()
     exit(EXIT_SUCCESS);
 }
 
+char* dnbd3_get_ip(char* hostname)
+{
+    struct hostent *host;
+
+    if ((host = gethostbyname(hostname)) == NULL)
+    {
+        printf("ERROR: Unknown host '%s'\n", hostname);
+        exit(EXIT_FAILURE);
+    }
+
+    return inet_ntoa(*((struct in_addr *) host->h_addr));
+}
+
 int main(int argc, char *argv[])
 {
     int fd;
@@ -67,7 +80,7 @@ int main(int argc, char *argv[])
 
     dnbd3_ioctl_t msg;
     msg.host = NULL;
-    msg.port = NULL;
+    msg.port = PORTSTR;
     msg.vid = 0;
     msg.rid = 0;
 
@@ -97,7 +110,7 @@ int main(int argc, char *argv[])
             _config_file_name = optarg;
             break;
         case 'h':
-            msg.host = optarg;
+            msg.host = dnbd3_get_ip(optarg);
             break;
         case 'p':
             msg.port = optarg;
@@ -116,7 +129,7 @@ int main(int argc, char *argv[])
             close_dev = 1;
             break;
         case 's':
-            msg.host = optarg;
+            msg.host = dnbd3_get_ip(optarg);
             switch_host = 1;
             break;
         case 'H':
@@ -132,7 +145,7 @@ int main(int argc, char *argv[])
     }
 
     // close device
-    if (close_dev && !msg.host && dev && !msg.port && (msg.vid == 0))
+    if (close_dev && !msg.host && dev && (msg.vid == 0))
     {
         fd = open(dev, O_WRONLY);
         printf("INFO: Closing device %s\n", dev);
@@ -145,7 +158,7 @@ int main(int argc, char *argv[])
     }
 
     // switch host
-    if (switch_host && msg.host && dev && !msg.port && (msg.vid == 0))
+    if (switch_host && msg.host && dev && (msg.vid == 0))
     {
         fd = open(dev, O_WRONLY);
         printf("INFO: Switching device %s to %s\n", dev, msg.host);
@@ -158,7 +171,7 @@ int main(int argc, char *argv[])
     }
 
     // connect
-    if (msg.host && msg.port && dev && (msg.vid != 0))
+    if (msg.host && dev && (msg.vid != 0))
     {
         fd = open(dev, O_WRONLY);
         printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);

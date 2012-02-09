@@ -227,7 +227,7 @@ int dnbd3_net_receive(void *data)
     unsigned int size;
 
     int i = 0;
-    char a[15];
+    //char a[15];
 
     msg.msg_name = NULL;
     msg.msg_namelen = 0;
