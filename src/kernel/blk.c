@@ -34,6 +34,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     dev->vid = 0;
     dev->rid = 0;
     dev->sock = NULL;
+    dev->num_servers = 0;
     dev->thread_send = NULL;
     dev->thread_receive = NULL;
 
@@ -62,8 +63,6 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     disk->private_data = dev;
     queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
     dev->disk = disk;
-
-    dev->hb_request.cmd_type = REQ_TYPE_SPECIAL;
 
     add_disk(disk); // must be last
     return 0;
@@ -123,7 +122,9 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
         break;
 
     default:
+        kfree(msg);
         return -1;
+
     }
 
     kfree(msg);

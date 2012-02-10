@@ -41,6 +41,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_reply_t reply;
 
     int image_file = -1;
+    dnbd3_image_t *image;
 
     struct in_addr server;
     int i = 0;
@@ -48,13 +49,24 @@ void *dnbd3_handle_query(void *dnbd3_client)
     while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
     {
         reply.cmd = request.cmd;
+        reply.error = 0;
         memcpy(reply.handle, request.handle, sizeof(request.handle));
 
         // TODO: lock CMD_GET_SERVERS and CMD_GET_SIZE because of reloading cfg...
+        // pthread_spin_lock(&_spinlock);
+        // pthread_spin_unlock(&_spinlock);
 
         switch (request.cmd)
         {
         case CMD_GET_SERVERS:
+            if(!client->image)
+            { // configuration was reloaded, send error
+                reply.size = 0;
+                reply.error = ERROR_RELOAD;
+                send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+                continue;
+            }
+
             if (client->image->num_servers < MAX_NUMBER_SERVERS)
                 reply.size = client->image->num_servers * sizeof(struct in_addr);
             else
@@ -67,30 +79,30 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 inet_aton(client->image->servers[i], &server);
                 send(client->sock, (char *) &server, sizeof(struct in_addr), 0);
             }
-            break;
+            continue;
 
         case CMD_GET_SIZE:
-            pthread_spin_lock(&_spinlock); // because of reloading config
-            dnbd3_image_t *image = dnbd3_get_image(request.vid, request.rid);
-            pthread_spin_unlock(&_spinlock);
-            if (image)
-            {
-                image_file = open(image->file, O_RDONLY);
-                reply.size = sizeof(uint64_t);
-                client->image = image;
-            }
-            else
-            {
+            image = dnbd3_get_image(request.vid, request.rid);
+
+            if(!image)
+            { // image not found, send error
                 printf("ERROR: Client requested an unknown image id.\n");
                 reply.size = 0;
+                reply.error = ERROR_SIZE;
+                send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+                continue;
             }
+
+            image_file = open(image->file, O_RDONLY);
+            reply.size = sizeof(uint64_t);
+            client->image = image;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
             send(client->sock, &image->filesize, sizeof(uint64_t), 0);
-            break;
+            continue;
 
         case CMD_GET_BLOCK:
             if (image_file < 0)
-                break;
+                continue;
 
             reply.size = request.size;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
@@ -98,11 +110,12 @@ void *dnbd3_handle_query(void *dnbd3_client)
             if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
                 printf("ERROR: sendfile returned -1\n");
 
-            break;
+            continue;
 
         default:
             printf("ERROR: Unknown command\n");
-            break;
+            continue;
+
         }
 
     }

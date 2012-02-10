@@ -67,8 +67,7 @@ void* dnbd3_ipc_receive()
 
     while (1)
     {
-        int cmd;
-        int num = 0;
+        int cmd, num = 0;
         char buf[4096];
 
         // Accept connection
@@ -114,9 +113,7 @@ void* dnbd3_ipc_receive()
             break;
 
         }
-
     }
-
     close(server_sock);
 }
 
@@ -131,7 +128,6 @@ void dnbd3_ipc_send(int cmd)
         perror("ERROR: IPC socket");
         exit(EXIT_FAILURE);
     }
-
     server.sun_family = AF_UNIX;
     strcpy(server.sun_path, UNIX_SOCKET);
 
@@ -158,15 +154,12 @@ void dnbd3_ipc_send(int cmd)
     case IPC_INFO:
         send(client_sock, &cmd, sizeof(int), MSG_WAITALL);
         recv(client_sock, &num, sizeof(int), MSG_WAITALL);
-
         printf("INFO: Number clients connected: %i\n", num);
-
         for (i = 0; i < num; i++)
         {
             if (recv(client_sock, &buf, sizeof(buf), MSG_WAITALL) > 0)
                 printf("INFO: %s", buf);
         }
-
         break;
 
     default:
@@ -174,6 +167,5 @@ void dnbd3_ipc_send(int cmd)
         break;
 
     }
-
     close(client_sock);
 }

@@ -72,8 +72,14 @@ void dnbd3_load_config(char *file)
 
 void dnbd3_reload_config(char* config_file_name)
 {
-    free(_images);
     _num_images = 0;
+    GSList *iterator = NULL;
+    for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
+    {
+        dnbd3_client_t *client = iterator->data;
+        client->image = NULL;
+    }
+    free(_images);
     dnbd3_load_config(config_file_name);
 }
 
