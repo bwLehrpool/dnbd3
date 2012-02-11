@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
 #include "server.h"
 #include "utils.h"
@@ -72,15 +73,21 @@ void dnbd3_load_config(char *file)
 
 void dnbd3_reload_config(char* config_file_name)
 {
-    _num_images = 0;
     GSList *iterator = NULL;
     for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
     {
         dnbd3_client_t *client = iterator->data;
+        pthread_spin_lock(&client->spinlock);
         client->image = NULL;
     }
+    _num_images = 0;
     free(_images);
     dnbd3_load_config(config_file_name);
+    for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
+    {
+        dnbd3_client_t *client = iterator->data;
+        pthread_spin_unlock(&client->spinlock);
+    }
 }
 
 dnbd3_image_t* dnbd3_get_image(int vid, int rid)

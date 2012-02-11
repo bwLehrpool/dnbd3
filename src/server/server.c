@@ -37,7 +37,6 @@
 int _sock;
 
 GSList *_dnbd3_clients = NULL;
-pthread_spinlock_t _spinlock;
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 dnbd3_image_t *_images;
 size_t _num_images = 0;
@@ -137,7 +136,6 @@ int main(int argc, char* argv[])
         daemon(1, 0);
 
     // load config file
-    pthread_spin_init(&_spinlock, PTHREAD_PROCESS_PRIVATE);
     dnbd3_load_config(_config_file_name);
 
     // setup signal handler
@@ -178,6 +176,7 @@ int main(int argc, char* argv[])
 
         pthread_t thread;
         dnbd3_client_t *dnbd3_client = (dnbd3_client_t *) malloc(sizeof(dnbd3_client_t));
+        pthread_spin_init(&dnbd3_client->spinlock, PTHREAD_PROCESS_PRIVATE);
         strcpy(dnbd3_client->ip, inet_ntoa(client.sin_addr));
         dnbd3_client->sock = fd;
         dnbd3_client->thread = &thread;

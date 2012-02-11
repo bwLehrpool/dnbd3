@@ -41,7 +41,6 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_reply_t reply;
 
     int image_file = -1;
-    dnbd3_image_t *image;
 
     struct in_addr server;
     int i = 0;
@@ -51,10 +50,6 @@ void *dnbd3_handle_query(void *dnbd3_client)
         reply.cmd = request.cmd;
         reply.error = 0;
         memcpy(reply.handle, request.handle, sizeof(request.handle));
-
-        // TODO: lock CMD_GET_SERVERS and CMD_GET_SIZE because of reloading cfg...
-        // pthread_spin_lock(&_spinlock);
-        // pthread_spin_unlock(&_spinlock);
 
         switch (request.cmd)
         {
@@ -67,6 +62,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 continue;
             }
 
+            pthread_spin_lock(&client->spinlock);
             if (client->image->num_servers < MAX_NUMBER_SERVERS)
                 reply.size = client->image->num_servers * sizeof(struct in_addr);
             else
@@ -79,10 +75,13 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 inet_aton(client->image->servers[i], &server);
                 send(client->sock, (char *) &server, sizeof(struct in_addr), 0);
             }
+            pthread_spin_unlock(&client->spinlock);
             continue;
 
         case CMD_GET_SIZE:
-            image = dnbd3_get_image(request.vid, request.rid);
+            pthread_spin_lock(&client->spinlock);
+            dnbd3_image_t *image = dnbd3_get_image(request.vid, request.rid);
+            pthread_spin_unlock(&client->spinlock);
 
             if(!image)
             { // image not found, send error

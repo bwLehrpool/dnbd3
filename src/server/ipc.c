@@ -88,9 +88,7 @@ void* dnbd3_ipc_receive()
 
         case IPC_RELOAD:
             printf("INFO: Reloading configuration...\n");
-            pthread_spin_lock(&_spinlock);
             dnbd3_reload_config(_config_file_name);
-            pthread_spin_unlock(&_spinlock);
             break;
 
         case IPC_INFO:
