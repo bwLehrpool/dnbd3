@@ -49,6 +49,7 @@ void dnbd3_load_config(char *file)
         _images[i].servers = g_key_file_get_string_list(gkf, groups[i], "servers", &_images[i].num_servers, NULL);
         _images[i].vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
         _images[i].rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
+        _images[i].atime = 0;
 
         if (_images[i].num_servers > MAX_NUMBER_SERVERS)
             printf("WARN: Max allowed servers %i\n", MAX_NUMBER_SERVERS);

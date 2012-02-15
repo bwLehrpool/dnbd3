@@ -109,15 +109,15 @@ int main(int argc, char* argv[])
             demonize = 0;
             break;
         case 'r':
-             printf("INFO: Reloading configuration file...\n");
+             printf("INFO: Reloading configuration file...\n\n");
              dnbd3_ipc_send(IPC_RELOAD);
             return EXIT_SUCCESS;
         case 's':
-            printf("INFO: Stopping running server...\n");
+            printf("INFO: Stopping running server...\n\n");
             dnbd3_ipc_send(IPC_EXIT);
             return EXIT_SUCCESS;
         case 'i':
-            printf("INFO: Requesting information...\n");
+            printf("INFO: Requesting information...\n\n");
             dnbd3_ipc_send(IPC_INFO);
             return EXIT_SUCCESS;
         case 'H':

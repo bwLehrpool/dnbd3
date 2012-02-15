@@ -36,6 +36,7 @@ typedef struct
     char **servers;
     int vid;
     int rid;
+    time_t atime;
 } dnbd3_image_t;
 
 typedef struct

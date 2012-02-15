@@ -97,6 +97,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
             client->image = image;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
             send(client->sock, &image->filesize, sizeof(uint64_t), 0);
+            image->atime = time(NULL);
             continue;
 
         case CMD_GET_BLOCK:
@@ -108,6 +109,8 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
             if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
                 printf("ERROR: sendfile returned -1\n");
+
+            image->atime = time(NULL);
 
             continue;
 

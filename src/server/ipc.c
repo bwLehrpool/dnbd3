@@ -40,6 +40,9 @@ void* dnbd3_ipc_receive()
 
     GSList *iterator = NULL;
 
+    struct tm * timeinfo;
+    char time_buff[64];
+
     // Create socket
     if ((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
     {
@@ -67,7 +70,7 @@ void* dnbd3_ipc_receive()
 
     while (1)
     {
-        int cmd, num = 0;
+        int cmd, num, i = 0;
         char buf[4096];
 
         // Accept connection
@@ -92,8 +95,26 @@ void* dnbd3_ipc_receive()
             break;
 
         case IPC_INFO:
-            num = g_slist_length(_dnbd3_clients);
-            send(client_sock, &num, sizeof(int), MSG_WAITALL); // send number of clients
+            num = g_slist_length(_dnbd3_clients) + _num_images +4;
+            send(client_sock, &num, sizeof(int), MSG_WAITALL); // send number of lines to print
+
+            sprintf(buf, "Exported images (atime, vid, rid, file):\n");
+            strcat( buf, "========================================\n");
+            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+            for (i = 0; i < _num_images; i++)
+            {
+                timeinfo = localtime(&_images[i].atime);
+                strftime (time_buff,64,"%d.%m.%y %H:%M:%S",timeinfo);
+                sprintf(buf, "%s\t%i\t%i\t%s\n", time_buff, _images[i].vid, _images[i].rid,_images[i].file);
+                send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+            }
+
+            sprintf(buf, "\nNumber images: %i\n\n", _num_images);
+            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+
+            sprintf(buf, "Connected clients (ip, file):\n");
+            strcat( buf, "=============================\n");
+            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
             for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
             {
                 dnbd3_client_t *client = iterator->data;
@@ -103,6 +124,10 @@ void* dnbd3_ipc_receive()
                     send(client_sock, buf, sizeof(buf), MSG_WAITALL);
                 }
             }
+
+            sprintf(buf, "\nNumber clients: %i\n\n", g_slist_length(_dnbd3_clients));
+            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+
             close(client_sock);
             break;
 
@@ -152,11 +177,10 @@ void dnbd3_ipc_send(int cmd)
     case IPC_INFO:
         send(client_sock, &cmd, sizeof(int), MSG_WAITALL);
         recv(client_sock, &num, sizeof(int), MSG_WAITALL);
-        printf("INFO: Number clients connected: %i\n", num);
         for (i = 0; i < num; i++)
         {
             if (recv(client_sock, &buf, sizeof(buf), MSG_WAITALL) > 0)
-                printf("INFO: %s", buf);
+                printf("%s", buf);
         }
         break;
 
