@@ -40,4 +40,6 @@ int dnbd3_net_receive(void *data);
 
 void dnbd3_net_heartbeat(unsigned long arg);
 
+int dnbd3_net_discover(void *data);
+
 #endif /* NET_H_ */

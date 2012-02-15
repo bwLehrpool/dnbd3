@@ -185,6 +185,7 @@ int main(int argc, char* argv[])
         _dnbd3_clients = g_slist_append(_dnbd3_clients, dnbd3_client);
 
         pthread_create(&(thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client);
+        pthread_detach(thread);
     }
 
     dnbd3_cleanup();

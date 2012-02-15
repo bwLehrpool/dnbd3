@@ -28,6 +28,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
     init_waitqueue_head(&dev->process_queue_send);
     init_waitqueue_head(&dev->process_queue_receive);
+    init_waitqueue_head(&dev->process_queue_discover);
     INIT_LIST_HEAD(&dev->request_queue_send);
     INIT_LIST_HEAD(&dev->request_queue_receive);
 
@@ -37,6 +38,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     dev->num_servers = 0;
     dev->thread_send = NULL;
     dev->thread_receive = NULL;
+    dev->thread_discover = NULL;
 
     if (!(disk = alloc_disk(1)))
     {

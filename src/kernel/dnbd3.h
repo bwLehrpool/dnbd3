@@ -50,8 +50,10 @@ typedef struct
     // process
     struct task_struct *thread_send;
     struct task_struct *thread_receive;
+    struct task_struct *thread_discover;
     wait_queue_head_t process_queue_send;
     wait_queue_head_t process_queue_receive;
+    wait_queue_head_t process_queue_discover;
     struct list_head request_queue_send;
     struct list_head request_queue_receive;
 
