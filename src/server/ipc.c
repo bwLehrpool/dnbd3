@@ -109,7 +109,7 @@ void* dnbd3_ipc_receive()
                 send(client_sock, buf, sizeof(buf), MSG_WAITALL);
             }
 
-            sprintf(buf, "\nNumber images: %i\n\n", _num_images);
+            sprintf(buf, "\nNumber images: %Zu\n\n", _num_images);
             send(client_sock, buf, sizeof(buf), MSG_WAITALL);
 
             sprintf(buf, "Connected clients (ip, file):\n");

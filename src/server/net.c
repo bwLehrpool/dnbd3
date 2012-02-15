@@ -124,8 +124,8 @@ void *dnbd3_handle_query(void *dnbd3_client)
     close(client->sock);
     close(image_file);
     _dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
-    free(client);
     printf("INFO: Client %s exit\n", client->ip);
+    free(client);
     pthread_exit((void *) 0);
 }
 
