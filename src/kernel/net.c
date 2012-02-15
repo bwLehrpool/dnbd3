@@ -29,6 +29,10 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     struct sockaddr_in sin;
     struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
 
+    struct timeval timeout;
+    timeout.tv_sec = CLIENT_SOCKET_TIMEOUT;
+    timeout.tv_usec = 0;
+
     // do some checks before connecting
     if (!req)
     {
@@ -55,6 +59,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
         dev->sock = NULL;
         return;
     }
+    kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
     dev->sock->sk->sk_allocation = GFP_NOIO;
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = inet_addr(dev->host);
@@ -262,7 +267,7 @@ int dnbd3_net_discover(void *data)
 
             t1 = (start.tv_sec*1000000ull) + start.tv_usec;
             t2 = (end.tv_sec*1000000ull) + end.tv_usec;
-            printk("DEBUG: Server: %s RTT: %llums received bytes: %i\n", ip,t2 - t1, a);
+            //printk("DEBUG: Server: %s RTT: %llums received bytes: %i\n", ip,t2 - t1, a);
         }
     }
     kfree(buf);
@@ -279,9 +284,8 @@ int dnbd3_net_send(void *data)
     struct kvec iov;
 
     init_msghdr(msg);
-    set_user_nice(current, -20);
 
-    // TODO: check if socket error
+    set_user_nice(current, -20);
 
     while (!kthread_should_stop() || !list_empty(&dev->request_queue_send))
     {
@@ -294,7 +298,6 @@ int dnbd3_net_send(void *data)
         // extract block request
         spin_lock_irq(&dev->blk_lock);
         blk_request = list_entry(dev->request_queue_send.next, struct request, queuelist);
-        list_del_init(&blk_request->queuelist);
         spin_unlock_irq(&dev->blk_lock);
 
         // what to do?
@@ -321,7 +324,10 @@ int dnbd3_net_send(void *data)
             break;
 
         default:
-            printk("ERROR: Unknown command (Send)\n");
+            printk("ERROR: Unknown command (send)\n");
+            spin_lock_irq(&dev->blk_lock);
+            list_del_init(&blk_request->queuelist);
+            spin_unlock_irq(&dev->blk_lock);
             continue;
         }
 
@@ -330,15 +336,23 @@ int dnbd3_net_send(void *data)
         iov.iov_base = &dnbd3_request;
         iov.iov_len = sizeof(dnbd3_request);
         if (kernel_sendmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
-            printk("ERROR: kernel_sendmsg\n");
+            goto error;
 
         // enqueue request to request_queue_receive
         spin_lock_irq(&dev->blk_lock);
+        list_del_init(&blk_request->queuelist);
         list_add_tail(&blk_request->queuelist, &dev->request_queue_receive);
         spin_unlock_irq(&dev->blk_lock);
         wake_up(&dev->process_queue_receive);
     }
     return 0;
+
+    error:
+        printk("ERROR: Connection to server %s lost (send)\n", dev->host);
+        if (dev->sock)
+            kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+        dev->thread_send = NULL;
+        return -1;
 }
 
 int dnbd3_net_receive(void *data)
@@ -361,8 +375,6 @@ int dnbd3_net_receive(void *data)
     init_msghdr(msg);
     set_user_nice(current, -20);
 
-    // TODO: check if socket error
-
     while (!kthread_should_stop() || !list_empty(&dev->request_queue_receive))
     {
         wait_event_interruptible(dev->process_queue_receive,
@@ -374,18 +386,16 @@ int dnbd3_net_receive(void *data)
         // receive net replay
         iov.iov_base = &dnbd3_reply;
         iov.iov_len = sizeof(dnbd3_reply);
-        kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
+        if (kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)
+            goto error;
 
         // search for replied request in queue
         received_request = *(struct request **) dnbd3_reply.handle;
         spin_lock_irq(&dev->blk_lock);
         list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
         {
-            if (blk_request != received_request)
-                continue;
-
-            list_del_init(&blk_request->queuelist);
-            break;
+            if (blk_request == received_request)
+                break;
         }
         spin_unlock_irq(&dev->blk_lock);
 
@@ -393,7 +403,8 @@ int dnbd3_net_receive(void *data)
         switch (dnbd3_reply.error)
         {
         case ERROR_SIZE:
-            printk("ERROR: Requested image does't exist\n");
+            printk("FATAL: Requested image does't exist\n");
+            list_del_init(&blk_request->queuelist);
             kthread_stop(dev->thread_send);
             del_timer(&dev->hb_timer);
             sock_release(dev->sock);
@@ -402,6 +413,7 @@ int dnbd3_net_receive(void *data)
             return -1;
 
         case ERROR_RELOAD:
+            list_del_init(&blk_request->queuelist);
             blk_request->cmd_type = REQ_TYPE_SPECIAL;
             blk_request->cmd_flags = REQ_GET_FILESIZE;
             list_add(&blk_request->queuelist, &dev->request_queue_send);
@@ -424,12 +436,14 @@ int dnbd3_net_receive(void *data)
                 size = bvec->bv_len;
                 iov.iov_base = kaddr;
                 iov.iov_len = size;
-                kernel_recvmsg(dev->sock, &msg, &iov, 1, size, msg.msg_flags);
+                if (kernel_recvmsg(dev->sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
+                    goto error;
                 kunmap(bvec->bv_page);
 
                 sigprocmask(SIG_SETMASK, &oldset, NULL);
             }
             spin_lock_irqsave(&dev->blk_lock, flags);
+            list_del_init(&blk_request->queuelist);
             __blk_end_request_all(blk_request, 0);
             spin_unlock_irqrestore(&dev->blk_lock, flags);
             continue;
@@ -437,9 +451,13 @@ int dnbd3_net_receive(void *data)
         case CMD_GET_SIZE:
             iov.iov_base = &filesize;
             iov.iov_len = sizeof(uint64_t);
-            kernel_recvmsg(dev->sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags);
+            if (kernel_recvmsg(dev->sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)
+                goto error;
             set_capacity(dev->disk, filesize >> 9); /* 512 Byte blocks */
             printk("INFO: Filesize %s: %llu\n", dev->disk->disk_name, filesize);
+            spin_lock_irq(&dev->blk_lock);
+            list_del_init(&blk_request->queuelist);
+            spin_unlock_irq(&dev->blk_lock);
             kfree(blk_request);
             continue;
 
@@ -450,8 +468,12 @@ int dnbd3_net_receive(void *data)
             {
                 iov.iov_base = &dev->servers[i];
                 iov.iov_len = size;
-                kernel_recvmsg(dev->sock, &msg, &iov, 1, size, msg.msg_flags);
+                if (kernel_recvmsg(dev->sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
+                    goto error;
             }
+            spin_lock_irq(&dev->blk_lock);
+            list_del_init(&blk_request->queuelist);
+            spin_unlock_irq(&dev->blk_lock);
             kfree(blk_request);
 //            if (dev->num_servers > 1)
 //                wake_up(&dev->process_queue_discover);
@@ -459,9 +481,31 @@ int dnbd3_net_receive(void *data)
 
         default:
             printk("ERROR: Unknown command (Receive)\n");
+            spin_lock_irq(&dev->blk_lock);
+            list_del_init(&blk_request->queuelist);
+            spin_unlock_irq(&dev->blk_lock);
             continue;
 
         }
     }
     return 0;
+
+    error:
+        printk("ERROR: Connection to server %s lost (receive)\n", dev->host);
+        // move already send requests to request_queue_send again
+        if (!list_empty(&dev->request_queue_receive))
+        {
+            printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);
+            spin_lock_irq(&dev->blk_lock);
+            list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
+            {
+                list_del_init(&blk_request->queuelist);
+                list_add(&blk_request->queuelist, &dev->request_queue_send);
+            }
+            spin_unlock_irq(&dev->blk_lock);
+        }
+        if (dev->sock)
+            kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+        dev->thread_receive = NULL;
+        return -1;
 }

@@ -25,7 +25,8 @@
 #define PORT 5003
 #define PORTSTR "5003"
 #define SERVER_SOCKET_TIMEOUT 30
-#define HB_INTERVAL 20*HZ
+#define CLIENT_SOCKET_TIMEOUT 5
+#define HB_INTERVAL 10*HZ
 #define MAX_NUMBER_SERVERS 8
 
 // block device
