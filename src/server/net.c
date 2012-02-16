@@ -63,14 +63,14 @@ void *dnbd3_handle_query(void *dnbd3_client)
             }
 
             pthread_spin_lock(&client->spinlock);
-            if (client->image->num_servers < MAX_NUMBER_SERVERS)
+            if (client->image->num_servers < NUMBER_SERVERS)
                 reply.size = client->image->num_servers * sizeof(struct in_addr);
             else
-                reply.size = MAX_NUMBER_SERVERS * sizeof(struct in_addr);
+                reply.size = NUMBER_SERVERS * sizeof(struct in_addr);
 
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 
-            for (i = 0; i < client->image->num_servers && i < MAX_NUMBER_SERVERS; i++)
+            for (i = 0; i < client->image->num_servers && i < NUMBER_SERVERS; i++)
             {
                 inet_aton(client->image->servers[i], &server);
                 send(client->sock, (char *) &server, sizeof(struct in_addr), 0);

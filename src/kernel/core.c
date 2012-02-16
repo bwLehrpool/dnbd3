@@ -22,7 +22,7 @@
 #include "blk.h"
 
 int major;
-dnbd3_device_t dnbd3_device[MAX_NUMBER_DEVICES];
+dnbd3_device_t dnbd3_device[NUMBER_DEVICES];
 
 static int __init dnbd3_init(void)
 {
@@ -36,7 +36,7 @@ static int __init dnbd3_init(void)
     }
 
     // add MAX_NUMBER_DEVICES devices
-    for (i = 0; i < MAX_NUMBER_DEVICES; i++)
+    for (i = 0; i < NUMBER_DEVICES; i++)
     {
         if (dnbd3_blk_add_device(&dnbd3_device[i], i) != 0)
         {
@@ -53,7 +53,7 @@ static void __exit dnbd3_exit(void)
 {
     int i;
 
-    for (i = 0; i < MAX_NUMBER_DEVICES; i++)
+    for (i = 0; i < NUMBER_DEVICES; i++)
     {
         dnbd3_blk_del_device(&dnbd3_device[i]);
     }

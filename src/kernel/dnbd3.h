@@ -45,7 +45,7 @@ typedef struct
     struct socket *sock;
     struct timer_list hb_timer;
     int num_servers;
-    struct in_addr servers[MAX_NUMBER_SERVERS];
+    struct in_addr servers[NUMBER_SERVERS];
     int discover, panic;
 
     // process

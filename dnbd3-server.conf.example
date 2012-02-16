@@ -2,24 +2,24 @@
 
 [Ubuntu 10.04]
 file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-10.04.3-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220
+servers=132.230.4.29;132.230.4.220;132.230.8.96
 vid=1
 rid=3
 
 [Ubuntu 10.10]
 file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-10.10-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220
+servers=132.230.4.29;132.230.4.220;132.230.8.96
 vid=2
 rid=1
 
 [Ubuntu 11.04]
 file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-11.04-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220
+servers=132.230.4.29;132.230.4.220;132.230.8.96
 vid=3
 rid=1
 
 [Ubuntu 11.10]
 file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-11.10-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220
+servers=132.230.4.29;132.230.4.220;132.230.8.96
 vid=4
 rid=1

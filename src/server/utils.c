@@ -51,8 +51,8 @@ void dnbd3_load_config(char *file)
         _images[i].rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
         _images[i].atime = 0;
 
-        if (_images[i].num_servers > MAX_NUMBER_SERVERS)
-            printf("WARN: Max allowed servers %i\n", MAX_NUMBER_SERVERS);
+        if (_images[i].num_servers > NUMBER_SERVERS)
+            printf("WARN: Max allowed servers %i\n", NUMBER_SERVERS);
 
         fd = open(_images[i].file, O_RDONLY);
         if (fd > 0)

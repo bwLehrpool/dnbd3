@@ -30,7 +30,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
 
     struct timeval timeout;
-    timeout.tv_sec = CLIENT_SOCKET_TIMEOUT_DATA;
+    timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
     timeout.tv_usec = 0;
 
     // do some checks before connecting
@@ -59,6 +59,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
         dev->sock = NULL;
         return;
     }
+    kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
     kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
     dev->sock->sk->sk_allocation = GFP_NOIO;
     sin.sin_family = AF_INET;
@@ -96,7 +97,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     init_timer(&dev->hb_timer);
     dev->hb_timer.data = (unsigned long) dev;
     dev->hb_timer.function = dnbd3_net_heartbeat;
-    dev->hb_timer.expires = jiffies + HB_INTERVAL;
+    dev->hb_timer.expires = jiffies + TIMER_INTERVAL_HEARTBEAT;
     add_timer(&dev->hb_timer);
 
 }
@@ -110,13 +111,6 @@ void dnbd3_net_disconnect(dnbd3_device_t *dev)
         del_timer(&dev->hb_timer);
 
     // kill sending and receiving threads
-//    if (dev->thread_send && dev->thread_receive && dev->thread_discover)
-//    {
-//        kthread_stop(dev->thread_send);
-//        kthread_stop(dev->thread_receive);
-//        kthread_stop(dev->thread_discover);
-//    }
-
     if (dev->thread_send)
         kthread_stop(dev->thread_send);
 
@@ -150,7 +144,11 @@ void dnbd3_net_heartbeat(unsigned long arg)
     dev->discover = 1;
     wake_up(&dev->process_queue_discover);
 
-    dev->hb_timer.expires = jiffies + HB_INTERVAL;
+    if (dev->panic)
+        dev->hb_timer.expires = jiffies + TIMER_INTERVAL_PANIC;
+    else
+        dev->hb_timer.expires = jiffies + TIMER_INTERVAL_HEARTBEAT;
+
     add_timer(&dev->hb_timer);
 }
 
@@ -167,14 +165,14 @@ int dnbd3_net_discover(void *data)
 
     uint64_t filesize;
     char *buf;
-    char ip[16];
+    char host[16];
 
     struct timeval start, end;
     uint64_t t1, t2 = 0;
     int i, num = 0;
 
     struct timeval timeout;
-    timeout.tv_sec = CLIENT_SOCKET_TIMEOUT_DISCOVERY;
+    timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DISCOVERY;
     timeout.tv_usec = 0;
 
     init_msghdr(msg);
@@ -182,23 +180,21 @@ int dnbd3_net_discover(void *data)
     buf = kmalloc(4096, GFP_KERNEL);
     if (!buf)
     {
-        printk("ERROR: Kmalloc failed (discover)\n");
+        printk("FATAL: Kmalloc failed (discover)\n");
         return -1;
     }
 
-    set_user_nice(current, -20);
-
     while (!kthread_should_stop())
     {
-        wait_event_interruptible(dev->process_queue_discover, kthread_should_stop() || dev->discover || dev->panic);
+        wait_event_interruptible(dev->process_queue_discover, kthread_should_stop() || dev->discover);
 
-        if (!&dev->discover && !dev->panic)
+        if (!&dev->discover)
             continue;
 
         num = dev->num_servers;
         dev->discover = 0;
 
-        for (i=0; i < num && i < MAX_NUMBER_SERVERS; i++)
+        for (i=0; i < num && i < NUMBER_SERVERS; i++)
         {
             // initialize socket and connect
             if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
@@ -207,15 +203,16 @@ int dnbd3_net_discover(void *data)
                 sock = NULL;
                 continue;
             }
+            kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
             kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
-            inet_ntoa(dev->servers[i], ip);
+            inet_ntoa(dev->servers[i], host);
             sock->sk->sk_allocation = GFP_NOIO;
             sin.sin_family = AF_INET;
-            sin.sin_addr.s_addr = inet_addr(ip);
+            sin.sin_addr.s_addr = inet_addr(host);
             sin.sin_port = htons(simple_strtol(dev->port, NULL, 10));
             if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
             {
-                printk("ERROR: Couldn't connect to host %s:%s (discover)\n", ip, dev->port);
+                printk("ERROR: Couldn't connect to host %s:%s (discover)\n", host, dev->port);
                 sock = NULL;
                 continue;
             }
@@ -223,12 +220,12 @@ int dnbd3_net_discover(void *data)
             // panic mode, take first responding server
             if (dev->panic)
             {
-                printk("WARN: Panic mode, taking server %s\n", ip);
+                printk("WARN: Panic mode, taking server %s\n", host);
                 sock_release(sock);
                 kfree(buf);
                 dev->thread_discover = NULL;
                 dnbd3_net_disconnect(dev);
-                strcpy(dev->host, ip);
+                strcpy(dev->host, host);
                 dnbd3_net_connect(dev);
                 return 0;
             }
@@ -283,13 +280,13 @@ int dnbd3_net_discover(void *data)
             sock_release(sock);
             sock = NULL;
 
-            // TODO: work here
+            // TODO: take fastest server
             t1 = (start.tv_sec*1000000ull) + start.tv_usec;
             t2 = (end.tv_sec*1000000ull) + end.tv_usec;
-            printk("DEBUG: Server: %s RTT: %llums\n", ip,t2 - t1);
-
+            printk("DEBUG: Server: %s RTT: %llums\n", host,t2 - t1);
 
             continue;
+
             error:
                 printk("ERROR: kernel_sendmsg or kernel_recvmsg (discover)\n");
                 sock_release(sock);
@@ -465,7 +462,10 @@ int dnbd3_net_receive(void *data)
                 iov.iov_base = kaddr;
                 iov.iov_len = size;
                 if (kernel_recvmsg(dev->sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
+                {
+                    kunmap(bvec->bv_page);
                     goto error;
+                }
                 kunmap(bvec->bv_page);
 
                 sigprocmask(SIG_SETMASK, &oldset, NULL);
@@ -492,7 +492,7 @@ int dnbd3_net_receive(void *data)
         case CMD_GET_SERVERS:
             dev->num_servers = dnbd3_reply.size / sizeof(struct in_addr);
             size = sizeof(struct in_addr);
-            for (i = 0; i < dev->num_servers && i < MAX_NUMBER_SERVERS; i++)
+            for (i = 0; i < dev->num_servers && i < NUMBER_SERVERS; i++)
             {
                 iov.iov_base = &dev->servers[i];
                 iov.iov_len = size;

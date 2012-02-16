@@ -151,7 +151,7 @@ int main(int argc, char* argv[])
     unsigned int len = sizeof(client);
     int fd;
     struct timeval timeout;
-    timeout.tv_sec = SERVER_SOCKET_TIMEOUT;
+    timeout.tv_sec = SOCKET_TIMEOUT_SERVER;
     timeout.tv_usec = 0;
 
     // setup icp
