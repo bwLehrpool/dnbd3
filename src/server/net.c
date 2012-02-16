@@ -110,7 +110,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
             if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
                 printf("ERROR: sendfile returned -1\n");
 
-            image->atime = time(NULL);
+            image->atime = time(NULL); // TODO: check if mutex is needed
 
             continue;
 
