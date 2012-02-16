@@ -39,6 +39,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     dev->thread_send = NULL;
     dev->thread_receive = NULL;
     dev->thread_discover = NULL;
+    dev->discover = 0;
+    dev->panic = 0;
 
     if (!(disk = alloc_disk(1)))
     {

@@ -46,6 +46,7 @@ typedef struct
     struct timer_list hb_timer;
     int num_servers;
     struct in_addr servers[MAX_NUMBER_SERVERS];
+    int discover, panic;
 
     // process
     struct task_struct *thread_send;
