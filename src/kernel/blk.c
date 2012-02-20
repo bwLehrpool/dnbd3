@@ -74,15 +74,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
-    if (dev->sock)
-    {
-        sock_release(dev->sock);
-        dev->sock = NULL;
-    }
-
-    if (&dev->hb_timer)
-        del_timer(&dev->hb_timer);
-
+	dnbd3_net_disconnect(dev);
     del_gendisk(dev->disk);
     put_disk(dev->disk);
     blk_cleanup_queue(dev->disk->queue);

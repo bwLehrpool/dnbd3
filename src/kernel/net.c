@@ -283,7 +283,7 @@ int dnbd3_net_discover(void *data)
             // TODO: take fastest server
             t1 = (start.tv_sec*1000000ull) + start.tv_usec;
             t2 = (end.tv_sec*1000000ull) + end.tv_usec;
-            printk("DEBUG: Server: %s RTT: %llums\n", host,t2 - t1);
+            printk("DEBUG: Server: %s RTT: %lluus\n", host,t2 - t1);
 
             continue;
 
