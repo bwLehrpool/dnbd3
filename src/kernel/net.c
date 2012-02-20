@@ -163,12 +163,12 @@ int dnbd3_net_discover(void *data)
     struct msghdr msg;
     struct kvec iov;
 
-    uint64_t filesize;
     char *buf;
-    char host[16];
+    uint64_t filesize;
+    char current_server[16], best_server[16];
 
     struct timeval start, end;
-    uint64_t t1, t2 = 0;
+    uint64_t t1, t2, best_rtt = 0;
     int i, num = 0;
 
     struct timeval timeout;
@@ -193,6 +193,7 @@ int dnbd3_net_discover(void *data)
 
         num = dev->num_servers;
         dev->discover = 0;
+        best_rtt = -1;
 
         for (i=0; i < num && i < NUMBER_SERVERS; i++)
         {
@@ -205,14 +206,14 @@ int dnbd3_net_discover(void *data)
             }
             kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
             kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
-            inet_ntoa(dev->servers[i], host);
+            inet_ntoa(dev->servers[i], current_server);
             sock->sk->sk_allocation = GFP_NOIO;
             sin.sin_family = AF_INET;
-            sin.sin_addr.s_addr = inet_addr(host);
+            sin.sin_addr.s_addr = inet_addr(current_server);
             sin.sin_port = htons(simple_strtol(dev->port, NULL, 10));
             if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
             {
-                printk("ERROR: Couldn't connect to host %s:%s (discover)\n", host, dev->port);
+                printk("ERROR: Couldn't connect to host %s:%s (discover)\n", current_server, dev->port);
                 sock = NULL;
                 continue;
             }
@@ -220,12 +221,12 @@ int dnbd3_net_discover(void *data)
             // panic mode, take first responding server
             if (dev->panic)
             {
-                printk("WARN: Panic mode, taking server %s\n", host);
+                printk("WARN: Panic mode, taking server %s\n", current_server);
                 sock_release(sock);
                 kfree(buf);
                 dev->thread_discover = NULL;
                 dnbd3_net_disconnect(dev);
-                strcpy(dev->host, host);
+                strcpy(dev->host, current_server);
                 dnbd3_net_connect(dev);
                 return 0;
             }
@@ -280,10 +281,13 @@ int dnbd3_net_discover(void *data)
             sock_release(sock);
             sock = NULL;
 
-            // TODO: take fastest server
             t1 = (start.tv_sec*1000000ull) + start.tv_usec;
             t2 = (end.tv_sec*1000000ull) + end.tv_usec;
-            printk("DEBUG: Server: %s RTT: %lluus\n", host,t2 - t1);
+            if ( best_rtt > (t2 - t1) )
+            {
+            	best_rtt = t2 - t1;
+            	strcpy(best_server, current_server);
+            }
 
             continue;
 
@@ -293,6 +297,19 @@ int dnbd3_net_discover(void *data)
                 sock = NULL;
                 continue;
         }
+
+        // take server with lowest rtt
+        if (num > 1 && strcmp(dev->host, best_server))
+        {
+        	printk("INFO: Server %s is faster (%lluus), switching...\n", best_server, best_rtt);
+        	kfree(buf);
+            dev->thread_discover = NULL;
+            dnbd3_net_disconnect(dev);
+            strcpy(dev->host, best_server);
+            dnbd3_net_connect(dev);
+            return 0;
+        }
+
     }
     kfree(buf);
     return 0;
