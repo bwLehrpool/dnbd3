@@ -503,6 +503,8 @@ int dnbd3_net_receive(void *data)
             continue;
 
         case CMD_GET_SIZE:
+            dev->vid = dnbd3_reply.vid;
+            dev->rid = dnbd3_reply.rid;
             iov.iov_base = &filesize;
             iov.iov_len = sizeof(uint64_t);
             if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)

@@ -61,6 +61,8 @@ typedef struct
 typedef struct
 {
     uint16_t cmd;   // 2byte
+    uint16_t vid;   // 2byte
+    uint16_t rid;   // 2byte
     uint16_t error; // 2byte
     uint64_t size;  // 8byte
     char handle[8]; // 8byte

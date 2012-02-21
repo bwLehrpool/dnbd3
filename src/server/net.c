@@ -93,6 +93,8 @@ void *dnbd3_handle_query(void *dnbd3_client)
             }
 
             image_file = open(image->file, O_RDONLY);
+            reply.vid = image->vid;
+            reply.rid = image->rid;
             reply.size = sizeof(uint64_t);
             client->image = image;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
