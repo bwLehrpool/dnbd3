@@ -33,22 +33,31 @@ extern int major;
 
 typedef struct
 {
+    char host[16];
+    char port[6];
+    uint64_t rtt;
+    struct socket *sock;
+    struct kobject kobj;
+} dnbd3_server_t;
+
+typedef struct
+{
     // block
     struct gendisk *disk;
     spinlock_t blk_lock;
 
+    // sysfs
+    struct kobject kobj;
+
     // network
-    char host[16];
-    char port[6];
-    int vid;
-    int rid;
-    struct socket *sock;
-    struct timer_list hb_timer;
-    int num_servers;
-    struct in_addr servers[NUMBER_SERVERS];
+    dnbd3_server_t cur_server;
+    int vid, rid;
+    int alt_servers_num;
+    dnbd3_server_t alt_servers[NUMBER_SERVERS];
     int discover, panic;
 
     // process
+    struct timer_list hb_timer;
     struct task_struct *thread_send;
     struct task_struct *thread_receive;
     struct task_struct *thread_discover;

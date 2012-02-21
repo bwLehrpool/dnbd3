@@ -20,6 +20,7 @@
 
 #include "blk.h"
 #include "net.h"
+#include "sysfs.h"
 
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
@@ -32,10 +33,15 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     INIT_LIST_HEAD(&dev->request_queue_send);
     INIT_LIST_HEAD(&dev->request_queue_receive);
 
+    memset(dev->cur_server.host, 0, 16);
+    memset(dev->cur_server.port, 0, 6);
+    dev->cur_server.rtt = 0;
+    dev->cur_server.sock = NULL;
+
     dev->vid = 0;
     dev->rid = 0;
-    dev->sock = NULL;
-    dev->num_servers = 0;
+    dev->alt_servers_num = 0;
+    memset(dev->alt_servers, 0, sizeof(dnbd3_server_t)*NUMBER_SERVERS);
     dev->thread_send = NULL;
     dev->thread_receive = NULL;
     dev->thread_discover = NULL;
@@ -68,12 +74,14 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
     dev->disk = disk;
 
-    add_disk(disk); // must be last
+    add_disk(disk);
+    dnbd3_sysfs_init(dev);
     return 0;
 }
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
+	dnbd3_sysfs_exit(dev);
 	dnbd3_net_disconnect(dev);
     del_gendisk(dev->disk);
     put_disk(dev->disk);
@@ -95,8 +103,8 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     switch (cmd)
     {
     case IOCTL_OPEN:
-        strcpy(dev->host, msg->host);
-        strcpy(dev->port, msg->port);
+        strcpy(dev->cur_server.host, msg->host);
+        strcpy(dev->cur_server.port, msg->port);
         dev->vid = msg->vid;
         dev->rid = msg->rid;
         dnbd3_net_connect(dev);
@@ -110,7 +118,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 
     case IOCTL_SWITCH:
         dnbd3_net_disconnect(dev);
-        strcpy(dev->host, msg->host);
+        strcpy(dev->cur_server.host, msg->host);
         dnbd3_net_connect(dev);
         break;
 

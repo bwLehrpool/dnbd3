@@ -18,28 +18,14 @@
  *
  */
 
-#ifndef CONFIG_H_
-#define CONFIG_H_
+#ifndef SYSFS_H_
+#define SYSFS_H_
 
-// network
-#define PORT 5003
-#define PORTSTR "5003"
+#include "dnbd3.h"
 
-#define SOCKET_TIMEOUT_SERVER 30
-#define SOCKET_TIMEOUT_CLIENT_DATA 5
-#define SOCKET_TIMEOUT_CLIENT_DISCOVERY 1
-#define TIMER_INTERVAL_HEARTBEAT 10*HZ
-#define TIMER_INTERVAL_PANIC 1*HZ
-#define NUMBER_SERVERS 8
+void dnbd3_sysfs_init(dnbd3_device_t *dev);
 
-// block device
-#define KERNEL_SECTOR_SIZE 512
-#define DNBD3_BLOCK_SIZE 4096
-#define NUMBER_DEVICES 8
+void dnbd3_sysfs_exit(dnbd3_device_t *dev);
 
-// misc
-#define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3-server.conf"
-#define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3-client.conf"
-#define UNIX_SOCKET "/tmp/dnbd3-server.sock"
 
-#endif /* CONFIG_H_ */
+#endif /* SYSFS_H_ */

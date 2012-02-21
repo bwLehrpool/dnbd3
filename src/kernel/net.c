@@ -39,36 +39,36 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
         printk("ERROR: Kmalloc failed.\n");
         return;
     }
-    if (!dev->host || !dev->port || (dev->vid == 0))
+    if (!dev->cur_server.host || !dev->cur_server.port || (dev->vid == 0))
     {
         printk("ERROR: Host, port or vid not set.\n");
         return;
     }
-    if (dev->sock)
+    if (dev->cur_server.sock)
     {
-        printk("ERROR: Device %s already connected to %s.\n", dev->disk->disk_name, dev->host);
+        printk("ERROR: Device %s already connected to %s.\n", dev->disk->disk_name, dev->cur_server.host);
         return;
     }
 
-    printk("INFO: Connecting device %s to %s\n", dev->disk->disk_name, dev->host);
+    printk("INFO: Connecting device %s to %s\n", dev->disk->disk_name, dev->cur_server.host);
 
     // initialize socket
-    if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
+    if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &dev->cur_server.sock) < 0)
     {
         printk("ERROR: Couldn't create socket.\n");
-        dev->sock = NULL;
+        dev->cur_server.sock = NULL;
         return;
     }
-    kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
-    kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
-    dev->sock->sk->sk_allocation = GFP_NOIO;
+    kernel_setsockopt(dev->cur_server.sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
+    kernel_setsockopt(dev->cur_server.sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
+    dev->cur_server.sock->sk->sk_allocation = GFP_NOIO;
     sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = inet_addr(dev->host);
-    sin.sin_port = htons(simple_strtol(dev->port, NULL, 10));
-    if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
+    sin.sin_addr.s_addr = inet_addr(dev->cur_server.host);
+    sin.sin_port = htons(simple_strtol(dev->cur_server.port, NULL, 10));
+    if (kernel_connect(dev->cur_server.sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
     {
-        printk("ERROR: Couldn't connect to host %s:%s\n", dev->host, dev->port);
-        dev->sock = NULL;
+        printk("ERROR: Couldn't connect to host %s:%s\n", dev->cur_server.host, dev->cur_server.port);
+        dev->cur_server.sock = NULL;
         return;
     }
 
@@ -121,10 +121,10 @@ void dnbd3_net_disconnect(dnbd3_device_t *dev)
         kthread_stop(dev->thread_discover);
 
     // clear socket
-    if (dev->sock)
+    if (dev->cur_server.sock)
     {
-        sock_release(dev->sock);
-        dev->sock = NULL;
+        sock_release(dev->cur_server.sock);
+        dev->cur_server.sock = NULL;
     }
 }
 
@@ -191,7 +191,7 @@ int dnbd3_net_discover(void *data)
         if (!&dev->discover)
             continue;
 
-        num = dev->num_servers;
+        num = dev->alt_servers_num;
         dev->discover = 0;
         best_rtt = -1;
 
@@ -206,14 +206,15 @@ int dnbd3_net_discover(void *data)
             }
             kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
             kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
-            inet_ntoa(dev->servers[i], current_server);
+            strcpy(current_server, dev->alt_servers[i].host);
             sock->sk->sk_allocation = GFP_NOIO;
             sin.sin_family = AF_INET;
             sin.sin_addr.s_addr = inet_addr(current_server);
-            sin.sin_port = htons(simple_strtol(dev->port, NULL, 10));
+            sin.sin_port = htons(simple_strtol(dev->cur_server.port, NULL, 10));
             if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
             {
-                printk("ERROR: Couldn't connect to host %s:%s (discover)\n", current_server, dev->port);
+                printk("ERROR: Couldn't connect to host %s:%s (discover)\n", current_server, dev->cur_server.port);
+                dev->alt_servers[i].rtt = -1;
                 sock = NULL;
                 continue;
             }
@@ -226,7 +227,7 @@ int dnbd3_net_discover(void *data)
                 kfree(buf);
                 dev->thread_discover = NULL;
                 dnbd3_net_disconnect(dev);
-                strcpy(dev->host, current_server);
+                strcpy(dev->cur_server.host, current_server);
                 dnbd3_net_connect(dev);
                 return 0;
             }
@@ -283,9 +284,11 @@ int dnbd3_net_discover(void *data)
 
             t1 = (start.tv_sec*1000000ull) + start.tv_usec;
             t2 = (end.tv_sec*1000000ull) + end.tv_usec;
-            if ( best_rtt > (t2 - t1) )
+            dev->alt_servers[i].rtt = t2 -t1;
+
+            if ( best_rtt > dev->alt_servers[i].rtt )
             {
-            	best_rtt = t2 - t1;
+            	best_rtt = dev->alt_servers[i].rtt;
             	strcpy(best_server, current_server);
             }
 
@@ -299,15 +302,20 @@ int dnbd3_net_discover(void *data)
         }
 
         // take server with lowest rtt
-        if (num > 1 && strcmp(dev->host, best_server))
+        if (num > 1 && strcmp(dev->cur_server.host, best_server))
         {
         	printk("INFO: Server %s is faster (%lluus), switching...\n", best_server, best_rtt);
         	kfree(buf);
             dev->thread_discover = NULL;
             dnbd3_net_disconnect(dev);
-            strcpy(dev->host, best_server);
+            strcpy(dev->cur_server.host, best_server);
+            dev->cur_server.rtt = best_rtt;
             dnbd3_net_connect(dev);
             return 0;
+        }
+        else
+        {
+            dev->cur_server.rtt = best_rtt;
         }
 
     }
@@ -376,7 +384,7 @@ int dnbd3_net_send(void *data)
         memcpy(dnbd3_request.handle, &blk_request, sizeof(blk_request));
         iov.iov_base = &dnbd3_request;
         iov.iov_len = sizeof(dnbd3_request);
-        if (kernel_sendmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
+        if (kernel_sendmsg(dev->cur_server.sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
             goto error;
 
         // enqueue request to request_queue_receive
@@ -389,9 +397,9 @@ int dnbd3_net_send(void *data)
     return 0;
 
     error:
-        printk("ERROR: Connection to server %s lost (send)\n", dev->host);
-        if (dev->sock)
-            kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+        printk("ERROR: Connection to server %s lost (send)\n", dev->cur_server.host);
+        if (dev->cur_server.sock)
+            kernel_sock_shutdown(dev->cur_server.sock, SHUT_RDWR);
         dev->thread_send = NULL;
         dev->panic = 1;
         return -1;
@@ -413,6 +421,7 @@ int dnbd3_net_receive(void *data)
 
     unsigned int size, i;
     uint64_t filesize;
+    struct in_addr tmp_addr;
 
     init_msghdr(msg);
     set_user_nice(current, -20);
@@ -428,7 +437,7 @@ int dnbd3_net_receive(void *data)
         // receive net replay
         iov.iov_base = &dnbd3_reply;
         iov.iov_len = sizeof(dnbd3_reply);
-        if (kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)
+        if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)
             goto error;
 
         // search for replied request in queue
@@ -449,9 +458,9 @@ int dnbd3_net_receive(void *data)
             list_del_init(&blk_request->queuelist);
             kthread_stop(dev->thread_send);
             del_timer(&dev->hb_timer);
-            sock_release(dev->sock);
+            sock_release(dev->cur_server.sock);
             kfree(blk_request);
-            dev->sock = NULL;
+            dev->cur_server.sock = NULL;
             return -1;
 
         case ERROR_RELOAD:
@@ -478,7 +487,7 @@ int dnbd3_net_receive(void *data)
                 size = bvec->bv_len;
                 iov.iov_base = kaddr;
                 iov.iov_len = size;
-                if (kernel_recvmsg(dev->sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
+                if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
                 {
                     kunmap(bvec->bv_page);
                     goto error;
@@ -496,7 +505,7 @@ int dnbd3_net_receive(void *data)
         case CMD_GET_SIZE:
             iov.iov_base = &filesize;
             iov.iov_len = sizeof(uint64_t);
-            if (kernel_recvmsg(dev->sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)
+            if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)
                 goto error;
             set_capacity(dev->disk, filesize >> 9); /* 512 Byte blocks */
             printk("INFO: Filesize %s: %llu\n", dev->disk->disk_name, filesize);
@@ -507,14 +516,15 @@ int dnbd3_net_receive(void *data)
             continue;
 
         case CMD_GET_SERVERS:
-            dev->num_servers = dnbd3_reply.size / sizeof(struct in_addr);
+            dev->alt_servers_num = dnbd3_reply.size / sizeof(struct in_addr);
             size = sizeof(struct in_addr);
-            for (i = 0; i < dev->num_servers && i < NUMBER_SERVERS; i++)
+            for (i = 0; i < dev->alt_servers_num && i < NUMBER_SERVERS; i++)
             {
-                iov.iov_base = &dev->servers[i];
+                iov.iov_base = &tmp_addr;
                 iov.iov_len = size;
-                if (kernel_recvmsg(dev->sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
+                if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
                     goto error;
+                inet_ntoa(tmp_addr, dev->alt_servers[i].host);
             }
             spin_lock_irq(&dev->blk_lock);
             list_del_init(&blk_request->queuelist);
@@ -534,7 +544,7 @@ int dnbd3_net_receive(void *data)
     return 0;
 
     error:
-        printk("ERROR: Connection to server %s lost (receive)\n", dev->host);
+        printk("ERROR: Connection to server %s lost (receive)\n", dev->cur_server.host);
         // move already send requests to request_queue_send again
         if (!list_empty(&dev->request_queue_receive))
         {
@@ -547,8 +557,8 @@ int dnbd3_net_receive(void *data)
             }
             spin_unlock_irq(&dev->blk_lock);
         }
-        if (dev->sock)
-            kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+        if (dev->cur_server.sock)
+            kernel_sock_shutdown(dev->cur_server.sock, SHUT_RDWR);
         dev->thread_receive = NULL;
         dev->panic = 1;
         return -1;

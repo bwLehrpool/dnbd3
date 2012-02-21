@@ -1,2 +1,2 @@
 obj-m := ${MODULE_NAME}.o
-${MODULE_NAME}-objs += core.o blk.o net.o utils.o
+${MODULE_NAME}-objs += core.o blk.o net.o sysfs.o utils.o
