@@ -120,22 +120,29 @@ void dnbd3_net_disconnect(dnbd3_device_t *dev)
 
     // kill sending and receiving threads
     if (dev->thread_send)
+    {
         kthread_stop(dev->thread_send);
+        dev->thread_send = NULL;
+    }
 
     if (dev->thread_receive)
+    {
         kthread_stop(dev->thread_receive);
+        dev->thread_receive = NULL;
+    }
 
     if (dev->thread_discover)
+    {
         kthread_stop(dev->thread_discover);
+        dev->thread_discover = NULL;
+    }
 
     // clear socket
     if (dev->cur_server.sock)
+    {
         sock_release(dev->cur_server.sock);
-
-    dev->thread_send = NULL;
-    dev->thread_receive = NULL;
-    dev->thread_discover = NULL;
-    dev->cur_server.sock = NULL;
+        dev->cur_server.sock = NULL;
+    }
 }
 
 void dnbd3_net_heartbeat(unsigned long arg)
@@ -317,9 +324,9 @@ int dnbd3_net_discover(void *data)
             continue;
 
         // take server with lowest rtt
-        if (num > 1 && strcmp(dev->cur_server.host, best_server))
+        if (num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop())
         {
-            printk("INFO: Server %s on %s is faster (%lluus), switching\n", best_server, dev->disk->disk_name, best_rtt);
+            printk("INFO: Server %s on %s is faster (%lluus)\n", best_server, dev->disk->disk_name, best_rtt);
         	kfree(buf);
             dev->thread_discover = NULL;
             dnbd3_net_disconnect(dev);
