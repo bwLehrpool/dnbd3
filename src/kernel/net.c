@@ -27,14 +27,15 @@
 void dnbd3_net_connect(dnbd3_device_t *dev)
 {
     struct sockaddr_in sin;
-    struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
+    struct request *req0 = kmalloc(sizeof(struct request), GFP_ATOMIC);
+    struct request *req1 = kmalloc(sizeof(struct request), GFP_ATOMIC);
 
     struct timeval timeout;
     timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
     timeout.tv_usec = 0;
 
     // do some checks before connecting
-    if (!req)
+    if (!req0 || !req1)
     {
         printk("FATAL: Kmalloc failed.\n");
         return;
@@ -75,10 +76,16 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     dev->panic = 0;
     dev->alt_servers_num = 0;
 
+
+    // enqueue request to request_queue_send (ask alt servers)
+    req1->cmd_type = REQ_TYPE_SPECIAL;
+    req1->cmd_flags = REQ_GET_SERVERS;
+    list_add(&req1->queuelist, &dev->request_queue_send);
+
     // enqueue request to request_queue_send (ask file size)
-    req->cmd_type = REQ_TYPE_SPECIAL;
-    req->cmd_flags = REQ_GET_FILESIZE;
-    list_add(&req->queuelist, &dev->request_queue_send);
+    req0->cmd_type = REQ_TYPE_SPECIAL;
+    req0->cmd_flags = REQ_GET_FILESIZE;
+    list_add(&req0->queuelist, &dev->request_queue_send);
 
     // start sending thread
     dev->thread_send = kthread_create(dnbd3_net_send, dev, dev->disk->disk_name);
