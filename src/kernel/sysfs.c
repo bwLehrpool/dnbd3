@@ -45,7 +45,7 @@ ssize_t show_cur_server_ip(char *buf, dnbd3_device_t *dev)
 
 ssize_t show_cur_server_rtt(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%lluus\n", dev->cur_server.rtt);
+    return sprintf(buf, "%llu\n", dev->cur_server.rtt);
 }
 
 ssize_t show_alt_server_num(char *buf, dnbd3_device_t *dev)
@@ -70,7 +70,7 @@ ssize_t show_alt_server_ip(char *buf, dnbd3_server_t *srv)
 
 ssize_t show_alt_server_rtt(char *buf, dnbd3_server_t *srv)
 {
-    return sprintf(buf, "%lluus\n", srv->rtt);
+    return sprintf(buf, "%llu\n", srv->rtt);
 }
 
 device_attr_t cur_server_ip =
