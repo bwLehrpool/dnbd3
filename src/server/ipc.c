@@ -95,6 +95,7 @@ void* dnbd3_ipc_receive()
             break;
 
         case IPC_INFO:
+            pthread_spin_lock(&_spinlock);
             num = g_slist_length(_dnbd3_clients) + _num_images +4;
             send(client_sock, &num, sizeof(int), MSG_WAITALL); // send number of lines to print
 
@@ -128,6 +129,7 @@ void* dnbd3_ipc_receive()
             sprintf(buf, "\nNumber clients: %i\n\n", g_slist_length(_dnbd3_clients));
             send(client_sock, buf, sizeof(buf), MSG_WAITALL);
 
+            pthread_spin_unlock(&_spinlock);
             close(client_sock);
             break;
 

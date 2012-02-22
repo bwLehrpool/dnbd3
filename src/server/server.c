@@ -35,6 +35,7 @@
 #include "ipc.h"
 
 int _sock;
+pthread_spinlock_t _spinlock;
 
 GSList *_dnbd3_clients = NULL;
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
@@ -64,6 +65,8 @@ void dnbd3_print_version()
 void dnbd3_cleanup()
 {
     printf("INFO: Cleanup...\n");
+
+    pthread_spin_lock(&_spinlock);
     GSList *iterator = NULL;
     for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
     {
@@ -71,8 +74,8 @@ void dnbd3_cleanup()
         shutdown(client->sock, SHUT_RDWR);
         pthread_join(*client->thread, NULL);
     }
-
     g_slist_free(_dnbd3_clients);
+    pthread_spin_unlock(&_spinlock);
 
     close(_sock);
     free(_images);
@@ -158,6 +161,8 @@ int main(int argc, char* argv[])
     pthread_t thread_ipc;
     pthread_create(&(thread_ipc), NULL, dnbd3_ipc_receive, NULL);
 
+    pthread_spin_init(&_spinlock, PTHREAD_PROCESS_PRIVATE);
+
     printf("INFO: Server is ready...\n");
 
     // main loop
@@ -182,7 +187,9 @@ int main(int argc, char* argv[])
         dnbd3_client->thread = &thread;
         dnbd3_client->image = NULL;
 
+        pthread_spin_lock(&_spinlock);
         _dnbd3_clients = g_slist_append(_dnbd3_clients, dnbd3_client);
+        pthread_spin_unlock(&_spinlock);
 
         pthread_create(&(thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client);
         pthread_detach(thread);

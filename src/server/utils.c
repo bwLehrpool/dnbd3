@@ -74,6 +74,7 @@ void dnbd3_load_config(char *file)
 
 void dnbd3_reload_config(char* config_file_name)
 {
+    pthread_spin_lock(&_spinlock);
     GSList *iterator = NULL;
     for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
     {
@@ -89,6 +90,7 @@ void dnbd3_reload_config(char* config_file_name)
         dnbd3_client_t *client = iterator->data;
         pthread_spin_unlock(&client->spinlock);
     }
+    pthread_spin_unlock(&_spinlock);
 }
 
 dnbd3_image_t* dnbd3_get_image(int vid, int rid)

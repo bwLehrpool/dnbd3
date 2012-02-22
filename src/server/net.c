@@ -40,6 +40,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_request_t request;
     dnbd3_reply_t reply;
 
+    dnbd3_image_t *image = NULL;
     int image_file = -1;
 
     struct in_addr server;
@@ -51,6 +52,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
         reply.error = 0;
         memcpy(reply.handle, request.handle, sizeof(request.handle));
 
+        pthread_spin_lock(&client->spinlock);
         switch (request.cmd)
         {
         case CMD_GET_SERVERS:
@@ -59,10 +61,9 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 reply.size = 0;
                 reply.error = ERROR_RELOAD;
                 send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
-                continue;
+                break;
             }
 
-            pthread_spin_lock(&client->spinlock);
             if (client->image->num_servers < NUMBER_SERVERS)
                 reply.size = client->image->num_servers * sizeof(struct in_addr);
             else
@@ -75,13 +76,10 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 inet_aton(client->image->servers[i], &server);
                 send(client->sock, (char *) &server, sizeof(struct in_addr), 0);
             }
-            pthread_spin_unlock(&client->spinlock);
-            continue;
+            break;
 
         case CMD_GET_SIZE:
-            pthread_spin_lock(&client->spinlock);
-            dnbd3_image_t *image = dnbd3_get_image(request.vid, request.rid);
-            pthread_spin_unlock(&client->spinlock);
+            image = dnbd3_get_image(request.vid, request.rid);
 
             if(!image)
             { // image not found, send error
@@ -89,7 +87,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 reply.size = 0;
                 reply.error = ERROR_SIZE;
                 send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
-                continue;
+                break;
             }
 
             image_file = open(image->file, O_RDONLY);
@@ -100,11 +98,11 @@ void *dnbd3_handle_query(void *dnbd3_client)
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
             send(client->sock, &image->filesize, sizeof(uint64_t), 0);
             image->atime = time(NULL);
-            continue;
+            break;
 
         case CMD_GET_BLOCK:
             if (image_file < 0)
-                continue;
+                break;
 
             reply.size = request.size;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
@@ -113,19 +111,20 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 printf("ERROR: sendfile returned -1\n");
 
             image->atime = time(NULL); // TODO: check if mutex is needed
-
-            continue;
+            break;
 
         default:
             printf("ERROR: Unknown command\n");
-            continue;
+            break;
 
         }
-
+        pthread_spin_unlock(&client->spinlock);
     }
     close(client->sock);
     close(image_file);
+    pthread_spin_lock(&_spinlock);
     _dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
+    pthread_spin_unlock(&_spinlock);
     printf("INFO: Client %s exit\n", client->ip);
     free(client);
     pthread_exit((void *) 0);
@@ -157,7 +156,7 @@ int dnbd3_setup_socket()
     }
 
     // Listen on socket
-    if (listen(sock, 50) == -1)
+    if (listen(sock, 100) == -1)
     {
         printf("ERROR: Listen failure\n");
         return -1;

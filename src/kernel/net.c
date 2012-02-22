@@ -219,19 +219,6 @@ int dnbd3_net_discover(void *data)
                 continue;
             }
 
-            // panic mode, take first responding server
-            if (dev->panic)
-            {
-                printk("WARN: Panic mode, taking server %s\n", current_server);
-                sock_release(sock);
-                kfree(buf);
-                dev->thread_discover = NULL;
-                dnbd3_net_disconnect(dev);
-                strcpy(dev->cur_server.host, current_server);
-                dnbd3_net_connect(dev);
-                return 0;
-            }
-
             // Request filesize
             dnbd3_request.cmd = CMD_GET_SIZE;
             dnbd3_request.vid = dev->vid;
@@ -252,6 +239,19 @@ int dnbd3_net_discover(void *data)
             iov.iov_len = sizeof(uint64_t);
             if (kernel_recvmsg(sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)
                 goto error;
+
+            // panic mode, take first responding server
+            if (dev->panic)
+            {
+                printk("WARN: Panic mode, taking server %s\n", current_server);
+                sock_release(sock);
+                kfree(buf);
+                dev->thread_discover = NULL;
+                dnbd3_net_disconnect(dev);
+                strcpy(dev->cur_server.host, current_server);
+                dnbd3_net_connect(dev);
+                return 0;
+            }
 
             do_gettimeofday(&start); // start rtt measurement
 
@@ -295,7 +295,7 @@ int dnbd3_net_discover(void *data)
             continue;
 
             error:
-                printk("ERROR: kernel_sendmsg or kernel_recvmsg (discover)\n");
+                printk("ERROR: Send/Receive failed, host %s:%s (discover)\n", current_server, dev->cur_server.port);
                 sock_release(sock);
                 sock = NULL;
                 continue;
