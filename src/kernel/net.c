@@ -203,6 +203,7 @@ int dnbd3_net_discover(void *data)
 
         num = dev->alt_servers_num;
         dev->discover = 0;
+        strcpy(best_server, "0.0.0.0");
         best_rtt = -1;
 
         for (i=0; i < num && i < NUMBER_SERVERS; i++)
@@ -253,7 +254,7 @@ int dnbd3_net_discover(void *data)
             // panic mode, take first responding server
             if (dev->panic)
             {
-                printk("WARN: Panic mode, taking server %s\n", current_server);
+                printk("WARN: Panic mode (%s), taking server %s\n", dev->disk->disk_name, current_server);
                 sock_release(sock);
                 kfree(buf);
                 dev->thread_discover = NULL;
@@ -311,10 +312,14 @@ int dnbd3_net_discover(void *data)
                 continue;
         }
 
+
+        if (!strcmp(best_server, "0.0.0.0") || best_rtt == (uint64_t)-1)
+            continue;
+
         // take server with lowest rtt
         if (num > 1 && strcmp(dev->cur_server.host, best_server))
         {
-        	printk("INFO: Server %s is faster (%lluus), switching...\n", best_server, best_rtt);
+            printk("INFO: Server %s on %s is faster (%lluus), switching\n", best_server, dev->disk->disk_name, best_rtt);
         	kfree(buf);
             dev->thread_discover = NULL;
             dnbd3_net_disconnect(dev);
@@ -330,7 +335,6 @@ int dnbd3_net_discover(void *data)
 
     }
     kfree(buf);
-    printk("INFO: dnbd3_net_discover exit\n");
     return 0;
 }
 
@@ -410,7 +414,6 @@ int dnbd3_net_send(void *data)
         wake_up(&dev->process_queue_receive);
     }
 
-    printk("INFO: dnbd3_net_send exit\n");
     return 0;
 
     error:
@@ -551,7 +554,6 @@ int dnbd3_net_receive(void *data)
         }
     }
 
-    printk("INFO: dnbd3_net_receive exit\n");
     return 0;
 
     error:
