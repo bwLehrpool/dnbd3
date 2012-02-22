@@ -95,8 +95,6 @@ struct block_device_operations dnbd3_blk_ops =
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
     dnbd3_device_t *dev = bdev->bd_disk->private_data;
-    int minor = dev->disk->first_minor;
-
     dnbd3_ioctl_t *msg = kmalloc(sizeof(dnbd3_ioctl_t), GFP_KERNEL);
     copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
 
@@ -111,9 +109,8 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
         break;
 
     case IOCTL_CLOSE:
+        set_capacity(dev->disk, 0);
         dnbd3_net_disconnect(dev);
-        dnbd3_blk_del_device(dev);
-        dnbd3_blk_add_device(dev, minor);
         break;
 
     case IOCTL_SWITCH:

@@ -42,9 +42,6 @@ typedef struct
 #define CMD_GET_SIZE    2
 #define CMD_GET_SERVERS 3
 
-#define ERROR_SIZE   1
-#define ERROR_RELOAD 2
-
 #pragma pack(1)
 typedef struct
 {
@@ -63,7 +60,6 @@ typedef struct
     uint16_t cmd;   // 2byte
     uint16_t vid;   // 2byte
     uint16_t rid;   // 2byte
-    uint16_t error; // 2byte
     uint64_t size;  // 8byte
     char handle[8]; // 8byte
 } dnbd3_reply_t;

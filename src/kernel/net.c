@@ -36,17 +36,17 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     // do some checks before connecting
     if (!req)
     {
-        printk("ERROR: Kmalloc failed.\n");
+        printk("FATAL: Kmalloc failed.\n");
         return;
     }
     if (!dev->cur_server.host || !dev->cur_server.port || (dev->vid == 0))
     {
-        printk("ERROR: Host, port or vid not set.\n");
+        printk("FATAL: Host, port or vid not set.\n");
         return;
     }
     if (dev->cur_server.sock)
     {
-        printk("ERROR: Device %s already connected to %s.\n", dev->disk->disk_name, dev->cur_server.host);
+        printk("ERROR: Device %s is already connected to %s.\n", dev->disk->disk_name, dev->cur_server.host);
         return;
     }
 
@@ -73,6 +73,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     }
 
     dev->panic = 0;
+    dev->alt_servers_num = 0;
 
     // enqueue request to request_queue_send (ask file size)
     req->cmd_type = REQ_TYPE_SPECIAL;
@@ -122,10 +123,12 @@ void dnbd3_net_disconnect(dnbd3_device_t *dev)
 
     // clear socket
     if (dev->cur_server.sock)
-    {
         sock_release(dev->cur_server.sock);
-        dev->cur_server.sock = NULL;
-    }
+
+    dev->thread_send = NULL;
+    dev->thread_receive = NULL;
+    dev->thread_discover = NULL;
+    dev->cur_server.sock = NULL;
 }
 
 void dnbd3_net_heartbeat(unsigned long arg)
@@ -320,6 +323,7 @@ int dnbd3_net_discover(void *data)
 
     }
     kfree(buf);
+    printk("INFO: dnbd3_net_discover exit\n");
     return 0;
 }
 
@@ -354,6 +358,8 @@ int dnbd3_net_send(void *data)
         {
         case REQ_TYPE_FS:
             dnbd3_request.cmd = CMD_GET_BLOCK;
+            dnbd3_request.vid = dev->vid;
+            dnbd3_request.rid = dev->rid;
             dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
             dnbd3_request.size = blk_rq_bytes(blk_request); // bytes left to complete entire request
             break;
@@ -368,6 +374,8 @@ int dnbd3_net_send(void *data)
                 break;
             case REQ_GET_SERVERS:
                 dnbd3_request.cmd = CMD_GET_SERVERS;
+                dnbd3_request.vid = dev->vid;
+                dnbd3_request.rid = dev->rid;
                 break;
             }
             break;
@@ -394,6 +402,8 @@ int dnbd3_net_send(void *data)
         spin_unlock_irq(&dev->blk_lock);
         wake_up(&dev->process_queue_receive);
     }
+
+    printk("INFO: dnbd3_net_send exit\n");
     return 0;
 
     error:
@@ -450,28 +460,18 @@ int dnbd3_net_receive(void *data)
         }
         spin_unlock_irq(&dev->blk_lock);
 
-        // check if server send error
-        switch (dnbd3_reply.error)
+        // check error
+        if (dnbd3_reply.size == 0)
         {
-        case ERROR_SIZE:
             printk("FATAL: Requested image does't exist\n");
+            spin_lock_irq(&dev->blk_lock);
             list_del_init(&blk_request->queuelist);
-            kthread_stop(dev->thread_send);
-            del_timer(&dev->hb_timer);
-            sock_release(dev->cur_server.sock);
-            kfree(blk_request);
-            dev->cur_server.sock = NULL;
-            return -1;
-
-        case ERROR_RELOAD:
-            list_del_init(&blk_request->queuelist);
-            blk_request->cmd_type = REQ_TYPE_SPECIAL;
-            blk_request->cmd_flags = REQ_GET_FILESIZE;
-            list_add(&blk_request->queuelist, &dev->request_queue_send);
-            wake_up(&dev->process_queue_send);
+            spin_unlock_irq(&dev->blk_lock);
+            if ( (dnbd3_reply.cmd == CMD_GET_SIZE) || (dnbd3_reply.cmd == CMD_GET_SERVERS) )
+                kfree(blk_request);
             continue;
-
         }
+
 
         // what to do?
         switch (dnbd3_reply.cmd)
@@ -543,6 +543,8 @@ int dnbd3_net_receive(void *data)
 
         }
     }
+
+    printk("INFO: dnbd3_net_receive exit\n");
     return 0;
 
     error:

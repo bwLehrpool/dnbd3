@@ -163,7 +163,10 @@ struct sysfs_ops server_ops =
     .show = server_show,
 };
 
-void release(struct kobject *kobj) {}
+void release(struct kobject *kobj)
+{
+    kobj->state_initialized = 0;
+}
 
 struct kobj_type device_ktype =
 {
@@ -202,11 +205,9 @@ void dnbd3_sysfs_init(dnbd3_device_t *dev)
 void dnbd3_sysfs_exit(dnbd3_device_t *dev)
 {
     int i;
-
     for (i = 0; i < NUMBER_SERVERS; i++)
     {
         kobject_put(&dev->alt_servers[i].kobj);
     }
-
     kobject_put(&dev->kobj);
 }

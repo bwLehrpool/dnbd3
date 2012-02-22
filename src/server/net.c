@@ -43,74 +43,64 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_image_t *image = NULL;
     int image_file = -1;
 
-    struct in_addr server;
+    struct in_addr alt_server;
     int i = 0;
 
     while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
     {
         reply.cmd = request.cmd;
-        reply.error = 0;
+        reply.size = 0;
         memcpy(reply.handle, request.handle, sizeof(request.handle));
 
         pthread_spin_lock(&client->spinlock);
         switch (request.cmd)
         {
         case CMD_GET_SERVERS:
-            if(!client->image)
-            { // configuration was reloaded, send error
-                reply.size = 0;
-                reply.error = ERROR_RELOAD;
-                send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
-                break;
-            }
+            image = dnbd3_get_image(request.vid, request.rid);
+            if(!image)
+                goto error;
 
-            if (client->image->num_servers < NUMBER_SERVERS)
-                reply.size = client->image->num_servers * sizeof(struct in_addr);
-            else
-                reply.size = NUMBER_SERVERS * sizeof(struct in_addr);
-
+            int num = (image->num_servers < NUMBER_SERVERS) ? image->num_servers : NUMBER_SERVERS;
+            reply.vid = image->vid;
+            reply.rid = image->rid;
+            reply.size = num * sizeof(struct in_addr);
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 
-            for (i = 0; i < client->image->num_servers && i < NUMBER_SERVERS; i++)
+            for (i = 0; i < num; i++)
             {
-                inet_aton(client->image->servers[i], &server);
-                send(client->sock, (char *) &server, sizeof(struct in_addr), 0);
+                inet_aton(image->servers[i], &alt_server);
+                send(client->sock, (char *) &alt_server, sizeof(struct in_addr), 0);
             }
+            client->image = image;
+            image->atime = time(NULL); // TODO: check if mutex is needed
             break;
 
         case CMD_GET_SIZE:
             image = dnbd3_get_image(request.vid, request.rid);
-
             if(!image)
-            { // image not found, send error
-                printf("ERROR: Client requested an unknown image id.\n");
-                reply.size = 0;
-                reply.error = ERROR_SIZE;
-                send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
-                break;
-            }
+                goto error;
 
-            image_file = open(image->file, O_RDONLY);
             reply.vid = image->vid;
             reply.rid = image->rid;
             reply.size = sizeof(uint64_t);
-            client->image = image;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+
             send(client->sock, &image->filesize, sizeof(uint64_t), 0);
-            image->atime = time(NULL);
+            image_file = open(image->file, O_RDONLY);
+            client->image = image;
+            image->atime = time(NULL); // TODO: check if mutex is needed
             break;
 
         case CMD_GET_BLOCK:
             if (image_file < 0)
-                break;
+                goto error;
 
             reply.size = request.size;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 
             if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
-                printf("ERROR: sendfile returned -1\n");
+                printf("ERROR: Sendfile failed\n");
 
-            image->atime = time(NULL); // TODO: check if mutex is needed
             break;
 
         default:
@@ -118,7 +108,16 @@ void *dnbd3_handle_query(void *dnbd3_client)
             break;
 
         }
+
         pthread_spin_unlock(&client->spinlock);
+        continue;
+
+        error:
+            printf("ERROR: Client requested an unknown image id.\n");
+            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+            pthread_spin_unlock(&client->spinlock);
+            continue;
+
     }
     close(client->sock);
     close(image_file);
