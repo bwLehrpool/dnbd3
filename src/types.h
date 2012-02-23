@@ -35,6 +35,7 @@ typedef struct
     char *port;
     int vid;
     int rid;
+    int read_ahead_kb;
 } dnbd3_ioctl_t;
 
 // network

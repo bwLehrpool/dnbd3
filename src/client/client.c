@@ -36,18 +36,20 @@ char *_config_file_name = DEFAULT_CLIENT_CONFIG_FILE;
 
 void dnbd3_print_help(char* argv_0)
 {
-    printf("Usage: %s -h <host> [-p <port>] -v <vid> [-r <rid>] -d <device> || -f <file> || -c <device>\n", argv_0);
+    printf("\nUsage: %s\n"
+            "\t-h <host> [-p <port>] -v <vid> [-r <rid>] -d <device> [-a <kb>] || -f <file> || -c <device>\n\n", argv_0);
     printf("Start the DNBD3 client.\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
     printf("-h or --host \t\t Host running dnbd3-server.\n");
     printf("-p or --port \t\t Port used by server (default %i).\n", PORT);
     printf("-v or --vid \t\t Volume-ID of exported image.\n");
-    printf("-r or --rid \t\t Release-ID of exported image (if 0 latest available rid will be used).\n");
+    printf("-r or --rid \t\t Release-ID of exported image (default 0, latest).\n");
     printf("-d or --device \t\t DNBD3 device name.\n");
+    printf("-a or --ahead \t\t Read ahead in KByte (default %i).\n", DEFAULT_READ_AHEAD_KB);
     printf("-c or --close \t\t Disconnect and close device.\n");
     printf("-s or --switch \t\t Switch dnbd3-server on device (DEBUG).\n");
     printf("-H or --help \t\t Show this help text and quit.\n");
-    printf("-V or --version \t Show version and quit.\n");
+    printf("-V or --version \t Show version and quit.\n\n");
     exit(EXIT_SUCCESS);
 }
 
@@ -83,10 +85,11 @@ int main(int argc, char *argv[])
     msg.port = PORTSTR;
     msg.vid = 0;
     msg.rid = 0;
+    msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
 
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "f:h:p:v:r:d:c:s:HV?";
+    static const char *optString = "f:h:p:v:r:d:a:c:s:HV?";
     static const struct option longOpts[] =
     {
     { "file", required_argument, NULL, 'f' },
@@ -95,6 +98,7 @@ int main(int argc, char *argv[])
     { "vid", required_argument, NULL, 'v' },
     { "rid", required_argument, NULL, 'r' },
     { "device", required_argument, NULL, 'd' },
+    { "ahead", required_argument, NULL, 'a' },
     { "close", required_argument, NULL, 'c' },
     { "switch", required_argument, NULL, 's' },
     { "help", no_argument, NULL, 'H' },
@@ -123,6 +127,9 @@ int main(int argc, char *argv[])
             break;
         case 'd':
             dev = optarg;
+            break;
+        case 'a':
+            msg.read_ahead_kb = atoi(optarg);
             break;
         case 'c':
             dev = optarg;
@@ -202,6 +209,10 @@ int main(int argc, char *argv[])
             msg.vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
             msg.rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
             dev = g_key_file_get_string(gkf, groups[i], "device", NULL);
+
+            msg.read_ahead_kb = g_key_file_get_integer(gkf, groups[i], "ahead", NULL);
+            if (!msg.read_ahead_kb)
+                msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
 
             fd = open(dev, O_WRONLY);
             printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);

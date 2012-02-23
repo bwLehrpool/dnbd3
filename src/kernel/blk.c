@@ -22,6 +22,8 @@
 #include "net.h"
 #include "sysfs.h"
 
+#include <linux/pagemap.h>
+
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
     struct gendisk *disk;
@@ -69,6 +71,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     }
 
     blk_queue_logical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
+    blk_queue_physical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
+
     disk->queue = blk_queue;
     disk->private_data = dev;
     queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
@@ -95,6 +99,7 @@ struct block_device_operations dnbd3_blk_ops =
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
     dnbd3_device_t *dev = bdev->bd_disk->private_data;
+    struct request_queue *blk_queue = dev->disk->queue;
     dnbd3_ioctl_t *msg = kmalloc(sizeof(dnbd3_ioctl_t), GFP_KERNEL);
     copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
 
@@ -105,6 +110,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
         strcpy(dev->cur_server.port, msg->port);
         dev->vid = msg->vid;
         dev->rid = msg->rid;
+        blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024)/ PAGE_CACHE_SIZE;
         dnbd3_net_connect(dev);
         break;
 

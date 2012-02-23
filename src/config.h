@@ -36,6 +36,7 @@
 #define KERNEL_SECTOR_SIZE 512
 #define DNBD3_BLOCK_SIZE 4096
 #define NUMBER_DEVICES 8
+#define DEFAULT_READ_AHEAD_KB 256
 
 // misc
 #define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3-server.conf"

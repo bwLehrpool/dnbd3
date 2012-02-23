@@ -21,7 +21,7 @@
 #ifndef VERSION_H_
 #define VERSION_H_
 
-#define VERSION_STRING "0.3.0"
-#define VERSION_NUMBER 030
+#define VERSION_STRING "0.7.0"
+#define VERSION_NUMBER 070
 
 #endif /* VERSION_H_ */

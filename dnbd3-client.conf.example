@@ -6,6 +6,7 @@ port=5003
 vid=1
 rid=3
 device=/dev/dnbd0
+ahead=256
 
 [Ubuntu 10.10]
 server=132.230.4.29
@@ -13,6 +14,7 @@ port=5003
 vid=2
 rid=1
 device=/dev/dnbd1
+ahead=256
 
 [Ubuntu 11.04]
 server=132.230.4.29
@@ -20,6 +22,7 @@ port=5003
 vid=3
 rid=1
 device=/dev/dnbd2
+ahead=256
 
 [Ubuntu 11.10]
 server=132.230.4.29
@@ -27,3 +30,4 @@ port=5003
 vid=4
 rid=1
 device=/dev/dnbd3
+ahead=256
