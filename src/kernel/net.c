@@ -478,9 +478,14 @@ int dnbd3_net_receive(void *data)
         spin_unlock_irq(&dev->blk_lock);
 
         // check error
+        if (dnbd3_reply.cmd == 0)
+        {
+         printk("ERROR: Command was 0 (Receive)\n");
+         goto error;
+        }
         if (dnbd3_reply.size == 0)
         {
-            printk("FATAL: Requested image does't exist\n");
+            printk("FATAL: Requested image does't exist cmd: %i\n", dnbd3_reply.cmd);
             spin_lock_irq(&dev->blk_lock);
             list_del_init(&blk_request->queuelist);
             spin_unlock_irq(&dev->blk_lock);
