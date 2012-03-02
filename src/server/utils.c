@@ -56,15 +56,10 @@ void dnbd3_load_config(char *file)
 
         fd = open(_images[i].file, O_RDONLY);
         if (fd > 0)
-        {
-            struct stat st;
-            fstat(fd, &st);
-            _images[i].filesize = st.st_size;
-        }
+            _images[i].filesize = lseek(fd, 0, SEEK_END);
         else
-        {
             printf("ERROR: Image not found: %s\n", _images[i].file);
-        }
+
         close(fd);
     }
 
