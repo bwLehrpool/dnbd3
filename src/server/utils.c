@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <pthread.h>
+#include <string.h>
 
 #include "server.h"
 #include "utils.h"
@@ -49,6 +50,7 @@ void dnbd3_load_config(char *file)
         _images[i].servers = g_key_file_get_string_list(gkf, groups[i], "servers", &_images[i].num_servers, NULL);
         _images[i].vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
         _images[i].rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
+        _images[i].cache_file = g_key_file_get_string(gkf, groups[i], "cache", NULL);
         _images[i].atime = 0;
 
         if (_images[i].num_servers > NUMBER_SERVERS)
@@ -61,6 +63,30 @@ void dnbd3_load_config(char *file)
             printf("ERROR: Image not found: %s\n", _images[i].file);
 
         close(fd);
+
+        if (_images[i].cache_file)
+        {
+            // read cache map from file
+            _images[i].cache_map  = calloc(_images[i].filesize >> 15, sizeof(char));
+            memset(_images[i].cache_map, 0, (_images[i].filesize >> 15) * sizeof(char));
+            char tmp[strlen(_images[i].cache_file)+4];
+            strcpy(tmp, _images[i].cache_file);
+            strcat(tmp, ".map");
+            fd = open(tmp, O_RDONLY);
+            if (fd > 0)
+                read(fd, _images[i].cache_map, (_images[i].filesize >> 15) * sizeof(char));
+            close(fd);
+
+            // open cache file
+            fd = open(_images[i].cache_file, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+            if (fd < 1)
+                printf("ERROR: Could't create cache file\n");
+
+            if (_images[i].filesize != lseek(fd, 0, SEEK_END))
+                fallocate(fd, 0, 0, _images[i].filesize);
+
+            close(fd);
+        }
     }
 
     g_strfreev(groups);
@@ -69,6 +95,7 @@ void dnbd3_load_config(char *file)
 
 void dnbd3_reload_config(char* config_file_name)
 {
+    int i, fd;
     pthread_spin_lock(&_spinlock);
     GSList *iterator = NULL;
     for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
@@ -77,6 +104,24 @@ void dnbd3_reload_config(char* config_file_name)
         pthread_spin_lock(&client->spinlock);
         client->image = NULL;
     }
+
+    // save cache maps
+    for (i = 0; i < _num_images; i++)
+    {
+        if (_images[i].cache_file)
+        {
+            char tmp[strlen(_images[i].cache_file)+4];
+            strcpy(tmp, _images[i].cache_file);
+            strcat(tmp, ".map");
+            fd = open(tmp, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+
+            if (fd > 0)
+                write(fd, _images[i].cache_map,  (_images[i].filesize >> 15) * sizeof(char));
+
+            close(fd);
+        }
+    }
+
     _num_images = 0;
     free(_images);
     dnbd3_load_config(config_file_name);

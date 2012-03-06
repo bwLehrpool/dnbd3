@@ -25,6 +25,7 @@
 #include <getopt.h>
 #include <pthread.h>
 #include <string.h>
+#include <fcntl.h>
 
 #include "../types.h"
 #include "../version.h"
@@ -64,6 +65,7 @@ void dnbd3_print_version()
 
 void dnbd3_cleanup()
 {
+    int i, fd;
     printf("INFO: Cleanup...\n");
 
     pthread_spin_lock(&_spinlock);
@@ -75,6 +77,24 @@ void dnbd3_cleanup()
         pthread_join(*client->thread, NULL);
     }
     g_slist_free(_dnbd3_clients);
+
+    // save cache maps to files
+    for (i = 0; i < _num_images; i++)
+    {
+        if (_images[i].cache_file)
+        {
+            char tmp[strlen(_images[i].cache_file)+4];
+            strcpy(tmp, _images[i].cache_file);
+            strcat(tmp, ".map");
+            fd = open(tmp, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+
+            if (fd > 0)
+                write(fd, _images[i].cache_map,  (_images[i].filesize >> 15) * sizeof(char));
+
+            close(fd);
+        }
+    }
+
     pthread_spin_unlock(&_spinlock);
 
     close(_sock);

@@ -41,10 +41,13 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_reply_t reply;
 
     dnbd3_image_t *image = NULL;
-    int image_file = -1;
+    int image_file, image_cache = -1;
 
     struct in_addr alt_server;
     int i = 0;
+
+    uint64_t map_y;
+    char map_x, bit_mask;
 
     while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
     {
@@ -89,6 +92,10 @@ void *dnbd3_handle_query(void *dnbd3_client)
             image_file = open(image->file, O_RDONLY);
             client->image = image;
             image->atime = time(NULL); // TODO: check if mutex is needed
+
+            if (image->cache_file)
+                image_cache = open(image->cache_file, O_RDWR);
+
             break;
 
         case CMD_GET_BLOCK:
@@ -98,8 +105,31 @@ void *dnbd3_handle_query(void *dnbd3_client)
             reply.size = request.size;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 
-            if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
-                printf("ERROR: Sendfile failed\n");
+            // caching is off
+            if (!image->cache_file)
+            {
+                if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
+                    printf("ERROR: Sendfile failed (sock)\n");
+
+                break;
+            }
+
+            map_y = request.offset >> 15;
+            map_x = (request.offset >> 12) & 7; // mod 8
+            bit_mask = 0b00000001 << (map_x);
+
+            if ((image->cache_map[map_y] & bit_mask) == 0) // cache miss
+            {
+                uint64_t tmp = request.offset;
+                lseek(image_cache, tmp, SEEK_SET);
+                if (sendfile(image_cache, image_file, (off_t *) &tmp, request.size) < 0)
+                    printf("ERROR: Sendfile failed (cache)\n");
+
+                image->cache_map[map_y] |= bit_mask; // set 1 in cache map
+            }
+
+            if (sendfile(client->sock, image_cache, (off_t *) &request.offset, request.size) < 0)
+                printf("ERROR: Sendfile failed (net)\n");
 
             break;
 
@@ -121,6 +151,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
     }
     close(client->sock);
     close(image_file);
+    close(image_cache);
     pthread_spin_lock(&_spinlock);
     _dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
     pthread_spin_unlock(&_spinlock);

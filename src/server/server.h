@@ -37,6 +37,8 @@ typedef struct
     int vid;
     int rid;
     time_t atime;
+    char *cache_map;
+    char *cache_file;
 } dnbd3_image_t;
 
 typedef struct
