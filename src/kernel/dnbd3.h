@@ -21,6 +21,7 @@
 #ifndef DNBD_H_
 #define DNBD_H_
 
+#include <linux/version.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/blkdev.h>

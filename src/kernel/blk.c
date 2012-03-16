@@ -75,7 +75,12 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
     blk_queue_max_hw_sectors(blk_queue, DNBD3_BLOCK_SIZE/KERNEL_SECTOR_SIZE);
     blk_queue_max_segment_size(blk_queue, DNBD3_BLOCK_SIZE);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,34)
     blk_queue_max_segments(blk_queue, 1);
+#else
+    blk_queue_max_phys_segments(blk_queue, 1);
+    blk_queue_max_hw_segments(blk_queue, 1);
+#endif
 
     disk->queue = blk_queue;
     disk->private_data = dev;
