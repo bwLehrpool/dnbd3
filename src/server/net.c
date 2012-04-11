@@ -30,6 +30,7 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 
 #include "server.h"
 #include "utils.h"
@@ -39,6 +40,9 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_client_t *client = (dnbd3_client_t *) (uintptr_t) dnbd3_client;
     dnbd3_request_t request;
     dnbd3_reply_t reply;
+
+    int cork = 1;
+    int uncork = 0;
 
     dnbd3_image_t *image = NULL;
     int image_file, image_cache = -1;
@@ -105,6 +109,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
             if (image_file < 0)
                 goto error;
 
+            setsockopt(client->sock, SOL_TCP, TCP_CORK, &cork, sizeof(cork));
             reply.size = request.size;
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 
@@ -114,6 +119,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
                     printf("ERROR: Sendfile failed (sock)\n");
 
+                setsockopt(client->sock, SOL_TCP, TCP_CORK, &uncork, sizeof(uncork));
                 break;
             }
 
@@ -178,6 +184,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
             if (sendfile(client->sock, image_cache, (off_t *) &request.offset, request.size) < 0)
                 printf("ERROR: Sendfile failed (net)\n");
 
+            setsockopt(client->sock, SOL_TCP, TCP_CORK, &uncork, sizeof(uncork));
             break;
 
         default:
