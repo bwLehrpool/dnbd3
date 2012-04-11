@@ -49,6 +49,9 @@ void *dnbd3_handle_query(void *dnbd3_client)
     uint64_t map_y;
     char map_x, bit_mask;
 
+    uint64_t todo_size, todo_offset, cur_offset, last_offset = 0;
+    int dirty = 0;
+
     while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
     {
         reply.cmd = request.cmd;
@@ -114,20 +117,64 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 break;
             }
 
-            map_y = request.offset >> 15;
-            map_x = (request.offset >> 12) & 7; // mod 8
-            bit_mask = 0b00000001 << (map_x);
+            // caching is on
+            dirty = 0;
+            todo_size = 0;
+            todo_offset = request.offset;
+            cur_offset = request.offset;
+            last_offset = request.offset + request.size;
 
-            if ((image->cache_map[map_y] & bit_mask) == 0) // cache miss
+            while(cur_offset < last_offset)
             {
-                uint64_t tmp = request.offset;
-                lseek(image_cache, tmp, SEEK_SET);
-                if (sendfile(image_cache, image_file, (off_t *) &tmp, request.size) < 0)
-                    printf("ERROR: Sendfile failed (cache)\n");
+                map_y = cur_offset >> 15;
+                map_x = (cur_offset >> 12) & 7; // mod 8
+                bit_mask = 0b00000001 << (map_x);
 
-                image->cache_map[map_y] |= bit_mask; // set 1 in cache map
+                cur_offset += 4096;
+
+                if ((image->cache_map[map_y] & bit_mask) != 0) // cache hit
+                {
+                    if (todo_size != 0) // fetch missing chunks
+                    {
+                        lseek(image_cache, todo_offset, SEEK_SET);
+                        if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) < 0)
+                            printf("ERROR: Sendfile failed (cache)\n");
+                        todo_size = 0;
+                        dirty = 1;
+                    }
+                    todo_offset = cur_offset;
+                }
+                else
+                {
+                    todo_size += 4096;
+                }
             }
 
+            // whole request was missing
+            if (todo_size != 0)
+            {
+                lseek(image_cache, todo_offset, SEEK_SET);
+                if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) < 0)
+                    printf("ERROR: Sendfile failed (cache)\n");
+
+                dirty = 1;
+            }
+
+            if (dirty)
+            {
+                // set 1 in cache map for whole request
+                cur_offset = request.offset;
+                while(cur_offset < last_offset)
+                {
+                    map_y = cur_offset >> 15;
+                    map_x = (cur_offset >> 12) & 7; // mod 8
+                    bit_mask = 0b00000001 << (map_x);
+                    image->cache_map[map_y] |= bit_mask;
+                    cur_offset += 4096;
+                }
+            }
+
+            // send data to client
             if (sendfile(client->sock, image_cache, (off_t *) &request.offset, request.size) < 0)
                 printf("ERROR: Sendfile failed (net)\n");
 
