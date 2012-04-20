@@ -42,6 +42,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
     dev->vid = 0;
     dev->rid = 0;
+    dev->update_available = 0;
     dev->alt_servers_num = 0;
     memset(dev->alt_servers, 0, sizeof(dnbd3_server_t)*NUMBER_SERVERS);
     dev->thread_send = NULL;

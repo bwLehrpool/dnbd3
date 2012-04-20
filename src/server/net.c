@@ -72,7 +72,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
             int num = (image->num_servers < NUMBER_SERVERS) ? image->num_servers : NUMBER_SERVERS;
             reply.vid = image->vid;
-            reply.rid = image->rid;
+            reply.rid = dnbd3_get_image(request.vid, 0)->rid;
             reply.size = num * sizeof(struct in_addr);
             send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
 

@@ -63,6 +63,11 @@ ssize_t show_rid(char *buf, dnbd3_device_t *dev)
     return sprintf(buf, "%d\n", dev->rid);
 }
 
+ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
+{
+    return sprintf(buf, "%d\n", dev->update_available);
+}
+
 ssize_t show_alt_server_ip(char *buf, dnbd3_server_t *srv)
 {
     return sprintf(buf, "%s\n", srv->host);
@@ -108,6 +113,13 @@ device_attr_t rid =
     .store  = NULL,
 };
 
+device_attr_t update_available =
+{
+    .attr = {.name = "update_available", .mode = 0444 },
+    .show   = show_update_available,
+    .store  = NULL,
+};
+
 server_attr_t alt_server_ip =
 {
     .attr = {.name = "alt_server_ip", .mode = 0444 },
@@ -143,6 +155,7 @@ struct attribute *device_attrs[] =
     &alt_server_num.attr,
     &vid.attr,
     &rid.attr,
+    &update_available.attr,
     NULL,
 };
 

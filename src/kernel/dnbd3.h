@@ -52,7 +52,7 @@ typedef struct
 
     // network
     dnbd3_server_t cur_server;
-    int vid, rid;
+    int vid, rid, update_available;
     int alt_servers_num;
     dnbd3_server_t alt_servers[NUMBER_SERVERS];
     int discover, panic;

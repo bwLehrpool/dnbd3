@@ -75,6 +75,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
 
     dev->panic = 0;
     dev->alt_servers_num = 0;
+    dev->update_available = 0;
 
 
     // enqueue request to request_queue_send (ask alt servers)
@@ -554,6 +555,10 @@ int dnbd3_net_receive(void *data)
             list_del_init(&blk_request->queuelist);
             spin_unlock_irq(&dev->blk_lock);
             kfree(blk_request);
+
+            if (dev->rid < dnbd3_reply.rid)
+                dev->update_available = 1;
+
             continue;
 
         default:
