@@ -38,11 +38,13 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     if (!req0 || !req1)
     {
         printk("FATAL: Kmalloc failed.\n");
+        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
         return;
     }
     if (!dev->cur_server.host || !dev->cur_server.port || (dev->vid == 0))
     {
         printk("FATAL: Host, port or vid not set.\n");
+        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
         return;
     }
     if (dev->cur_server.sock)
@@ -58,6 +60,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     {
         printk("ERROR: Couldn't create socket.\n");
         dev->cur_server.sock = NULL;
+        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
         return;
     }
     kernel_setsockopt(dev->cur_server.sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
@@ -70,6 +73,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     {
         printk("ERROR: Couldn't connect to host %s:%s\n", dev->cur_server.host, dev->cur_server.port);
         dev->cur_server.sock = NULL;
+        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
         return;
     }
 
@@ -143,6 +147,7 @@ void dnbd3_net_disconnect(dnbd3_device_t *dev)
     {
         sock_release(dev->cur_server.sock);
         dev->cur_server.sock = NULL;
+        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
     }
 }
 
