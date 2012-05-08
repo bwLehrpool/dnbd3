@@ -24,7 +24,7 @@
 
 #include <linux/time.h>
 
-void dnbd3_net_connect(dnbd3_device_t *dev)
+int dnbd3_net_connect(dnbd3_device_t *dev)
 {
     struct sockaddr_in sin;
     struct request *req0 = kmalloc(sizeof(struct request), GFP_ATOMIC);
@@ -39,18 +39,18 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     {
         printk("FATAL: Kmalloc failed.\n");
         memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return;
+        return -1;
     }
     if (!dev->cur_server.host || !dev->cur_server.port || (dev->vid == 0))
     {
         printk("FATAL: Host, port or vid not set.\n");
         memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return;
+        return -1;
     }
     if (dev->cur_server.sock)
     {
         printk("ERROR: Device %s is already connected to %s.\n", dev->disk->disk_name, dev->cur_server.host);
-        return;
+        return -1;
     }
 
     printk("INFO: Connecting device %s to %s\n", dev->disk->disk_name, dev->cur_server.host);
@@ -61,7 +61,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
         printk("ERROR: Couldn't create socket.\n");
         dev->cur_server.sock = NULL;
         memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return;
+        return -1;
     }
     kernel_setsockopt(dev->cur_server.sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
     kernel_setsockopt(dev->cur_server.sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
@@ -74,7 +74,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
         printk("ERROR: Couldn't connect to host %s:%s\n", dev->cur_server.host, dev->cur_server.port);
         dev->cur_server.sock = NULL;
         memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return;
+        return -1;
     }
 
     dev->panic = 0;
@@ -113,6 +113,7 @@ void dnbd3_net_connect(dnbd3_device_t *dev)
     dev->hb_timer.expires = jiffies + TIMER_INTERVAL_HEARTBEAT;
     add_timer(&dev->hb_timer);
 
+    return 0;
 }
 
 void dnbd3_net_disconnect(dnbd3_device_t *dev)

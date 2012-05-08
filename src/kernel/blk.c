@@ -112,8 +112,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
         dev->vid = msg->vid;
         dev->rid = msg->rid;
         blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024)/ PAGE_CACHE_SIZE;
-        dnbd3_net_connect(dev);
-        break;
+        return dnbd3_net_connect(dev);
 
     case IOCTL_CLOSE:
         set_capacity(dev->disk, 0);
@@ -123,8 +122,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     case IOCTL_SWITCH:
         dnbd3_net_disconnect(dev);
         strcpy(dev->cur_server.host, msg->host);
-        dnbd3_net_connect(dev);
-        break;
+        return dnbd3_net_connect(dev);
 
     case BLKFLSBUF:
         break;

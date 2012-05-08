@@ -158,7 +158,10 @@ int main(int argc, char *argv[])
         printf("INFO: Closing device %s\n", dev);
 
         if (ioctl(fd, IOCTL_CLOSE, &msg) < 0)
+        {
             printf("ERROR: ioctl not successful\n");
+            exit(EXIT_FAILURE);
+        }
 
         close(fd);
         exit(EXIT_SUCCESS);
@@ -171,7 +174,10 @@ int main(int argc, char *argv[])
         printf("INFO: Switching device %s to %s\n", dev, msg.host);
 
         if (ioctl(fd, IOCTL_SWITCH, &msg) < 0)
+        {
             printf("ERROR: ioctl not successful\n");
+            exit(EXIT_FAILURE);
+        }
 
         close(fd);
         exit(EXIT_SUCCESS);
@@ -184,7 +190,10 @@ int main(int argc, char *argv[])
         printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);
 
         if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
+        {
             printf("ERROR: ioctl not successful\n");
+            exit(EXIT_FAILURE);
+        }
 
         close(fd);
         exit(EXIT_SUCCESS);
@@ -218,7 +227,10 @@ int main(int argc, char *argv[])
             printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);
 
             if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
+            {
                 printf("ERROR: ioctl not successful\n");
+                exit(EXIT_FAILURE);
+            }
 
             close(fd);
         }

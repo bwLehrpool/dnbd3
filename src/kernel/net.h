@@ -30,7 +30,7 @@
         h.msg_controllen = 0;\
         h.msg_flags = MSG_WAITALL | MSG_NOSIGNAL;
 
-void dnbd3_net_connect(dnbd3_device_t *lo);
+int dnbd3_net_connect(dnbd3_device_t *lo);
 
 void dnbd3_net_disconnect(dnbd3_device_t *lo);
 
