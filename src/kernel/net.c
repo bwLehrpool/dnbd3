@@ -193,6 +193,8 @@ int dnbd3_net_discover(void *data)
     struct timeval start, end;
     uint64_t t1, t2, best_rtt = 0;
     int i, num = 0;
+    int turn = 0;
+    int ready = 0;
 
     struct timeval timeout;
     timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DISCOVERY;
@@ -308,9 +310,16 @@ int dnbd3_net_discover(void *data)
 
             t1 = (start.tv_sec*1000000ull) + start.tv_usec;
             t2 = (end.tv_sec*1000000ull) + end.tv_usec;
-            dev->alt_servers[i].rtt = t2 -t1;
+            dev->alt_servers[i].rtts[turn] = t2 -t1;
 
-            if ( best_rtt > dev->alt_servers[i].rtt )
+            dev->alt_servers[i].rtt = ( dev->alt_servers[i].rtts[0]
+                                       +dev->alt_servers[i].rtts[1]
+                                       +dev->alt_servers[i].rtts[2]
+                                       +dev->alt_servers[i].rtts[3] ) / 4;
+
+
+
+            if ( best_rtt > dev->alt_servers[i].rtt + RTT_THRESHOLD)
             {
             	best_rtt = dev->alt_servers[i].rtt;
             	strcpy(best_server, current_server);
@@ -330,7 +339,7 @@ int dnbd3_net_discover(void *data)
             continue;
 
         // take server with lowest rtt
-        if (num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop())
+        if (ready && num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop())
         {
             printk("INFO: Server %s on %s is faster (%lluus)\n", best_server, dev->disk->disk_name, best_rtt);
         	kfree(buf);
@@ -345,6 +354,10 @@ int dnbd3_net_discover(void *data)
         {
             dev->cur_server.rtt = best_rtt;
         }
+
+        turn = (turn +1) % 4;
+        if (turn == 3)
+            ready = 1;
 
     }
     kfree(buf);

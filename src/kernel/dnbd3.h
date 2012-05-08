@@ -37,6 +37,7 @@ typedef struct
     char host[16];
     char port[6];
     uint64_t rtt;
+    uint64_t rtts[4];
     struct socket *sock;
     struct kobject kobj;
 } dnbd3_server_t;
