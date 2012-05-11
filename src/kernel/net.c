@@ -320,7 +320,7 @@ int dnbd3_net_discover(void *data)
 
 
 
-            if ( best_rtt > dev->alt_servers[i].rtt + RTT_THRESHOLD)
+            if ( best_rtt > dev->alt_servers[i].rtt)
             {
             	best_rtt = dev->alt_servers[i].rtt;
             	strcpy(best_server, current_server);
@@ -340,7 +340,7 @@ int dnbd3_net_discover(void *data)
             continue;
 
         // take server with lowest rtt
-        if (ready && num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop())
+        if (ready && num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop() && dev->cur_server.rtt > best_rtt + RTT_THRESHOLD)
         {
             printk("INFO: Server %s on %s is faster (%lluus)\n", best_server, dev->disk->disk_name, best_rtt);
         	kfree(buf);
