@@ -326,6 +326,12 @@ int dnbd3_net_discover(void *data)
             	strcpy(best_server, current_server);
             }
 
+            // update cur servers rtt
+            if (strcmp(dev->cur_server.host, dev->alt_servers[i].host) == 0)
+            {
+                dev->cur_server.rtt = dev->alt_servers[i].rtt;
+            }
+
             continue;
 
             error:
