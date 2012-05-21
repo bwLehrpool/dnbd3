@@ -99,6 +99,7 @@ struct block_device_operations dnbd3_blk_ops =
 
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
+    int result = 0;
     dnbd3_device_t *dev = bdev->bd_disk->private_data;
     struct request_queue *blk_queue = dev->disk->queue;
     dnbd3_ioctl_t *msg = kmalloc(sizeof(dnbd3_ioctl_t), GFP_KERNEL);
@@ -108,33 +109,34 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     {
     case IOCTL_OPEN:
         strcpy(dev->cur_server.host, msg->host);
-        strcpy(dev->cur_server.port, msg->port);
+        strcpy(dev->cur_server.port, PORTSTR);
         dev->vid = msg->vid;
         dev->rid = msg->rid;
         blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024)/ PAGE_CACHE_SIZE;
-        return dnbd3_net_connect(dev);
+        result =  dnbd3_net_connect(dev);
+        break;
 
     case IOCTL_CLOSE:
         set_capacity(dev->disk, 0);
-        dnbd3_net_disconnect(dev);
+        result = dnbd3_net_disconnect(dev);
         break;
 
     case IOCTL_SWITCH:
         dnbd3_net_disconnect(dev);
         strcpy(dev->cur_server.host, msg->host);
-        return dnbd3_net_connect(dev);
+        result = dnbd3_net_connect(dev);
+        break;
 
     case BLKFLSBUF:
         break;
 
     default:
-        kfree(msg);
-        return -1;
+        result = -EIO;
 
     }
 
     kfree(msg);
-    return 0;
+    return result;
 }
 
 void dnbd3_blk_request(struct request_queue *q)

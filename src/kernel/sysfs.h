@@ -27,5 +27,19 @@ void dnbd3_sysfs_init(dnbd3_device_t *dev);
 
 void dnbd3_sysfs_exit(dnbd3_device_t *dev);
 
+typedef struct
+{
+    struct attribute attr;
+    ssize_t (*show)(char *, dnbd3_device_t *);
+    ssize_t (*store)(const char *, size_t, dnbd3_device_t *);
+} device_attr_t;
+
+typedef struct
+{
+    struct attribute attr;
+    ssize_t (*show)(char *, dnbd3_server_t *);
+    ssize_t (*store)(const char *, size_t, dnbd3_server_t *);
+} server_attr_t;
+
 
 #endif /* SYSFS_H_ */

@@ -32,7 +32,6 @@
 typedef struct
 {
     char *host;
-    char *port;
     int vid;
     int rid;
     int read_ahead_kb;

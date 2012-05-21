@@ -37,11 +37,10 @@ char *_config_file_name = DEFAULT_CLIENT_CONFIG_FILE;
 void dnbd3_print_help(char* argv_0)
 {
     printf("\nUsage: %s\n"
-            "\t-h <host> [-p <port>] -v <vid> [-r <rid>] -d <device> [-a <kb>] || -f <file> || -c <device>\n\n", argv_0);
+            "\t-h <host> -v <vid> [-r <rid>] -d <device> [-a <KB>] || -f <file> || -c <device>\n\n", argv_0);
     printf("Start the DNBD3 client.\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
     printf("-h or --host \t\t Host running dnbd3-server.\n");
-    printf("-p or --port \t\t Port used by server (default %i).\n", PORT);
     printf("-v or --vid \t\t Volume-ID of exported image.\n");
     printf("-r or --rid \t\t Release-ID of exported image (default 0, latest).\n");
     printf("-d or --device \t\t DNBD3 device name.\n");
@@ -65,7 +64,7 @@ char* dnbd3_get_ip(char* hostname)
 
     if ((host = gethostbyname(hostname)) == NULL)
     {
-        printf("ERROR: Unknown host '%s'\n", hostname);
+        printf("FATAL: Unknown host '%s'\n", hostname);
         exit(EXIT_FAILURE);
     }
 
@@ -82,19 +81,17 @@ int main(int argc, char *argv[])
 
     dnbd3_ioctl_t msg;
     msg.host = NULL;
-    msg.port = PORTSTR;
     msg.vid = 0;
     msg.rid = 0;
     msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
 
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "f:h:p:v:r:d:a:c:s:HV?";
+    static const char *optString = "f:h:v:r:d:a:c:s:HV?";
     static const struct option longOpts[] =
     {
     { "file", required_argument, NULL, 'f' },
     { "host", required_argument, NULL, 'h' },
-    { "port", required_argument, NULL, 'p' },
     { "vid", required_argument, NULL, 'v' },
     { "rid", required_argument, NULL, 'r' },
     { "device", required_argument, NULL, 'd' },
@@ -115,9 +112,6 @@ int main(int argc, char *argv[])
             break;
         case 'h':
             msg.host = dnbd3_get_ip(optarg);
-            break;
-        case 'p':
-            msg.port = optarg;
             break;
         case 'v':
             msg.vid = atoi(optarg);
@@ -159,7 +153,7 @@ int main(int argc, char *argv[])
 
         if (ioctl(fd, IOCTL_CLOSE, &msg) < 0)
         {
-            printf("ERROR: ioctl not successful\n");
+            printf("ERROR: ioctl not successful (close)\n");
             exit(EXIT_FAILURE);
         }
 
@@ -175,7 +169,7 @@ int main(int argc, char *argv[])
 
         if (ioctl(fd, IOCTL_SWITCH, &msg) < 0)
         {
-            printf("ERROR: ioctl not successful\n");
+            printf("ERROR: ioctl not successful (switch)\n");
             exit(EXIT_FAILURE);
         }
 
@@ -187,11 +181,11 @@ int main(int argc, char *argv[])
     if (msg.host && dev && (msg.vid != 0))
     {
         fd = open(dev, O_WRONLY);
-        printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);
+        printf("INFO: Connecting %s to %s vid:%i rid:%i\n", dev, msg.host, msg.vid, msg.rid);
 
         if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
         {
-            printf("ERROR: ioctl not successful\n");
+            printf("ERROR: ioctl not successful (connect)\n");
             exit(EXIT_FAILURE);
         }
 
@@ -214,7 +208,6 @@ int main(int argc, char *argv[])
         for (i = 0; i < j; i++)
         {
             msg.host = g_key_file_get_string(gkf, groups[i], "server", NULL);
-            msg.port = g_key_file_get_string(gkf, groups[i], "port", NULL);
             msg.vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
             msg.rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
             dev = g_key_file_get_string(gkf, groups[i], "device", NULL);
@@ -224,11 +217,11 @@ int main(int argc, char *argv[])
                 msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
 
             fd = open(dev, O_WRONLY);
-            printf("INFO: Connecting %s to %s:%s vid:%i rid:%i\n", dev, msg.host, msg.port, msg.vid, msg.rid);
+            printf("INFO: Connecting %s to %s vid:%i rid:%i\n", dev, msg.host, msg.vid, msg.rid);
 
             if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
             {
-                printf("ERROR: ioctl not successful\n");
+                printf("ERROR: ioctl not successful (connect)\n");
                 exit(EXIT_FAILURE);
             }
 
@@ -241,7 +234,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        printf("WARN: Config file not found: %s\n", _config_file_name);
+        printf("ERROR: Config file not found: %s\n", _config_file_name);
     }
 
     g_key_file_free(gkf);

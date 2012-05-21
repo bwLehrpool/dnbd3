@@ -116,7 +116,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     return 0;
 }
 
-void dnbd3_net_disconnect(dnbd3_device_t *dev)
+int dnbd3_net_disconnect(dnbd3_device_t *dev)
 {
     printk("INFO: Disconnecting device %s\n", dev->disk->disk_name);
 
@@ -150,6 +150,8 @@ void dnbd3_net_disconnect(dnbd3_device_t *dev)
         dev->cur_server.sock = NULL;
         memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
     }
+
+    return 0;
 }
 
 void dnbd3_net_heartbeat(unsigned long arg)
@@ -157,6 +159,7 @@ void dnbd3_net_heartbeat(unsigned long arg)
     dnbd3_device_t *dev = (dnbd3_device_t *) arg;
     struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
 
+    // send keepalive
     if (req)
     {
         req->cmd_type = REQ_TYPE_SPECIAL;
@@ -164,7 +167,12 @@ void dnbd3_net_heartbeat(unsigned long arg)
         list_add_tail(&req->queuelist, &dev->request_queue_send);
         wake_up(&dev->process_queue_send);
     }
+    else
+    {
+        printk("ERROR: Couldn't create keepalive request\n");
+    }
 
+    // start discover
     dev->discover = 1;
     wake_up(&dev->process_queue_discover);
 
@@ -255,7 +263,7 @@ int dnbd3_net_discover(void *data)
             if (kernel_sendmsg(sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
                 goto error;
 
-            // receive net replay
+            // receive net reply
             iov.iov_base = &dnbd3_reply;
             iov.iov_len = sizeof(dnbd3_reply);
             if (kernel_recvmsg(sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)
@@ -319,8 +327,7 @@ int dnbd3_net_discover(void *data)
                                        +dev->alt_servers[i].rtts[3] ) / 4;
 
 
-
-            if ( best_rtt > dev->alt_servers[i].rtt)
+            if (best_rtt > dev->alt_servers[i].rtt)
             {
             	best_rtt = dev->alt_servers[i].rtt;
             	strcpy(best_server, current_server);
@@ -346,7 +353,8 @@ int dnbd3_net_discover(void *data)
             continue;
 
         // take server with lowest rtt
-        if (ready && num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop() && dev->cur_server.rtt > best_rtt + RTT_THRESHOLD)
+        if (ready && num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop()
+                                                 && dev->cur_server.rtt > best_rtt + RTT_THRESHOLD)
         {
             printk("INFO: Server %s on %s is faster (%lluus)\n", best_server, dev->disk->disk_name, best_rtt);
         	kfree(buf);
@@ -356,10 +364,6 @@ int dnbd3_net_discover(void *data)
             dev->cur_server.rtt = best_rtt;
             dnbd3_net_connect(dev);
             return 0;
-        }
-        else
-        {
-            dev->cur_server.rtt = best_rtt;
         }
 
         turn = (turn +1) % 4;
@@ -382,6 +386,9 @@ int dnbd3_net_send(void *data)
 
     init_msghdr(msg);
 
+    dnbd3_request.vid = dev->vid;
+    dnbd3_request.rid = dev->rid;
+
     set_user_nice(current, -20);
 
     while (!kthread_should_stop() || !list_empty(&dev->request_queue_send))
@@ -402,8 +409,6 @@ int dnbd3_net_send(void *data)
         {
         case REQ_TYPE_FS:
             dnbd3_request.cmd = CMD_GET_BLOCK;
-            dnbd3_request.vid = dev->vid;
-            dnbd3_request.rid = dev->rid;
             dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
             dnbd3_request.size = blk_rq_bytes(blk_request); // bytes left to complete entire request
             break;
@@ -413,13 +418,9 @@ int dnbd3_net_send(void *data)
             {
             case REQ_GET_FILESIZE:
                 dnbd3_request.cmd = CMD_GET_SIZE;
-                dnbd3_request.vid = dev->vid;
-                dnbd3_request.rid = dev->rid;
                 break;
             case REQ_GET_SERVERS:
                 dnbd3_request.cmd = CMD_GET_SERVERS;
-                dnbd3_request.vid = dev->vid;
-                dnbd3_request.rid = dev->rid;
                 break;
             }
             break;
@@ -487,7 +488,7 @@ int dnbd3_net_receive(void *data)
         if (list_empty(&dev->request_queue_receive))
             continue;
 
-        // receive net replay
+        // receive net reply
         iov.iov_base = &dnbd3_reply;
         iov.iov_len = sizeof(dnbd3_reply);
         if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)

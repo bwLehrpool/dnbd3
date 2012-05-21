@@ -23,21 +23,6 @@
 #include "sysfs.h"
 #include "utils.h"
 
-typedef struct
-{
-    struct attribute attr;
-    ssize_t (*show)(char *, dnbd3_device_t *);
-    ssize_t (*store)(const char *, size_t, dnbd3_device_t *);
-} device_attr_t;
-
-typedef struct
-{
-    struct attribute attr;
-    ssize_t (*show)(char *, dnbd3_server_t *);
-    ssize_t (*store)(const char *, size_t, dnbd3_server_t *);
-} server_attr_t;
-
-
 ssize_t show_cur_server_ip(char *buf, dnbd3_device_t *dev)
 {
     return sprintf(buf, "%s\n", dev->cur_server.host);

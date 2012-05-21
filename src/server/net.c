@@ -53,7 +53,11 @@ void *dnbd3_handle_query(void *dnbd3_client)
     uint64_t map_y;
     char map_x, bit_mask;
 
-    uint64_t todo_size, todo_offset, cur_offset, last_offset = 0;
+    uint64_t todo_size = 0;
+    uint64_t todo_offset = 0;
+    uint64_t cur_offset = 0;
+    uint64_t last_offset = 0;
+
     int dirty = 0;
 
     while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
