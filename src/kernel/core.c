@@ -22,11 +22,16 @@
 #include "blk.h"
 
 int major;
-dnbd3_device_t dnbd3_device[NUMBER_DEVICES];
+static unsigned int max_devs = NUMBER_DEVICES;
+static dnbd3_device_t *dnbd3_device;
 
 static int __init dnbd3_init(void)
 {
     int i;
+
+    dnbd3_device = kcalloc(max_devs, sizeof(*dnbd3_device), GFP_KERNEL);
+    if (!dnbd3_device)
+        return -ENOMEM;
 
     // initialize block device
     if ((major = register_blkdev(0, "dnbd3")) == 0)
@@ -36,7 +41,7 @@ static int __init dnbd3_init(void)
     }
 
     // add MAX_NUMBER_DEVICES devices
-    for (i = 0; i < NUMBER_DEVICES; i++)
+    for (i = 0; i < max_devs; i++)
     {
         if (dnbd3_blk_add_device(&dnbd3_device[i], i) != 0)
         {
@@ -45,7 +50,7 @@ static int __init dnbd3_init(void)
         }
     }
 
-    printk("INFO: dnbd3 init successful.\n");
+    printk("INFO: dnbd3 init successful (%i devices).\n", max_devs);
     return 0;
 }
 
@@ -53,12 +58,13 @@ static void __exit dnbd3_exit(void)
 {
     int i;
 
-    for (i = 0; i < NUMBER_DEVICES; i++)
+    for (i = 0; i < max_devs; i++)
     {
         dnbd3_blk_del_device(&dnbd3_device[i]);
     }
 
     unregister_blkdev(major, "dnbd3");
+    kfree(dnbd3_device);
     printk("INFO: dnbd3 exit.\n");
 }
 
@@ -67,3 +73,6 @@ module_exit( dnbd3_exit);
 
 MODULE_DESCRIPTION("Distributed Network Block Device 3");
 MODULE_LICENSE("GPL");
+
+module_param(max_devs, int, 0444);
+MODULE_PARM_DESC(max_devs, "number of network block devices to initialize (default: 8)");
