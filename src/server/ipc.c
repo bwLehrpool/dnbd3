@@ -22,7 +22,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <stdio.h>
-
+#include <sys/stat.h>
+#include <grp.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -66,6 +67,19 @@ void* dnbd3_ipc_receive()
     {
         perror("ERROR: IPC listen");
         exit(EXIT_FAILURE);
+    }
+
+    // Set groupID and permissions on ipc socket
+    struct group *grp;
+    grp = getgrnam(UNIX_SOCKET_GROUP);
+    if (grp == NULL)
+    {
+    	printf("WARN: Group '%s' not found.\n", UNIX_SOCKET_GROUP);
+    }
+    else
+    {
+    	chmod(UNIX_SOCKET, 0775);
+    	chown(UNIX_SOCKET, -1, grp->gr_gid);
     }
 
     while (1)

@@ -40,8 +40,9 @@
 #define DEFAULT_READ_AHEAD_KB 256
 
 // misc
-#define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3-server.conf"
-#define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3-client.conf"
-#define UNIX_SOCKET "/tmp/dnbd3-server.sock"
+#define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3/server.conf"
+#define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3/client.conf"
+#define UNIX_SOCKET "/run/dnbd3-server.sock"
+#define UNIX_SOCKET_GROUP "dnbd"
 
 #endif /* CONFIG_H_ */

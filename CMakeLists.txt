@@ -83,7 +83,7 @@ ADD_CUSTOM_TARGET(${MODULE_NAME} ALL DEPENDS ${CMAKE_BINARY_DIR}/${MODULE_FILE})
 
 INSTALL(TARGETS dnbd3-server dnbd3-client RUNTIME DESTINATION sbin)
 
-INSTALL(FILES dnbd3-server.conf.example dnbd3-client.conf.example DESTINATION /etc/)
+INSTALL(FILES server.conf.example client.conf.example DESTINATION /etc/dnbd3/)
 
 INSTALL(FILES ${CMAKE_BINARY_DIR}/${MODULE_NAME}.ko
         DESTINATION /lib/modules/${CMAKE_SYSTEM_VERSION}/kernel/drivers/block
