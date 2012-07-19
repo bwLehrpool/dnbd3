@@ -87,8 +87,6 @@ void* dnbd3_ipc_receive()
     {
     	int i = 0;
         uint32_t cmd;
-        char buf[4096];
-        uint32_t num = htonl(0);
 
         // Accept connection
         if ((client_sock = accept(server_sock, &client, &len)) < 0)
@@ -103,58 +101,59 @@ void* dnbd3_ipc_receive()
         {
         case IPC_EXIT:
         	printf("INFO: Server shutdown...\n");
-        	send(client_sock, &num, sizeof(num), MSG_WAITALL);
+        	close(client_sock);
             close(server_sock);
             dnbd3_cleanup();
             break;
 
         case IPC_RELOAD:
             printf("INFO: Reloading configuration...\n");
-            send(client_sock, &num, sizeof(num), MSG_WAITALL);
             dnbd3_reload_config(_config_file_name);
+            close(client_sock);
             break;
 
         case IPC_INFO:
             pthread_spin_lock(&_spinlock);
-            num = htonl(g_slist_length(_dnbd3_clients) + _num_images +4);
-            send(client_sock, &num, sizeof(num), MSG_WAITALL); // send number of lines to print
 
-            sprintf(buf, "Exported images (atime, vid, rid, file):\n");
-            strcat( buf, "========================================\n");
-            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+            int reply_size = (g_slist_length(_dnbd3_clients) + _num_images) * 4096 + 20;
+            char *reply = calloc(reply_size, sizeof(char));
+            char line[4096];
+
+            strcat(reply, "Exported images (atime, vid, rid, file):\n");
+            strcat( reply, "========================================\n");
             for (i = 0; i < _num_images; i++)
             {
                 timeinfo = localtime(&_images[i].atime);
                 strftime (time_buff,64,"%d.%m.%y %H:%M:%S",timeinfo);
-                sprintf(buf, "%s\t%i\t%i\t%s\n", time_buff, _images[i].vid, _images[i].rid,_images[i].file);
-                send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+                sprintf(line, "%s\t%i\t%i\t%s\n", time_buff, _images[i].vid, _images[i].rid,_images[i].file);
+                strcat(reply, line);
             }
-
-            sprintf(buf, "\nNumber images: %Zu\n\n", _num_images);
-            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
-
-            sprintf(buf, "Connected clients (ip, file):\n");
-            strcat( buf, "=============================\n");
-            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+            sprintf(line, "\nNumber images: %Zu\n\n", _num_images);
+            strcat(reply, line);
+            strcat(reply, "Connected clients (ip, file):\n");
+            strcat(reply, "=============================\n");
             for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
             {
                 dnbd3_client_t *client = iterator->data;
                 if (client->image)
                 {
-                    sprintf(buf, "%s\t%s\n", client->ip, client->image->file);
-                    send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+                    sprintf(line, "%s\t%s\n", client->ip, client->image->file);
+                    strcat(reply, line);
                 }
             }
+            sprintf(line, "\nNumber clients: %i\n\n", g_slist_length(_dnbd3_clients));
+            strcat(reply, line);
 
-            sprintf(buf, "\nNumber clients: %i\n\n", g_slist_length(_dnbd3_clients));
-            send(client_sock, buf, sizeof(buf), MSG_WAITALL);
+            send(client_sock, reply, reply_size*sizeof(char), MSG_WAITALL);
 
             pthread_spin_unlock(&_spinlock);
             close(client_sock);
+            free(reply);
             break;
 
         default:
             printf("ERROR: Unknown command: %i\n", cmd);
+            close(client_sock);
             break;
 
         }
@@ -166,6 +165,8 @@ void dnbd3_ipc_send(int cmd)
 {
     int client_sock;
     struct sockaddr_un server;
+    uint32_t cmd_net = htonl(cmd);
+    char buf[64];
 
     // Create socket
     if ((client_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
@@ -183,18 +184,10 @@ void dnbd3_ipc_send(int cmd)
         exit(EXIT_FAILURE);
     }
 
-    int i = 0;
-    char buf[4096];
-    uint32_t num, cmd_net;
-    cmd_net = htonl(cmd);
-
-	send(client_sock, &cmd_net, sizeof(cmd_net), MSG_WAITALL);
-	recv(client_sock, &num, sizeof(num), MSG_WAITALL);
-	for (i = 0; i < ntohl(num); i++)
-	{
-		if (recv(client_sock, &buf, sizeof(buf), MSG_WAITALL) > 0)
-			printf("%s", buf);
-	}
+    // Send and receive messages
+    send(client_sock, &cmd_net, sizeof(cmd_net), MSG_WAITALL);
+	while (recv(client_sock, &buf, sizeof(buf), MSG_WAITALL) > 0)
+		printf("%s", buf);
 
     close(client_sock);
 }
