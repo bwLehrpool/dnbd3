@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <netinet/in.h>
 
 #include "ipc.h"
 #include "config.h"
@@ -84,8 +85,10 @@ void* dnbd3_ipc_receive()
 
     while (1)
     {
-        int cmd, num, i = 0;
+    	int i = 0;
+        uint32_t cmd;
         char buf[4096];
+        uint32_t num = htonl(0);
 
         // Accept connection
         if ((client_sock = accept(server_sock, &client, &len)) < 0)
@@ -94,24 +97,27 @@ void* dnbd3_ipc_receive()
             exit(EXIT_FAILURE);
         }
 
-        recv(client_sock, &cmd, sizeof(int), MSG_WAITALL);
+        recv(client_sock, &cmd, sizeof(cmd), MSG_WAITALL);
 
-        switch (cmd)
+        switch (ntohl(cmd))
         {
         case IPC_EXIT:
+        	printf("INFO: Server shutdown...\n");
+        	send(client_sock, &num, sizeof(num), MSG_WAITALL);
             close(server_sock);
             dnbd3_cleanup();
             break;
 
         case IPC_RELOAD:
             printf("INFO: Reloading configuration...\n");
+            send(client_sock, &num, sizeof(num), MSG_WAITALL);
             dnbd3_reload_config(_config_file_name);
             break;
 
         case IPC_INFO:
             pthread_spin_lock(&_spinlock);
-            num = g_slist_length(_dnbd3_clients) + _num_images +4;
-            send(client_sock, &num, sizeof(int), MSG_WAITALL); // send number of lines to print
+            num = htonl(g_slist_length(_dnbd3_clients) + _num_images +4);
+            send(client_sock, &num, sizeof(num), MSG_WAITALL); // send number of lines to print
 
             sprintf(buf, "Exported images (atime, vid, rid, file):\n");
             strcat( buf, "========================================\n");
@@ -148,7 +154,7 @@ void* dnbd3_ipc_receive()
             break;
 
         default:
-            printf("ERROR: Unknown command: %i", cmd);
+            printf("ERROR: Unknown command: %i\n", cmd);
             break;
 
         }
@@ -177,33 +183,18 @@ void dnbd3_ipc_send(int cmd)
         exit(EXIT_FAILURE);
     }
 
-    int i, num = 0;
+    int i = 0;
     char buf[4096];
+    uint32_t num, cmd_net;
+    cmd_net = htonl(cmd);
 
-    switch (cmd)
-    {
-    case IPC_EXIT:
-        send(client_sock, &cmd, sizeof(int), MSG_WAITALL);
-        break;
+	send(client_sock, &cmd_net, sizeof(cmd_net), MSG_WAITALL);
+	recv(client_sock, &num, sizeof(num), MSG_WAITALL);
+	for (i = 0; i < ntohl(num); i++)
+	{
+		if (recv(client_sock, &buf, sizeof(buf), MSG_WAITALL) > 0)
+			printf("%s", buf);
+	}
 
-    case IPC_RELOAD:
-        send(client_sock, &cmd, sizeof(int), MSG_WAITALL);
-        break;
-
-    case IPC_INFO:
-        send(client_sock, &cmd, sizeof(int), MSG_WAITALL);
-        recv(client_sock, &num, sizeof(int), MSG_WAITALL);
-        for (i = 0; i < num; i++)
-        {
-            if (recv(client_sock, &buf, sizeof(buf), MSG_WAITALL) > 0)
-                printf("%s", buf);
-        }
-        break;
-
-    default:
-        printf("ERROR: Unknown command: %i", cmd);
-        break;
-
-    }
     close(client_sock);
 }
