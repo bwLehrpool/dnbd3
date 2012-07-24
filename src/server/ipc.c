@@ -228,7 +228,7 @@ void dnbd3_ipc_send(int cmd)
 
 		    xmlXPathContextPtr xpathCtx;
 		    xmlXPathObjectPtr xpathObj;
-		    xmlChar* xpathExpr
+		    xmlChar* xpathExpr;
 		    xmlNodeSetPtr nodes;
 		    xmlNodePtr cur;
 
