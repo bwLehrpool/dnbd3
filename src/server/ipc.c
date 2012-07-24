@@ -29,6 +29,9 @@
 #include <pthread.h>
 #include <netinet/in.h>
 
+#include <libxml/parser.h>
+#include <libxml/xpath.h>
+
 #include "ipc.h"
 #include "config.h"
 #include "server.h"
@@ -115,40 +118,57 @@ void* dnbd3_ipc_receive()
         case IPC_INFO:
             pthread_spin_lock(&_spinlock);
 
-            int reply_size = (g_slist_length(_dnbd3_clients) + _num_images) * 4096 + 20;
-            char *reply = calloc(reply_size, sizeof(char));
-            char line[4096];
+            xmlDocPtr doc;
+            xmlNodePtr root_node, images_node, clients_node, tmp_node;
+            xmlChar *xmlbuff;
+            int buffersize;
 
-            strcat(reply, "Exported images (atime, vid, rid, file):\n");
-            strcat( reply, "========================================\n");
-            for (i = 0; i < _num_images; i++)
-            {
-                timeinfo = localtime(&_images[i].atime);
-                strftime (time_buff,64,"%d.%m.%y %H:%M:%S",timeinfo);
-                sprintf(line, "%s\t%i\t%i\t%s\n", time_buff, _images[i].vid, _images[i].rid,_images[i].file);
-                strcat(reply, line);
-            }
-            sprintf(line, "\nNumber images: %Zu\n\n", _num_images);
-            strcat(reply, line);
-            strcat(reply, "Connected clients (ip, file):\n");
-            strcat(reply, "=============================\n");
-            for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
-            {
-                dnbd3_client_t *client = iterator->data;
-                if (client->image)
-                {
-                    sprintf(line, "%s\t%s\n", client->ip, client->image->file);
-                    strcat(reply, line);
-                }
-            }
-            sprintf(line, "\nNumber clients: %i\n\n", g_slist_length(_dnbd3_clients));
-            strcat(reply, line);
+            doc = xmlNewDoc(BAD_CAST "1.0");
+            root_node = xmlNewNode(NULL, BAD_CAST "dnbd3-server");
+            xmlDocSetRootElement(doc, root_node);
 
-            send(client_sock, reply, reply_size*sizeof(char), MSG_WAITALL);
+            // Images
+            images_node = xmlNewNode(NULL, BAD_CAST "images");
+            xmlAddChild(root_node, images_node);
+			for (i = 0; i < _num_images; i++)
+			{
+				char vid[20], rid[20];
+				sprintf(vid,"%d",_images[i].vid);
+				sprintf(rid,"%d",_images[i].rid);
+				timeinfo = localtime(&_images[i].atime);
+				strftime(time_buff,64,"%d.%m.%y %H:%M:%S",timeinfo);
+				tmp_node = xmlNewNode(NULL, BAD_CAST "image");
+				xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST time_buff);
+				xmlNewProp(tmp_node, BAD_CAST "vid", BAD_CAST vid);
+				xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST rid);
+				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST _images[i].file);
+				xmlAddChild(images_node, tmp_node);
+			}
 
+			// Clients
+            clients_node = xmlNewNode(NULL, BAD_CAST "clients");
+            xmlAddChild(root_node, clients_node);
+			for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
+			{
+				dnbd3_client_t *client = iterator->data;
+				if (client->image)
+				{
+					tmp_node = xmlNewNode(NULL, BAD_CAST "client");
+					xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST client->ip);
+					xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST client->image->file);
+					xmlAddChild(clients_node, tmp_node);
+				}
+			}
+
+			// Dump and send
+            xmlDocDumpFormatMemory(doc, &xmlbuff, &buffersize, 1);
+            send(client_sock, (char *) xmlbuff, buffersize, MSG_WAITALL);
+
+            // Cleanup
             pthread_spin_unlock(&_spinlock);
             close(client_sock);
-            free(reply);
+            xmlFree(xmlbuff);
+            xmlFreeDoc(doc);
             break;
 
         default:
@@ -163,10 +183,13 @@ void* dnbd3_ipc_receive()
 
 void dnbd3_ipc_send(int cmd)
 {
-    int client_sock;
+    int client_sock, size;
     struct sockaddr_un server;
     uint32_t cmd_net = htonl(cmd);
     char buf[64];
+
+    xmlParserCtxtPtr ctxt;
+    xmlDocPtr doc;
 
     // Create socket
     if ((client_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
@@ -184,10 +207,88 @@ void dnbd3_ipc_send(int cmd)
         exit(EXIT_FAILURE);
     }
 
-    // Send and receive messages
+    // Send message
     send(client_sock, &cmd_net, sizeof(cmd_net), MSG_WAITALL);
-	while (recv(client_sock, &buf, sizeof(buf), MSG_WAITALL) > 0)
-		printf("%s", buf);
+
+    if (cmd == IPC_INFO)
+    {
+    	// Parse reply
+    	ctxt = xmlCreatePushParserCtxt(NULL, NULL, NULL, 0, NULL);
+		while ( (size=recv(client_sock, &buf, sizeof(buf), MSG_WAITALL)) > 0)
+			xmlParseChunk(ctxt, buf, size, 0);
+
+		// Indicate the parsing is finished
+		xmlParseChunk(ctxt, buf, 0, 1);
+		doc = ctxt->myDoc;
+
+		// Print reply to stdout
+		if (ctxt->wellFormed)
+		{
+		    int n, i;
+
+		    xmlXPathContextPtr xpathCtx;
+		    xmlXPathObjectPtr xpathObj;
+		    xmlChar* xpathExpr
+		    xmlNodeSetPtr nodes;
+		    xmlNodePtr cur;
+
+		    // Print images
+		    xpathExpr = BAD_CAST "/dnbd3-server/images/image";
+		    xpathCtx = xmlXPathNewContext(doc);
+		    xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
+		    printf("Exported images (atime, vid, rid, file):\n");
+		    printf("========================================\n");
+		    nodes = xpathObj->nodesetval;
+		    n = (nodes) ? nodes->nodeNr : 0;
+		    for(i = 0; i < n; ++i)
+		    {
+				if(nodes->nodeTab[i]->type == XML_ELEMENT_NODE)
+				{
+					cur = nodes->nodeTab[i];
+					xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
+					xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "vid");
+					xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
+					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
+					printf("%s\t%s\t%s\t%s\n", atime, vid, rid, file);
+				}
+		    }
+		    printf("\nNumber images: %d\n\n", n);
+		    xmlXPathFreeObject(xpathObj);
+		    xmlXPathFreeContext(xpathCtx);
+
+		    // Print clients
+		    xpathExpr = BAD_CAST "/dnbd3-server/clients/client";
+		    xpathCtx = xmlXPathNewContext(doc);
+		    xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
+		    printf("Connected clients (ip, file):\n");
+		    printf("=============================\n");
+		    nodes = xpathObj->nodesetval;
+		    n = (nodes) ? nodes->nodeNr : 0;
+		    for(i = 0; i < n; ++i)
+		    {
+				if(nodes->nodeTab[i]->type == XML_ELEMENT_NODE)
+				{
+					cur = nodes->nodeTab[i];
+					xmlChar *ip = xmlGetNoNsProp(cur, BAD_CAST "ip");
+					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
+					printf("%s\t%s\n", ip, file);
+				}
+		    }
+		    printf("\nNumber clients: %d\n\n", n);
+		    xmlXPathFreeObject(xpathObj);
+		    xmlXPathFreeContext(xpathCtx);
+			//xmlDocDump(stdout, doc);
+		}
+		else
+		{
+			printf("ERROR: Failed to parse reply\n");
+		}
+
+		// Cleanup
+		xmlFreeParserCtxt(ctxt);
+		xmlFreeDoc(doc);
+		xmlCleanupParser();
+    }
 
     close(client_sock);
 }
