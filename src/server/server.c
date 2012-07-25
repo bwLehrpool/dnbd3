@@ -99,7 +99,9 @@ void dnbd3_cleanup()
 
     close(_sock);
     free(_images);
+#ifndef IPC_TCP
     unlink(UNIX_SOCKET);
+#endif
     exit(EXIT_SUCCESS);
 }
 

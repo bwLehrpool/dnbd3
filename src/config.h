@@ -44,5 +44,6 @@
 #define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3/client.conf"
 #define UNIX_SOCKET "/run/dnbd3-server.sock"
 #define UNIX_SOCKET_GROUP "dnbd"
+#define IPC_PORT 5004
 
 #endif /* CONFIG_H_ */

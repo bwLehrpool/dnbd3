@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <libxml/parser.h>
 #include <libxml/xpath.h>
@@ -39,28 +40,31 @@
 
 void* dnbd3_ipc_receive()
 {
-    int server_sock, client_sock;
-    struct sockaddr_un server, client;
-    unsigned int len = sizeof(client);
-
     GSList *iterator = NULL;
 
     struct tm * timeinfo;
     char time_buff[64];
 
+    int server_sock, client_sock;
+
+#ifdef IPC_TCP
+    struct sockaddr_in server, client;
+    unsigned int len = sizeof(client);
+
     // Create socket
-    if ((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+    if ((server_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
     {
         perror("ERROR: IPC socket");
         exit(EXIT_FAILURE);
     }
 
-    server.sun_family = AF_UNIX;
-    strcpy(server.sun_path, UNIX_SOCKET);
-    unlink(UNIX_SOCKET);
+    memset(&server, 0, sizeof(server));
+    server.sin_family = AF_INET; // IPv4
+    server.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server.sin_port = htons(IPC_PORT); // set port number
 
     // Bind to socket
-    if (bind(server_sock, &server, sizeof(server.sun_family) + strlen(server.sun_path)) < 0)
+    if (bind(server_sock, (struct sockaddr*) &server, sizeof(server)) < 0)
     {
         perror("ERROR: IPC bind");
         exit(EXIT_FAILURE);
@@ -72,19 +76,48 @@ void* dnbd3_ipc_receive()
         perror("ERROR: IPC listen");
         exit(EXIT_FAILURE);
     }
+#else
+    struct sockaddr_un server, client;
+    unsigned int len = sizeof(client);
 
-    // Set groupID and permissions on ipc socket
-    struct group *grp;
-    grp = getgrnam(UNIX_SOCKET_GROUP);
-    if (grp == NULL)
-    {
-    	printf("WARN: Group '%s' not found.\n", UNIX_SOCKET_GROUP);
-    }
-    else
-    {
-    	chmod(UNIX_SOCKET, 0775);
-    	chown(UNIX_SOCKET, -1, grp->gr_gid);
-    }
+    // Create socket
+	if ((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+	{
+		perror("ERROR: IPC socket");
+		exit(EXIT_FAILURE);
+	}
+
+	server.sun_family = AF_UNIX;
+	strcpy(server.sun_path, UNIX_SOCKET);
+	unlink(UNIX_SOCKET);
+
+	// Bind to socket
+	if (bind(server_sock, &server, sizeof(server.sun_family) + strlen(server.sun_path)) < 0)
+	{
+		perror("ERROR: IPC bind");
+		exit(EXIT_FAILURE);
+	}
+
+	// Listen on socket
+	if (listen(server_sock, 5) < 0)
+	{
+		perror("ERROR: IPC listen");
+		exit(EXIT_FAILURE);
+	}
+
+	// Set groupID and permissions on ipc socket
+	struct group *grp;
+	grp = getgrnam(UNIX_SOCKET_GROUP);
+	if (grp == NULL)
+	{
+		printf("WARN: Group '%s' not found.\n", UNIX_SOCKET_GROUP);
+	}
+	else
+	{
+		chmod(UNIX_SOCKET, 0775);
+		chown(UNIX_SOCKET, -1, grp->gr_gid);
+	}
+#endif
 
     while (1)
     {
@@ -183,13 +216,36 @@ void* dnbd3_ipc_receive()
 
 void dnbd3_ipc_send(int cmd)
 {
+	uint32_t cmd_net = htonl(cmd);
     int client_sock, size;
-    struct sockaddr_un server;
-    uint32_t cmd_net = htonl(cmd);
     char buf[64];
 
     xmlParserCtxtPtr ctxt;
     xmlDocPtr doc;
+
+#ifdef IPC_TCP
+    struct sockaddr_in server;
+
+    // Create socket
+    if ((client_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+    {
+        perror("ERROR: IPC socket");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server, 0, sizeof(server));
+    server.sin_family = AF_INET; // IPv4
+    server.sin_addr.s_addr = inet_addr("127.0.0.1");
+    server.sin_port = htons(IPC_PORT); // set port number
+
+    // Connect to server
+    if (connect(client_sock, (struct sockaddr *) &server, sizeof(server)) < 0)
+    {
+        perror("ERROR: IPC connect");
+        exit(EXIT_FAILURE);
+    }
+#else
+    struct sockaddr_un server;
 
     // Create socket
     if ((client_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
@@ -206,6 +262,7 @@ void dnbd3_ipc_send(int cmd)
         perror("ERROR: IPC connect");
         exit(EXIT_FAILURE);
     }
+#endif
 
     // Send message
     send(client_sock, &cmd_net, sizeof(cmd_net), MSG_WAITALL);
