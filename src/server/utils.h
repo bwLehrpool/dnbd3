@@ -28,6 +28,7 @@
 
 void dnbd3_load_config(char *file);
 void dnbd3_reload_config(char* config_file_name);
+void dnbd3_add_image(dnbd3_image_t *image, char *file);
 
 dnbd3_image_t* dnbd3_get_image(int vid, int rid);
 

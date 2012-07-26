@@ -30,10 +30,12 @@
 
 typedef struct
 {
+	char *group;
     char *file;
     uint64_t filesize;
     size_t num_servers;
     char **servers;
+    char *serverss;
     int vid;
     int rid;
     time_t atime;

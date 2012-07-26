@@ -78,9 +78,10 @@ void dnbd3_cleanup()
     }
     g_slist_free(_dnbd3_clients);
 
-    // save cache maps to files
+
     for (i = 0; i < _num_images; i++)
     {
+    	// save cache maps to files
         if (_images[i].cache_file)
         {
             char tmp[strlen(_images[i].cache_file)+4];
@@ -93,6 +94,13 @@ void dnbd3_cleanup()
 
             close(fd);
         }
+
+        free(_images[i].group);
+        free(_images[i].file);
+        free(_images[i].servers);
+        free(_images[i].serverss);
+        free(_images[i].cache_file);
+        free(_images[i].cache_map);
     }
 
     pthread_spin_unlock(&_spinlock);

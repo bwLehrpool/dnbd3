@@ -44,8 +44,13 @@ void* dnbd3_ipc_receive()
 
     struct tm * timeinfo;
     char time_buff[64];
+    char buf[64];
 
     int server_sock, client_sock;
+
+    struct timeval timeout;
+    timeout.tv_sec = 2;
+    timeout.tv_usec = 0;
 
 #ifdef IPC_TCP
     struct sockaddr_in server, client;
@@ -62,6 +67,9 @@ void* dnbd3_ipc_receive()
     server.sin_family = AF_INET; // IPv4
     server.sin_addr.s_addr = inet_addr("127.0.0.1");
     server.sin_port = htons(IPC_PORT); // set port number
+
+    int optval = 1;
+    setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
     // Bind to socket
     if (bind(server_sock, (struct sockaddr*) &server, sizeof(server)) < 0)
@@ -121,7 +129,7 @@ void* dnbd3_ipc_receive()
 
     while (1)
     {
-    	int i = 0;
+    	int i = 0, size = 0;
         uint32_t cmd;
 
         // Accept connection
@@ -130,6 +138,9 @@ void* dnbd3_ipc_receive()
             perror("ERROR: IPC accept");
             exit(EXIT_FAILURE);
         }
+
+        setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
+        setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
 
         recv(client_sock, &cmd, sizeof(cmd), MSG_WAITALL);
 
@@ -151,14 +162,14 @@ void* dnbd3_ipc_receive()
         case IPC_INFO:
             pthread_spin_lock(&_spinlock);
 
-            xmlDocPtr doc;
+            xmlDocPtr doc_info;
             xmlNodePtr root_node, images_node, clients_node, tmp_node;
             xmlChar *xmlbuff;
             int buffersize;
 
-            doc = xmlNewDoc(BAD_CAST "1.0");
+            doc_info = xmlNewDoc(BAD_CAST "1.0");
             root_node = xmlNewNode(NULL, BAD_CAST "dnbd3-server");
-            xmlDocSetRootElement(doc, root_node);
+            xmlDocSetRootElement(doc_info, root_node);
 
             // Images
             images_node = xmlNewNode(NULL, BAD_CAST "images");
@@ -171,10 +182,13 @@ void* dnbd3_ipc_receive()
 				timeinfo = localtime(&_images[i].atime);
 				strftime(time_buff,64,"%d.%m.%y %H:%M:%S",timeinfo);
 				tmp_node = xmlNewNode(NULL, BAD_CAST "image");
+				xmlNewProp(tmp_node, BAD_CAST "group", BAD_CAST _images[i].group);
 				xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST time_buff);
 				xmlNewProp(tmp_node, BAD_CAST "vid", BAD_CAST vid);
 				xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST rid);
 				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST _images[i].file);
+				xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST _images[i].serverss);
+				xmlNewProp(tmp_node, BAD_CAST "cache_file", BAD_CAST _images[i].cache_file);
 				xmlAddChild(images_node, tmp_node);
 			}
 
@@ -194,15 +208,73 @@ void* dnbd3_ipc_receive()
 			}
 
 			// Dump and send
-            xmlDocDumpFormatMemory(doc, &xmlbuff, &buffersize, 1);
+            xmlDocDumpFormatMemory(doc_info, &xmlbuff, &buffersize, 1);
             send(client_sock, (char *) xmlbuff, buffersize, MSG_WAITALL);
 
             // Cleanup
             pthread_spin_unlock(&_spinlock);
             close(client_sock);
             xmlFree(xmlbuff);
-            xmlFreeDoc(doc);
+            xmlFreeDoc(doc_info);
             break;
+
+        case IPC_CONFIG:
+        	pthread_spin_lock(&_spinlock);
+            xmlParserCtxtPtr ctxt;
+            xmlDocPtr doc_config;
+
+            // Parse reply
+            ctxt = xmlCreatePushParserCtxt(NULL, NULL, NULL, 0, NULL);
+        	while ( (size=recv(client_sock, &buf, sizeof(buf), MSG_WAITALL)) > 0)
+        		xmlParseChunk(ctxt, buf, size, 0);
+
+    		// Indicate the parsing is finished
+    		xmlParseChunk(ctxt, buf, 0, 1);
+    		doc_config = ctxt->myDoc;
+
+    		if (ctxt->wellFormed)
+    		{
+//    			xmlDocDump(stdout, doc_config);
+
+				xmlXPathContextPtr xpathCtx;
+				xmlXPathObjectPtr xpathObj;
+				xmlChar* xpathExpr;
+				xmlNodeSetPtr nodes;
+				xmlNodePtr cur;
+
+				xpathExpr = BAD_CAST "/dnbd3-server/image";
+				xpathCtx = xmlXPathNewContext(doc_config);
+				xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
+
+				nodes = xpathObj->nodesetval;
+				cur = nodes->nodeTab[0];
+				if(cur->type == XML_ELEMENT_NODE)
+				{
+					dnbd3_image_t image;
+					image.group = (char *) xmlGetNoNsProp(cur, BAD_CAST "group");
+					image.vid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "vid"));
+					image.rid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "rid"));
+					image.file = (char *) xmlGetNoNsProp(cur, BAD_CAST "file");
+					image.serverss = (char *) xmlGetNoNsProp(cur, BAD_CAST "servers");
+					image.cache_file = (char *) xmlGetNoNsProp(cur, BAD_CAST "cache_file");
+					dnbd3_add_image(&image, _config_file_name);
+				}
+
+				xmlXPathFreeObject(xpathObj);
+				xmlXPathFreeContext(xpathCtx);
+    		}
+
+        	// Cleanup
+        	pthread_spin_unlock(&_spinlock);
+        	close(client_sock);
+    		xmlFreeParserCtxt(ctxt);
+    		xmlFreeDoc(doc_config);
+    		xmlCleanupParser();
+
+    		// Reload configuration
+            printf("INFO: Reloading configuration...\n");
+            dnbd3_reload_config(_config_file_name);
+        	break;
 
         default:
             printf("ERROR: Unknown command: %i\n", cmd);
@@ -334,7 +406,7 @@ void dnbd3_ipc_send(int cmd)
 		    printf("\nNumber clients: %d\n\n", n);
 		    xmlXPathFreeObject(xpathObj);
 		    xmlXPathFreeContext(xpathCtx);
-			//xmlDocDump(stdout, doc);
+//			xmlDocDump(stdout, doc);
 		}
 		else
 		{

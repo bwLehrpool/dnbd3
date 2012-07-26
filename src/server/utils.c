@@ -46,8 +46,11 @@ void dnbd3_load_config(char *file)
 
     for (i = 0; i < _num_images; i++)
     {
+    	_images[i].group = malloc(strlen(groups[i]));
+    	strcpy(_images[i].group, groups[i]);
         _images[i].file = g_key_file_get_string(gkf, groups[i], "file", NULL);
         _images[i].servers = g_key_file_get_string_list(gkf, groups[i], "servers", &_images[i].num_servers, NULL);
+        _images[i].serverss = g_key_file_get_string(gkf, groups[i], "servers", NULL);
         _images[i].vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
         _images[i].rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
         _images[i].cache_file = g_key_file_get_string(gkf, groups[i], "cache", NULL);
@@ -105,9 +108,9 @@ void dnbd3_reload_config(char* config_file_name)
         client->image = NULL;
     }
 
-    // save cache maps
     for (i = 0; i < _num_images; i++)
     {
+    	// save cache maps
         if (_images[i].cache_file)
         {
             char tmp[strlen(_images[i].cache_file)+4];
@@ -120,6 +123,13 @@ void dnbd3_reload_config(char* config_file_name)
 
             close(fd);
         }
+
+        free(_images[i].group);
+        free(_images[i].file);
+        free(_images[i].servers);
+        free(_images[i].serverss);
+        free(_images[i].cache_file);
+        free(_images[i].cache_map);
     }
 
     _num_images = 0;
@@ -131,6 +141,33 @@ void dnbd3_reload_config(char* config_file_name)
         pthread_spin_unlock(&client->spinlock);
     }
     pthread_spin_unlock(&_spinlock);
+}
+
+void dnbd3_add_image(dnbd3_image_t *image, char *file)
+{
+    GKeyFile* gkf;
+    gkf = g_key_file_new();
+    if (!g_key_file_load_from_file(gkf, file, G_KEY_FILE_NONE, NULL))
+    {
+        printf("ERROR: Config file not found: %s\n", file);
+        exit(EXIT_FAILURE);
+    }
+
+    g_key_file_set_integer(gkf, image->group, "vid", image->vid);
+    g_key_file_set_integer(gkf, image->group, "rid", image->rid);
+    g_key_file_set_string(gkf, image->group, "file", image->file);
+    g_key_file_set_string(gkf, image->group, "servers", image->serverss);
+    g_key_file_set_string(gkf, image->group, "cache_file", image->cache_file);
+
+    gchar* data = g_key_file_to_data(gkf, NULL, NULL);
+
+    FILE *f;
+    f = fopen(file,"w");
+    fputs((char*) data, f);
+    fclose(f);
+
+    g_free(data);
+    g_key_file_free(gkf);
 }
 
 dnbd3_image_t* dnbd3_get_image(int vid, int rid)

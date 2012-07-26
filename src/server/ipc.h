@@ -24,6 +24,7 @@
 #define IPC_EXIT 0
 #define IPC_RELOAD 1
 #define IPC_INFO 2
+#define IPC_CONFIG 3
 
 void* dnbd3_ipc_receive();
 
