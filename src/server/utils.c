@@ -145,6 +145,16 @@ void dnbd3_reload_config(char* config_file_name)
 
 void dnbd3_add_image(dnbd3_image_t *image, char *file)
 {
+	dnbd3_image_t* tmp = dnbd3_get_image(image->vid, image->rid);
+	if (tmp && image->rid != 0)
+	{
+		printf("ERROR: Image already exists (%d,%d)\n", image->vid, image->rid);
+		return;
+	}
+
+	if (tmp && image->rid == 0)
+		image->rid = tmp->rid +1;
+
     GKeyFile* gkf;
     gkf = g_key_file_new();
     if (!g_key_file_load_from_file(gkf, file, G_KEY_FILE_NONE, NULL))
