@@ -44,8 +44,8 @@ void* dnbd3_ipc_receive()
 
     struct tm * timeinfo;
     char time_buff[64];
-    char buf[64];
 
+    dnbd3_ipc_t header;
     int server_sock, client_sock;
 
     struct timeval timeout;
@@ -130,7 +130,6 @@ void* dnbd3_ipc_receive()
     while (1)
     {
     	int i = 0, size = 0;
-        uint32_t cmd;
 
         // Accept connection
         if ((client_sock = accept(server_sock, &client, &len)) < 0)
@@ -142,12 +141,18 @@ void* dnbd3_ipc_receive()
         setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
         setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
 
-        recv(client_sock, &cmd, sizeof(cmd), MSG_WAITALL);
+        recv(client_sock, &header, sizeof(header), MSG_WAITALL);
+        header.cmd = ntohl(header.cmd);
+        header.size = ntohl(header.size);
+        header.error = ntohl(header.error);
 
-        switch (ntohl(cmd))
+        switch (header.cmd)
         {
         case IPC_EXIT:
         	printf("INFO: Server shutdown...\n");
+    		header.size = ntohl(0);
+    		header.error = ntohl(0);
+        	send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
         	close(client_sock);
             close(server_sock);
             dnbd3_cleanup();
@@ -156,6 +161,9 @@ void* dnbd3_ipc_receive()
         case IPC_RELOAD:
             printf("INFO: Reloading configuration...\n");
             dnbd3_reload_config(_config_file_name);
+    		header.size = ntohl(0);
+    		header.error = ntohl(0);
+            send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
             close(client_sock);
             break;
 
@@ -209,6 +217,9 @@ void* dnbd3_ipc_receive()
 
 			// Dump and send
             xmlDocDumpFormatMemory(doc_info, &xmlbuff, &buffersize, 1);
+            header.size = htonl(buffersize);
+            header.error = htonl(0);
+            send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
             send(client_sock, (char *) xmlbuff, buffersize, MSG_WAITALL);
 
             // Cleanup
@@ -220,21 +231,15 @@ void* dnbd3_ipc_receive()
 
         case IPC_CONFIG:
         	pthread_spin_lock(&_spinlock);
-            xmlParserCtxtPtr ctxt;
-            xmlDocPtr doc_config;
 
-            // Parse reply
-            ctxt = xmlCreatePushParserCtxt(NULL, NULL, NULL, 0, NULL);
-        	while ( (size=recv(client_sock, &buf, sizeof(buf), MSG_WAITALL)) > 0)
-        		xmlParseChunk(ctxt, buf, size, 0);
+        	// Parse reply
+            char* buf = malloc(header.size);
+        	size = recv(client_sock, buf, header.size, MSG_WAITALL);
+        	xmlDocPtr doc_config = xmlReadMemory(buf, size, "noname.xml", NULL, 0);
 
-    		// Indicate the parsing is finished
-    		xmlParseChunk(ctxt, buf, 0, 1);
-    		doc_config = ctxt->myDoc;
-
-    		if (ctxt->wellFormed)
+    		if (doc_config)
     		{
-//    			xmlDocDump(stdout, doc_config);
+    			// xmlDocDump(stdout, doc_config);
 
 				xmlXPathContextPtr xpathCtx;
 				xmlXPathObjectPtr xpathObj;
@@ -257,27 +262,29 @@ void* dnbd3_ipc_receive()
 					image.file = (char *) xmlGetNoNsProp(cur, BAD_CAST "file");
 					image.serverss = (char *) xmlGetNoNsProp(cur, BAD_CAST "servers");
 					image.cache_file = (char *) xmlGetNoNsProp(cur, BAD_CAST "cache_file");
-					dnbd3_add_image(&image, _config_file_name);
+					header.error = htonl(dnbd3_add_image(&image, _config_file_name));
 				}
 
 				xmlXPathFreeObject(xpathObj);
 				xmlXPathFreeContext(xpathCtx);
     		}
 
+    		header.size = htonl(0);
+    		send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
+
         	// Cleanup
         	pthread_spin_unlock(&_spinlock);
         	close(client_sock);
-    		xmlFreeParserCtxt(ctxt);
     		xmlFreeDoc(doc_config);
     		xmlCleanupParser();
-
-    		// Reload configuration
-            printf("INFO: Reloading configuration...\n");
-            dnbd3_reload_config(_config_file_name);
+    		free(buf);
         	break;
 
         default:
-            printf("ERROR: Unknown command: %i\n", cmd);
+            printf("ERROR: Unknown command: %i\n", header.cmd);
+            header.size = htonl(0);
+            header.error = htonl(ERROR_UNKNOWN);
+            send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
             close(client_sock);
             break;
 
@@ -288,12 +295,7 @@ void* dnbd3_ipc_receive()
 
 void dnbd3_ipc_send(int cmd)
 {
-	uint32_t cmd_net = htonl(cmd);
     int client_sock, size;
-    char buf[64];
-
-    xmlParserCtxtPtr ctxt;
-    xmlDocPtr doc;
 
 #ifdef IPC_TCP
     struct sockaddr_in server;
@@ -337,40 +339,39 @@ void dnbd3_ipc_send(int cmd)
 #endif
 
     // Send message
-    send(client_sock, &cmd_net, sizeof(cmd_net), MSG_WAITALL);
+    dnbd3_ipc_t header;
+    header.cmd = htonl(cmd);
+    header.size = 0;
+    header.error = 0;
+    send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
+    recv(client_sock, &header, sizeof(header), MSG_WAITALL);
 
-    if (cmd == IPC_INFO)
+    if (cmd == IPC_INFO && header.size > 0)
     {
-    	// Parse reply
-    	ctxt = xmlCreatePushParserCtxt(NULL, NULL, NULL, 0, NULL);
-		while ( (size=recv(client_sock, &buf, sizeof(buf), MSG_WAITALL)) > 0)
-			xmlParseChunk(ctxt, buf, size, 0);
+        char* buf = malloc(header.size);
+    	size = recv(client_sock, buf, header.size, MSG_WAITALL);
+    	xmlDocPtr doc = xmlReadMemory(buf, size, "noname.xml", NULL, 0);
 
-		// Indicate the parsing is finished
-		xmlParseChunk(ctxt, buf, 0, 1);
-		doc = ctxt->myDoc;
-
-		// Print reply to stdout
-		if (ctxt->wellFormed)
+		if (doc)
 		{
-		    int n, i;
+			int n, i;
 
-		    xmlXPathContextPtr xpathCtx;
-		    xmlXPathObjectPtr xpathObj;
-		    xmlChar* xpathExpr;
-		    xmlNodeSetPtr nodes;
-		    xmlNodePtr cur;
+			xmlXPathContextPtr xpathCtx;
+			xmlXPathObjectPtr xpathObj;
+			xmlChar* xpathExpr;
+			xmlNodeSetPtr nodes;
+			xmlNodePtr cur;
 
-		    // Print images
-		    xpathExpr = BAD_CAST "/dnbd3-server/images/image";
-		    xpathCtx = xmlXPathNewContext(doc);
-		    xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
-		    printf("Exported images (atime, vid, rid, file):\n");
-		    printf("========================================\n");
-		    nodes = xpathObj->nodesetval;
-		    n = (nodes) ? nodes->nodeNr : 0;
-		    for(i = 0; i < n; ++i)
-		    {
+			// Print images
+			xpathExpr = BAD_CAST "/dnbd3-server/images/image";
+			xpathCtx = xmlXPathNewContext(doc);
+			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
+			printf("Exported images (atime, vid, rid, file):\n");
+			printf("========================================\n");
+			nodes = xpathObj->nodesetval;
+			n = (nodes) ? nodes->nodeNr : 0;
+			for(i = 0; i < n; ++i)
+			{
 				if(nodes->nodeTab[i]->type == XML_ELEMENT_NODE)
 				{
 					cur = nodes->nodeTab[i];
@@ -380,21 +381,21 @@ void dnbd3_ipc_send(int cmd)
 					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
 					printf("%s\t%s\t%s\t%s\n", atime, vid, rid, file);
 				}
-		    }
-		    printf("\nNumber images: %d\n\n", n);
-		    xmlXPathFreeObject(xpathObj);
-		    xmlXPathFreeContext(xpathCtx);
+			}
+			printf("\nNumber images: %d\n\n", n);
+			xmlXPathFreeObject(xpathObj);
+			xmlXPathFreeContext(xpathCtx);
 
-		    // Print clients
-		    xpathExpr = BAD_CAST "/dnbd3-server/clients/client";
-		    xpathCtx = xmlXPathNewContext(doc);
-		    xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
-		    printf("Connected clients (ip, file):\n");
-		    printf("=============================\n");
-		    nodes = xpathObj->nodesetval;
-		    n = (nodes) ? nodes->nodeNr : 0;
-		    for(i = 0; i < n; ++i)
-		    {
+			// Print clients
+			xpathExpr = BAD_CAST "/dnbd3-server/clients/client";
+			xpathCtx = xmlXPathNewContext(doc);
+			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
+			printf("Connected clients (ip, file):\n");
+			printf("=============================\n");
+			nodes = xpathObj->nodesetval;
+			n = (nodes) ? nodes->nodeNr : 0;
+			for(i = 0; i < n; ++i)
+			{
 				if(nodes->nodeTab[i]->type == XML_ELEMENT_NODE)
 				{
 					cur = nodes->nodeTab[i];
@@ -402,21 +403,22 @@ void dnbd3_ipc_send(int cmd)
 					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
 					printf("%s\t%s\n", ip, file);
 				}
-		    }
-		    printf("\nNumber clients: %d\n\n", n);
-		    xmlXPathFreeObject(xpathObj);
-		    xmlXPathFreeContext(xpathCtx);
-//			xmlDocDump(stdout, doc);
-		}
-		else
+			}
+			printf("\nNumber clients: %d\n\n", n);
+
+			// Cleanup
+			xmlXPathFreeObject(xpathObj);
+			xmlXPathFreeContext(xpathCtx);
+			xmlFreeDoc(doc);
+			xmlCleanupParser();
+
+			// xmlDocDump(stdout, doc);
+
+		} else
 		{
 			printf("ERROR: Failed to parse reply\n");
 		}
 
-		// Cleanup
-		xmlFreeParserCtxt(ctxt);
-		xmlFreeDoc(doc);
-		xmlCleanupParser();
     }
 
     close(client_sock);

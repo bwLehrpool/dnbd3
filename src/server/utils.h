@@ -26,9 +26,14 @@
 #ifndef UTILS_H_
 #define UTILS_H_
 
+#define ERROR_FILE_NOT_FOUND			1
+#define ERROR_IMAGE_ALREADY_EXISTS		2
+#define ERROR_CONFIG_FILE_PERMISSIONS	3
+#define ERROR_UNKNOWN					10
+
 void dnbd3_load_config(char *file);
 void dnbd3_reload_config(char* config_file_name);
-void dnbd3_add_image(dnbd3_image_t *image, char *file);
+int dnbd3_add_image(dnbd3_image_t *image, char *file);
 
 dnbd3_image_t* dnbd3_get_image(int vid, int rid);
 

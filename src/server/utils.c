@@ -63,7 +63,7 @@ void dnbd3_load_config(char *file)
         if (fd > 0)
             _images[i].filesize = lseek(fd, 0, SEEK_END);
         else
-            printf("ERROR: Image not found: %s\n", _images[i].file);
+            printf("ERROR: Image file not found: %s\n", _images[i].file);
 
         close(fd);
 
@@ -143,13 +143,21 @@ void dnbd3_reload_config(char* config_file_name)
     pthread_spin_unlock(&_spinlock);
 }
 
-void dnbd3_add_image(dnbd3_image_t *image, char *file)
+int dnbd3_add_image(dnbd3_image_t *image, char *file)
 {
+	FILE* f = fopen(image->file,"r");
+	if (f == NULL)
+	{
+		printf("ERROR: Image file not found: %s\n", image->file);
+		return ERROR_FILE_NOT_FOUND;
+	}
+	fclose (f);
+
 	dnbd3_image_t* tmp = dnbd3_get_image(image->vid, image->rid);
 	if (tmp && image->rid != 0)
 	{
 		printf("ERROR: Image already exists (%d,%d)\n", image->vid, image->rid);
-		return;
+		return ERROR_IMAGE_ALREADY_EXISTS;
 	}
 
 	if (tmp && image->rid == 0)
@@ -171,13 +179,22 @@ void dnbd3_add_image(dnbd3_image_t *image, char *file)
 
     gchar* data = g_key_file_to_data(gkf, NULL, NULL);
 
-    FILE *f;
     f = fopen(file,"w");
-    fputs((char*) data, f);
-    fclose(f);
-
-    g_free(data);
-    g_key_file_free(gkf);
+    if (f)
+    {
+    	fputs((char*) data, f);
+    	fclose(f);
+        g_free(data);
+        g_key_file_free(gkf);
+        return 0;
+    }
+    else
+    {
+    	g_free(data);
+    	g_key_file_free(gkf);
+    	printf("ERROR: Config file is not writable: %s\n", file);
+    	return ERROR_CONFIG_FILE_PERMISSIONS;
+    }
 }
 
 dnbd3_image_t* dnbd3_get_image(int vid, int rid)

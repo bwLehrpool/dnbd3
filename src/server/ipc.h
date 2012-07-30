@@ -30,4 +30,14 @@ void* dnbd3_ipc_receive();
 
 void dnbd3_ipc_send(int cmd);
 
+
+#pragma pack(1)
+typedef struct
+{
+    uint32_t cmd;	// 4byte
+    uint32_t size;	// 4byte
+    uint32_t error;	// 4byte
+} dnbd3_ipc_t;
+#pragma pack(0)
+
 #endif /* IPC_H_ */
