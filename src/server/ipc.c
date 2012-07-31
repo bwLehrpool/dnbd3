@@ -130,6 +130,8 @@ void* dnbd3_ipc_receive()
     while (1)
     {
     	int i = 0, size = 0;
+    	char* buf;
+    	xmlDocPtr doc;
 
         // Accept connection
         if ((client_sock = accept(server_sock, &client, &len)) < 0)
@@ -170,14 +172,13 @@ void* dnbd3_ipc_receive()
         case IPC_INFO:
             pthread_spin_lock(&_spinlock);
 
-            xmlDocPtr doc_info;
             xmlNodePtr root_node, images_node, clients_node, tmp_node;
             xmlChar *xmlbuff;
             int buffersize;
 
-            doc_info = xmlNewDoc(BAD_CAST "1.0");
+            doc = xmlNewDoc(BAD_CAST "1.0");
             root_node = xmlNewNode(NULL, BAD_CAST "info");
-            xmlDocSetRootElement(doc_info, root_node);
+            xmlDocSetRootElement(doc, root_node);
 
             // Images
             images_node = xmlNewNode(NULL, BAD_CAST "images");
@@ -216,7 +217,7 @@ void* dnbd3_ipc_receive()
 			}
 
 			// Dump and send
-            xmlDocDumpFormatMemory(doc_info, &xmlbuff, &buffersize, 1);
+            xmlDocDumpFormatMemory(doc, &xmlbuff, &buffersize, 1);
             header.size = htonl(buffersize);
             header.error = htonl(0);
             send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
@@ -226,18 +227,18 @@ void* dnbd3_ipc_receive()
             pthread_spin_unlock(&_spinlock);
             close(client_sock);
             xmlFree(xmlbuff);
-            xmlFreeDoc(doc_info);
+            xmlFreeDoc(doc);
             break;
 
-        case IPC_CONFIG:
+        case IPC_ADDIMG:
         	pthread_spin_lock(&_spinlock);
 
         	// Parse reply
-            char* buf = malloc(header.size);
+            buf = malloc(header.size);
         	size = recv(client_sock, buf, header.size, MSG_WAITALL);
-        	xmlDocPtr doc_config = xmlReadMemory(buf, size, "noname.xml", NULL, 0);
+        	doc = xmlReadMemory(buf, size, "noname.xml", NULL, 0);
 
-    		if (doc_config)
+    		if (doc)
     		{
 //    			xmlDocDump(stdout, doc_config);
 
@@ -248,7 +249,7 @@ void* dnbd3_ipc_receive()
 				xmlNodePtr cur;
 
 				xpathExpr = BAD_CAST "/info/images/image";
-				xpathCtx = xmlXPathNewContext(doc_config);
+				xpathCtx = xmlXPathNewContext(doc);
 				xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
 
 				nodes = xpathObj->nodesetval;
@@ -275,7 +276,58 @@ void* dnbd3_ipc_receive()
         	// Cleanup
         	pthread_spin_unlock(&_spinlock);
         	close(client_sock);
-    		xmlFreeDoc(doc_config);
+    		xmlFreeDoc(doc);
+    		xmlCleanupParser();
+    		free(buf);
+        	break;
+
+        case IPC_DELIMG:
+        	pthread_spin_lock(&_spinlock);
+
+        	// Parse reply
+            buf = malloc(header.size);
+        	size = recv(client_sock, buf, header.size, MSG_WAITALL);
+        	doc = xmlReadMemory(buf, size, "noname.xml", NULL, 0);
+
+    		if (doc)
+    		{
+//    			xmlDocDump(stdout, doc_config);
+
+				xmlXPathContextPtr xpathCtx;
+				xmlXPathObjectPtr xpathObj;
+				xmlChar* xpathExpr;
+				xmlNodeSetPtr nodes;
+				xmlNodePtr cur;
+
+				xpathExpr = BAD_CAST "/info/images/image";
+				xpathCtx = xmlXPathNewContext(doc);
+				xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
+
+				nodes = xpathObj->nodesetval;
+				cur = nodes->nodeTab[0];
+				if(cur->type == XML_ELEMENT_NODE)
+				{
+					dnbd3_image_t image;
+					image.group = (char *) xmlGetNoNsProp(cur, BAD_CAST "group");
+					image.vid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "vid"));
+					image.rid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "rid"));
+					image.file = (char *) xmlGetNoNsProp(cur, BAD_CAST "file");
+					image.serverss = (char *) xmlGetNoNsProp(cur, BAD_CAST "servers");
+					image.cache_file = (char *) xmlGetNoNsProp(cur, BAD_CAST "cache");
+					header.error = htonl(dnbd3_del_image(&image, _config_file_name));
+				}
+
+				xmlXPathFreeObject(xpathObj);
+				xmlXPathFreeContext(xpathCtx);
+    		}
+
+    		header.size = htonl(0);
+    		send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
+
+        	// Cleanup
+        	pthread_spin_unlock(&_spinlock);
+        	close(client_sock);
+    		xmlFreeDoc(doc);
     		xmlCleanupParser();
     		free(buf);
         	break;

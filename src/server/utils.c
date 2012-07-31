@@ -178,7 +178,7 @@ int dnbd3_add_image(dnbd3_image_t *image, char *file)
     g_key_file_set_integer(gkf, image->group, "rid", image->rid);
     g_key_file_set_string(gkf, image->group, "file", image->file);
     g_key_file_set_string(gkf, image->group, "servers", image->serverss);
-    g_key_file_set_string(gkf, image->group, "cache_file", image->cache_file);
+    g_key_file_set_string(gkf, image->group, "cache", image->cache_file);
 
     gchar* data = g_key_file_to_data(gkf, NULL, NULL);
 
@@ -189,6 +189,62 @@ int dnbd3_add_image(dnbd3_image_t *image, char *file)
     	fclose(f);
         g_free(data);
         g_key_file_free(gkf);
+        return 0;
+    }
+    else
+    {
+    	g_free(data);
+    	g_key_file_free(gkf);
+    	printf("ERROR: Config file is not writable: %s\n", file);
+    	return ERROR_CONFIG_FILE_PERMISSIONS;
+    }
+}
+
+int dnbd3_del_image(dnbd3_image_t *image, char *file)
+{
+	if (image->rid == 0)
+	{
+        printf("ERROR: Delete with rid=0 is not allowed\n");
+        return ERROR_RID;
+	}
+
+	dnbd3_image_t* tmp = dnbd3_get_image(image->vid, image->rid);
+	if (!tmp)
+	{
+        printf("ERROR: Image not found: (%d,%d)\n", image->vid, image->rid);
+        return ERROR_IMAGE_NOT_FOUND;
+	}
+
+	GSList *iterator = NULL;
+    for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
+    {
+        dnbd3_client_t *client = iterator->data;
+        if (tmp == client->image)
+        {
+        	printf("ERROR: Delete is not allowed, image is in use (%d,%d)\n", tmp->vid, tmp->rid);
+        	return ERROR_IMAGE_IN_USE;
+        }
+    }
+
+    GKeyFile* gkf;
+    gkf = g_key_file_new();
+    if (!g_key_file_load_from_file(gkf, file, G_KEY_FILE_NONE, NULL))
+    {
+        printf("ERROR: Config file not found: %s\n", file);
+        exit(EXIT_FAILURE);
+    }
+
+    g_key_file_remove_group(gkf, tmp->group, NULL);
+    gchar* data = g_key_file_to_data(gkf, NULL, NULL);
+
+    FILE* f = fopen(file,"w");
+    if (f)
+    {
+    	fputs((char*) data, f);
+    	fclose(f);
+        g_free(data);
+        g_key_file_free(gkf);
+        // TODO: unlink image file
         return 0;
     }
     else

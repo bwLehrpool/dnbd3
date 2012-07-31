@@ -24,7 +24,8 @@
 #define IPC_EXIT 0
 #define IPC_RELOAD 1
 #define IPC_INFO 2
-#define IPC_CONFIG 3
+#define IPC_ADDIMG 3
+#define IPC_DELIMG 4
 
 void* dnbd3_ipc_receive();
 
