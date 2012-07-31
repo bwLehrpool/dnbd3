@@ -176,7 +176,7 @@ void* dnbd3_ipc_receive()
             int buffersize;
 
             doc_info = xmlNewDoc(BAD_CAST "1.0");
-            root_node = xmlNewNode(NULL, BAD_CAST "dnbd3-server");
+            root_node = xmlNewNode(NULL, BAD_CAST "info");
             xmlDocSetRootElement(doc_info, root_node);
 
             // Images
@@ -196,7 +196,7 @@ void* dnbd3_ipc_receive()
 				xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST rid);
 				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST _images[i].file);
 				xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST _images[i].serverss);
-				xmlNewProp(tmp_node, BAD_CAST "cache_file", BAD_CAST _images[i].cache_file);
+				xmlNewProp(tmp_node, BAD_CAST "cache", BAD_CAST _images[i].cache_file);
 				xmlAddChild(images_node, tmp_node);
 			}
 
@@ -239,7 +239,7 @@ void* dnbd3_ipc_receive()
 
     		if (doc_config)
     		{
-    			// xmlDocDump(stdout, doc_config);
+//    			xmlDocDump(stdout, doc_config);
 
 				xmlXPathContextPtr xpathCtx;
 				xmlXPathObjectPtr xpathObj;
@@ -247,7 +247,7 @@ void* dnbd3_ipc_receive()
 				xmlNodeSetPtr nodes;
 				xmlNodePtr cur;
 
-				xpathExpr = BAD_CAST "/dnbd3-server/image";
+				xpathExpr = BAD_CAST "/info/images/image";
 				xpathCtx = xmlXPathNewContext(doc_config);
 				xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
 
@@ -261,7 +261,7 @@ void* dnbd3_ipc_receive()
 					image.rid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "rid"));
 					image.file = (char *) xmlGetNoNsProp(cur, BAD_CAST "file");
 					image.serverss = (char *) xmlGetNoNsProp(cur, BAD_CAST "servers");
-					image.cache_file = (char *) xmlGetNoNsProp(cur, BAD_CAST "cache_file");
+					image.cache_file = (char *) xmlGetNoNsProp(cur, BAD_CAST "cache");
 					header.error = htonl(dnbd3_add_image(&image, _config_file_name));
 				}
 
@@ -363,7 +363,7 @@ void dnbd3_ipc_send(int cmd)
 			xmlNodePtr cur;
 
 			// Print images
-			xpathExpr = BAD_CAST "/dnbd3-server/images/image";
+			xpathExpr = BAD_CAST "/info/images/image";
 			xpathCtx = xmlXPathNewContext(doc);
 			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
 			printf("Exported images (atime, vid, rid, file):\n");
@@ -387,7 +387,7 @@ void dnbd3_ipc_send(int cmd)
 			xmlXPathFreeContext(xpathCtx);
 
 			// Print clients
-			xpathExpr = BAD_CAST "/dnbd3-server/clients/client";
+			xpathExpr = BAD_CAST "/info/clients/client";
 			xpathCtx = xmlXPathNewContext(doc);
 			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
 			printf("Connected clients (ip, file):\n");
@@ -412,7 +412,7 @@ void dnbd3_ipc_send(int cmd)
 			xmlFreeDoc(doc);
 			xmlCleanupParser();
 
-			// xmlDocDump(stdout, doc);
+//			xmlDocDump(stdout, doc);
 
 		} else
 		{
