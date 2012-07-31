@@ -154,14 +154,17 @@ int dnbd3_add_image(dnbd3_image_t *image, char *file)
 	fclose (f);
 
 	dnbd3_image_t* tmp = dnbd3_get_image(image->vid, image->rid);
-	if (tmp && image->rid != 0)
+	if (image->rid == 0)
+	{
+		if(tmp)
+			image->rid = tmp->rid +1;
+		else
+			image->rid = 1;
+	} else if (tmp)
 	{
 		printf("ERROR: Image already exists (%d,%d)\n", image->vid, image->rid);
 		return ERROR_IMAGE_ALREADY_EXISTS;
 	}
-
-	if (tmp && image->rid == 0)
-		image->rid = tmp->rid +1;
 
     GKeyFile* gkf;
     gkf = g_key_file_new();
