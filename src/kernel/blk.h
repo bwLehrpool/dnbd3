@@ -23,12 +23,6 @@
 
 #include "dnbd3.h"
 
-enum
-{
-    REQ_GET_SERVERS = 1,
-    REQ_GET_FILESIZE = 2,
-};
-
 extern struct block_device_operations dnbd3_blk_ops;
 
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg);
@@ -38,5 +32,7 @@ void dnbd3_blk_request(struct request_queue *q);
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor);
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev);
+
+void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev);
 
 #endif /* BLK_H_ */

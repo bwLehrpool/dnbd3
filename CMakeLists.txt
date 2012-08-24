@@ -47,9 +47,10 @@ TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${GLIB_LDFLAGS} ${L
 # MODULE                                                                       #
 ################################################################################
 
+
 SET(MODULE_NAME dnbd3)
 SET(MODULE_FILE ${MODULE_NAME}.ko)
-FILE(GLOB MODULE_SOURCE_FILES src/kernel/*.c)
+FILE(GLOB MODULE_SOURCE_FILES src/kernel/*.c src/serialize.c)
 FILE(GLOB MODULE_HEADER_FILES src/kernel/*.h src/*.h)
 
 SET(KERNEL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build")

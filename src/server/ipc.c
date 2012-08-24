@@ -34,16 +34,17 @@
 #include <libxml/xpath.h>
 
 #include "ipc.h"
-#include "config.h"
+#include "../config.h"
 #include "server.h"
 #include "utils.h"
+#include "memlog.h"
 
 void* dnbd3_ipc_receive()
 {
     GSList *iterator = NULL;
 
     struct tm * timeinfo;
-    char time_buff[64];
+    char time_buff[64], rid[20], ipaddr[100];
 
     dnbd3_ipc_t header;
     int server_sock, client_sock;
@@ -118,7 +119,7 @@ void* dnbd3_ipc_receive()
 	grp = getgrnam(UNIX_SOCKET_GROUP);
 	if (grp == NULL)
 	{
-		printf("WARN: Group '%s' not found.\n", UNIX_SOCKET_GROUP);
+		memlogf("WARN: Group '%s' not found.\n", UNIX_SOCKET_GROUP);
 	}
 	else
 	{
@@ -129,9 +130,12 @@ void* dnbd3_ipc_receive()
 
     while (1)
     {
-    	int i = 0, size = 0;
+    	int size;
     	char* buf;
     	xmlDocPtr doc;
+        xmlNodePtr root_node, images_node, clients_node, tmp_node, log_parent_node, log_node;
+        xmlChar *xmlbuff;
+        int buffersize;
 
         // Accept connection
         if ((client_sock = accept(server_sock, &client, &len)) < 0)
@@ -151,7 +155,7 @@ void* dnbd3_ipc_receive()
         switch (header.cmd)
         {
         case IPC_EXIT:
-        	printf("INFO: Server shutdown...\n");
+        	memlogf("INFO: Server shutdown...\n");
     		header.size = ntohl(0);
     		header.error = ntohl(0);
         	send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
@@ -161,21 +165,13 @@ void* dnbd3_ipc_receive()
             break;
 
         case IPC_RELOAD:
-            printf("INFO: Reloading configuration...\n");
-            dnbd3_reload_config(_config_file_name);
-    		header.size = ntohl(0);
-    		header.error = ntohl(0);
+            header.size = ntohl(0);
+    		header.error = ntohl(ERROR_UNKNOWN);
             send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
             close(client_sock);
             break;
 
         case IPC_INFO:
-            pthread_spin_lock(&_spinlock);
-
-            xmlNodePtr root_node, images_node, clients_node, tmp_node;
-            xmlChar *xmlbuff;
-            int buffersize;
-
             doc = xmlNewDoc(BAD_CAST "1.0");
             root_node = xmlNewNode(NULL, BAD_CAST "info");
             xmlDocSetRootElement(doc, root_node);
@@ -183,38 +179,46 @@ void* dnbd3_ipc_receive()
             // Images
             images_node = xmlNewNode(NULL, BAD_CAST "images");
             xmlAddChild(root_node, images_node);
-			for (i = 0; i < _num_images; i++)
-			{
-				char vid[20], rid[20];
-				sprintf(vid,"%d",_images[i].vid);
-				sprintf(rid,"%d",_images[i].rid);
-				timeinfo = localtime(&_images[i].atime);
+            pthread_spin_lock(&_spinlock);
+            for (iterator = _dnbd3_images; iterator; iterator = iterator->next)
+            {
+            	const dnbd3_image_t *image = iterator->data;
+				sprintf(rid,"%d",image->rid);
+				timeinfo = localtime(&image->atime);
 				strftime(time_buff,64,"%d.%m.%y %H:%M:%S",timeinfo);
 				tmp_node = xmlNewNode(NULL, BAD_CAST "image");
-				xmlNewProp(tmp_node, BAD_CAST "group", BAD_CAST _images[i].group);
+				xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->name);
 				xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST time_buff);
-				xmlNewProp(tmp_node, BAD_CAST "vid", BAD_CAST vid);
 				xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST rid);
-				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST _images[i].file);
-				xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST _images[i].serverss);
-				xmlNewProp(tmp_node, BAD_CAST "cache", BAD_CAST _images[i].cache_file);
+				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST image->file);
+				xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST "???");
+				xmlNewProp(tmp_node, BAD_CAST "cache", BAD_CAST image->cache_file);
 				xmlAddChild(images_node, tmp_node);
 			}
-
 			// Clients
             clients_node = xmlNewNode(NULL, BAD_CAST "clients");
-            xmlAddChild(root_node, clients_node);
+            log_node = xmlAddChild(root_node, clients_node);
 			for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
 			{
 				dnbd3_client_t *client = iterator->data;
 				if (client->image)
 				{
 					tmp_node = xmlNewNode(NULL, BAD_CAST "client");
-					xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST client->ip);
+					*ipaddr = '\0';
+					inet_ntop(client->addrtype, client->ipaddr, ipaddr, 100);
+					xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST ipaddr);
 					xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST client->image->file);
 					xmlAddChild(clients_node, tmp_node);
 				}
 			}
+			pthread_spin_unlock(&_spinlock);
+
+			// Log
+			log_parent_node = xmlNewChild(root_node, NULL, BAD_CAST "log", NULL);
+			char *log = fetchlog(0);
+			if (log == NULL) log = "LOG IS NULL";
+			log_node = xmlNewCDataBlock(doc, BAD_CAST log, strlen(log));
+			xmlAddChild(log_parent_node, log_node);
 
 			// Dump and send
             xmlDocDumpFormatMemory(doc, &xmlbuff, &buffersize, 1);
@@ -224,10 +228,10 @@ void* dnbd3_ipc_receive()
             send(client_sock, (char *) xmlbuff, buffersize, MSG_WAITALL);
 
             // Cleanup
-            pthread_spin_unlock(&_spinlock);
             close(client_sock);
             xmlFree(xmlbuff);
             xmlFreeDoc(doc);
+            free(log);
             break;
 
         case IPC_ADDIMG:
@@ -257,11 +261,10 @@ void* dnbd3_ipc_receive()
 				if(cur->type == XML_ELEMENT_NODE)
 				{
 					dnbd3_image_t image;
-					image.group = (char *) xmlGetNoNsProp(cur, BAD_CAST "group");
-					image.vid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "vid"));
+					memset(&image, 0, sizeof(dnbd3_image_t));
+					image.name = (char *) xmlGetNoNsProp(cur, BAD_CAST "name");
 					image.rid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "rid"));
 					image.file = (char *) xmlGetNoNsProp(cur, BAD_CAST "file");
-					image.serverss = (char *) xmlGetNoNsProp(cur, BAD_CAST "servers");
 					image.cache_file = (char *) xmlGetNoNsProp(cur, BAD_CAST "cache");
 					header.error = htonl(dnbd3_add_image(&image, _config_file_name));
 				}
@@ -308,11 +311,10 @@ void* dnbd3_ipc_receive()
 				if(cur->type == XML_ELEMENT_NODE)
 				{
 					dnbd3_image_t image;
-					image.group = (char *) xmlGetNoNsProp(cur, BAD_CAST "group");
-					image.vid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "vid"));
+					memset(&image, 0, sizeof(dnbd3_image_t));
+					image.name = (char *) xmlGetNoNsProp(cur, BAD_CAST "name");
 					image.rid = atoi((char *) xmlGetNoNsProp(cur, BAD_CAST "rid"));
 					image.file = (char *) xmlGetNoNsProp(cur, BAD_CAST "file");
-					image.serverss = (char *) xmlGetNoNsProp(cur, BAD_CAST "servers");
 					image.cache_file = (char *) xmlGetNoNsProp(cur, BAD_CAST "cache");
 					header.error = htonl(dnbd3_del_image(&image, _config_file_name));
 				}
@@ -333,7 +335,7 @@ void* dnbd3_ipc_receive()
         	break;
 
         default:
-            printf("ERROR: Unknown command: %i\n", header.cmd);
+            memlogf("ERROR: Unknown command: %i\n", header.cmd);
             header.size = htonl(0);
             header.error = htonl(ERROR_UNKNOWN);
             send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
@@ -343,6 +345,7 @@ void* dnbd3_ipc_receive()
         }
     }
     close(server_sock);
+    pthread_exit((void *) 0);
 }
 
 void dnbd3_ipc_send(int cmd)
@@ -414,11 +417,21 @@ void dnbd3_ipc_send(int cmd)
 			xmlNodeSetPtr nodes;
 			xmlNodePtr cur;
 
+			// Print log
+			xpathExpr = BAD_CAST "/info/log";
+			xpathCtx = xmlXPathNewContext(doc);
+			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
+			if (xpathObj->nodesetval && xpathObj->nodesetval->nodeTab && xpathObj->nodesetval->nodeTab[0]) {
+				printf("--- Last log lines ----\n%s\n\n", xmlNodeGetContent(xpathObj->nodesetval->nodeTab[0]));
+			}
+			xmlXPathFreeObject(xpathObj);
+			xmlXPathFreeContext(xpathCtx);
+
 			// Print images
 			xpathExpr = BAD_CAST "/info/images/image";
 			xpathCtx = xmlXPathNewContext(doc);
 			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
-			printf("Exported images (atime, vid, rid, file):\n");
+			printf("Exported images (atime, name, rid, file):\n");
 			printf("========================================\n");
 			nodes = xpathObj->nodesetval;
 			n = (nodes) ? nodes->nodeNr : 0;
@@ -428,7 +441,7 @@ void dnbd3_ipc_send(int cmd)
 				{
 					cur = nodes->nodeTab[i];
 					xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
-					xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "vid");
+					xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
 					xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
 					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
 					printf("%s\t%s\t%s\t%s\n", atime, vid, rid, file);

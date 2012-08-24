@@ -21,87 +21,169 @@
 #include "net.h"
 #include "blk.h"
 #include "utils.h"
+#include "serialize.h"
 
 #include <linux/time.h>
+
+#ifndef MIN
+#define MIN(a,b) (a < b ? a : b)
+#endif
 
 int dnbd3_net_connect(dnbd3_device_t *dev)
 {
     struct sockaddr_in sin;
-    struct request *req0 = kmalloc(sizeof(struct request), GFP_ATOMIC);
-    struct request *req1 = kmalloc(sizeof(struct request), GFP_ATOMIC);
+    struct request *req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
 
     struct timeval timeout;
     timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
     timeout.tv_usec = 0;
 
     // do some checks before connecting
-    if (!req0 || !req1)
+    if (!req1)
     {
-        printk("FATAL: Kmalloc failed.\n");
-        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return -1;
+        printk("FATAL: Kmalloc(1) failed.\n");
+        goto error;
     }
-    if (!dev->cur_server.host || !dev->cur_server.port || (dev->vid == 0))
+    if (dev->cur_server.port == 0 || dev->cur_server.hostaddrtype == 0 || dev->imgname == NULL)
     {
-        printk("FATAL: Host, port or vid not set.\n");
-        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return -1;
+        printk("FATAL: Host, port or image name not set.\n");
+        goto error;
     }
-    if (dev->cur_server.sock)
+    if (dev->sock)
     {
-        printk("ERROR: Device %s is already connected to %s.\n", dev->disk->disk_name, dev->cur_server.host);
-        return -1;
+    	if (dev->cur_server.hostaddrtype == AF_INET)
+    		printk("ERROR: Device %s is already connected to %pI4 : %d.\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+    	else
+    		printk("ERROR: Device %s is already connected to %pI6 : %d.\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+        goto error;
     }
 
-    printk("INFO: Connecting device %s to %s\n", dev->disk->disk_name, dev->cur_server.host);
-
-    // initialize socket
-    if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &dev->cur_server.sock) < 0)
+    if (dev->cur_server.hostaddrtype == AF_INET)
+    	printk("INFO: Connecting device %s to %pI4 : %d\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+    else
     {
-        printk("ERROR: Couldn't create socket.\n");
-        dev->cur_server.sock = NULL;
-        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return -1;
+    	printk("ERROR: Cannot connect to %pI6 - IPv6 not yet implemented.\n", dev->cur_server.hostaddr);
+    	//printk("INFO: Connecting device %s to %pI6 : %d\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+    	goto error;
     }
-    kernel_setsockopt(dev->cur_server.sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
-    kernel_setsockopt(dev->cur_server.sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
-    dev->cur_server.sock->sk->sk_allocation = GFP_NOIO;
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = inet_addr(dev->cur_server.host);
-    sin.sin_port = htons(simple_strtol(dev->cur_server.port, NULL, 10));
-    if (kernel_connect(dev->cur_server.sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
+
+    if (dev->better_sock == NULL)
+    { //  no established connection yet from discovery thread, start new one
+        dnbd3_request_t dnbd3_request;
+        dnbd3_reply_t dnbd3_reply;
+        struct msghdr msg;
+        struct kvec iov[2];
+        uint16_t rid;
+        char *name;
+        init_msghdr(msg);
+		if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
+		{
+			printk("ERROR: Couldn't create socket.\n");
+			goto error;
+		}
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
+		dev->sock->sk->sk_allocation = GFP_NOIO;
+		sin.sin_family = AF_INET;
+		memcpy(&(sin.sin_addr.s_addr), dev->cur_server.hostaddr, 4);
+		sin.sin_port = dev->cur_server.port;
+		if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
+		{
+			printk("ERROR: Couldn't connect to host %pI4 : %d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+			goto error;
+		}
+        // Request filesize
+		dnbd3_request.magic = dnbd3_packet_magic;
+        dnbd3_request.cmd = CMD_GET_SIZE;
+        dnbd3_request.size = strlen(dev->imgname) + 1 + 2 + 2; // str+\0, version, rid
+        fixup_request(dnbd3_request);
+        iov[0].iov_base = &dnbd3_request;
+        iov[0].iov_len = sizeof(dnbd3_request);
+        serializer_reset_write(&dev->payload_buffer);
+        serializer_put_uint16(&dev->payload_buffer, PROTOCOL_VERSION);
+        serializer_put_string(&dev->payload_buffer, dev->imgname);
+        serializer_put_uint16(&dev->payload_buffer, dev->rid);
+        iov[1].iov_base = &dev->payload_buffer;
+        iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
+        if (kernel_sendmsg(dev->sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) <= 0)
+            goto error;
+        // receive reply header
+        iov[0].iov_base = &dnbd3_reply;
+        iov[0].iov_len = sizeof(dnbd3_reply);
+        if (kernel_recvmsg(dev->sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply) || dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD || dnbd3_reply.magic != dnbd3_packet_magic)
+        {
+        	printk("FATAL: Requested image does not exist on server.\n");
+            goto error;
+        }
+        // receive reply payload
+        iov[0].iov_base = &dev->payload_buffer;
+        iov[0].iov_len = dnbd3_reply.size;
+        if (kernel_recvmsg(dev->sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size)
+        {
+        	printk("FATAL: Cold not read CMD_GET_SIZE payload on handshake.\n");
+            goto error;
+        }
+        // read reply payload
+        dev->cur_server.protocol_version = serializer_get_uint16(&dev->payload_buffer);
+        if (dev->cur_server.protocol_version < MIN_SUPPORTED_SERVER)
+        {
+        	printk("FATAL: Server version is lower than min supported version.\n");
+        	goto error;
+        }
+        name = serializer_get_string(&dev->payload_buffer);
+        if (dev->rid != 0 && strcmp(name, dev->imgname) != 0)
+        {
+        	printk("FATAL: Server provides different image than asked for.\n");
+        	goto error;
+        }
+        if (strlen(dev->imgname) < strlen(name))
+        {
+        	dev->imgname = krealloc(dev->imgname, strlen(name) + 1, GFP_ATOMIC);
+        	if (dev->imgname == NULL)
+        	{
+        		printk("FATAL: Reallocating buffer for new image name failed");
+        		goto error;
+        	}
+        }
+        strcpy(dev->imgname, name);
+        rid = serializer_get_uint16(&dev->payload_buffer);
+        if (dev->rid != 0 && dev->rid != rid)
+        {
+        	printk("FATAL: Server provides different rid of image than asked for.\n");
+        	goto error;
+        }
+        dev->rid = rid;
+        dev->reported_size = serializer_get_uint64(&dev->payload_buffer);
+        // store image information
+        set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
+        printk("INFO: Filesize of %s: %llu\n", dev->disk->disk_name, dev->reported_size);
+    }
+    else // Switching server, connection is already established and size request was executed
     {
-        printk("ERROR: Couldn't connect to host %s:%s\n", dev->cur_server.host, dev->cur_server.port);
-        dev->cur_server.sock = NULL;
-        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
-        return -1;
+    	printk("INFO: On-the-fly server change\n");
+    	dev->sock = dev->better_sock;
+    	dev->better_sock = NULL;
+        kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
+        kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
     }
 
     dev->panic = 0;
+    dev->panic_count = 0;
     dev->alt_servers_num = 0;
     dev->update_available = 0;
 
-
     // enqueue request to request_queue_send (ask alt servers)
     req1->cmd_type = REQ_TYPE_SPECIAL;
-    req1->cmd_flags = REQ_GET_SERVERS;
+    req1->cmd_flags = CMD_GET_SERVERS;
     list_add(&req1->queuelist, &dev->request_queue_send);
 
-    // enqueue request to request_queue_send (ask file size)
-    req0->cmd_type = REQ_TYPE_SPECIAL;
-    req0->cmd_flags = REQ_GET_FILESIZE;
-    list_add(&req0->queuelist, &dev->request_queue_send);
-
-    // start sending thread
+    // create required threads
     dev->thread_send = kthread_create(dnbd3_net_send, dev, dev->disk->disk_name);
-    wake_up_process(dev->thread_send);
-
-    // start receiving thread
     dev->thread_receive = kthread_create(dnbd3_net_receive, dev, dev->disk->disk_name);
-    wake_up_process(dev->thread_receive);
-
-    // start discover thread
     dev->thread_discover = kthread_create(dnbd3_net_discover, dev, dev->disk->disk_name);
+    // start them up
+    wake_up_process(dev->thread_send);
+    wake_up_process(dev->thread_receive);
     wake_up_process(dev->thread_discover);
 
     wake_up(&dev->process_queue_send);
@@ -114,15 +196,32 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     add_timer(&dev->hb_timer);
 
     return 0;
+error:
+	if (dev->sock)
+	{
+		sock_release(dev->sock);
+		dev->sock = NULL;
+	}
+	dev->cur_server.hostaddrtype = 0;
+	dev->cur_server.port = 0;
+	if (req1) kfree(req1);
+	return -1;
 }
 
 int dnbd3_net_disconnect(dnbd3_device_t *dev)
 {
     printk("INFO: Disconnecting device %s\n", dev->disk->disk_name);
 
+    dev->disconnecting = 1;
+
     // clear heartbeat timer
     if (&dev->hb_timer)
-        del_timer(&dev->hb_timer);
+    	del_timer(&dev->hb_timer);
+
+    dev->discover = 0;
+
+    if (dev->sock)
+    	kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 
     // kill sending and receiving threads
     if (dev->thread_send)
@@ -144,12 +243,15 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
     }
 
     // clear socket
-    if (dev->cur_server.sock)
+    if (dev->sock)
     {
-        sock_release(dev->cur_server.sock);
-        dev->cur_server.sock = NULL;
-        memset(dev->cur_server.host, '\0', sizeof(dev->cur_server.host));
+        sock_release(dev->sock);
+        dev->sock = NULL;
     }
+	dev->cur_server.hostaddrtype = 0;
+	dev->cur_server.port = 0;
+
+	dev->disconnecting = 0;
 
     return 0;
 }
@@ -157,19 +259,23 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 void dnbd3_net_heartbeat(unsigned long arg)
 {
     dnbd3_device_t *dev = (dnbd3_device_t *) arg;
-    struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
 
-    // send keepalive
-    if (req)
+
+    if (!dev->panic)
     {
-        req->cmd_type = REQ_TYPE_SPECIAL;
-        req->cmd_flags = REQ_GET_SERVERS;
-        list_add_tail(&req->queuelist, &dev->request_queue_send);
-        wake_up(&dev->process_queue_send);
-    }
-    else
-    {
-        printk("ERROR: Couldn't create keepalive request\n");
+		struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
+		// send keepalive
+		if (req)
+		{
+			req->cmd_type = REQ_TYPE_SPECIAL;
+			req->cmd_flags = CMD_GET_SERVERS;
+			list_add_tail(&req->queuelist, &dev->request_queue_send);
+			wake_up(&dev->process_queue_send);
+		}
+		else
+		{
+			printk("ERROR: Couldn't create keepalive request\n");
+		}
     }
 
     // start discover
@@ -188,20 +294,21 @@ int dnbd3_net_discover(void *data)
 {
     dnbd3_device_t *dev = data;
     struct sockaddr_in sin;
-    struct socket *sock;
+    struct socket *sock, *best_sock = NULL;
 
     dnbd3_request_t dnbd3_request;
     dnbd3_reply_t dnbd3_reply;
     struct msghdr msg;
-    struct kvec iov;
+    struct kvec iov[2];
 
-    char *buf;
+    char *buf, *name;
+    serialized_buffer_t *payload;
     uint64_t filesize;
-    char current_server[16], best_server[16];
+    uint16_t rid;
 
     struct timeval start, end;
-    uint64_t t1, t2, best_rtt = 0;
-    int i, num = 0;
+    uint64_t rtt, best_rtt = 0;
+    int i, best_server, current_server;
     int turn = 0;
     int ready = 0;
 
@@ -217,22 +324,55 @@ int dnbd3_net_discover(void *data)
         printk("FATAL: Kmalloc failed (discover)\n");
         return -1;
     }
+    payload = (serialized_buffer_t*)buf;
 
-    while (!kthread_should_stop())
+    dnbd3_request.magic = dnbd3_packet_magic;
+
+    for (;;)
     {
-        wait_event_interruptible(dev->process_queue_discover, kthread_should_stop() || dev->discover);
+        wait_event_interruptible(dev->process_queue_discover,
+        		kthread_should_stop() || dev->discover);
 
-        if (!&dev->discover)
+        if (kthread_should_stop() || dev->imgname == NULL)
+        	break;
+
+        if (!dev->discover)
             continue;
-
-        num = dev->alt_servers_num;
         dev->discover = 0;
-        strcpy(best_server, "0.0.0.0");
-        best_rtt = -1;
 
-        for (i=0; i < num && i < NUMBER_SERVERS; i++)
+        // Check if the list of alt servers needs to be updated and do so if neccessary
+        spin_lock_irq(&dev->blk_lock);
+        if (dev->new_servers_num)
         {
-            // initialize socket and connect
+        	for (i = 0; i < dev->new_servers_num; ++i)
+        	{
+        		memcpy(dev->alt_servers[i].hostaddr, dev->new_servers[i].ipaddr, 16);
+        		dev->alt_servers[i].hostaddrtype = dev->new_servers[i].addrtype;
+        		dev->alt_servers[i].port = dev->new_servers[i].port;
+        		memset(dev->alt_servers[i].rtts, 0xFF, sizeof(dev->alt_servers[i].rtts[0]) * 4);
+        		dev->alt_servers[i].protocol_version = 0;
+        		dev->alt_servers[i].skip_count = 0;
+        	}
+        	dev->alt_servers_num = dev->new_servers_num;
+        	dev->new_servers_num = 0;
+        }
+        spin_unlock_irq(&dev->blk_lock);
+
+        current_server = best_server = -1;
+        best_rtt = 0xFFFFFFFFFFFFull;
+
+        for (i=0; i < dev->alt_servers_num; ++i)
+        {
+            if (dev->alt_servers[i].hostaddrtype != AF_INET) // add IPv6....
+            	continue;
+
+            if (!dev->panic && dev->alt_servers[i].skip_count) // If not in panic mode, skip server if indicated
+            {
+            	--dev->alt_servers[i].skip_count;
+            	continue;
+            }
+
+            // Initialize socket and connect
             if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
             {
                 printk("ERROR: Couldn't create socket (discover)\n");
@@ -241,49 +381,102 @@ int dnbd3_net_discover(void *data)
             }
             kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
             kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
-            strcpy(current_server, dev->alt_servers[i].host);
             sock->sk->sk_allocation = GFP_NOIO;
-            sin.sin_family = AF_INET;
-            sin.sin_addr.s_addr = inet_addr(current_server);
-            sin.sin_port = htons(simple_strtol(dev->cur_server.port, NULL, 10));
+            sin.sin_family = AF_INET; // add IPv6.....
+            memcpy(&sin.sin_addr.s_addr, dev->alt_servers[i].hostaddr, 4);
+            sin.sin_port = dev->alt_servers[i].port;
             if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
             {
-                printk("ERROR: Couldn't connect to host %s:%s (discover)\n", current_server, dev->cur_server.port);
-                dev->alt_servers[i].rtt = -1;
-                sock = NULL;
-                continue;
+                //printk("ERROR: Couldn't connect to host %s:%s (discover)\n", current_server, dev->cur_server.port);
+                goto error;
             }
 
             // Request filesize
             dnbd3_request.cmd = CMD_GET_SIZE;
-            dnbd3_request.vid = dev->vid;
-            dnbd3_request.rid = dev->rid;
-            iov.iov_base = &dnbd3_request;
-            iov.iov_len = sizeof(dnbd3_request);
-            if (kernel_sendmsg(sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
+            dnbd3_request.size = strlen(dev->imgname) + 1 + 2 + 2; // str+\0, version, rid
+            fixup_request(dnbd3_request);
+            iov[0].iov_base = &dnbd3_request;
+            iov[0].iov_len = sizeof(dnbd3_request);
+            serializer_reset_write(payload);
+            serializer_put_uint16(payload, PROTOCOL_VERSION);
+            serializer_put_string(payload, dev->imgname);
+            serializer_put_uint16(payload, dev->rid);
+            iov[1].iov_base = payload;
+            iov[1].iov_len = serializer_get_written_length(payload);
+            if (kernel_sendmsg(sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
+            {
+            	printk("ERROR: Requesting image size failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
                 goto error;
+            }
 
             // receive net reply
-            iov.iov_base = &dnbd3_reply;
-            iov.iov_len = sizeof(dnbd3_reply);
-            if (kernel_recvmsg(sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)
+            iov[0].iov_base = &dnbd3_reply;
+            iov[0].iov_len = sizeof(dnbd3_reply);
+            if (kernel_recvmsg(sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
+            {
+            	printk("ERROR: Receiving image size packet (header) failed (%pI4 :%d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
                 goto error;
+            }
+            fixup_reply(dnbd3_reply);
+            if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 4)
+            {
+            	printk("ERROR: Content of image size packet (header) mismatched (%pI4 :%d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+                goto error;
+            }
 
             // receive data
-            iov.iov_base = &filesize;
-            iov.iov_len = sizeof(uint64_t);
-            if (kernel_recvmsg(sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)
+            iov[0].iov_base = payload;
+            iov[0].iov_len = dnbd3_reply.size;
+            if (kernel_recvmsg(sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size)
+            {
+            	printk("ERROR: Receiving image size packet (payload) failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
                 goto error;
+            }
+            serializer_reset_read(payload, dnbd3_reply.size);
+
+            dev->alt_servers[i].protocol_version = serializer_get_uint16(payload);
+            if (dev->alt_servers[i].protocol_version < MIN_SUPPORTED_SERVER)
+            {
+            	printk("ERROR: Server version too old (client: %d, server: %d, min supported: %d) (%pI4 : %d, discover)\n", (int)PROTOCOL_VERSION, (int)dev->alt_servers[i].protocol_version, (int)MIN_SUPPORTED_SERVER, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+                goto error;
+            }
+
+            name = serializer_get_string(payload);
+            if (name == NULL)
+            {
+            	printk("ERROR: Server did not supply an image name (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+                goto error;
+            }
+            if (strcmp(name, dev->imgname) != 0)
+            {
+            	printk("ERROR: Image name does not match requested one (client: '%s', server: '%s') (%pI4 : %d, discover)\n", dev->imgname, name, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+                goto error;
+            }
+
+            rid = serializer_get_uint16(payload);
+            if (rid != dev->rid)
+            {
+            	printk("ERROR: Server supplied wrong rid (client: '%d', server: '%d') (%pI4 : %d, discover)\n", (int)dev->rid, (int)rid, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+                goto error;
+            }
+
+            filesize = serializer_get_uint64(payload);
+            if (filesize != dev->reported_size)
+            {
+            	printk("ERROR: Reported image size of %llu does not match expected value %llu. (%pI4 :%d, discover)\n", (unsigned long long)filesize, (unsigned long long)dev->reported_size, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+            	goto error;
+            }
 
             // panic mode, take first responding server
             if (dev->panic)
             {
-                printk("WARN: Panic mode (%s), taking server %s\n", dev->disk->disk_name, current_server);
-                sock_release(sock);
+                printk("WARN: Panic mode (%s), taking server %pI4 : %d\n", dev->disk->disk_name, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+                if (best_sock != NULL) sock_release(best_sock);
+                dev->better_sock = sock; // Pass over socket to take a shortcut in *_connect();
                 kfree(buf);
                 dev->thread_discover = NULL;
                 dnbd3_net_disconnect(dev);
-                strcpy(dev->cur_server.host, current_server);
+                memcpy(&dev->cur_server, &dev->alt_servers[i], sizeof(dev->cur_server));
                 dnbd3_net_connect(dev);
                 return 0;
             }
@@ -292,81 +485,129 @@ int dnbd3_net_discover(void *data)
 
             // Request block
             dnbd3_request.cmd = CMD_GET_BLOCK;
-            dnbd3_request.offset = 0; // TODO: take random block
-            dnbd3_request.size = 4096;
-            iov.iov_base = &dnbd3_request;
-            iov.iov_len = sizeof(dnbd3_request);
-            if (kernel_sendmsg(sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
+            dnbd3_request.offset = ((start.tv_usec ^ start.tv_sec) % dev->reported_size) & ~(uint64_t)(RTT_BLOCK_SIZE-1); // Pick random block
+            dnbd3_request.size = RTT_BLOCK_SIZE;
+            fixup_request(dnbd3_request);
+            iov[0].iov_base = &dnbd3_request;
+            iov[0].iov_len = sizeof(dnbd3_request);
+            if (kernel_sendmsg(sock, &msg, iov, 1, sizeof(dnbd3_request)) <= 0)
+            {
+            	printk("ERROR: Requesting test block failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
                 goto error;
+            }
 
-            // receive net replay
-            iov.iov_base = &dnbd3_reply;
-            iov.iov_len = sizeof(dnbd3_reply);
-            if (kernel_recvmsg(sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)
+            // receive net reply
+            iov[0].iov_base = &dnbd3_reply;
+            iov[0].iov_len = sizeof(dnbd3_reply);
+            if (kernel_recvmsg(sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
+            {
+            	printk("ERROR: Receiving test block header packet failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
                 goto error;
+            }
+            fixup_reply(dnbd3_reply);
+            if (dnbd3_reply.cmd != CMD_GET_BLOCK || dnbd3_reply.size != RTT_BLOCK_SIZE)
+            {
+            	printk("ERROR: Unexpected reply to block request: cmd=%d, size=%d (%pI4 : %d, discover)\n", (int)dnbd3_reply.cmd, (int)dnbd3_reply.size, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+                goto error;
+            }
 
             // receive data
-            iov.iov_base = buf;
-            iov.iov_len = 4096;
-            if (kernel_recvmsg(sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)
+            iov[0].iov_base = buf;
+            iov[0].iov_len = RTT_BLOCK_SIZE;
+            if (kernel_recvmsg(sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != RTT_BLOCK_SIZE)
+            {
+            	printk("ERROR: Receiving test block payload failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
                 goto error;
+            }
 
             do_gettimeofday(&end); // end rtt measurement
 
-            // clear socket
-            sock_release(sock);
-            sock = NULL;
+            dev->alt_servers[i].rtts[turn] =
+            		  (end.tv_sec - start.tv_sec) * 1000000ull
+            		+ (end.tv_usec - start.tv_usec);
 
-            t1 = (start.tv_sec*1000000ull) + start.tv_usec;
-            t2 = (end.tv_sec*1000000ull) + end.tv_usec;
-            dev->alt_servers[i].rtts[turn] = t2 -t1;
-
-            dev->alt_servers[i].rtt = ( dev->alt_servers[i].rtts[0]
-                                       +dev->alt_servers[i].rtts[1]
-                                       +dev->alt_servers[i].rtts[2]
-                                       +dev->alt_servers[i].rtts[3] ) / 4;
+            rtt = ( dev->alt_servers[i].rtts[0]
+				  + dev->alt_servers[i].rtts[1]
+				  + dev->alt_servers[i].rtts[2]
+				  + dev->alt_servers[i].rtts[3] ) / 4;
 
 
-            if (best_rtt > dev->alt_servers[i].rtt)
-            {
-            	best_rtt = dev->alt_servers[i].rtt;
-            	strcpy(best_server, current_server);
+            if (best_rtt > rtt)
+            { // This one is better, keep socket open in case we switch
+            	best_rtt = rtt;
+            	best_server = i;
+            	if (best_sock != NULL) sock_release(best_sock);
+            	best_sock = sock;
+            	sock = NULL;
+            }
+            else
+            { // Not better, discard connection
+                sock_release(sock);
+                sock = NULL;
             }
 
             // update cur servers rtt
-            if (strcmp(dev->cur_server.host, dev->alt_servers[i].host) == 0)
+            if (dev->cur_server.port == dev->alt_servers[i].port && dev->cur_server.hostaddrtype == dev->alt_servers[i].hostaddrtype
+            	&& (
+						(dev->cur_server.hostaddrtype == AF_INET
+							&& memcmp(dev->cur_server.hostaddr, dev->alt_servers[i].hostaddr, 4) == 0)
+					||
+						(dev->cur_server.hostaddrtype == AF_INET6
+							&& memcmp(dev->cur_server.hostaddr, dev->alt_servers[i].hostaddr, 16) == 0)
+            		)
+            )
             {
-                dev->cur_server.rtt = dev->alt_servers[i].rtt;
+                dev->cur_rtt = rtt;
+                current_server = i;
             }
 
             continue;
 
             error:
-                printk("ERROR: Send/Receive failed, host %s:%s (discover)\n", current_server, dev->cur_server.port);
                 sock_release(sock);
                 sock = NULL;
+                dev->alt_servers[i].rtts[turn] = 0xFFFFFFFF;
                 continue;
         }
 
+        if (dev->panic && ++dev->panic_count == 21)
+		{ // After 21 retries, bail out by reporting errors to block layer
+        	dnbd3_blk_fail_all_requests(dev);
+		}
 
-        if (!strcmp(best_server, "0.0.0.0") || best_rtt == (uint64_t)-1)
+        if (best_server == -1 || kthread_should_stop()) // No alt server could be reached at all or thread should stop
+        {
+        	if (best_sock != NULL) // Should never happen actually
+        	{
+        		sock_release(best_sock);
+        		best_sock = NULL;
+        	}
             continue;
+        }
 
         // take server with lowest rtt
-        if (ready && num > 1 && strcmp(dev->cur_server.host, best_server) && !kthread_should_stop()
-                                                 && dev->cur_server.rtt > best_rtt + RTT_THRESHOLD)
+        if (ready && best_server != current_server
+        		&& dev->cur_rtt > best_rtt + RTT_THRESHOLD)
         {
-            printk("INFO: Server %s on %s is faster (%lluus)\n", best_server, dev->disk->disk_name, best_rtt);
+            printk("INFO: Server %d on %s is faster (%lluµs)\n", best_server, dev->disk->disk_name, best_rtt);
         	kfree(buf);
+        	dev->better_sock = best_sock; // Take shortcut by continuing to use open connection
             dev->thread_discover = NULL;
             dnbd3_net_disconnect(dev);
-            strcpy(dev->cur_server.host, best_server);
-            dev->cur_server.rtt = best_rtt;
+            memcpy(&dev->cur_server, &dev->alt_servers[best_server], sizeof(dev->cur_server));
+            dev->cur_rtt = best_rtt;
             dnbd3_net_connect(dev);
             return 0;
         }
 
-        turn = (turn +1) % 4;
+        // Clean up connection that was held open for quicker server switch
+        if (best_sock != NULL)
+        {
+			sock_release(best_sock);
+			best_sock = NULL;
+        }
+
+        turn = (turn + 1) % 4;
         if (turn == 3)
             ready = 1;
 
@@ -386,21 +627,25 @@ int dnbd3_net_send(void *data)
 
     init_msghdr(msg);
 
-    dnbd3_request.vid = dev->vid;
-    dnbd3_request.rid = dev->rid;
+    dnbd3_request.magic = dnbd3_packet_magic;
 
     set_user_nice(current, -20);
 
-    while (!kthread_should_stop() || !list_empty(&dev->request_queue_send))
+    for (;;)
     {
         wait_event_interruptible(dev->process_queue_send,
                 kthread_should_stop() || !list_empty(&dev->request_queue_send));
 
-        if (list_empty(&dev->request_queue_send))
-            continue;
+        if (kthread_should_stop())
+        	break;
 
         // extract block request
-        spin_lock_irq(&dev->blk_lock);
+        spin_lock_irq(&dev->blk_lock); // TODO: http://www.linuxjournal.com/article/5833 says spin_lock_irq should not be used in general, but article is 10 years old
+        if (list_empty(&dev->request_queue_send))
+        {
+        	spin_unlock_irq(&dev->blk_lock);
+            continue;
+        }
         blk_request = list_entry(dev->request_queue_send.next, struct request, queuelist);
         spin_unlock_irq(&dev->blk_lock);
 
@@ -411,18 +656,19 @@ int dnbd3_net_send(void *data)
             dnbd3_request.cmd = CMD_GET_BLOCK;
             dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
             dnbd3_request.size = blk_rq_bytes(blk_request); // bytes left to complete entire request
+            // enqueue request to request_queue_receive
+            spin_lock_irq(&dev->blk_lock);
+            list_del_init(&blk_request->queuelist);
+            list_add_tail(&blk_request->queuelist, &dev->request_queue_receive);
+            spin_unlock_irq(&dev->blk_lock);
             break;
 
         case REQ_TYPE_SPECIAL:
-            switch (blk_request->cmd_flags)
-            {
-            case REQ_GET_FILESIZE:
-                dnbd3_request.cmd = CMD_GET_SIZE;
-                break;
-            case REQ_GET_SERVERS:
-                dnbd3_request.cmd = CMD_GET_SERVERS;
-                break;
-            }
+            dnbd3_request.cmd = blk_request->cmd_flags;
+            dnbd3_request.size = 0;
+            spin_lock_irq(&dev->blk_lock);
+            list_del_init(&blk_request->queuelist);
+            spin_unlock_irq(&dev->blk_lock);
             break;
 
         default:
@@ -434,29 +680,30 @@ int dnbd3_net_send(void *data)
         }
 
         // send net request
-        memcpy(dnbd3_request.handle, &blk_request, sizeof(blk_request));
+        dnbd3_request.handle = (uint64_t)blk_request;
+        fixup_request(dnbd3_request);
         iov.iov_base = &dnbd3_request;
         iov.iov_len = sizeof(dnbd3_request);
-        if (kernel_sendmsg(dev->cur_server.sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0)
+        if (kernel_sendmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_request)) != sizeof(dnbd3_request))
             goto error;
-
-        // enqueue request to request_queue_receive
-        spin_lock_irq(&dev->blk_lock);
-        list_del_init(&blk_request->queuelist);
-        list_add_tail(&blk_request->queuelist, &dev->request_queue_receive);
-        spin_unlock_irq(&dev->blk_lock);
         wake_up(&dev->process_queue_receive);
     }
 
     return 0;
 
-    error:
-        printk("ERROR: Connection to server %s lost (send)\n", dev->cur_server.host);
-        if (dev->cur_server.sock)
-            kernel_sock_shutdown(dev->cur_server.sock, SHUT_RDWR);
-        dev->thread_send = NULL;
-        dev->panic = 1;
-        return -1;
+error:
+	printk("ERROR: Connection to server %pI4 : %d lost (send)\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+	if (dev->sock)
+		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+	dev->thread_send = NULL;
+	if (!dev->disconnecting)
+	{
+		dev->panic = 1;
+		// start discover
+		dev->discover = 1;
+		wake_up(&dev->process_queue_discover);
+	}
+	return -1;
 }
 
 int dnbd3_net_receive(void *data)
@@ -473,17 +720,18 @@ int dnbd3_net_receive(void *data)
     unsigned long flags;
     sigset_t blocked, oldset;
 
-    unsigned int size, i;
-    uint64_t filesize;
-    struct in_addr tmp_addr;
+    int count, remaining;
 
     init_msghdr(msg);
     set_user_nice(current, -20);
 
-    while (!kthread_should_stop() || !list_empty(&dev->request_queue_receive))
+    for (;;)
     {
         wait_event_interruptible(dev->process_queue_receive,
                 kthread_should_stop() || !list_empty(&dev->request_queue_receive));
+
+        if (kthread_should_stop())
+        	break;
 
         if (list_empty(&dev->request_queue_receive))
             continue;
@@ -491,34 +739,20 @@ int dnbd3_net_receive(void *data)
         // receive net reply
         iov.iov_base = &dnbd3_reply;
         iov.iov_len = sizeof(dnbd3_reply);
-        if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) <= 0)
+        if (kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
             goto error;
-
-        // search for replied request in queue
-        received_request = *(struct request **) dnbd3_reply.handle;
-        spin_lock_irq(&dev->blk_lock);
-        list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
-        {
-            if (blk_request == received_request)
-                break;
-        }
-        spin_unlock_irq(&dev->blk_lock);
+        fixup_reply(dnbd3_reply);
 
         // check error
+        if (dnbd3_reply.magic != dnbd3_packet_magic)
+        {
+         printk("ERROR: Wrong packet magic (Receive)\n");
+         goto error;
+        }
         if (dnbd3_reply.cmd == 0)
         {
          printk("ERROR: Command was 0 (Receive)\n");
          goto error;
-        }
-        if (dnbd3_reply.size == 0)
-        {
-            printk("FATAL: Requested image does't exist cmd: %i\n", dnbd3_reply.cmd);
-            spin_lock_irq(&dev->blk_lock);
-            list_del_init(&blk_request->queuelist);
-            spin_unlock_irq(&dev->blk_lock);
-            if ( (dnbd3_reply.cmd == CMD_GET_SIZE) || (dnbd3_reply.cmd == CMD_GET_SERVERS) )
-                kfree(blk_request);
-            continue;
         }
 
 
@@ -526,6 +760,24 @@ int dnbd3_net_receive(void *data)
         switch (dnbd3_reply.cmd)
         {
         case CMD_GET_BLOCK:
+            // search for replied request in queue
+            blk_request = NULL;
+            spin_lock_irq(&dev->blk_lock);
+            list_for_each_entry_safe(received_request, tmp_request, &dev->request_queue_receive, queuelist)
+            {
+                if ((uint64_t)received_request == dnbd3_reply.handle)
+                {
+                	blk_request = received_request;
+                    break;
+                }
+            }
+            spin_unlock_irq(&dev->blk_lock);
+            if (blk_request == NULL)
+            {
+            	printk("ERROR: Received block data for unrequested handle (%llu: %llu).\n",
+            			(unsigned long long)dnbd3_reply.handle, (unsigned long long)dnbd3_reply.size);
+            	goto error;
+            }
             // receive data and answer to block layer
             rq_for_each_segment(bvec, blk_request, iter)
             {
@@ -533,10 +785,9 @@ int dnbd3_net_receive(void *data)
                 sigprocmask(SIG_SETMASK, &blocked, &oldset);
 
                 kaddr = kmap(bvec->bv_page) + bvec->bv_offset;
-                size = bvec->bv_len;
                 iov.iov_base = kaddr;
-                iov.iov_len = size;
-                if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
+                iov.iov_len = bvec->bv_len;
+                if (kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags) <= 0)
                 {
                     kunmap(bvec->bv_page);
                     goto error;
@@ -551,47 +802,38 @@ int dnbd3_net_receive(void *data)
             spin_unlock_irqrestore(&dev->blk_lock, flags);
             continue;
 
-        case CMD_GET_SIZE:
-            dev->vid = dnbd3_reply.vid;
-            dev->rid = dnbd3_reply.rid;
-            iov.iov_base = &filesize;
-            iov.iov_len = sizeof(uint64_t);
-            if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, dnbd3_reply.size, msg.msg_flags) <= 0)
-                goto error;
-            set_capacity(dev->disk, filesize >> 9); /* 512 Byte blocks */
-            printk("INFO: Filesize %s: %llu\n", dev->disk->disk_name, filesize);
-            spin_lock_irq(&dev->blk_lock);
-            list_del_init(&blk_request->queuelist);
-            spin_unlock_irq(&dev->blk_lock);
-            kfree(blk_request);
-            continue;
-
         case CMD_GET_SERVERS:
-            dev->alt_servers_num = dnbd3_reply.size / sizeof(struct in_addr);
-            size = sizeof(struct in_addr);
-            for (i = 0; i < dev->alt_servers_num && i < NUMBER_SERVERS; i++)
+        	spin_lock_irq(&dev->blk_lock);
+        	dev->new_servers_num = 0;
+        	spin_unlock_irq(&dev->blk_lock);
+            count = MIN(NUMBER_SERVERS, dnbd3_reply.size / sizeof(dnbd3_server_entry_t));
+
+            if (count != 0)
             {
-                iov.iov_base = &tmp_addr;
-                iov.iov_len = size;
-                if (kernel_recvmsg(dev->cur_server.sock, &msg, &iov, 1, size, msg.msg_flags) <= 0)
-                    goto error;
-                inet_ntoa(tmp_addr, dev->alt_servers[i].host);
+				iov.iov_base = dev->new_servers;
+				iov.iov_len = count * sizeof(dnbd3_server_entry_t);
+				if (kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags) != iov.iov_len)
+					goto error;
+	        	spin_lock_irq(&dev->blk_lock);
+	        	dev->new_servers_num = count;
+	        	spin_unlock_irq(&dev->blk_lock);
+				// TODO: Re-Add update check
             }
-            spin_lock_irq(&dev->blk_lock);
-            list_del_init(&blk_request->queuelist);
-            spin_unlock_irq(&dev->blk_lock);
-            kfree(blk_request);
-
-            if (dev->rid < dnbd3_reply.rid)
-                dev->update_available = 1;
-
+            // If there were more servers than accepted, remove the remaining data from the socket buffer
+            remaining = dnbd3_reply.size - count * sizeof(dnbd3_server_entry_t);
+            while (remaining > 0)
+            {
+            	count = MIN(sizeof(dnbd3_reply), remaining);
+            	iov.iov_base = &dnbd3_reply;
+            	iov.iov_len = count;
+            	if (kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags) <= 0)
+            		goto error;
+            	remaining -= count;
+            }
             continue;
 
         default:
             printk("ERROR: Unknown command (Receive)\n");
-            spin_lock_irq(&dev->blk_lock);
-            list_del_init(&blk_request->queuelist);
-            spin_unlock_irq(&dev->blk_lock);
             continue;
 
         }
@@ -599,23 +841,29 @@ int dnbd3_net_receive(void *data)
 
     return 0;
 
-    error:
-        printk("ERROR: Connection to server %s lost (receive)\n", dev->cur_server.host);
-        // move already send requests to request_queue_send again
-        if (!list_empty(&dev->request_queue_receive))
-        {
-            printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);
-            spin_lock_irq(&dev->blk_lock);
-            list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
-            {
-                list_del_init(&blk_request->queuelist);
-                list_add(&blk_request->queuelist, &dev->request_queue_send);
-            }
-            spin_unlock_irq(&dev->blk_lock);
-        }
-        if (dev->cur_server.sock)
-            kernel_sock_shutdown(dev->cur_server.sock, SHUT_RDWR);
-        dev->thread_receive = NULL;
-        dev->panic = 1;
-        return -1;
+error:
+    printk("ERROR: Connection to server %pI4 : %d lost (receive)\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+	// move already send requests to request_queue_send again
+	if (!list_empty(&dev->request_queue_receive))
+	{
+		printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);
+		spin_lock_irq(&dev->blk_lock);
+		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
+		{
+			list_del_init(&blk_request->queuelist);
+			list_add(&blk_request->queuelist, &dev->request_queue_send);
+		}
+		spin_unlock_irq(&dev->blk_lock);
+	}
+	if (dev->sock)
+		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+	dev->thread_receive = NULL;
+	if (!dev->disconnecting)
+	{
+		dev->panic = 1;
+		// start discover
+		dev->discover = 1;
+		wake_up(&dev->process_queue_discover);
+	}
+	return -1;
 }

@@ -34,6 +34,83 @@
 
 #include "server.h"
 #include "utils.h"
+#include "memlog.h"
+#include "../serialize.h"
+#include "../config.h"
+
+
+static char recv_request_header(int sock, dnbd3_request_t *request)
+{
+	// Read request heade from socket
+    if (recv(sock, request, sizeof(dnbd3_request_t), MSG_WAITALL) != sizeof(dnbd3_request_t))
+    {
+    	printf("[DEBUG] Error receiving request: Could not read message header\n");
+    	return 0;
+    }
+    // Make sure all bytes are in the right order (endianness)
+    fixup_request(*request);
+    if (request->magic != dnbd3_packet_magic)
+    {
+    	printf("[DEBUG] Magic in client request incorrect\n");
+    	return 0;
+    }
+    // Payload sanity check
+    if (request->size > MAX_PAYLOAD)
+    {
+    	memlogf("[WARNING] Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd, (int)request->size);
+    	return 0;
+    }
+    return 1;
+}
+
+static char recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
+{
+	if (size == 0)
+	{
+		memlogf("[BUG] Called recv_request_payload() to receive 0 bytes");
+		return 0;
+	}
+	if (size > MAX_PAYLOAD)
+	{
+		memlogf("[BUG] Called recv_request_payload() for more bytes than the passed buffer could hold!");
+		return 0;
+	}
+	if (recv(sock, payload->buffer, size, MSG_WAITALL) != size)
+	{
+		printf("[ERROR] Could not receive request payload of length %d\n", (int)size);
+		return 0;
+	}
+	// Prepare payload buffer for reading
+	serializer_reset_read(payload, size);
+	return 1;
+}
+
+static char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
+{
+	fixup_reply(*reply);
+	if (!payload || reply->size == 0)
+	{
+		if (send(sock, reply, sizeof(dnbd3_reply_t), MSG_WAITALL) != sizeof(dnbd3_reply_t))
+		{
+			printf("[DEBUG] Send failed (header-only)\n");
+			return 0;
+		}
+	}
+	else
+	{
+		struct iovec iov[2];
+		iov[0].iov_base = reply;
+		iov[0].iov_len = sizeof(dnbd3_reply_t);
+		iov[1].iov_base = payload;
+		iov[1].iov_len = reply->size;
+		if (writev(sock, iov, 2) != sizeof(dnbd3_reply_t) + reply->size)
+		{
+			printf("[DEBUG] Send failed (reply with payload of %d bytes)\n", (int)reply->size);
+			return 0;
+		}
+	}
+	return 1;
+}
 
 void *dnbd3_handle_query(void *dnbd3_client)
 {
@@ -41,87 +118,146 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_request_t request;
     dnbd3_reply_t reply;
 
-    int cork = 1;
-    int uncork = 0;
+    const int cork = 1;
+    const int uncork = 0;
 
     dnbd3_image_t *image = NULL;
-    int image_file, image_cache = -1;
+    int image_file = -1, image_cache = -1;
 
-    struct in_addr alt_server;
-    int i = 0;
+    int i, num;
 
     uint64_t map_y;
     char map_x, bit_mask;
+    serialized_buffer_t payload;
+    char *image_name;
+    uint16_t rid, client_version;
 
     uint64_t todo_size = 0;
     uint64_t todo_offset = 0;
     uint64_t cur_offset = 0;
     uint64_t last_offset = 0;
 
+    dnbd3_server_entry_t server_list[NUMBER_SERVERS];
+
     int dirty = 0;
 
-    while (recv(client->sock, &request, sizeof(dnbd3_request_t), MSG_WAITALL) > 0)
-    {
-        reply.cmd = request.cmd;
-        reply.size = 0;
-        memcpy(reply.handle, request.handle, sizeof(request.handle));
+    reply.magic = dnbd3_packet_magic;
 
-        pthread_spin_lock(&client->spinlock);
+    // Receive first packet. This must be CMD_GET_SIZE by protocol specification
+    if (recv_request_header(client->sock, &request))
+    {
+    	if (request.cmd != CMD_GET_SIZE)
+    	{
+    		printf("[DEBUG] Client sent invalid handshake (%d). Dropping Client\n", (int)request.cmd);
+    	}
+    	else
+    	{
+    		if (recv_request_payload(client->sock, request.size, &payload))
+    		{
+    			client_version = serializer_get_uint16(&payload);
+				image_name = serializer_get_string(&payload);
+				rid = serializer_get_uint16(&payload);
+				if (request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT)
+				{
+					if (client_version < MIN_SUPPORTED_CLIENT)
+					{
+						printf("[DEBUG] Client too old\n");
+					}
+					else
+					{
+						printf("[DEBUG] Incomplete handshake received\n");
+					}
+				}
+				else
+				{
+					pthread_spin_lock(&_spinlock);
+					image = dnbd3_get_image(image_name, rid, 0);
+					if (!image)
+					{
+						printf("[DEBUG] Client requested non-existent image '%s'\n", image_name);
+					}
+					else
+					{
+						serializer_put_uint16(&payload, PROTOCOL_VERSION);
+						serializer_put_string(&payload, image->low_name);
+						serializer_put_uint16(&payload, image->rid);
+						serializer_put_uint64(&payload, image->filesize);
+						reply.cmd = CMD_GET_SIZE;
+						reply.size = serializer_get_written_length(&payload);
+						if (!send_reply(client->sock, &reply, &payload))
+						{
+							image = NULL;
+						}
+						else
+						{
+							image_file = open(image->file, O_RDONLY);
+							if (image_file == -1)
+							{
+								image = NULL;
+							}
+							else
+							{
+								client->image = image;
+								image->atime = time(NULL); // TODO: check if mutex is needed
+
+								if (image->cache_map && image->cache_file)
+									image_cache = open(image->cache_file, O_RDWR);
+							}
+						}
+					}
+					pthread_spin_unlock(&_spinlock);
+				}
+			}
+    	}
+	}
+
+    if (image) while (recv_request_header(client->sock, &request))
+    {
+
         switch (request.cmd)
         {
-        case CMD_GET_SERVERS:
-            image = dnbd3_get_image(request.vid, request.rid);
-            if(!image)
-                goto error;
-
-            int num = (image->num_servers < NUMBER_SERVERS) ? image->num_servers : NUMBER_SERVERS;
-            reply.vid = image->vid;
-            reply.rid = dnbd3_get_image(request.vid, 0)->rid;
-            reply.size = num * sizeof(struct in_addr);
-            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
-
-            for (i = 0; i < num; i++)
-            {
-                inet_aton(image->servers[i], &alt_server);
-                send(client->sock, (char *) &alt_server, sizeof(struct in_addr), 0);
-            }
-            client->image = image;
-            image->atime = time(NULL); // TODO: check if mutex is needed
-            break;
-
-        case CMD_GET_SIZE:
-            image = dnbd3_get_image(request.vid, request.rid);
-            if(!image)
-                goto error;
-
-            reply.vid = image->vid;
-            reply.rid = image->rid;
-            reply.size = sizeof(uint64_t);
-            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
-
-            send(client->sock, &image->filesize, sizeof(uint64_t), 0);
-            image_file = open(image->file, O_RDONLY);
-            client->image = image;
-            image->atime = time(NULL); // TODO: check if mutex is needed
-
-            if (image->cache_file)
-                image_cache = open(image->cache_file, O_RDWR);
-
-            break;
 
         case CMD_GET_BLOCK:
-            if (image_file < 0)
-                goto error;
+            if (request.offset >= image->filesize)
+            { // Sanity check
+            	memlogf("[WARNING] Client requested non-existent block");
+            	reply.size = 0;
+            	reply.cmd = CMD_ERROR;
+            	send_reply(client->sock, &reply, NULL);
+            	break;
+            }
+            if (request.offset + request.size > image->filesize)
+            { // Sanity check
+            	memlogf("[WARNING] Client requested data block that extends beyond image size");
+            	reply.size = 0;
+            	reply.cmd = CMD_ERROR;
+            	send_reply(client->sock, &reply, NULL);
+            	break;
+            }
+            if (request.size > image->filesize)
+            { // Sanity check
+            	memlogf("[WARNING] Client requested data block that is bigger than the image size");
+            	reply.size = 0;
+            	reply.cmd = CMD_ERROR;
+            	send_reply(client->sock, &reply, NULL);
+            	break;
+            }
 
+            // TODO: Try MSG_MORE instead of cork+uncork if performance ever becomes an issue..
             setsockopt(client->sock, SOL_TCP, TCP_CORK, &cork, sizeof(cork));
+            reply.cmd = CMD_GET_BLOCK;
             reply.size = request.size;
-            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
+            reply.handle = request.handle;
+            send_reply(client->sock, &reply, NULL);
 
             // caching is off
-            if (!image->cache_file)
+            if (image_cache == -1)
             {
-                if (sendfile(client->sock, image_file, (off_t *) &request.offset, request.size) < 0)
-                    printf("ERROR: Sendfile failed (sock)\n");
+                if (sendfile(client->sock, image_file, (off_t *)&request.offset, request.size) != request.size)
+                {
+                	printf("[ERROR] sendfile failed (image to net)\n");
+                	close(client->sock);
+                }
 
                 setsockopt(client->sock, SOL_TCP, TCP_CORK, &uncork, sizeof(uncork));
                 break;
@@ -134,10 +270,11 @@ void *dnbd3_handle_query(void *dnbd3_client)
             cur_offset = request.offset;
             last_offset = request.offset + request.size;
 
+            // first make sure the whole requested part is in the local cache file
             while(cur_offset < last_offset)
             {
                 map_y = cur_offset >> 15;
-                map_x = (cur_offset >> 12) & 7; // mod 8
+                map_x = (cur_offset >> 12) & 7; // mod 256
                 bit_mask = 0b00000001 << (map_x);
 
                 cur_offset += 4096;
@@ -147,8 +284,15 @@ void *dnbd3_handle_query(void *dnbd3_client)
                     if (todo_size != 0) // fetch missing chunks
                     {
                         lseek(image_cache, todo_offset, SEEK_SET);
-                        if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) < 0)
-                            printf("ERROR: Sendfile failed (cache)\n");
+                        if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) != todo_size)
+                        {
+                        	printf("[ERROR] sendfile failed (copy to cache 1)\n");
+                        	close(client->sock);
+                        	// Reset these so we don't update the cache map with false information
+                        	dirty = 0;
+                        	todo_size = 0;
+                        	break;
+                        }
                         todo_size = 0;
                         dirty = 1;
                     }
@@ -164,13 +308,16 @@ void *dnbd3_handle_query(void *dnbd3_client)
             if (todo_size != 0)
             {
                 lseek(image_cache, todo_offset, SEEK_SET);
-                if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) < 0)
-                    printf("ERROR: Sendfile failed (cache)\n");
-
+                if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) != todo_size)
+                {
+                	printf("[ERROR] sendfile failed (copy to cache 2)\n");
+                	close(client->sock);
+                	break;
+                }
                 dirty = 1;
             }
 
-            if (dirty)
+            if (dirty) // cache map needs to be updated as something was missing locally
             {
                 // set 1 in cache map for whole request
                 cur_offset = request.offset;
@@ -185,35 +332,42 @@ void *dnbd3_handle_query(void *dnbd3_client)
             }
 
             // send data to client
-            if (sendfile(client->sock, image_cache, (off_t *) &request.offset, request.size) < 0)
-                printf("ERROR: Sendfile failed (net)\n");
+            if (sendfile(client->sock, image_cache, (off_t *) &request.offset, request.size) != request.size)
+            {
+            	memlogf("[ERROR] sendfile failed (cache to net)\n");
+            	close(client->sock);
+            }
 
             setsockopt(client->sock, SOL_TCP, TCP_CORK, &uncork, sizeof(uncork));
             break;
 
+
+        case CMD_GET_SERVERS:
+            // Build list of known working alt servers
+            num = 0;
+            for (i = 0; i < NUMBER_SERVERS; i++)
+            {
+                if (image->servers[i].addrtype == 0 || image->servers[i].failures > 200) continue;
+                memcpy(server_list + num++, image->servers + i, sizeof(dnbd3_server_entry_t));
+            }
+            reply.cmd = CMD_GET_SERVERS;
+            reply.size = num * sizeof(dnbd3_server_entry_t);
+            send_reply(client->sock, &reply, server_list);
+            break;
+
         default:
-            printf("ERROR: Unknown command\n");
+        	memlogf("ERROR: Unknown command\n");
             break;
 
         }
 
-        pthread_spin_unlock(&client->spinlock);
-        continue;
-
-        error:
-            printf("ERROR: Client requested an unknown image id.\n");
-            send(client->sock, (char *) &reply, sizeof(dnbd3_reply_t), 0);
-            pthread_spin_unlock(&client->spinlock);
-            continue;
-
     }
     close(client->sock);
-    close(image_file);
-    close(image_cache);
+    if (image_file != -1) close(image_file);
+    if (image_cache != -1) close(image_cache);
     pthread_spin_lock(&_spinlock);
     _dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
     pthread_spin_unlock(&_spinlock);
-    printf("INFO: Client %s exit\n", client->ip);
     free(client);
     pthread_exit((void *) 0);
 }
@@ -227,7 +381,7 @@ int dnbd3_setup_socket()
     sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sock < 0)
     {
-        printf("ERROR: Socket failure\n");
+    	memlogf("ERROR: Socket setup failure\n");
         return -1;
     }
 
@@ -239,14 +393,14 @@ int dnbd3_setup_socket()
     // Bind to socket
     if (bind(sock, (struct sockaddr*) &server, sizeof(server)) < 0)
     {
-        printf("ERROR: Bind failure\n");
+    	memlogf("ERROR: Bind failure\n");
         return -1;
     }
 
     // Listen on socket
     if (listen(sock, 100) == -1)
     {
-        printf("ERROR: Listen failure\n");
+    	memlogf("ERROR: Listen failure\n");
         return -1;
     }
 

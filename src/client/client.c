@@ -28,6 +28,7 @@
 #include <glib.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <string.h>
 
 #include "../types.h"
 #include "../version.h"
@@ -37,11 +38,11 @@ char *_config_file_name = DEFAULT_CLIENT_CONFIG_FILE;
 void dnbd3_print_help(char* argv_0)
 {
     printf("\nUsage: %s\n"
-            "\t-h <host> -v <vid> [-r <rid>] -d <device> [-a <KB>] || -f <file> || -c <device>\n\n", argv_0);
+            "\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -f <file> || -c <device>\n\n", argv_0);
     printf("Start the DNBD3 client.\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
     printf("-h or --host \t\t Host running dnbd3-server.\n");
-    printf("-v or --vid \t\t Volume-ID of exported image.\n");
+    printf("-i or --image \t\t Image name of exported image.\n");
     printf("-r or --rid \t\t Release-ID of exported image (default 0, latest).\n");
     printf("-d or --device \t\t DNBD3 device name.\n");
     printf("-a or --ahead \t\t Read ahead in KByte (default %i).\n", DEFAULT_READ_AHEAD_KB);
@@ -58,7 +59,7 @@ void dnbd3_print_version()
     exit(EXIT_SUCCESS);
 }
 
-char* dnbd3_get_ip(char* hostname)
+static void dnbd3_get_ip(char* hostname, uint8_t *target, uint8_t *addrtype)
 {
     struct hostent *host;
 
@@ -68,7 +69,16 @@ char* dnbd3_get_ip(char* hostname)
         exit(EXIT_FAILURE);
     }
 
-    return inet_ntoa(*((struct in_addr *) host->h_addr));
+    *addrtype = (uint8_t)host->h_addrtype;
+    if (host->h_addrtype == AF_INET)
+    	memcpy(target, host->h_addr, 4);
+    else if (host->h_addrtype == AF_INET6)
+    	memcpy(target, host->h_addr, 16);
+    else
+    {
+    	printf("FATAL: Unknown address type: %d\n", host->h_addrtype);
+    	exit(EXIT_FAILURE);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -80,19 +90,20 @@ int main(int argc, char *argv[])
     int switch_host = 0;
 
     dnbd3_ioctl_t msg;
-    msg.host = NULL;
-    msg.vid = 0;
-    msg.rid = 0;
+    memset(&msg, 0, sizeof(dnbd3_ioctl_t));
+    msg.len = (uint16_t)sizeof(dnbd3_ioctl_t);
     msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
+    msg.port = htons(PORT);
+    msg.addrtype = 0;
 
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "f:h:v:r:d:a:c:s:HV?";
+    static const char *optString = "f:h:i:r:d:a:c:s:HV?";
     static const struct option longOpts[] =
     {
     { "file", required_argument, NULL, 'f' },
     { "host", required_argument, NULL, 'h' },
-    { "vid", required_argument, NULL, 'v' },
+    { "image", required_argument, NULL, 'i' },
     { "rid", required_argument, NULL, 'r' },
     { "device", required_argument, NULL, 'd' },
     { "ahead", required_argument, NULL, 'a' },
@@ -108,29 +119,32 @@ int main(int argc, char *argv[])
         switch (opt)
         {
         case 'f':
-            _config_file_name = optarg;
+            _config_file_name = strdup(optarg);
             break;
         case 'h':
-            msg.host = dnbd3_get_ip(optarg);
+            dnbd3_get_ip(optarg, msg.addr, &msg.addrtype);
+            printf("Host set to %s (type %d)\n", optarg, (int)msg.addrtype);
             break;
-        case 'v':
-            msg.vid = atoi(optarg);
+        case 'i':
+            msg.imgname = strdup(optarg);
+            printf("Image: %s\n", msg.imgname);
             break;
         case 'r':
             msg.rid = atoi(optarg);
             break;
         case 'd':
-            dev = optarg;
+            dev = strdup(optarg);
+            printf("Device is %s\n", dev);
             break;
         case 'a':
             msg.read_ahead_kb = atoi(optarg);
             break;
         case 'c':
-            dev = optarg;
+            dev = strdup(optarg);
             close_dev = 1;
             break;
         case 's':
-            msg.host = dnbd3_get_ip(optarg);
+            dnbd3_get_ip(optarg, msg.addr, &msg.addrtype);
             switch_host = 1;
             break;
         case 'H':
@@ -141,12 +155,13 @@ int main(int argc, char *argv[])
             break;
         case '?':
             dnbd3_print_help(argv[0]);
+            break;
         }
         opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
     }
 
     // close device
-    if (close_dev && !msg.host && dev && (msg.vid == 0))
+    if (close_dev && msg.addrtype == 0 && dev && (msg.imgname == NULL))
     {
         fd = open(dev, O_WRONLY);
         printf("INFO: Closing device %s\n", dev);
@@ -162,10 +177,10 @@ int main(int argc, char *argv[])
     }
 
     // switch host
-    if (switch_host && msg.host && dev && (msg.vid == 0))
+    if (switch_host && msg.addrtype != 0 && dev && (msg.imgname == NULL))
     {
         fd = open(dev, O_WRONLY);
-        printf("INFO: Switching device %s to %s\n", dev, msg.host);
+        printf("INFO: Switching device %s to %s\n", dev, "<fixme>");
 
         if (ioctl(fd, IOCTL_SWITCH, &msg) < 0)
         {
@@ -178,10 +193,11 @@ int main(int argc, char *argv[])
     }
 
     // connect
-    if (msg.host && dev && (msg.vid != 0))
+    if (msg.addrtype != 0 && dev && (msg.imgname != NULL))
     {
+    	msg.imgnamelen = (uint16_t)strlen(msg.imgname);
         fd = open(dev, O_WRONLY);
-        printf("INFO: Connecting %s to %s vid:%i rid:%i\n", dev, msg.host, msg.vid, msg.rid);
+        printf("INFO: Connecting %s to %s (%s rid:%i)\n", dev, "<fixme>", msg.imgname, msg.rid);
 
         if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
         {
@@ -207,8 +223,8 @@ int main(int argc, char *argv[])
 
         for (i = 0; i < j; i++)
         {
-            msg.host = g_key_file_get_string(gkf, groups[i], "server", NULL);
-            msg.vid = g_key_file_get_integer(gkf, groups[i], "vid", NULL);
+            dnbd3_get_ip(g_key_file_get_string(gkf, groups[i], "server", NULL), msg.addr, &msg.addrtype);
+            msg.imgname = g_key_file_get_string(gkf, groups[i], "name", NULL);
             msg.rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
             dev = g_key_file_get_string(gkf, groups[i], "device", NULL);
 
@@ -217,7 +233,7 @@ int main(int argc, char *argv[])
                 msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
 
             fd = open(dev, O_WRONLY);
-            printf("INFO: Connecting %s to %s vid:%i rid:%i\n", dev, msg.host, msg.vid, msg.rid);
+            printf("INFO: Connecting %s to %s (%s rid:%i)\n", dev, "<fixme>", msg.imgname, msg.rid);
 
             if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
             {

@@ -34,14 +34,14 @@
 #include "utils.h"
 #include "net.h"
 #include "ipc.h"
+#include "memlog.h"
 
 int _sock;
 pthread_spinlock_t _spinlock;
 
 GSList *_dnbd3_clients = NULL;
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
-dnbd3_image_t *_images;
-size_t _num_images = 0;
+GSList *_dnbd3_images; // of dnbd3_image_t
 
 void dnbd3_print_help(char* argv_0)
 {
@@ -65,8 +65,10 @@ void dnbd3_print_version()
 
 void dnbd3_cleanup()
 {
-    int i, fd;
-    printf("INFO: Cleanup...\n");
+    int fd;
+    memlogf("INFO: Cleanup...\n");
+
+    close(_sock);
 
     pthread_spin_lock(&_spinlock);
     GSList *iterator = NULL;
@@ -74,39 +76,38 @@ void dnbd3_cleanup()
     {
         dnbd3_client_t *client = iterator->data;
         shutdown(client->sock, SHUT_RDWR);
-        pthread_join(*client->thread, NULL);
+        pthread_join(client->thread, NULL);
+        g_free(client);
     }
     g_slist_free(_dnbd3_clients);
 
 
-    for (i = 0; i < _num_images; i++)
+    for (iterator = _dnbd3_images; iterator; iterator = iterator->next)
     {
     	// save cache maps to files
-        if (_images[i].cache_file)
+    	dnbd3_image_t *image = iterator->data;
+        if (image->cache_file)
         {
-            char tmp[strlen(_images[i].cache_file)+4];
-            strcpy(tmp, _images[i].cache_file);
+            char tmp[strlen(image->cache_file)+4];
+            strcpy(tmp, image->cache_file);
             strcat(tmp, ".map");
             fd = open(tmp, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
 
             if (fd > 0)
-                write(fd, _images[i].cache_map,  (_images[i].filesize >> 15) * sizeof(char));
+                write(fd, image->cache_map,  ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char));
 
             close(fd);
         }
 
-        free(_images[i].group);
-        free(_images[i].file);
-        free(_images[i].servers);
-        free(_images[i].serverss);
-        free(_images[i].cache_file);
-        free(_images[i].cache_map);
+        free(image->name);
+        g_free(image->file);
+        g_free(image->cache_file);
+        free(image->cache_map);
+        g_free(image);
     }
+    g_slist_free(_dnbd3_images);
 
     pthread_spin_unlock(&_spinlock);
-
-    close(_sock);
-    free(_images);
 #ifndef IPC_TCP
     unlink(UNIX_SOCKET);
 #endif
@@ -161,12 +162,17 @@ int main(int argc, char* argv[])
             break;
         case '?':
             dnbd3_print_help(argv[0]);
+            break;
         }
         opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
     }
 
     if (demonize)
         daemon(1, 0);
+
+    pthread_spin_init(&_spinlock, PTHREAD_PROCESS_PRIVATE);
+
+    initmemlog();
 
     // load config file
     dnbd3_load_config(_config_file_name);
@@ -191,9 +197,7 @@ int main(int argc, char* argv[])
     pthread_t thread_ipc;
     pthread_create(&(thread_ipc), NULL, dnbd3_ipc_receive, NULL);
 
-    pthread_spin_init(&_spinlock, PTHREAD_PROCESS_PRIVATE);
-
-    printf("INFO: Server is ready...\n");
+    memlogf("[INFO] Server is ready...");
 
     // main loop
     while (1)
@@ -201,28 +205,45 @@ int main(int argc, char* argv[])
         fd = accept(_sock, (struct sockaddr*) &client, &len);
         if (fd < 0)
         {
-            printf("ERROR: Accept failure\n");
+        	memlogf("[ERROR] Accept failure");
             continue;
         }
-        printf("INFO: Client %s connected\n", inet_ntoa(client.sin_addr));
+        //memlogf("INFO: Client %s connected\n", inet_ntoa(client.sin_addr));
 
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
 
-        pthread_t thread;
-        dnbd3_client_t *dnbd3_client = (dnbd3_client_t *) malloc(sizeof(dnbd3_client_t));
-        pthread_spin_init(&dnbd3_client->spinlock, PTHREAD_PROCESS_PRIVATE);
-        strcpy(dnbd3_client->ip, inet_ntoa(client.sin_addr));
+        dnbd3_client_t *dnbd3_client = g_new0(dnbd3_client_t, 1);
+        if (dnbd3_client == NULL)
+        {
+        	memlogf("[ERROR] Could not alloc dnbd3_client_t for new client.");
+        	close(fd);
+        	continue;
+        }
+        // TODO: Extend this if you ever want to add IPv6 (something like:)
+        // dnbd3_client->addrtype = AF_INET6;
+        // memcpy(dnbd3_client->ipaddr, &(client.sin6_addr), 16);
+        dnbd3_client->addrtype = AF_INET;
+        memcpy(dnbd3_client->ipaddr, &(client.sin_addr), 4);
         dnbd3_client->sock = fd;
-        dnbd3_client->thread = &thread;
         dnbd3_client->image = NULL;
 
+        // This has to be done before creating the thread, otherwise a race condition might occur when the new thread dies faster than this thread adds the client to the list after creating the thread
         pthread_spin_lock(&_spinlock);
         _dnbd3_clients = g_slist_append(_dnbd3_clients, dnbd3_client);
         pthread_spin_unlock(&_spinlock);
 
-        pthread_create(&(thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client);
-        pthread_detach(thread);
+        if (0 != pthread_create(&(dnbd3_client->thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client))
+        {
+        	memlogf("[ERROR] Could not start thread for new client.");
+            pthread_spin_lock(&_spinlock);
+            _dnbd3_clients = g_slist_remove(_dnbd3_clients, dnbd3_client);
+            pthread_spin_unlock(&_spinlock);
+            g_free(dnbd3_client);
+        	close(fd);
+        	continue;
+        }
+        pthread_detach(dnbd3_client->thread);
     }
 
     dnbd3_cleanup();

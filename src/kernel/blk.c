@@ -35,12 +35,10 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     INIT_LIST_HEAD(&dev->request_queue_send);
     INIT_LIST_HEAD(&dev->request_queue_receive);
 
-    memset(dev->cur_server.host, 0, 16);
-    memset(dev->cur_server.port, 0, 6);
-    dev->cur_server.rtt = 0;
-    dev->cur_server.sock = NULL;
+    memset(&dev->cur_server, 0, sizeof(dnbd3_server_t));
+    dev->better_sock = NULL;
 
-    dev->vid = 0;
+    dev->imgname = NULL;
     dev->rid = 0;
     dev->update_available = 0;
     dev->alt_servers_num = 0;
@@ -50,6 +48,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     dev->thread_discover = NULL;
     dev->discover = 0;
     dev->panic = 0;
+    dev->panic_count = 0;
+    dev->reported_size = 0;
 
     if (!(disk = alloc_disk(1)))
     {
@@ -102,28 +102,60 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     int result = 0;
     dnbd3_device_t *dev = bdev->bd_disk->private_data;
     struct request_queue *blk_queue = dev->disk->queue;
+    char *imgname = NULL;
     dnbd3_ioctl_t *msg = kmalloc(sizeof(dnbd3_ioctl_t), GFP_KERNEL);
-    copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
+
+    if (msg == NULL) return -ENOMEM;
+    copy_from_user((char *)msg, (char *)arg, 2);
+    if (msg->len != sizeof(dnbd3_ioctl_t))
+    {
+    	result = -ENOEXEC;
+    	goto cleanup_return;
+    }
+    copy_from_user((char *)msg, (char *)arg, sizeof(dnbd3_ioctl_t));
+    if (msg->imgname != NULL && msg->imgnamelen > 0)
+    {
+    	imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
+    	if (imgname == NULL)
+    	{
+    		result = -ENOMEM;
+    		goto cleanup_return;
+    	}
+    	copy_from_user(imgname, msg->imgname, msg->imgnamelen);
+    	imgname[msg->imgnamelen] = '\0';
+    }
 
     switch (cmd)
     {
     case IOCTL_OPEN:
-        strcpy(dev->cur_server.host, msg->host);
-        strcpy(dev->cur_server.port, PORTSTR);
-        dev->vid = msg->vid;
-        dev->rid = msg->rid;
-        blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024)/ PAGE_CACHE_SIZE;
-        result =  dnbd3_net_connect(dev);
+    	if (imgname == NULL)
+    	{
+    		result = -EINVAL;
+    	}
+    	else
+    	{
+			memcpy(dev->cur_server.hostaddr, msg->addr, 16);
+			dev->cur_server.port = msg->port;
+			dev->cur_server.hostaddrtype = msg->addrtype;
+			dev->imgname = imgname;
+			imgname = NULL;
+			dev->rid = msg->rid;
+			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_CACHE_SIZE;
+			result =  dnbd3_net_connect(dev);
+    	}
         break;
 
     case IOCTL_CLOSE:
         set_capacity(dev->disk, 0);
         result = dnbd3_net_disconnect(dev);
+        dnbd3_blk_fail_all_requests(dev);
         break;
 
     case IOCTL_SWITCH:
         dnbd3_net_disconnect(dev);
-        strcpy(dev->cur_server.host, msg->host);
+		memcpy(dev->cur_server.hostaddr, msg->addr, 16);
+		dev->cur_server.port = msg->port;
+		dev->cur_server.hostaddrtype = msg->addrtype;
         result = dnbd3_net_connect(dev);
         break;
 
@@ -132,10 +164,12 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 
     default:
         result = -EIO;
-
+        break;
     }
 
-    kfree(msg);
+cleanup_return:
+    if (msg) kfree(msg);
+    if (imgname) kfree(imgname);
     return result;
 }
 
@@ -148,18 +182,78 @@ void dnbd3_blk_request(struct request_queue *q)
     {
         dev = req->rq_disk->private_data;
 
+        if (dev->cur_server.hostaddrtype == 0)
+        {
+        	__blk_end_request_all(req, -EIO);
+        	continue;
+        }
+
         if (req->cmd_type != REQ_TYPE_FS)
         {
             __blk_end_request_all(req, 0);
             continue;
         }
 
-        if (rq_data_dir(req) == READ)
+        if (dev->panic_count >= 20)
         {
-            list_add_tail(&req->queuelist, &dev->request_queue_send);
-            spin_unlock_irq(q->queue_lock);
-            wake_up(&dev->process_queue_send);
-            spin_lock_irq(q->queue_lock);
+        	__blk_end_request_all(req, -EIO);
+        	continue;
         }
+
+        if (rq_data_dir(req) != READ)
+        {
+        	__blk_end_request_all(req, -EACCES);
+        	continue;
+        }
+
+		list_add_tail(&req->queuelist, &dev->request_queue_send);
+		spin_unlock_irq(q->queue_lock);
+		wake_up(&dev->process_queue_send);
+		spin_lock_irq(q->queue_lock);
     }
+}
+
+void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
+{
+	struct request *blk_request, *tmp_request;
+	struct request *blk_request2, *tmp_request2;
+	unsigned long flags;
+	struct list_head local_copy;
+	int dup;
+	INIT_LIST_HEAD(&local_copy);
+	spin_lock_irq(&dev->blk_lock);
+	list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
+	{
+		list_del_init(&blk_request->queuelist);
+		list_add(&blk_request->queuelist, &local_copy);
+	}
+	list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_send, queuelist)
+	{
+		list_del_init(&blk_request->queuelist);
+		dup = 0;
+		list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist)
+		{
+			if (blk_request == blk_request2)
+			{
+				printk("WARNING: Request is in both lists!\n");
+				dup = 1;
+			}
+		}
+		if (!dup) list_add(&blk_request->queuelist, &local_copy);
+	}
+	spin_unlock_irq(&dev->blk_lock);
+	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist)
+	{
+		list_del_init(&blk_request->queuelist);
+		if (blk_request->cmd_type == REQ_TYPE_FS)
+		{
+			spin_lock_irqsave(&dev->blk_lock, flags);
+			__blk_end_request_all(blk_request, -EIO);
+			spin_unlock_irqrestore(&dev->blk_lock, flags);
+		}
+		else if (blk_request->cmd_type == REQ_TYPE_SPECIAL)
+		{
+			kfree(blk_request);
+		}
+	}
 }

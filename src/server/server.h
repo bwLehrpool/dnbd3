@@ -30,33 +30,31 @@
 
 typedef struct
 {
-	char *group;
-    char *file;
-    uint64_t filesize;
-    size_t num_servers;
-    char **servers;
-    char *serverss;
-    int vid;
-    int rid;
-    time_t atime;
-    char *cache_map;
-    char *cache_file;
+	char *name; // full name of image, eg. "uni-freiburg.ubuntu-12.04"
+	char *low_name; // full name of image, lowercased for comparison
+    int rid; // revision of provided image
+    char *file; // path to image file or device
+    uint64_t filesize; // size of image
+    dnbd3_server_entry_t servers[NUMBER_SERVERS]; // known alt servers that also offer that image
+    time_t atime; // last access time
+    uint8_t *cache_map; // cache map telling which parts are locally cached
+    char *cache_file; // path to local cache of image (in case the image is read from a dnbd3 device)
+    char working;	// whether this image is considered working. local images are "working" if the local file exists, proxied images have to have at least one working upstream server or a complete local cache file
 } dnbd3_image_t;
 
 typedef struct
 {
     int sock;
-    char ip[16];
-    pthread_t *thread;
+    uint8_t ipaddr[16];
+    uint8_t addrtype; 	// ip version (AF_INET or AF_INET6)
+    pthread_t thread;
     dnbd3_image_t *image;
-    pthread_spinlock_t spinlock;
 } dnbd3_client_t;
 
-extern GSList *_dnbd3_clients;
+extern GSList *_dnbd3_clients; // of dnbd3_client_t
 extern pthread_spinlock_t _spinlock;
 extern char *_config_file_name;
-extern dnbd3_image_t *_images;
-extern size_t _num_images;
+extern GSList *_dnbd3_images; // of dnbd3_image_t
 
 void dnbd3_cleanup();
 

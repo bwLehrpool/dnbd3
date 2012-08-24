@@ -29,17 +29,19 @@
 
 #include "config.h"
 #include "types.h"
+#include "serialize.h"
 
 extern int major;
 
 typedef struct
 {
-    char host[16];
-    char port[6];
-    uint64_t rtt;
-    uint64_t rtts[4];
-    struct socket *sock;
-    struct kobject kobj;
+    uint64_t rtts[4];			// Last four round trip time measurements in µs
+    uint16_t port;				// Port in network representation
+    uint16_t protocol_version;	// dnbd3 protocol version of this server
+    uint8_t hostaddr[16];		// Address in network representation (IPv4 or IPv6)
+    uint8_t hostaddrtype;		// Address type (AF_INET or AF_INET6)
+    uint8_t skip_count;			// Do not check this server the next skip_count times
+    struct kobject kobj;		// SysFS
 } dnbd3_server_t;
 
 typedef struct
@@ -52,11 +54,20 @@ typedef struct
     struct kobject kobj;
 
     // network
+    struct socket *sock;
     dnbd3_server_t cur_server;
-    int vid, rid, update_available;
-    int alt_servers_num;
-    dnbd3_server_t alt_servers[NUMBER_SERVERS];
-    int discover, panic;
+    uint64_t cur_rtt;
+    char *imgname;
+    serialized_buffer_t payload_buffer;
+    int rid, update_available;
+    int alt_servers_num;	// number of currently known alt servers
+    dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
+    int new_servers_num;	// number of new alt servers that are waiting to be copied to above array
+    dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers
+    int discover, panic, panic_count, disconnecting;
+    uint64_t reported_size;
+    // server switch
+    struct socket *better_sock;
 
     // process
     struct timer_list hb_timer;

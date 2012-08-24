@@ -1,25 +1,9 @@
 # This is a sample configuration file for dnbd3-server
 
-[Ubuntu 10.04]
-file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-10.04.3-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220;132.230.8.96
-vid=1
+[settings]
+default_namespace=uni-freiburg/rz/bunker
+
+[eclipse-cdt linux (tar.gz)]
+file=/home/sr/Downloads/eclipse-cpp-juno-linux-gtk-x86_64.tar.gz
+servers=127.0.0.20:1234;132.230.4.58;2000::dead:beef
 rid=3
-
-[Ubuntu 10.10]
-file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-10.10-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220;132.230.8.96
-vid=2
-rid=1
-
-[Ubuntu 11.04]
-file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-11.04-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220;132.230.8.96
-vid=3
-rid=1
-
-[Ubuntu 11.10]
-file=/home/jjl/Data/ISOs/Ubuntu/ubuntu-11.10-desktop-i386.iso
-servers=132.230.4.29;132.230.4.220;132.230.8.96
-vid=4
-rid=1

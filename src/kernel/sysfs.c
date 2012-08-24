@@ -25,12 +25,12 @@
 
 ssize_t show_cur_server_ip(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%s\n", dev->cur_server.host);
+    return sprintf(buf, "%pI4\n", dev->cur_server.hostaddr);
 }
 
 ssize_t show_cur_server_rtt(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%llu\n", dev->cur_server.rtt);
+    return sprintf(buf, "%llu\n", (unsigned long long)dev->cur_rtt);
 }
 
 ssize_t show_alt_server_num(char *buf, dnbd3_device_t *dev)
@@ -38,9 +38,10 @@ ssize_t show_alt_server_num(char *buf, dnbd3_device_t *dev)
     return sprintf(buf, "%d\n", dev->alt_servers_num);
 }
 
-ssize_t show_vid(char *buf, dnbd3_device_t *dev)
+ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%d\n", dev->vid);
+	if (dev->imgname == NULL) return sprintf(buf, "(null)");
+    return sprintf(buf, "%s\n", dev->imgname);
 }
 
 ssize_t show_rid(char *buf, dnbd3_device_t *dev)
@@ -55,12 +56,12 @@ ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
 
 ssize_t show_alt_server_ip(char *buf, dnbd3_server_t *srv)
 {
-    return sprintf(buf, "%s\n", srv->host);
+    return sprintf(buf, "%pI4\n", srv->hostaddr);
 }
 
 ssize_t show_alt_server_rtt(char *buf, dnbd3_server_t *srv)
 {
-    return sprintf(buf, "%llu\n", srv->rtt);
+    return sprintf(buf, "%llu\n", (uint64_t)((srv->rtts[0]+srv->rtts[1]+srv->rtts[2]+srv->rtts[3]) / 4));
 }
 
 device_attr_t cur_server_ip =
@@ -84,10 +85,10 @@ device_attr_t alt_server_num =
     .store  = NULL,
 };
 
-device_attr_t vid =
+device_attr_t image_name =
 {
-    .attr = {.name = "vid", .mode = 0444 },
-    .show   = show_vid,
+    .attr = {.name = "image_name", .mode = 0444 },
+    .show   = show_image_name,
     .store  = NULL,
 };
 
@@ -138,7 +139,7 @@ struct attribute *device_attrs[] =
     &cur_server_ip.attr,
     &cur_server_rtt.attr,
     &alt_server_num.attr,
-    &vid.attr,
+    &image_name.attr,
     &rid.attr,
     &update_available.attr,
     NULL,
@@ -183,7 +184,7 @@ struct kobj_type server_ktype =
 void dnbd3_sysfs_init(dnbd3_device_t *dev)
 {
     int i;
-    char name[] = "alt_server99";
+    char name[15] = "alt_server99";
     struct kobject *kobj = &dev->kobj;
     struct kobj_type *ktype = &device_ktype;
     struct kobject *parent = &disk_to_dev(dev->disk)->kobj;

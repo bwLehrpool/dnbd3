@@ -35,11 +35,10 @@
 #define ERROR_UNKNOWN					10
 
 void dnbd3_load_config(char *file);
-void dnbd3_reload_config(char* config_file_name);
 int dnbd3_add_image(dnbd3_image_t *image, char *file);
 int dnbd3_del_image(dnbd3_image_t *image, char *file);
 
-dnbd3_image_t* dnbd3_get_image(int vid, int rid);
+dnbd3_image_t* dnbd3_get_image(char *name, int rid, const char do_lock);
 
 void dnbd3_handle_sigpipe(int signum);
 void dnbd3_handle_sigterm(int signum);

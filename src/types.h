@@ -29,10 +29,41 @@
 #define IOCTL_CLOSE     _IO(0xab, 2)
 #define IOCTL_SWITCH    _IO(0xab, 3)
 
+#if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && __BYTE_ORDER == __BIG_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
+// Flip bytes around on big endian when putting stuff on the net
+#define net_order_64(a) ((uint64_t)((((a) & 0xFFull) << 56) | (((a) & 0xFF00ull) << 40) | (((a) & 0xFF0000ull) << 24) | (((a) & 0xFF000000ull) << 8) | (((a) & 0xFF00000000ull) >> 8) | (((a) & 0xFF0000000000ull) >> 24) | (((a) & 0xFF000000000000ull) >> 40) | (((a) & 0xFF00000000000000ull) >> 56)))
+#define net_order_32(a) ((uint32_t)((((a) & (uint32_t)0xFF) << 24) | (((a) & (uint32_t)0xFF00) << 8) | (((a) & (uint32_t)0xFF0000) >> 8) | (((a) & (uint32_t)0xFF000000) >> 24)))
+#define net_order_16(a) ((uint16_t)((((a) & (uint16_t)0xFF) << 8) | (((a) & (uint16_t)0xFF00) >> 8)))
+#define fixup_request(a) do { \
+	(a).cmd = net_order_16((a).cmd); \
+	(a).size = net_order_32((a).size); \
+	(a).offset = net_order_64((a).offset); \
+} while (0)
+#define fixup_reply(a) do { \
+	(a).cmd = net_order_16((a).cmd); \
+	(a).size = net_order_32((a).size); \
+} while (0)
+#elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
+// Make little endian our network byte order as probably 99.999% of machines this will be used on are LE
+#define net_order_64(a) (a)
+#define net_order_32(a) (a)
+#define net_order_16(a) (a)
+#define fixup_request(a) while(0)
+#define fixup_reply(a)   while(0)
+#else
+#error "Unknown Endianness"
+#endif
+
 typedef struct
 {
-    char *host;
-    int vid;
+	uint16_t len;
+    uint8_t addrtype;
+    uint8_t addr[16];	// network representation
+    uint16_t port;		// network representation
+    uint16_t imgnamelen;
+    char *imgname;
     int rid;
     int read_ahead_kb;
 } dnbd3_ioctl_t;
@@ -41,28 +72,37 @@ typedef struct
 #define CMD_GET_BLOCK   1
 #define CMD_GET_SIZE    2
 #define CMD_GET_SERVERS 3
+#define CMD_ERROR		4
 
 #pragma pack(1)
 typedef struct
 {
+	uint16_t magic;		// 2byte
     uint16_t cmd;       // 2byte
-    uint16_t vid;       // 2byte
-    uint16_t rid;       // 2byte
-    uint64_t offset;    // 8byte
-    uint64_t size;      // 8byte
-    char handle[8];     // 8byte
+    uint32_t size;      // 4byte
+    uint64_t offset;	// 8byte
+    uint64_t handle;    // 8byte
 } dnbd3_request_t;
 #pragma pack(0)
 
 #pragma pack(1)
 typedef struct
 {
-    uint16_t cmd;   // 2byte
-    uint16_t vid;   // 2byte
-    uint16_t rid;   // 2byte
-    uint64_t size;  // 8byte
-    char handle[8]; // 8byte
+	uint16_t magic;		// 2byte
+    uint16_t cmd;		// 2byte
+    uint32_t size;		// 4byte
+    uint64_t handle;	// 8byte
 } dnbd3_reply_t;
+#pragma pack(0)
+
+#pragma pack(1)
+typedef struct
+{
+	uint8_t ipaddr[16];	// 16byte (network representation, so it can be directly passed to socket functions)
+	uint16_t port; 		// 2byte (network representation, so it can be directly passed to socket functions)
+	uint8_t addrtype; 	// 1byte (ip version. AF_INET or AF_INET6. 0 means this struct is empty and should be ignored)
+	uint8_t failures;	// 1byte (number of times server has been consecutively unreachable)
+} dnbd3_server_entry_t;
 #pragma pack(0)
 
 #endif /* TYPES_H_ */

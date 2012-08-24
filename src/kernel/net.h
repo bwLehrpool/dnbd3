@@ -23,12 +23,13 @@
 
 #include "dnbd3.h"
 
-#define init_msghdr(h)\
-        h.msg_name = NULL;\
-        h.msg_namelen = 0;\
-        h.msg_control = NULL;\
-        h.msg_controllen = 0;\
-        h.msg_flags = MSG_WAITALL | MSG_NOSIGNAL;
+#define init_msghdr(h) do { \
+        h.msg_name = NULL; \
+        h.msg_namelen = 0; \
+        h.msg_control = NULL; \
+        h.msg_controllen = 0; \
+        h.msg_flags = MSG_WAITALL | MSG_NOSIGNAL; \
+	} while (0)
 
 int dnbd3_net_connect(dnbd3_device_t *lo);
 

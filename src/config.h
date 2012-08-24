@@ -21,25 +21,42 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
-// network
+// +++++ Network +++++
+// Default port
 #define PORT 5003
 #define PORTSTR "5003"
+
+// Protocol version should be increased whenever new features/messages are added,
+// so either the client or server can run in compatibility mode, or they can
+// cancel the connection right away if the protocol has changed too much
+#define PROTOCOL_VERSION 1
+// Which is the minimum protocol version the server expects from the client
+#define MIN_SUPPORTED_CLIENT 1
+// Which is the minimum protocol version the client expects from the server
+#define MIN_SUPPORTED_SERVER 1
+
+// No payload allowed exceeding this many bytes:
+#define MAX_PAYLOAD 1000
 
 #define SOCKET_TIMEOUT_SERVER 30
 #define SOCKET_TIMEOUT_CLIENT_DATA 2
 #define SOCKET_TIMEOUT_CLIENT_DISCOVERY 1
-#define TIMER_INTERVAL_HEARTBEAT 10*HZ
-#define TIMER_INTERVAL_PANIC 1*HZ
+
 #define NUMBER_SERVERS 8
 #define RTT_THRESHOLD 1000
+// This must be a power of two:
+#define RTT_BLOCK_SIZE 4096
 
-// block device
+#define TIMER_INTERVAL_HEARTBEAT 10*HZ
+#define TIMER_INTERVAL_PANIC 2*HZ
+
+// +++++ Block Device +++++
 #define KERNEL_SECTOR_SIZE 512
 #define DNBD3_BLOCK_SIZE 4096
 #define NUMBER_DEVICES 8
 #define DEFAULT_READ_AHEAD_KB 256
 
-// misc
+// +++++ Misc +++++
 #define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3/server.conf"
 #define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3/client.conf"
 #define UNIX_SOCKET "/run/dnbd3-server.sock"
