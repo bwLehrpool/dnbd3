@@ -29,20 +29,33 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
+static inline int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b)
+{
+	return (a->hostaddrtype == b->hostaddrtype)
+		&& (a->port == b->port)
+		&& (0 == memcmp(a->hostaddr, b->hostaddr, (a->hostaddrtype == AF_INET ? 4 : 16)));
+}
+
 int dnbd3_net_connect(dnbd3_device_t *dev)
 {
     struct sockaddr_in sin;
-    struct request *req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
+    struct request *req1 = NULL;
 
     struct timeval timeout;
+
     timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
     timeout.tv_usec = 0;
 
     // do some checks before connecting
-    if (!req1)
+    if (is_same_server(&dev->cur_server, &dev->initial_server))
     {
-        printk("FATAL: Kmalloc(1) failed.\n");
-        goto error;
+    	printk("Connecting to initial server, so I need %d bytes.\n", (int)sizeof(*req1));
+    	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
+		if (!req1)
+		{
+			printk("FATAL: Kmalloc(1) failed.\n");
+			goto error;
+		}
     }
     if (dev->cur_server.port == 0 || dev->cur_server.hostaddrtype == 0 || dev->imgname == NULL)
     {
@@ -182,10 +195,13 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     dev->alt_servers_num = 0;
     dev->update_available = 0;
 
-    // enqueue request to request_queue_send (ask alt servers)
-    req1->cmd_type = REQ_TYPE_SPECIAL;
-    req1->cmd_flags = CMD_GET_SERVERS;
-    list_add(&req1->queuelist, &dev->request_queue_send);
+    if (req1)
+    {
+		// enqueue request to request_queue_send (ask alt servers)
+		req1->cmd_type = REQ_TYPE_SPECIAL;
+		req1->cmd_flags = CMD_GET_SERVERS;
+		list_add(&req1->queuelist, &dev->request_queue_send);
+    }
 
     // create required threads
     dev->thread_send = kthread_create(dnbd3_net_send, dev, dev->disk->disk_name);
@@ -278,7 +294,7 @@ void dnbd3_net_heartbeat(unsigned long arg)
 		if (req)
 		{
 			req->cmd_type = REQ_TYPE_SPECIAL;
-			req->cmd_flags = CMD_GET_SERVERS;
+			req->cmd_flags = CMD_KEEPALIVE;
 			list_add_tail(&req->queuelist, &dev->request_queue_send);
 			wake_up(&dev->process_queue_send);
 		}
@@ -599,7 +615,7 @@ int dnbd3_net_discover(void *data)
         if (ready && best_server != current_server
         		&& dev->cur_rtt > best_rtt + RTT_THRESHOLD)
         {
-            printk("INFO: Server %d on %s is faster (%lluµs)\n", best_server, dev->disk->disk_name, best_rtt);
+            printk("INFO: Server %d on %s is faster (%lluµs vs. %lluµs)\n", best_server, dev->disk->disk_name, (unsigned long long)best_rtt, (unsigned long long)dev->cur_rtt);
         	kfree(buf);
         	dev->better_sock = best_sock; // Take shortcut by continuing to use open connection
             dev->thread_discover = NULL;
@@ -824,6 +840,11 @@ int dnbd3_net_receive(void *data)
             continue;
 
         case CMD_GET_SERVERS:
+        	if (!is_same_server(&dev->cur_server, &dev->initial_server))
+        	{
+        		remaining = dnbd3_reply.size;
+        		goto clear_remaining_payload;
+        	}
         	spin_lock_irq(&dev->blk_lock);
         	dev->new_servers_num = 0;
         	spin_unlock_irq(&dev->blk_lock);
@@ -838,6 +859,15 @@ int dnbd3_net_receive(void *data)
 					printk("ERROR: Recv CMD_GET_SERVERS payload.\n");
 					goto error;
 				}
+				for (remaining = 0; remaining < count; ++remaining)
+				{
+					if (dev->new_servers[remaining].addrtype == AF_INET)
+						printk("New Server: %pI4 : %d\n", dev->new_servers[remaining].ipaddr, (int)ntohs(dev->new_servers[remaining].port));
+					else if (dev->new_servers[remaining].addrtype == AF_INET6)
+						printk("New Server: %pI6 : %d\n", dev->new_servers[remaining].ipaddr, (int)ntohs(dev->new_servers[remaining].port));
+					else
+						printk("New Server of unknown address type (%d)\n", (int)dev->new_servers[remaining].addrtype);
+				}
 	        	spin_lock_irq(&dev->blk_lock);
 	        	dev->new_servers_num = count;
 	        	spin_unlock_irq(&dev->blk_lock);
@@ -845,9 +875,10 @@ int dnbd3_net_receive(void *data)
             }
             // If there were more servers than accepted, remove the remaining data from the socket buffer
             remaining = dnbd3_reply.size - (count * sizeof(dnbd3_server_entry_t));
+clear_remaining_payload:
             while (remaining > 0)
             {
-            	count = MIN(sizeof(dnbd3_reply), remaining);
+            	count = MIN(sizeof(dnbd3_reply), remaining); // Abuse the reply struct as the receive buffer
             	iov.iov_base = &dnbd3_reply;
             	iov.iov_len = count;
             	ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags);
@@ -859,6 +890,11 @@ int dnbd3_net_receive(void *data)
             	remaining -= ret;
             }
             continue;
+
+        case CMD_KEEPALIVE:
+        	if (dnbd3_reply.size != 0)
+        		printk("Error: keep alive packet with payload.\n");
+        	continue;
 
         default:
             printk("ERROR: Unknown command (Receive)\n");

@@ -170,7 +170,7 @@ int main(int argc, char *argv[])
         const int ret = ioctl(fd, IOCTL_CLOSE, &msg);
         if (ret < 0)
         {
-            printf("ERROR: ioctl not successful (close, errcode: %d)\n", ret);
+            printf("ERROR: ioctl not successful (close, %s (%d))\n", strerror(ret), ret);
             exit(EXIT_FAILURE);
         }
 
@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
         const int ret = ioctl(fd, IOCTL_SWITCH, &msg);
         if (ret < 0)
         {
-            printf("ERROR: ioctl not successful (switch, errcode: %d)\n", ret);
+            printf("ERROR: ioctl not successful (switch, %s (%d))\n", strerror(ret), ret);
             exit(EXIT_FAILURE);
         }
 
@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
         const int ret = ioctl(fd, IOCTL_OPEN, &msg);
         if (ret < 0)
         {
-            printf("ERROR: ioctl not successful (connect, errcode: %d)\n", ret);
+            printf("ERROR: ioctl not successful (connect, %s (%d))\n", strerror(ret), ret);
             exit(EXIT_FAILURE);
         }
 
@@ -242,7 +242,7 @@ int main(int argc, char *argv[])
             const int ret = ioctl(fd, IOCTL_OPEN, &msg);
             if (ret < 0)
             {
-                printf("ERROR: ioctl not successful (config file, errcode: %d)\n", ret);
+                printf("ERROR: ioctl not successful (config file, %s (%d))\n", strerror(ret), ret);
                 exit(EXIT_FAILURE);
             }
 

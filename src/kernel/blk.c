@@ -142,6 +142,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			memcpy(dev->cur_server.hostaddr, msg->addr, 16);
 			dev->cur_server.port = msg->port;
 			dev->cur_server.hostaddrtype = msg->addrtype;
+			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
 			dev->imgname = imgname;
 			dev->rid = msg->rid;
 			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_CACHE_SIZE;

@@ -55,7 +55,7 @@ typedef struct
 
     // network
     struct socket *sock;
-    dnbd3_server_t cur_server;
+    dnbd3_server_t cur_server, initial_server;
     uint64_t cur_rtt;
     char *imgname;
     serialized_buffer_t payload_buffer;

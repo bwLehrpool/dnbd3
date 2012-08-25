@@ -75,6 +75,7 @@ typedef struct
 #define CMD_GET_SIZE    2
 #define CMD_GET_SERVERS 3
 #define CMD_ERROR		4
+#define CMD_KEEPALIVE	5
 
 #pragma pack(1)
 typedef struct

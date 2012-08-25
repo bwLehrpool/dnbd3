@@ -45,7 +45,8 @@ static char recv_request_header(int sock, dnbd3_request_t *request)
 	// Read request header from socket
     if ((ret = recv(sock, request, sizeof(*request), MSG_WAITALL)) != sizeof(*request))
     {
-    	printf("[DEBUG] Error receiving request: Could not read message header (%d)\n", ret);
+    	if (ret == 0) return 0;
+    	printf("[DEBUG] Error receiving request: Could not read message header (%d/%d)\n", ret, (int)sizeof(*request));
     	return 0;
     }
     // Make sure all bytes are in the right order (endianness)
@@ -252,6 +253,9 @@ void *dnbd3_handle_query(void *dnbd3_client)
             reply.handle = request.handle;
             send_reply(client->sock, &reply, NULL);
 
+            if (request.size == 0) // Request for 0 bytes, done after sending header
+            	break;
+
             // caching is off
             if (image_cache == -1)
             {
@@ -356,6 +360,12 @@ void *dnbd3_handle_query(void *dnbd3_client)
             reply.size = num * sizeof(dnbd3_server_entry_t);
             send_reply(client->sock, &reply, server_list);
             break;
+
+        case CMD_KEEPALIVE:
+        	reply.cmd = CMD_KEEPALIVE;
+        	reply.size = 0;
+        	send_reply(client->sock, &reply, NULL);
+        	break;
 
         default:
         	memlogf("ERROR: Unknown command\n");
