@@ -173,6 +173,7 @@ int main(int argc, char* argv[])
     pthread_spin_init(&_spinlock, PTHREAD_PROCESS_PRIVATE);
 
     initmemlog();
+    memlogf("DNBD3 server starting.... Machine type: " ENDIAN_MODE);
 
     // load config file
     dnbd3_load_config(_config_file_name);

@@ -40,6 +40,8 @@ static int __init dnbd3_init(void)
         return -EIO;
     }
 
+    printk("DNBD3 kernel module loaded. Machine type: " ENDIAN_MODE "\n");
+
     // add MAX_NUMBER_DEVICES devices
     for (i = 0; i < max_devs; i++)
     {

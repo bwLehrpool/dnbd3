@@ -87,7 +87,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		sin.sin_family = AF_INET;
 		memcpy(&(sin.sin_addr.s_addr), dev->cur_server.hostaddr, 4);
 		sin.sin_port = dev->cur_server.port;
-		if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
+		if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) != 0)
 		{
 			printk("ERROR: Couldn't connect to host %pI4 : %d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
 			goto error;
@@ -105,14 +105,23 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         serializer_put_uint16(&dev->payload_buffer, dev->rid);
         iov[1].iov_base = &dev->payload_buffer;
         iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
-        if (kernel_sendmsg(dev->sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) <= 0)
+        if (kernel_sendmsg(dev->sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
+        {
+        	printk("ERROR: Couldn't send CMD_SIZE_REQUEST to %pI4 : %d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
             goto error;
+        }
         // receive reply header
         iov[0].iov_base = &dnbd3_reply;
         iov[0].iov_len = sizeof(dnbd3_reply);
-        if (kernel_recvmsg(dev->sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply) || dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD || dnbd3_reply.magic != dnbd3_packet_magic)
+        if (kernel_recvmsg(dev->sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
         {
-        	printk("FATAL: Requested image does not exist on server.\n");
+        	printk("FATAL: Received corrupted reply header after CMD_SIZE_REQUEST.\n");
+            goto error;
+        }
+        fixup_reply(dnbd3_reply);
+        if (dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD || dnbd3_reply.magic != dnbd3_packet_magic)
+        {
+        	printk("FATAL: Received invalid reply to CMD_SIZE_REQUEST, image doesn't exist on server.\n");
             goto error;
         }
         // receive reply payload
@@ -123,6 +132,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         	printk("FATAL: Cold not read CMD_GET_SIZE payload on handshake.\n");
             goto error;
         }
+        serializer_reset_read(&dev->payload_buffer, dnbd3_reply.size);
         // read reply payload
         dev->cur_server.protocol_version = serializer_get_uint16(&dev->payload_buffer);
         if (dev->cur_server.protocol_version < MIN_SUPPORTED_SERVER)
@@ -393,7 +403,6 @@ int dnbd3_net_discover(void *data)
 
             // Request filesize
             dnbd3_request.cmd = CMD_GET_SIZE;
-            dnbd3_request.size = strlen(dev->imgname) + 1 + 2 + 2; // str+\0, version, rid
             fixup_request(dnbd3_request);
             iov[0].iov_base = &dnbd3_request;
             iov[0].iov_len = sizeof(dnbd3_request);
@@ -402,7 +411,7 @@ int dnbd3_net_discover(void *data)
             serializer_put_string(payload, dev->imgname);
             serializer_put_uint16(payload, dev->rid);
             iov[1].iov_base = payload;
-            iov[1].iov_len = serializer_get_written_length(payload);
+            dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(payload);
             if (kernel_sendmsg(sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
             {
             	printk("ERROR: Requesting image size failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
@@ -481,7 +490,8 @@ int dnbd3_net_discover(void *data)
                 return 0;
             }
 
-            do_gettimeofday(&start); // start rtt measurement
+            // start rtt measurement
+            do_gettimeofday(&start);
 
             // Request block
             dnbd3_request.cmd = CMD_GET_BLOCK;

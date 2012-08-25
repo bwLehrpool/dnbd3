@@ -42,7 +42,7 @@
 static char recv_request_header(int sock, dnbd3_request_t *request)
 {
 	// Read request heade from socket
-    if (recv(sock, request, sizeof(dnbd3_request_t), MSG_WAITALL) != sizeof(dnbd3_request_t))
+    if (recv(sock, request, sizeof(*request), MSG_WAITALL) != sizeof(*request))
     {
     	printf("[DEBUG] Error receiving request: Could not read message header\n");
     	return 0;
@@ -152,6 +152,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
     	}
     	else
     	{
+    		printf("Payload len: %d\n", (int)request.size);
     		if (recv_request_payload(client->sock, request.size, &payload))
     		{
     			client_version = serializer_get_uint16(&payload);
@@ -174,7 +175,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 					image = dnbd3_get_image(image_name, rid, 0);
 					if (!image)
 					{
-						printf("[DEBUG] Client requested non-existent image '%s'\n", image_name);
+						printf("[DEBUG] Client requested non-existent image '%s' (rid:%d, protocol:%d)\n", image_name, (int)rid, (int)client_version);
 					}
 					else
 					{
@@ -384,6 +385,8 @@ int dnbd3_setup_socket()
     	memlogf("ERROR: Socket setup failure\n");
         return -1;
     }
+    const int opt = 1;
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET; // IPv4

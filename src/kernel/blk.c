@@ -123,12 +123,17 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     	}
     	copy_from_user(imgname, msg->imgname, msg->imgnamelen);
     	imgname[msg->imgnamelen] = '\0';
+    	//printk("IOCTL Image name of len %d is %s\n", (int)msg->imgnamelen, imgname);
     }
 
     switch (cmd)
     {
     case IOCTL_OPEN:
-    	if (imgname == NULL)
+    	if (dev->imgname != NULL)
+    	{
+    		result = -EBUSY;
+    	}
+    	else if (imgname == NULL)
     	{
     		result = -EINVAL;
     	}
@@ -138,10 +143,18 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			dev->cur_server.port = msg->port;
 			dev->cur_server.hostaddrtype = msg->addrtype;
 			dev->imgname = imgname;
-			imgname = NULL;
 			dev->rid = msg->rid;
 			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_CACHE_SIZE;
-			result =  dnbd3_net_connect(dev);
+			if (dnbd3_net_connect(dev) == 0)
+			{
+				result = 0;
+				imgname = NULL; // Prevent kfree at the end
+			}
+			else
+			{
+				result = -ENOENT;
+				dev->imgname = NULL;
+			}
     	}
         break;
 
@@ -149,6 +162,11 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
         set_capacity(dev->disk, 0);
         result = dnbd3_net_disconnect(dev);
         dnbd3_blk_fail_all_requests(dev);
+        if (dev->imgname)
+        {
+        	kfree(dev->imgname);
+        	dev->imgname = NULL;
+        }
         break;
 
     case IOCTL_SWITCH:

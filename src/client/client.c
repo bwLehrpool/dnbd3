@@ -123,7 +123,7 @@ int main(int argc, char *argv[])
             break;
         case 'h':
             dnbd3_get_ip(optarg, msg.addr, &msg.addrtype);
-            printf("Host set to %s (type %d)\n", optarg, (int)msg.addrtype);
+            printf("Host set to %s (type %d)\n", inet_ntoa(*(struct in_addr*)msg.addr), (int)msg.addrtype);
             break;
         case 'i':
             msg.imgname = strdup(optarg);
@@ -166,9 +166,10 @@ int main(int argc, char *argv[])
         fd = open(dev, O_WRONLY);
         printf("INFO: Closing device %s\n", dev);
 
-        if (ioctl(fd, IOCTL_CLOSE, &msg) < 0)
+        const int ret = ioctl(fd, IOCTL_OPEN, &msg);
+        if (ret < 0)
         {
-            printf("ERROR: ioctl not successful (close)\n");
+            printf("ERROR: ioctl not successful (close, errcode: %d)\n", ret);
             exit(EXIT_FAILURE);
         }
 
@@ -199,9 +200,10 @@ int main(int argc, char *argv[])
         fd = open(dev, O_WRONLY);
         printf("INFO: Connecting %s to %s (%s rid:%i)\n", dev, "<fixme>", msg.imgname, msg.rid);
 
-        if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
+        const int ret = ioctl(fd, IOCTL_OPEN, &msg);
+        if (ret < 0)
         {
-            printf("ERROR: ioctl not successful (connect)\n");
+            printf("ERROR: ioctl not successful (connect, errcode: %d)\n", ret);
             exit(EXIT_FAILURE);
         }
 
@@ -235,9 +237,10 @@ int main(int argc, char *argv[])
             fd = open(dev, O_WRONLY);
             printf("INFO: Connecting %s to %s (%s rid:%i)\n", dev, "<fixme>", msg.imgname, msg.rid);
 
-            if (ioctl(fd, IOCTL_OPEN, &msg) < 0)
+            const int ret = ioctl(fd, IOCTL_OPEN, &msg);
+            if (ret < 0)
             {
-                printf("ERROR: ioctl not successful (connect)\n");
+                printf("ERROR: ioctl not successful (config file, errcode: %d)\n", ret);
                 exit(EXIT_FAILURE);
             }
 
