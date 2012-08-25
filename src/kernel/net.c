@@ -690,7 +690,7 @@ int dnbd3_net_send(void *data)
         }
 
         // send net request
-        dnbd3_request.handle = (uint64_t)blk_request;
+        dnbd3_request.handle = (uint64_t)(uintptr_t)blk_request; // Double cast to prevent warning on 32bit
         fixup_request(dnbd3_request);
         iov.iov_base = &dnbd3_request;
         iov.iov_len = sizeof(dnbd3_request);
@@ -785,7 +785,7 @@ int dnbd3_net_receive(void *data)
             spin_lock_irq(&dev->blk_lock);
             list_for_each_entry_safe(received_request, tmp_request, &dev->request_queue_receive, queuelist)
             {
-                if ((uint64_t)received_request == dnbd3_reply.handle)
+                if ((uint64_t)(uintptr_t)received_request == dnbd3_reply.handle) // Double cast to prevent warning on 32bit
                 {
                 	blk_request = received_request;
                     break;
