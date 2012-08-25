@@ -511,7 +511,17 @@ int dnbd3_net_discover(void *data)
 
             // Request block
             dnbd3_request.cmd = CMD_GET_BLOCK;
-            dnbd3_request.offset = ((start.tv_usec ^ start.tv_sec) % dev->reported_size) & ~(uint64_t)(RTT_BLOCK_SIZE-1); // Pick random block
+            // Pick random block
+            if (sizeof(size_t) >= 8)
+            {
+				dnbd3_request.offset = ((((start.tv_usec << 12) ^ start.tv_usec) << 4) % dev->reported_size) & ~(uint64_t)(RTT_BLOCK_SIZE-1);
+				printk("Random offset 64bit: %llu\n", (unsigned long long)dnbd3_request.offset);
+            }
+            else // On 32bit, we need to prevent modulo on a 64bit data type. This limits the random block picking to the first 4GB of the image
+            {
+				dnbd3_request.offset = ((((start.tv_usec << 12) ^ start.tv_usec) << 4) % (uint32_t)dev->reported_size) & ~(RTT_BLOCK_SIZE-1);
+				printk("Random offset 32bit: %llu\n", (unsigned long long)dnbd3_request.offset);
+            }
             dnbd3_request.size = RTT_BLOCK_SIZE;
             fixup_request(dnbd3_request);
             iov[0].iov_base = &dnbd3_request;
@@ -555,7 +565,7 @@ int dnbd3_net_discover(void *data)
             rtt = ( dev->alt_servers[i].rtts[0]
 				  + dev->alt_servers[i].rtts[1]
 				  + dev->alt_servers[i].rtts[2]
-				  + dev->alt_servers[i].rtts[3] ) / 4;
+				  + dev->alt_servers[i].rtts[3] ) >> 2; // ">> 2" == "/ 4", needed to prevent 64bit division on 32bit
 
 
             if (best_rtt > rtt)
@@ -762,7 +772,8 @@ int dnbd3_net_receive(void *data)
         ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
         if (ret == -EAGAIN)
         {
-            msleep_interruptible(2000); // Sleep at most 2 seconds, then check if we can receive something
+        	// Sleep at most 2 seconds, then check if we can receive something
+        	interruptible_sleep_on_timeout(&dev->process_queue_receive, 2*HZ);
             // If a request for a block was sent, the thread is waken up immediately, so that we don't wait 2 seconds for the reply
             // This change was made to allow unrequested information from the server to be received (push)
         	continue;
