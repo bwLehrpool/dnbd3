@@ -41,10 +41,11 @@
 
 static char recv_request_header(int sock, dnbd3_request_t *request)
 {
-	// Read request heade from socket
-    if (recv(sock, request, sizeof(*request), MSG_WAITALL) != sizeof(*request))
+	int ret;
+	// Read request header from socket
+    if ((ret = recv(sock, request, sizeof(*request), MSG_WAITALL)) != sizeof(*request))
     {
-    	printf("[DEBUG] Error receiving request: Could not read message header\n");
+    	printf("[DEBUG] Error receiving request: Could not read message header (%d)\n", ret);
     	return 0;
     }
     // Make sure all bytes are in the right order (endianness)
@@ -55,7 +56,7 @@ static char recv_request_header(int sock, dnbd3_request_t *request)
     	return 0;
     }
     // Payload sanity check
-    if (request->size > MAX_PAYLOAD)
+    if (request->cmd != CMD_GET_BLOCK && request->size > MAX_PAYLOAD)
     {
     	memlogf("[WARNING] Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd, (int)request->size);
     	return 0;
@@ -152,7 +153,6 @@ void *dnbd3_handle_query(void *dnbd3_client)
     	}
     	else
     	{
-    		printf("Payload len: %d\n", (int)request.size);
     		if (recv_request_payload(client->sock, request.size, &payload))
     		{
     			client_version = serializer_get_uint16(&payload);
@@ -179,6 +179,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 					}
 					else
 					{
+						serializer_reset_write(&payload);
 						serializer_put_uint16(&payload, PROTOCOL_VERSION);
 						serializer_put_string(&payload, image->low_name);
 						serializer_put_uint16(&payload, image->rid);

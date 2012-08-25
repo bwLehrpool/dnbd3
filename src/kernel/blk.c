@@ -159,9 +159,10 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
         break;
 
     case IOCTL_CLOSE:
-        set_capacity(dev->disk, 0);
+    	dnbd3_blk_fail_all_requests(dev);
         result = dnbd3_net_disconnect(dev);
         dnbd3_blk_fail_all_requests(dev);
+        set_capacity(dev->disk, 0);
         if (dev->imgname)
         {
         	kfree(dev->imgname);
@@ -240,24 +241,41 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 	int dup;
 	INIT_LIST_HEAD(&local_copy);
 	spin_lock_irq(&dev->blk_lock);
-	list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
+	while (!list_empty(&dev->request_queue_receive))
 	{
-		list_del_init(&blk_request->queuelist);
-		list_add(&blk_request->queuelist, &local_copy);
-	}
-	list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_send, queuelist)
-	{
-		list_del_init(&blk_request->queuelist);
-		dup = 0;
-		list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist)
+		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
 		{
-			if (blk_request == blk_request2)
+			list_del_init(&blk_request->queuelist);
+			dup = 0;
+			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist)
 			{
-				printk("WARNING: Request is in both lists!\n");
-				dup = 1;
+				if (blk_request == blk_request2)
+				{
+					printk("WARNING: Request is in both lists!\n");
+					dup = 1;
+					break;
+				}
 			}
+			if (!dup) list_add(&blk_request->queuelist, &local_copy);
 		}
-		if (!dup) list_add(&blk_request->queuelist, &local_copy);
+	}
+	while (!list_empty(&dev->request_queue_send))
+	{
+		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_send, queuelist)
+		{
+			list_del_init(&blk_request->queuelist);
+			dup = 0;
+			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist)
+			{
+				if (blk_request == blk_request2)
+				{
+					printk("WARNING: Request is in both lists!\n");
+					dup = 1;
+					break;
+				}
+			}
+			if (!dup) list_add(&blk_request->queuelist, &local_copy);
+		}
 	}
 	spin_unlock_irq(&dev->blk_lock);
 	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist)

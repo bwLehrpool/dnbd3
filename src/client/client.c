@@ -95,6 +95,7 @@ int main(int argc, char *argv[])
     msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
     msg.port = htons(PORT);
     msg.addrtype = 0;
+    msg.imgname = NULL;
 
     int opt = 0;
     int longIndex = 0;
@@ -166,7 +167,7 @@ int main(int argc, char *argv[])
         fd = open(dev, O_WRONLY);
         printf("INFO: Closing device %s\n", dev);
 
-        const int ret = ioctl(fd, IOCTL_OPEN, &msg);
+        const int ret = ioctl(fd, IOCTL_CLOSE, &msg);
         if (ret < 0)
         {
             printf("ERROR: ioctl not successful (close, errcode: %d)\n", ret);
@@ -183,9 +184,10 @@ int main(int argc, char *argv[])
         fd = open(dev, O_WRONLY);
         printf("INFO: Switching device %s to %s\n", dev, "<fixme>");
 
-        if (ioctl(fd, IOCTL_SWITCH, &msg) < 0)
+        const int ret = ioctl(fd, IOCTL_SWITCH, &msg);
+        if (ret < 0)
         {
-            printf("ERROR: ioctl not successful (switch)\n");
+            printf("ERROR: ioctl not successful (switch, errcode: %d)\n", ret);
             exit(EXIT_FAILURE);
         }
 

@@ -26,7 +26,7 @@
 #include <linux/time.h>
 
 #ifndef MIN
-#define MIN(a,b) (a < b ? a : b)
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
 int dnbd3_net_connect(dnbd3_device_t *dev)
@@ -695,7 +695,10 @@ int dnbd3_net_send(void *data)
         iov.iov_base = &dnbd3_request;
         iov.iov_len = sizeof(dnbd3_request);
         if (kernel_sendmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_request)) != sizeof(dnbd3_request))
+        {
+        	printk("Couldn't properly send a request header.\n");
             goto error;
+        }
         wake_up(&dev->process_queue_receive);
     }
 
@@ -730,27 +733,34 @@ int dnbd3_net_receive(void *data)
     unsigned long flags;
     sigset_t blocked, oldset;
 
-    int count, remaining;
+    int count, remaining, ret;
 
     init_msghdr(msg);
     set_user_nice(current, -20);
 
-    for (;;)
+    while (!kthread_should_stop())
     {
-        wait_event_interruptible(dev->process_queue_receive,
-                kthread_should_stop() || !list_empty(&dev->request_queue_receive));
-
-        if (kthread_should_stop())
-        	break;
-
-        if (list_empty(&dev->request_queue_receive))
-            continue;
-
         // receive net reply
         iov.iov_base = &dnbd3_reply;
         iov.iov_len = sizeof(dnbd3_reply);
-        if (kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
+        ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
+        if (ret == -EAGAIN)
+        {
+            msleep_interruptible(2000); // Sleep at most 2 seconds, then check if we can receive something
+            // If a request for a block was sent, the thread is waken up immediately, so that we don't wait 2 seconds for the reply
+            // This change was made to allow unrequested information from the server to be received (push)
+        	continue;
+        }
+        if (ret <= 0)
+        {
+        	printk("Connection closed (%d).\n", ret);
+        	goto error;
+        }
+        if (ret != sizeof(dnbd3_reply))
+        {
+        	printk("ERROR: Recv msg header\n");
             goto error;
+        }
         fixup_reply(dnbd3_reply);
 
         // check error
@@ -797,8 +807,9 @@ int dnbd3_net_receive(void *data)
                 kaddr = kmap(bvec->bv_page) + bvec->bv_offset;
                 iov.iov_base = kaddr;
                 iov.iov_len = bvec->bv_len;
-                if (kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags) <= 0)
+                if (kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags) != bvec->bv_len)
                 {
+                	printk("ERROR: Receiving from net to block layer\n");
                     kunmap(bvec->bv_page);
                     goto error;
                 }
@@ -822,23 +833,30 @@ int dnbd3_net_receive(void *data)
             {
 				iov.iov_base = dev->new_servers;
 				iov.iov_len = count * sizeof(dnbd3_server_entry_t);
-				if (kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags) != iov.iov_len)
+				if (kernel_recvmsg(dev->sock, &msg, &iov, 1, (count * sizeof(dnbd3_server_entry_t)), msg.msg_flags) != (count * sizeof(dnbd3_server_entry_t)))
+				{
+					printk("ERROR: Recv CMD_GET_SERVERS payload.\n");
 					goto error;
+				}
 	        	spin_lock_irq(&dev->blk_lock);
 	        	dev->new_servers_num = count;
 	        	spin_unlock_irq(&dev->blk_lock);
 				// TODO: Re-Add update check
             }
             // If there were more servers than accepted, remove the remaining data from the socket buffer
-            remaining = dnbd3_reply.size - count * sizeof(dnbd3_server_entry_t);
+            remaining = dnbd3_reply.size - (count * sizeof(dnbd3_server_entry_t));
             while (remaining > 0)
             {
             	count = MIN(sizeof(dnbd3_reply), remaining);
             	iov.iov_base = &dnbd3_reply;
             	iov.iov_len = count;
-            	if (kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags) <= 0)
+            	ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags);
+            	if (ret <= 0)
+            	{
+            		printk("ERROR: Recv additional payload from CMD_GET_SERVERS.\n");
             		goto error;
-            	remaining -= count;
+            	}
+            	remaining -= ret;
             }
             continue;
 
@@ -849,12 +867,13 @@ int dnbd3_net_receive(void *data)
         }
     }
 
+    printk("dnbd3_net_receive terminated normally.\n");
     return 0;
 
 error:
     printk("ERROR: Connection to server %pI4 : %d lost (receive)\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
 	// move already send requests to request_queue_send again
-	if (!list_empty(&dev->request_queue_receive))
+	while (!list_empty(&dev->request_queue_receive))
 	{
 		printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);
 		spin_lock_irq(&dev->blk_lock);
