@@ -49,7 +49,6 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     // do some checks before connecting
     if (is_same_server(&dev->cur_server, &dev->initial_server))
     {
-    	printk("Connecting to initial server, so I need %d bytes.\n", (int)sizeof(*req1));
     	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
 		if (!req1)
 		{
@@ -192,12 +191,13 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
     dev->panic = 0;
     dev->panic_count = 0;
-    dev->alt_servers_num = 0;
     dev->update_available = 0;
 
-    if (req1)
+    if (req1) // This connection is established to the initial server (from the ioctl call)
     {
-		// enqueue request to request_queue_send (ask alt servers)
+    	// Set number of known alt servers to 0
+    	dev->alt_servers_num = 0;
+		// And then enqueue request to request_queue_send for a fresh list of alt servers
 		req1->cmd_type = REQ_TYPE_SPECIAL;
 		req1->cmd_flags = CMD_GET_SERVERS;
 		list_add(&req1->queuelist, &dev->request_queue_send);
@@ -333,7 +333,7 @@ int dnbd3_net_discover(void *data)
     uint16_t rid;
 
     struct timeval start, end;
-    uint64_t rtt, best_rtt = 0;
+    unsigned long rtt, best_rtt = 0;
     int i, best_server, current_server;
     int turn = 0;
     int ready = 0;
@@ -375,7 +375,9 @@ int dnbd3_net_discover(void *data)
         		memcpy(dev->alt_servers[i].hostaddr, dev->new_servers[i].ipaddr, 16);
         		dev->alt_servers[i].hostaddrtype = dev->new_servers[i].addrtype;
         		dev->alt_servers[i].port = dev->new_servers[i].port;
-        		memset(dev->alt_servers[i].rtts, 0xFF, sizeof(dev->alt_servers[i].rtts[0]) * 4);
+        		dev->alt_servers[i].rtts[0] = dev->alt_servers[i].rtts[1]
+					= dev->alt_servers[i].rtts[2] = dev->alt_servers[i].rtts[3]
+					= RTT_UNREACHABLE;
         		dev->alt_servers[i].protocol_version = 0;
         		dev->alt_servers[i].skip_count = 0;
         	}
@@ -385,7 +387,7 @@ int dnbd3_net_discover(void *data)
         spin_unlock_irq(&dev->blk_lock);
 
         current_server = best_server = -1;
-        best_rtt = 0xFFFFFFFFFFFFull;
+        best_rtt = 0xFFFFFFFul;
 
         for (i=0; i < dev->alt_servers_num; ++i)
         {
@@ -506,26 +508,27 @@ int dnbd3_net_discover(void *data)
                 return 0;
             }
 
-            // start rtt measurement
-            do_gettimeofday(&start);
-
             // Request block
             dnbd3_request.cmd = CMD_GET_BLOCK;
             // Pick random block
             if (sizeof(size_t) >= 8)
             {
 				dnbd3_request.offset = ((((start.tv_usec << 12) ^ start.tv_usec) << 4) % dev->reported_size) & ~(uint64_t)(RTT_BLOCK_SIZE-1);
-				printk("Random offset 64bit: %llu\n", (unsigned long long)dnbd3_request.offset);
+				//printk("Random offset 64bit: %lluMiB\n", (unsigned long long)(dnbd3_request.offset >> 20));
             }
-            else // On 32bit, we need to prevent modulo on a 64bit data type. This limits the random block picking to the first 4GB of the image
+            else // On 32bit, prevent modulo on a 64bit data type. This limits the random block picking to the first 4GB of the image
             {
 				dnbd3_request.offset = ((((start.tv_usec << 12) ^ start.tv_usec) << 4) % (uint32_t)dev->reported_size) & ~(RTT_BLOCK_SIZE-1);
-				printk("Random offset 32bit: %llu\n", (unsigned long long)dnbd3_request.offset);
+				//printk("Random offset 32bit: %lluMiB\n", (unsigned long long)(dnbd3_request.offset >> 20));
             }
             dnbd3_request.size = RTT_BLOCK_SIZE;
             fixup_request(dnbd3_request);
             iov[0].iov_base = &dnbd3_request;
             iov[0].iov_len = sizeof(dnbd3_request);
+
+            // start rtt measurement
+            do_gettimeofday(&start);
+
             if (kernel_sendmsg(sock, &msg, iov, 1, sizeof(dnbd3_request)) <= 0)
             {
             	printk("ERROR: Requesting test block failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
@@ -541,7 +544,7 @@ int dnbd3_net_discover(void *data)
                 goto error;
             }
             fixup_reply(dnbd3_reply);
-            if (dnbd3_reply.cmd != CMD_GET_BLOCK || dnbd3_reply.size != RTT_BLOCK_SIZE)
+            if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_GET_BLOCK || dnbd3_reply.size != RTT_BLOCK_SIZE)
             {
             	printk("ERROR: Unexpected reply to block request: cmd=%d, size=%d (%pI4 : %d, discover)\n", (int)dnbd3_reply.cmd, (int)dnbd3_reply.size, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
                 goto error;
@@ -558,14 +561,16 @@ int dnbd3_net_discover(void *data)
 
             do_gettimeofday(&end); // end rtt measurement
 
-            dev->alt_servers[i].rtts[turn] =
+            dev->alt_servers[i].rtts[turn] = (unsigned long)(
             		  (end.tv_sec - start.tv_sec) * 1000000ull
-            		+ (end.tv_usec - start.tv_usec);
+            		+ (end.tv_usec - start.tv_usec)
+            );
 
             rtt = ( dev->alt_servers[i].rtts[0]
 				  + dev->alt_servers[i].rtts[1]
 				  + dev->alt_servers[i].rtts[2]
 				  + dev->alt_servers[i].rtts[3] ) >> 2; // ">> 2" == "/ 4", needed to prevent 64bit division on 32bit
+            printk("RTT: %luµs\n", rtt);
 
 
             if (best_rtt > rtt)
@@ -583,15 +588,7 @@ int dnbd3_net_discover(void *data)
             }
 
             // update cur servers rtt
-            if (dev->cur_server.port == dev->alt_servers[i].port && dev->cur_server.hostaddrtype == dev->alt_servers[i].hostaddrtype
-            	&& (
-						(dev->cur_server.hostaddrtype == AF_INET
-							&& memcmp(dev->cur_server.hostaddr, dev->alt_servers[i].hostaddr, 4) == 0)
-					||
-						(dev->cur_server.hostaddrtype == AF_INET6
-							&& memcmp(dev->cur_server.hostaddr, dev->alt_servers[i].hostaddr, 16) == 0)
-            		)
-            )
+            if (is_same_server(&dev->cur_server,  &dev->alt_servers[i]))
             {
                 dev->cur_rtt = rtt;
                 current_server = i;
@@ -602,7 +599,12 @@ int dnbd3_net_discover(void *data)
             error:
                 sock_release(sock);
                 sock = NULL;
-                dev->alt_servers[i].rtts[turn] = 0xFFFFFFFF;
+                dev->alt_servers[i].rtts[turn] = RTT_UNREACHABLE;
+                if (is_same_server(&dev->cur_server,  &dev->alt_servers[i]))
+                {
+                    dev->cur_rtt = RTT_UNREACHABLE;
+                    current_server = i;
+                }
                 continue;
         }
 
@@ -623,7 +625,7 @@ int dnbd3_net_discover(void *data)
 
         // take server with lowest rtt
         if (ready && best_server != current_server
-        		&& dev->cur_rtt > best_rtt + RTT_THRESHOLD)
+        		&& RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt)
         {
             printk("INFO: Server %d on %s is faster (%lluµs vs. %lluµs)\n", best_server, dev->disk->disk_name, (unsigned long long)best_rtt, (unsigned long long)dev->cur_rtt);
         	kfree(buf);
@@ -919,7 +921,7 @@ clear_remaining_payload:
 
 error:
     printk("ERROR: Connection to server %pI4 : %d lost (receive)\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
-	// move already send requests to request_queue_send again
+	// move already sent requests to request_queue_send again
 	while (!list_empty(&dev->request_queue_receive))
 	{
 		printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);

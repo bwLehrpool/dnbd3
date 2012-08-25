@@ -35,7 +35,7 @@ extern int major;
 
 typedef struct
 {
-    uint64_t rtts[4];			// Last four round trip time measurements in µs
+    unsigned long rtts[4];		// Last four round trip time measurements in µs
     uint16_t port;				// Port in network representation
     uint16_t protocol_version;	// dnbd3 protocol version of this server
     uint8_t hostaddr[16];		// Address in network representation (IPv4 or IPv6)
@@ -56,7 +56,7 @@ typedef struct
     // network
     struct socket *sock;
     dnbd3_server_t cur_server, initial_server;
-    uint64_t cur_rtt;
+    unsigned long cur_rtt;
     char *imgname;
     serialized_buffer_t payload_buffer;
     int rid, update_available;
