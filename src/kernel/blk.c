@@ -35,14 +35,14 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
     INIT_LIST_HEAD(&dev->request_queue_send);
     INIT_LIST_HEAD(&dev->request_queue_receive);
 
-    memset(&dev->cur_server, 0, sizeof(dnbd3_server_t));
+    memset(&dev->cur_server, 0, sizeof(dev->cur_server));
+    memset(&dev->initial_server, 0, sizeof(dev->initial_server));
     dev->better_sock = NULL;
 
     dev->imgname = NULL;
     dev->rid = 0;
     dev->update_available = 0;
-    dev->alt_servers_num = 0;
-    memset(dev->alt_servers, 0, sizeof(dnbd3_server_t)*NUMBER_SERVERS);
+    memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
     dev->thread_send = NULL;
     dev->thread_receive = NULL;
     dev->thread_discover = NULL;
@@ -103,16 +103,16 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     dnbd3_device_t *dev = bdev->bd_disk->private_data;
     struct request_queue *blk_queue = dev->disk->queue;
     char *imgname = NULL;
-    dnbd3_ioctl_t *msg = kmalloc(sizeof(dnbd3_ioctl_t), GFP_KERNEL);
+    dnbd3_ioctl_t *msg = kmalloc(sizeof(*msg), GFP_KERNEL);
 
     if (msg == NULL) return -ENOMEM;
     copy_from_user((char *)msg, (char *)arg, 2);
-    if (msg->len != sizeof(dnbd3_ioctl_t))
+    if (msg->len != sizeof(*msg))
     {
     	result = -ENOEXEC;
     	goto cleanup_return;
     }
-    copy_from_user((char *)msg, (char *)arg, sizeof(dnbd3_ioctl_t));
+    copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
     if (msg->imgname != NULL && msg->imgnamelen > 0)
     {
     	imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
@@ -142,6 +142,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			memcpy(dev->cur_server.hostaddr, msg->addr, 16);
 			dev->cur_server.port = msg->port;
 			dev->cur_server.hostaddrtype = msg->addrtype;
+			dev->cur_server.failures = 0;
 			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
 			dev->imgname = imgname;
 			dev->rid = msg->rid;

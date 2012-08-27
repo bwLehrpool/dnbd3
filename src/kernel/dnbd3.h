@@ -40,8 +40,7 @@ typedef struct
     uint16_t protocol_version;	// dnbd3 protocol version of this server
     uint8_t hostaddr[16];		// Address in network representation (IPv4 or IPv6)
     uint8_t hostaddrtype;		// Address type (AF_INET or AF_INET6)
-    uint8_t skip_count;			// Do not check this server the next skip_count times
-    struct kobject kobj;		// SysFS
+    uint8_t failures;			// How many times the server was unreachable
 } dnbd3_server_t;
 
 typedef struct
@@ -60,7 +59,6 @@ typedef struct
     char *imgname;
     serialized_buffer_t payload_buffer;
     int rid, update_available;
-    int alt_servers_num;	// number of currently known alt servers
     dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
     int new_servers_num;	// number of new alt servers that are waiting to be copied to above array
     dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers

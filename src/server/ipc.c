@@ -403,9 +403,10 @@ void dnbd3_ipc_send(int cmd)
 
     if (cmd == IPC_INFO && header.size > 0)
     {
-        char* buf = malloc(header.size);
+        char* buf = malloc(header.size+1);
     	size = recv(client_sock, buf, header.size, MSG_WAITALL);
     	xmlDocPtr doc = xmlReadMemory(buf, size, "noname.xml", NULL, 0);
+    	buf[header.size] = 0;
 
 		if (doc)
 		{
@@ -479,9 +480,10 @@ void dnbd3_ipc_send(int cmd)
 
 //			xmlDocDump(stdout, doc);
 
-		} else
+		}
+		else
 		{
-			printf("ERROR: Failed to parse reply\n");
+			printf("ERROR: Failed to parse reply\n-----------\n%s\n-------------\n", buf);
 		}
 
     }

@@ -23,51 +23,84 @@
 #include "sysfs.h"
 #include "utils.h"
 
-ssize_t show_cur_server_ip(char *buf, dnbd3_device_t *dev)
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
+
+ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%pI4\n", dev->cur_server.hostaddr);
+	if (dev->cur_server.hostaddrtype == AF_INET)
+		return MIN(snprintf(buf, PAGE_SIZE, "%pI4,%d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port)), PAGE_SIZE);
+	return MIN(snprintf(buf, PAGE_SIZE, "%pI6,%d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port)), PAGE_SIZE);
 }
 
 ssize_t show_cur_server_rtt(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%llu\n", (unsigned long long)dev->cur_rtt);
+    return MIN(snprintf(buf, PAGE_SIZE, "%llu\n", (unsigned long long)dev->cur_rtt), PAGE_SIZE);
 }
 
 ssize_t show_alt_server_num(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%d\n", dev->alt_servers_num);
+	int i, num = 0;
+	for (i = 0; i < NUMBER_SERVERS; ++i)
+	{
+		if (dev->alt_servers[i].hostaddrtype) ++num;
+	}
+    return MIN(snprintf(buf, PAGE_SIZE, "%d\n", num), PAGE_SIZE);
+}
+
+ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
+{
+	int i, size = PAGE_SIZE, ret;
+	for (i = 0; i < NUMBER_SERVERS; ++i)
+	{
+		if (dev->alt_servers[i].hostaddrtype == AF_INET)
+			ret = MIN(snprintf(buf, size, "%pI4,%d,%llu,%d\n",
+					dev->alt_servers[i].hostaddr,
+					(int)ntohs(dev->alt_servers[i].port),
+					(unsigned long long)((dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3]) / 4),
+					(int)dev->alt_servers[i].failures)
+				, size);
+		else if (dev->alt_servers[i].hostaddrtype == AF_INET6)
+			ret = MIN(snprintf(buf, size, "%pI6,%d,%llu,%d\n",
+					dev->alt_servers[i].hostaddr,
+					(int)ntohs(dev->alt_servers[i].port),
+					(unsigned long long)((dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3]) / 4),
+					(int)dev->alt_servers[i].failures)
+				, size);
+		else
+			continue;
+		size -= ret;
+		buf += ret;
+		if (size <= 0)
+		{
+			size = 0;
+			break;
+		}
+	}
+    return PAGE_SIZE - size;
 }
 
 ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
 {
 	if (dev->imgname == NULL) return sprintf(buf, "(null)");
-    return sprintf(buf, "%s\n", dev->imgname);
+    return MIN(snprintf(buf, PAGE_SIZE, "%s\n", dev->imgname), PAGE_SIZE);
 }
 
 ssize_t show_rid(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%d\n", dev->rid);
+    return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->rid), PAGE_SIZE);
 }
 
 ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
 {
-    return sprintf(buf, "%d\n", dev->update_available);
+    return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->update_available), PAGE_SIZE);
 }
 
-ssize_t show_alt_server_ip(char *buf, dnbd3_server_t *srv)
+device_attr_t cur_server_addr =
 {
-    return sprintf(buf, "%pI4\n", srv->hostaddr);
-}
-
-ssize_t show_alt_server_rtt(char *buf, dnbd3_server_t *srv)
-{
-    return sprintf(buf, "%llu\n", (uint64_t)((srv->rtts[0]+srv->rtts[1]+srv->rtts[2]+srv->rtts[3]) / 4));
-}
-
-device_attr_t cur_server_ip =
-{
-    .attr = {.name = "cur_server_ip", .mode = 0444 },
-    .show   = show_cur_server_ip,
+    .attr = {.name = "cur_server_addr", .mode = 0444 },
+    .show   = show_cur_server_addr,
     .store  = NULL,
 };
 
@@ -82,6 +115,13 @@ device_attr_t alt_server_num =
 {
     .attr = {.name = "alt_server_num", .mode = 0444 },
     .show   = show_alt_server_num,
+    .store  = NULL,
+};
+
+device_attr_t alt_servers =
+{
+    .attr = {.name = "alt_servers", .mode = 0444 },
+    .show   = show_alt_servers,
     .store  = NULL,
 };
 
@@ -106,20 +146,6 @@ device_attr_t update_available =
     .store  = NULL,
 };
 
-server_attr_t alt_server_ip =
-{
-    .attr = {.name = "alt_server_ip", .mode = 0444 },
-    .show   = show_alt_server_ip,
-    .store  = NULL,
-};
-
-server_attr_t alt_server_rtt =
-{
-    .attr = {.name = "alt_server_rtt", .mode = 0444 },
-    .show   = show_alt_server_rtt,
-    .store  = NULL,
-};
-
 ssize_t device_show(struct kobject *kobj, struct attribute *attr, char *buf)
 {
     device_attr_t *device_attr = container_of(attr, device_attr_t, attr);
@@ -127,39 +153,22 @@ ssize_t device_show(struct kobject *kobj, struct attribute *attr, char *buf)
     return device_attr->show(buf, dev);
 }
 
-ssize_t server_show(struct kobject *kobj, struct attribute *attr, char *buf)
-{
-    server_attr_t *server_attr = container_of(attr, server_attr_t, attr);
-    dnbd3_server_t *srv = container_of(kobj, dnbd3_server_t, kobj);
-    return server_attr->show(buf, srv);
-}
-
 struct attribute *device_attrs[] =
 {
-    &cur_server_ip.attr,
+    &cur_server_addr.attr,
     &cur_server_rtt.attr,
     &alt_server_num.attr,
+    &alt_servers.attr,
     &image_name.attr,
     &rid.attr,
     &update_available.attr,
     NULL,
 };
 
-struct attribute *server_attrs[] =
-{
-    &alt_server_ip.attr,
-    &alt_server_rtt.attr,
-    NULL,
-};
 
 struct sysfs_ops device_ops =
 {
     .show = device_show,
-};
-
-struct sysfs_ops server_ops =
-{
-    .show = server_show,
 };
 
 void release(struct kobject *kobj)
@@ -174,39 +183,17 @@ struct kobj_type device_ktype =
     .release = release,
 };
 
-struct kobj_type server_ktype =
-{
-    .default_attrs = server_attrs,
-    .sysfs_ops = &server_ops,
-    .release = release,
-};
 
 void dnbd3_sysfs_init(dnbd3_device_t *dev)
 {
-    int i;
-    char name[15] = "alt_server99";
     struct kobject *kobj = &dev->kobj;
     struct kobj_type *ktype = &device_ktype;
     struct kobject *parent = &disk_to_dev(dev->disk)->kobj;
 
     kobject_init_and_add(kobj, ktype, parent, "net");
-
-    for (i = 0; i < NUMBER_SERVERS; i++)
-    {
-        sprintf(name, "alt_server%d", i);
-        kobj = &dev->alt_servers[i].kobj;
-        ktype = &server_ktype;
-        parent = &dev->kobj;
-        kobject_init_and_add(kobj, ktype, parent, name);
-    }
 }
 
 void dnbd3_sysfs_exit(dnbd3_device_t *dev)
 {
-    int i;
-    for (i = 0; i < NUMBER_SERVERS; i++)
-    {
-        kobject_put(&dev->alt_servers[i].kobj);
-    }
     kobject_put(&dev->kobj);
 }

@@ -260,11 +260,11 @@ void dnbd3_load_config(char *file)
         gchar **servers = g_key_file_get_string_list(gkf, groups[i], "servers", &num_servers, NULL);
         if (servers) for (k = 0, j = 0; j < MIN(num_servers, NUMBER_SERVERS); ++j)
         {
-        	if (parse_address(servers[j], &(image->servers[k].addrtype), image->servers[k].ipaddr, &(image->servers[k].port)))
+        	if (parse_address(servers[j], &(image->servers[k].hostaddrtype), image->servers[k].hostaddr, &(image->servers[k].port)))
         	{
         		++k; continue;
         	}
-        	image->servers[k].addrtype = 0;
+        	image->servers[k].hostaddrtype = 0;
         }
         g_strfreev(servers);
 

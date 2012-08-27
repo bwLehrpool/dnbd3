@@ -56,6 +56,11 @@ extern pthread_spinlock_t _spinlock;
 extern char *_config_file_name;
 extern GSList *_dnbd3_images; // of dnbd3_image_t
 
+
+#ifdef _DEBUG
+extern int _fake_delay;
+#endif
+
 void dnbd3_cleanup();
 
 #endif /* SERVER_H_ */

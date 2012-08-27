@@ -39,7 +39,7 @@
 #include "../config.h"
 
 
-static char recv_request_header(int sock, dnbd3_request_t *request)
+static inline char recv_request_header(int sock, dnbd3_request_t *request)
 {
 	int ret;
 	// Read request header from socket
@@ -62,10 +62,13 @@ static char recv_request_header(int sock, dnbd3_request_t *request)
     	memlogf("[WARNING] Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd, (int)request->size);
     	return 0;
     }
+#ifdef _DEBUG
+    	if (_fake_delay) usleep(_fake_delay);
+#endif
     return 1;
 }
 
-static char recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
+static inline char recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
 {
 	if (size == 0)
 	{
@@ -87,10 +90,11 @@ static char recv_request_payload(int sock, uint32_t size, serialized_buffer_t *p
 	return 1;
 }
 
-static char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
+static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 {
+	const unsigned int size = reply->size;
 	fixup_reply(*reply);
-	if (!payload || reply->size == 0)
+	if (!payload || size == 0)
 	{
 		if (send(sock, reply, sizeof(dnbd3_reply_t), MSG_WAITALL) != sizeof(dnbd3_reply_t))
 		{
@@ -104,10 +108,10 @@ static char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 		iov[0].iov_base = reply;
 		iov[0].iov_len = sizeof(dnbd3_reply_t);
 		iov[1].iov_base = payload;
-		iov[1].iov_len = reply->size;
-		if (writev(sock, iov, 2) != sizeof(dnbd3_reply_t) + reply->size)
+		iov[1].iov_len = size;
+		if (writev(sock, iov, 2) != sizeof(dnbd3_reply_t) + size)
 		{
-			printf("[DEBUG] Send failed (reply with payload of %d bytes)\n", (int)reply->size);
+			printf("[DEBUG] Send failed (reply with payload of %u bytes)\n", size);
 			return 0;
 		}
 	}
@@ -119,9 +123,6 @@ void *dnbd3_handle_query(void *dnbd3_client)
     dnbd3_client_t *client = (dnbd3_client_t *) (uintptr_t) dnbd3_client;
     dnbd3_request_t request;
     dnbd3_reply_t reply;
-
-    const int cork = 1;
-    const int uncork = 0;
 
     dnbd3_image_t *image = NULL;
     int image_file = -1, image_cache = -1;
@@ -216,7 +217,6 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
     if (image) while (recv_request_header(client->sock, &request))
     {
-
         switch (request.cmd)
         {
 
@@ -246,12 +246,16 @@ void *dnbd3_handle_query(void *dnbd3_client)
             	break;
             }
 
-            // TODO: Try MSG_MORE instead of cork+uncork if performance ever becomes an issue..
-            setsockopt(client->sock, SOL_TCP, TCP_CORK, &cork, sizeof(cork));
             reply.cmd = CMD_GET_BLOCK;
             reply.size = request.size;
             reply.handle = request.handle;
-            send_reply(client->sock, &reply, NULL);
+
+        	fixup_reply(reply);
+			if (send(client->sock, &reply, sizeof(dnbd3_reply_t), MSG_MORE) != sizeof(dnbd3_reply_t))
+			{
+				printf("[DEBUG] Sending CMD_GET_BLOCK header failed\n");
+				return 0;
+			}
 
             if (request.size == 0) // Request for 0 bytes, done after sending header
             	break;
@@ -264,8 +268,6 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 	printf("[ERROR] sendfile failed (image to net)\n");
                 	close(client->sock);
                 }
-
-                setsockopt(client->sock, SOL_TCP, TCP_CORK, &uncork, sizeof(uncork));
                 break;
             }
 
@@ -343,8 +345,6 @@ void *dnbd3_handle_query(void *dnbd3_client)
             	memlogf("[ERROR] sendfile failed (cache to net)\n");
             	close(client->sock);
             }
-
-            setsockopt(client->sock, SOL_TCP, TCP_CORK, &uncork, sizeof(uncork));
             break;
 
 
@@ -353,7 +353,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
             num = 0;
             for (i = 0; i < NUMBER_SERVERS; i++)
             {
-                if (image->servers[i].addrtype == 0 || image->servers[i].failures > 200) continue;
+                if (image->servers[i].hostaddrtype == 0 || image->servers[i].failures > 200) continue;
                 memcpy(server_list + num++, image->servers + i, sizeof(dnbd3_server_entry_t));
             }
             reply.cmd = CMD_GET_SERVERS;

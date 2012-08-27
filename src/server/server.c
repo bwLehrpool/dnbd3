@@ -37,6 +37,9 @@
 #include "memlog.h"
 
 int _sock;
+#ifdef _DEBUG
+int _fake_delay = 0;
+#endif
 pthread_spinlock_t _spinlock;
 
 GSList *_dnbd3_clients = NULL;
@@ -48,6 +51,9 @@ void dnbd3_print_help(char* argv_0)
     printf("Usage: %s [OPTIONS]...\n", argv_0);
     printf("Start the DNBD3 server\n");
     printf("-f or --file \t\t Configuration file (default /etc/dnbd3-server.conf)\n");
+#ifdef _DEBUG
+    printf("-d or --delay \t\t Add a fake network delay of X µs\n");
+#endif
     printf("-n or --nodaemon \t Start server in foreground\n");
     printf("-r or --reload \t\t Reload configuration file\n");
     printf("-s or --stop \t\t Stop running dnbd3-server\n");
@@ -119,10 +125,11 @@ int main(int argc, char* argv[])
     int demonize = 1;
     int opt = 0;
     int longIndex = 0;
-    static const char *optString = "f:nrsiHV?";
+    static const char *optString = "f:d:nrsiHV?";
     static const struct option longOpts[] =
     {
     { "file", required_argument, NULL, 'f' },
+    { "delay", required_argument, NULL, 'd' },
     { "nodaemon", no_argument, NULL, 'n' },
     { "reload", no_argument, NULL, 'r' },
     { "stop", no_argument, NULL, 's' },
@@ -137,8 +144,16 @@ int main(int argc, char* argv[])
         switch (opt)
         {
         case 'f':
-            _config_file_name = optarg;
+            _config_file_name = strdup(optarg);
             break;
+        case 'd':
+#ifdef _DEBUG
+        	_fake_delay = atoi(optarg);
+        	break;
+#else
+        	printf("This option is only available in debug builds.\n\n");
+        	return EXIT_FAILURE;
+#endif
         case 'n':
             demonize = 0;
             break;

@@ -36,6 +36,39 @@ static inline int is_same_server(const dnbd3_server_t * const a, const dnbd3_ser
 		&& (0 == memcmp(a->hostaddr, b->hostaddr, (a->hostaddrtype == AF_INET ? 4 : 16)));
 }
 
+static inline dnbd3_server_t* get_existing_server(const dnbd3_server_entry_t * const newserver, dnbd3_device_t * const dev)
+{
+	int i;
+	for (i = 0; i < NUMBER_SERVERS; ++i)
+	{
+		if ((newserver->hostaddrtype == dev->alt_servers[i].hostaddrtype)
+			&& (newserver->port == dev->alt_servers[i].port)
+			&& (0 == memcmp(newserver->hostaddr, dev->alt_servers[i].hostaddr, (newserver->hostaddrtype == AF_INET ? 4 : 16))))
+		{
+			return &dev->alt_servers[i];
+			break;
+		}
+	}
+	return NULL;
+}
+
+static inline dnbd3_server_t* get_free_alt_server(dnbd3_device_t * const dev)
+{
+	int i;
+	for (i = 0; i < NUMBER_SERVERS; ++i)
+	{
+		if (dev->alt_servers[i].hostaddrtype == 0)
+			return &dev->alt_servers[i];
+	}
+	for (i = 0; i < NUMBER_SERVERS; ++i)
+	{
+		if (dev->alt_servers[i].failures > 10)
+			return &dev->alt_servers[i];
+	}
+	return NULL;
+}
+
+
 int dnbd3_net_connect(dnbd3_device_t *dev)
 {
     struct sockaddr_in sin;
@@ -195,8 +228,9 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
     if (req1) // This connection is established to the initial server (from the ioctl call)
     {
-    	// Set number of known alt servers to 0
-    	dev->alt_servers_num = 0;
+    	// Forget all known alt servers
+    	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
+    	memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
 		// And then enqueue request to request_queue_send for a fresh list of alt servers
 		req1->cmd_type = REQ_TYPE_SPECIAL;
 		req1->cmd_flags = CMD_GET_SERVERS;
@@ -324,6 +358,7 @@ int dnbd3_net_discover(void *data)
 
     dnbd3_request_t dnbd3_request;
     dnbd3_reply_t dnbd3_reply;
+    dnbd3_server_t *alt_server;
     struct msghdr msg;
     struct kvec iov[2];
 
@@ -334,6 +369,7 @@ int dnbd3_net_discover(void *data)
 
     struct timeval start, end;
     unsigned long rtt, best_rtt = 0;
+    unsigned long irqflags;
     int i, best_server, current_server;
     int turn = 0;
     int ready = 0;
@@ -367,38 +403,45 @@ int dnbd3_net_discover(void *data)
         dev->discover = 0;
 
         // Check if the list of alt servers needs to be updated and do so if neccessary
-        spin_lock_irq(&dev->blk_lock);
         if (dev->new_servers_num)
         {
+        	spin_lock_irqsave(&dev->blk_lock, irqflags);
         	for (i = 0; i < dev->new_servers_num; ++i)
         	{
-        		memcpy(dev->alt_servers[i].hostaddr, dev->new_servers[i].ipaddr, 16);
-        		dev->alt_servers[i].hostaddrtype = dev->new_servers[i].addrtype;
-        		dev->alt_servers[i].port = dev->new_servers[i].port;
-        		dev->alt_servers[i].rtts[0] = dev->alt_servers[i].rtts[1]
-					= dev->alt_servers[i].rtts[2] = dev->alt_servers[i].rtts[3]
+        		if (dev->new_servers[i].hostaddrtype != AF_INET) // Invalid entry.. (Add IPv6)
+        			continue;
+        		alt_server = get_existing_server(&dev->new_servers[i], dev);
+        		if (alt_server != NULL) // Server already known, reset fail counter
+        		{
+        			alt_server->failures = 0;
+        			continue;
+        		}
+        		alt_server = get_free_alt_server(dev);
+        		if (alt_server == NULL) // All NUMBER_SERVERS slots are taken, ignore entry
+        			continue;
+        		// Add new server entry
+        		memcpy(alt_server->hostaddr, dev->new_servers[i].hostaddr, 16);
+        		alt_server->hostaddrtype = dev->new_servers[i].hostaddrtype;
+        		alt_server->port = dev->new_servers[i].port;
+        		alt_server->rtts[0] = alt_server->rtts[1]
+					= alt_server->rtts[2] = alt_server->rtts[3]
 					= RTT_UNREACHABLE;
-        		dev->alt_servers[i].protocol_version = 0;
-        		dev->alt_servers[i].skip_count = 0;
+        		alt_server->protocol_version = 0;
+        		alt_server->failures = 0;
         	}
-        	dev->alt_servers_num = dev->new_servers_num;
         	dev->new_servers_num = 0;
+        	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
         }
-        spin_unlock_irq(&dev->blk_lock);
 
         current_server = best_server = -1;
         best_rtt = 0xFFFFFFFul;
 
-        for (i=0; i < dev->alt_servers_num; ++i)
+        for (i=0; i < NUMBER_SERVERS; ++i)
         {
-            if (dev->alt_servers[i].hostaddrtype != AF_INET) // add IPv6....
+        	if (dev->alt_servers[i].hostaddrtype == 0) // Empty slot
+        		continue;
+            if (!dev->panic && dev->alt_servers[i].failures > 50) // If not in panic mode, skip server if it failed too many times
             	continue;
-
-            if (!dev->panic && dev->alt_servers[i].skip_count) // If not in panic mode, skip server if indicated
-            {
-            	--dev->alt_servers[i].skip_count;
-            	continue;
-            }
 
             // Initialize socket and connect
             if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
@@ -569,9 +612,7 @@ int dnbd3_net_discover(void *data)
             rtt = ( dev->alt_servers[i].rtts[0]
 				  + dev->alt_servers[i].rtts[1]
 				  + dev->alt_servers[i].rtts[2]
-				  + dev->alt_servers[i].rtts[3] ) >> 2; // ">> 2" == "/ 4", needed to prevent 64bit division on 32bit
-            printk("RTT: %luµs\n", rtt);
-
+				  + dev->alt_servers[i].rtts[3] ) / 4;
 
             if (best_rtt > rtt)
             { // This one is better, keep socket open in case we switch
@@ -596,16 +637,17 @@ int dnbd3_net_discover(void *data)
 
             continue;
 
-            error:
-                sock_release(sock);
-                sock = NULL;
-                dev->alt_servers[i].rtts[turn] = RTT_UNREACHABLE;
-                if (is_same_server(&dev->cur_server,  &dev->alt_servers[i]))
-                {
-                    dev->cur_rtt = RTT_UNREACHABLE;
-                    current_server = i;
-                }
-                continue;
+		error:
+			++dev->alt_servers[i].failures;
+			sock_release(sock);
+			sock = NULL;
+			dev->alt_servers[i].rtts[turn] = RTT_UNREACHABLE;
+			if (is_same_server(&dev->cur_server,  &dev->alt_servers[i]))
+			{
+				dev->cur_rtt = RTT_UNREACHABLE;
+				current_server = i;
+			}
+			continue;
         }
 
         if (dev->panic && ++dev->panic_count == 21)
@@ -663,6 +705,8 @@ int dnbd3_net_send(void *data)
     struct msghdr msg;
     struct kvec iov;
 
+    unsigned long irqflags;
+
     init_msghdr(msg);
 
     dnbd3_request.magic = dnbd3_packet_magic;
@@ -678,14 +722,14 @@ int dnbd3_net_send(void *data)
         	break;
 
         // extract block request
-        spin_lock_irq(&dev->blk_lock); // TODO: http://www.linuxjournal.com/article/5833 says spin_lock_irq should not be used in general, but article is 10 years old
+        spin_lock_irqsave(&dev->blk_lock, irqflags);
         if (list_empty(&dev->request_queue_send))
         {
-        	spin_unlock_irq(&dev->blk_lock);
+        	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             continue;
         }
         blk_request = list_entry(dev->request_queue_send.next, struct request, queuelist);
-        spin_unlock_irq(&dev->blk_lock);
+        spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 
         // what to do?
         switch (blk_request->cmd_type)
@@ -695,25 +739,25 @@ int dnbd3_net_send(void *data)
             dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
             dnbd3_request.size = blk_rq_bytes(blk_request); // bytes left to complete entire request
             // enqueue request to request_queue_receive
-            spin_lock_irq(&dev->blk_lock);
+            spin_lock_irqsave(&dev->blk_lock, irqflags);
             list_del_init(&blk_request->queuelist);
             list_add_tail(&blk_request->queuelist, &dev->request_queue_receive);
-            spin_unlock_irq(&dev->blk_lock);
+            spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             break;
 
         case REQ_TYPE_SPECIAL:
             dnbd3_request.cmd = blk_request->cmd_flags;
             dnbd3_request.size = 0;
-            spin_lock_irq(&dev->blk_lock);
+            spin_lock_irqsave(&dev->blk_lock, irqflags);
             list_del_init(&blk_request->queuelist);
-            spin_unlock_irq(&dev->blk_lock);
+            spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             break;
 
         default:
             printk("ERROR: Unknown command (send)\n");
-            spin_lock_irq(&dev->blk_lock);
+            spin_lock_irqsave(&dev->blk_lock, irqflags);
             list_del_init(&blk_request->queuelist);
-            spin_unlock_irq(&dev->blk_lock);
+            spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             continue;
         }
 
@@ -758,8 +802,9 @@ int dnbd3_net_receive(void *data)
     struct req_iterator iter;
     struct bio_vec *bvec;
     void *kaddr;
-    unsigned long flags;
+    unsigned long irqflags;
     sigset_t blocked, oldset;
+    uint16_t rid;
 
     int count, remaining, ret;
 
@@ -811,7 +856,7 @@ int dnbd3_net_receive(void *data)
         case CMD_GET_BLOCK:
             // search for replied request in queue
             blk_request = NULL;
-            spin_lock_irq(&dev->blk_lock);
+            spin_lock_irqsave(&dev->blk_lock, irqflags);
             list_for_each_entry_safe(received_request, tmp_request, &dev->request_queue_receive, queuelist)
             {
                 if ((uint64_t)(uintptr_t)received_request == dnbd3_reply.handle) // Double cast to prevent warning on 32bit
@@ -820,7 +865,7 @@ int dnbd3_net_receive(void *data)
                     break;
                 }
             }
-            spin_unlock_irq(&dev->blk_lock);
+            spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             if (blk_request == NULL)
             {
             	printk("ERROR: Received block data for unrequested handle (%llu: %llu).\n",
@@ -846,10 +891,10 @@ int dnbd3_net_receive(void *data)
 
                 sigprocmask(SIG_SETMASK, &oldset, NULL);
             }
-            spin_lock_irqsave(&dev->blk_lock, flags);
+            spin_lock_irqsave(&dev->blk_lock, irqflags);
             list_del_init(&blk_request->queuelist);
             __blk_end_request_all(blk_request, 0);
-            spin_unlock_irqrestore(&dev->blk_lock, flags);
+            spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             continue;
 
         case CMD_GET_SERVERS:
@@ -858,9 +903,9 @@ int dnbd3_net_receive(void *data)
         		remaining = dnbd3_reply.size;
         		goto clear_remaining_payload;
         	}
-        	spin_lock_irq(&dev->blk_lock);
+        	spin_lock_irqsave(&dev->blk_lock, irqflags);
         	dev->new_servers_num = 0;
-        	spin_unlock_irq(&dev->blk_lock);
+        	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             count = MIN(NUMBER_SERVERS, dnbd3_reply.size / sizeof(dnbd3_server_entry_t));
 
             if (count != 0)
@@ -874,16 +919,16 @@ int dnbd3_net_receive(void *data)
 				}
 				for (remaining = 0; remaining < count; ++remaining)
 				{
-					if (dev->new_servers[remaining].addrtype == AF_INET)
-						printk("New Server: %pI4 : %d\n", dev->new_servers[remaining].ipaddr, (int)ntohs(dev->new_servers[remaining].port));
-					else if (dev->new_servers[remaining].addrtype == AF_INET6)
-						printk("New Server: %pI6 : %d\n", dev->new_servers[remaining].ipaddr, (int)ntohs(dev->new_servers[remaining].port));
+					if (dev->new_servers[remaining].hostaddrtype == AF_INET)
+						printk("New Server: %pI4 : %d\n", dev->new_servers[remaining].hostaddr, (int)ntohs(dev->new_servers[remaining].port));
+					else if (dev->new_servers[remaining].hostaddrtype == AF_INET6)
+						printk("New Server: %pI6 : %d\n", dev->new_servers[remaining].hostaddr, (int)ntohs(dev->new_servers[remaining].port));
 					else
-						printk("New Server of unknown address type (%d)\n", (int)dev->new_servers[remaining].addrtype);
+						printk("New Server of unknown address type (%d)\n", (int)dev->new_servers[remaining].hostaddrtype);
 				}
-	        	spin_lock_irq(&dev->blk_lock);
+	        	spin_lock_irqsave(&dev->blk_lock, irqflags);
 	        	dev->new_servers_num = count;
-	        	spin_unlock_irq(&dev->blk_lock);
+	        	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 				// TODO: Re-Add update check
             }
             // If there were more servers than accepted, remove the remaining data from the socket buffer
@@ -903,6 +948,26 @@ clear_remaining_payload:
             	remaining -= ret;
             }
             continue;
+
+        case CMD_LATEST_RID:
+        	if (dnbd3_reply.size != 2)
+        	{
+        		printk("Error: CMD_LATEST_RID.size != 2.\n");
+        		continue;
+        	}
+        	iov.iov_base = &rid;
+        	iov.iov_len = sizeof(rid);
+        	if (kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags) <= 0)
+        	{
+        		printk("Error: Could not receive CMD_LATEST_RID payload.\n");
+        	}
+        	else
+        	{
+        		rid = net_order_16(rid);
+        		printk("Latest rid of %s is %d (currently using %d)\n", dev->imgname, (int)rid, (int)dev->rid);
+        		dev->update_available = (rid > dev->rid ? 1 : 0);
+        	}
+        	continue;
 
         case CMD_KEEPALIVE:
         	if (dnbd3_reply.size != 0)
@@ -925,13 +990,13 @@ error:
 	while (!list_empty(&dev->request_queue_receive))
 	{
 		printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);
-		spin_lock_irq(&dev->blk_lock);
+		spin_lock_irqsave(&dev->blk_lock, irqflags);
 		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
 		{
 			list_del_init(&blk_request->queuelist);
 			list_add(&blk_request->queuelist, &dev->request_queue_send);
 		}
-		spin_unlock_irq(&dev->blk_lock);
+		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 	}
 	if (dev->sock)
 		kernel_sock_shutdown(dev->sock, SHUT_RDWR);

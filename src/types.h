@@ -76,6 +76,7 @@ typedef struct
 #define CMD_GET_SERVERS 3
 #define CMD_ERROR		4
 #define CMD_KEEPALIVE	5
+#define CMD_LATEST_RID	6
 
 #pragma pack(1)
 typedef struct
@@ -101,10 +102,10 @@ typedef struct
 #pragma pack(1)
 typedef struct
 {
-	uint8_t ipaddr[16];	// 16byte (network representation, so it can be directly passed to socket functions)
-	uint16_t port; 		// 2byte (network representation, so it can be directly passed to socket functions)
-	uint8_t addrtype; 	// 1byte (ip version. AF_INET or AF_INET6. 0 means this struct is empty and should be ignored)
-	uint8_t failures;	// 1byte (number of times server has been consecutively unreachable)
+	uint8_t hostaddr[16];	// 16byte (network representation, so it can be directly passed to socket functions)
+	uint16_t port; 			// 2byte (network representation, so it can be directly passed to socket functions)
+	uint8_t hostaddrtype; 	// 1byte (ip version. AF_INET or AF_INET6. 0 means this struct is empty and should be ignored)
+	uint8_t failures;		// 1byte (number of times server has been consecutively unreachable)
 } dnbd3_server_entry_t;
 #pragma pack(0)
 
