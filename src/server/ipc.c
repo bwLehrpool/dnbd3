@@ -400,6 +400,9 @@ void dnbd3_ipc_send(int cmd)
     header.error = 0;
     send(client_sock, (char *) &header, sizeof(header), MSG_WAITALL);
     recv(client_sock, &header, sizeof(header), MSG_WAITALL);
+    header.cmd = ntohl(header.cmd);
+    header.size = ntohl(header.size);
+    header.error = ntohl(header.error);
 
     if (cmd == IPC_INFO && header.size > 0)
     {

@@ -635,6 +635,8 @@ int dnbd3_net_discover(void *data)
                 current_server = i;
             }
 
+            dev->alt_servers[i].failures = 0;
+
             continue;
 
 		error:
