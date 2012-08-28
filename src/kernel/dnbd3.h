@@ -53,25 +53,25 @@ typedef struct
     struct kobject kobj;
 
     // network
+    char *imgname;
     struct socket *sock;
     dnbd3_server_t cur_server, initial_server;
     unsigned long cur_rtt;
-    char *imgname;
     serialized_buffer_t payload_buffer;
-    int rid, update_available;
     dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
     int new_servers_num;	// number of new alt servers that are waiting to be copied to above array
     dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers
-    int discover, panic, panic_count, disconnecting;
+    uint8_t discover, panic, disconnecting, mode, update_available, panic_count;
+    uint16_t rid, heartbeat_count;
     uint64_t reported_size;
     // server switch
     struct socket *better_sock;
 
     // process
-    struct timer_list hb_timer;
     struct task_struct *thread_send;
     struct task_struct *thread_receive;
     struct task_struct *thread_discover;
+    struct timer_list hb_timer;
     wait_queue_head_t process_queue_send;
     wait_queue_head_t process_queue_receive;
     wait_queue_head_t process_queue_discover;

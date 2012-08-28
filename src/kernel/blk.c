@@ -104,6 +104,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
     struct request_queue *blk_queue = dev->disk->queue;
     char *imgname = NULL;
     dnbd3_ioctl_t *msg = kmalloc(sizeof(*msg), GFP_KERNEL);
+    unsigned long irqflags;
 
     if (msg == NULL) return -ENOMEM;
     copy_from_user((char *)msg, (char *)arg, 2);
@@ -146,6 +147,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
 			dev->imgname = imgname;
 			dev->rid = msg->rid;
+			dev->mode = msg->mode;
 			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_CACHE_SIZE;
 			if (dnbd3_net_connect(dev) == 0)
 			{
@@ -180,6 +182,30 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
         result = dnbd3_net_connect(dev);
         break;
 
+    case IOCTL_ADD_SRV:
+    case IOCTL_REM_SRV:
+    	if (dev->imgname == NULL)
+    	{
+    		result = -ENOENT;
+    	}
+    	else
+    	{
+    		spin_lock_irqsave(&dev->blk_lock, irqflags);
+    		if (dev->new_servers_num >= NUMBER_SERVERS)
+    			result = -EAGAIN;
+    		else
+    		{
+				memcpy(dev->new_servers[dev->new_servers_num].hostaddr, msg->addr, 16);
+				dev->new_servers[dev->new_servers_num].port = msg->port;
+				dev->new_servers[dev->new_servers_num].hostaddrtype = msg->addrtype;
+				dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
+				++dev->new_servers_num;
+				result = 0;
+    		}
+    		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+    	}
+    	break;
+
     case BLKFLSBUF:
         break;
 
@@ -203,7 +229,7 @@ void dnbd3_blk_request(struct request_queue *q)
     {
         dev = req->rq_disk->private_data;
 
-        if (dev->cur_server.hostaddrtype == 0)
+        if (dev->imgname == NULL)
         {
         	__blk_end_request_all(req, -EIO);
         	continue;
@@ -215,7 +241,7 @@ void dnbd3_blk_request(struct request_queue *q)
             continue;
         }
 
-        if (dev->panic_count >= 20)
+        if (dev->panic_count >= PROBE_COUNT_TIMEOUT)
         {
         	__blk_end_request_all(req, -EIO);
         	continue;

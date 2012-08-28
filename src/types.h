@@ -28,6 +28,8 @@
 #define IOCTL_OPEN      _IO(0xab, 1)
 #define IOCTL_CLOSE     _IO(0xab, 2)
 #define IOCTL_SWITCH    _IO(0xab, 3)
+#define IOCTL_ADD_SRV	_IO(0xab, 4)
+#define IOCTL_REM_SRV	_IO(0xab, 5)
 
 #if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && __BYTE_ORDER == __BIG_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
@@ -68,7 +70,10 @@ typedef struct
     char *imgname;
     int rid;
     int read_ahead_kb;
+    uint8_t mode;		// 0 = automatic (real client), 1 = manual control (proxy)
 } dnbd3_ioctl_t;
+#define DEVICE_MODE_CLIENT		0
+#define DEVICE_MODE_PROXY		1
 
 // network
 #define CMD_GET_BLOCK   1

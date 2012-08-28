@@ -29,6 +29,49 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
+#if 1 // Debug output
+#define debug_print_va_host(_host, _fmt, ...) do { \
+	if (dev->cur_server.hostaddrtype == AF_INET) \
+		printk("%s:%d " _fmt " (%s, %pI4:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+	else \
+		printk("%s:%d " _fmt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+} while(0)
+#define debug_error_va_host(_host, _fmt, ...) do { \
+	debug_print_va_host(_host, _fmt, __VA_ARGS__); \
+	goto error; \
+} while(0)
+#define debug_dev_va(_fmt, ...) debug_print_va_host(dev->cur_server, _fmt, __VA_ARGS__)
+#define error_dev_va(_fmt, ...) debug_error_va_host(dev->cur_server, _fmt, __VA_ARGS__)
+#define debug_alt_va(_fmt, ...) debug_print_va_host(dev->alt_servers[i], _fmt, __VA_ARGS__)
+#define error_alt_va(_fmt, ...) debug_error_va_host(dev->alt_servers[i], _fmt, __VA_ARGS__)
+
+#define debug_print_host(_host, txt) do { \
+	if (dev->cur_server.hostaddrtype == AF_INET) \
+		printk("%s:%d " txt " (%s, %pI4:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+	else \
+		printk("%s:%d " txt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+} while(0)
+#define debug_error_host(_host, txt) do { \
+	debug_print_host(_host, txt); \
+	goto error; \
+} while(0)
+#define debug_dev(txt) debug_print_host(dev->cur_server, txt)
+#define error_dev(txt) debug_error_host(dev->cur_server, txt)
+#define debug_alt(txt) debug_print_host(dev->alt_servers[i], txt)
+#define error_alt(txt) debug_error_host(dev->alt_servers[i], txt)
+
+#else // Silent
+
+#define debug_dev(x) while(0)
+#define error_dev(x) goto error
+#define debug_dev_va(x, ...) while(0)
+#define error_dev_va(x, ...) goto error
+#define debug_alt(x) while(0)
+#define error_alt(x) goto error
+#define debug_alt_va(x, ...) while(0)
+#define error_alt_va(x, ...) goto error
+#endif
+
 static inline int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b)
 {
 	return (a->hostaddrtype == b->hostaddrtype)
@@ -80,37 +123,28 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     timeout.tv_usec = 0;
 
     // do some checks before connecting
+
     if (is_same_server(&dev->cur_server, &dev->initial_server))
     {
-    	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
-		if (!req1)
-		{
-			printk("FATAL: Kmalloc(1) failed.\n");
-			goto error;
-		}
+    	// Forget all known alt servers
+    	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
+    	memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
+    	if (dev->mode == DEVICE_MODE_CLIENT)
+    	{
+			req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
+			if (!req1)
+				error_dev("FATAL: Kmalloc(1) failed.");
+    	}
     }
     if (dev->cur_server.port == 0 || dev->cur_server.hostaddrtype == 0 || dev->imgname == NULL)
-    {
-        printk("FATAL: Host, port or image name not set.\n");
-        goto error;
-    }
+    	error_dev("FATAL: Host, port or image name not set.");
     if (dev->sock)
-    {
-    	if (dev->cur_server.hostaddrtype == AF_INET)
-    		printk("ERROR: Device %s is already connected to %pI4 : %d.\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
-    	else
-    		printk("ERROR: Device %s is already connected to %pI6 : %d.\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
-        goto error;
-    }
+    	error_dev("ERROR: Already connected.");
 
-    if (dev->cur_server.hostaddrtype == AF_INET)
-    	printk("INFO: Connecting device %s to %pI4 : %d\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+    if (dev->cur_server.hostaddrtype != AF_INET)
+    	error_dev("ERROR: IPv6 not implemented.");
     else
-    {
-    	printk("ERROR: Cannot connect to %pI6 - IPv6 not yet implemented.\n", dev->cur_server.hostaddr);
-    	//printk("INFO: Connecting device %s to %pI6 : %d\n", dev->disk->disk_name, dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
-    	goto error;
-    }
+    	debug_dev("INFO: Connecting...");
 
     if (dev->better_sock == NULL)
     { //  no established connection yet from discovery thread, start new one
@@ -122,10 +156,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         char *name;
         init_msghdr(msg);
 		if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
-		{
-			printk("ERROR: Couldn't create socket.\n");
-			goto error;
-		}
+			error_dev("ERROR: Couldn't create socket.");
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
 		dev->sock->sk->sk_allocation = GFP_NOIO;
@@ -133,10 +164,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		memcpy(&(sin.sin_addr.s_addr), dev->cur_server.hostaddr, 4);
 		sin.sin_port = dev->cur_server.port;
 		if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) != 0)
-		{
-			printk("ERROR: Couldn't connect to host %pI4 : %d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
-			goto error;
-		}
+			error_dev("FATAL: Connection to host failed.");
         // Request filesize
 		dnbd3_request.magic = dnbd3_packet_magic;
         dnbd3_request.cmd = CMD_GET_SIZE;
@@ -151,71 +179,48 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         iov[1].iov_base = &dev->payload_buffer;
         iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
         if (kernel_sendmsg(dev->sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
-        {
-        	printk("ERROR: Couldn't send CMD_SIZE_REQUEST to %pI4 : %d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
-            goto error;
-        }
+        	error_dev("ERROR: Couldn't send CMD_SIZE_REQUEST.");
         // receive reply header
         iov[0].iov_base = &dnbd3_reply;
         iov[0].iov_len = sizeof(dnbd3_reply);
         if (kernel_recvmsg(dev->sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
-        {
-        	printk("FATAL: Received corrupted reply header after CMD_SIZE_REQUEST.\n");
-            goto error;
-        }
+        	error_dev("FATAL: Received corrupted reply header after CMD_SIZE_REQUEST.");
+        // check reply header
         fixup_reply(dnbd3_reply);
         if (dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD || dnbd3_reply.magic != dnbd3_packet_magic)
-        {
-        	printk("FATAL: Received invalid reply to CMD_SIZE_REQUEST, image doesn't exist on server.\n");
-            goto error;
-        }
+        	error_dev("FATAL: Received invalid reply to CMD_SIZE_REQUEST, image doesn't exist on server.");
         // receive reply payload
         iov[0].iov_base = &dev->payload_buffer;
         iov[0].iov_len = dnbd3_reply.size;
         if (kernel_recvmsg(dev->sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size)
-        {
-        	printk("FATAL: Cold not read CMD_GET_SIZE payload on handshake.\n");
-            goto error;
-        }
+        	error_dev("FATAL: Cold not read CMD_GET_SIZE payload on handshake.");
+        // handle/check reply payload
         serializer_reset_read(&dev->payload_buffer, dnbd3_reply.size);
-        // read reply payload
         dev->cur_server.protocol_version = serializer_get_uint16(&dev->payload_buffer);
         if (dev->cur_server.protocol_version < MIN_SUPPORTED_SERVER)
-        {
-        	printk("FATAL: Server version is lower than min supported version.\n");
-        	goto error;
-        }
+        	error_dev("FATAL: Server version is lower than min supported version.");
         name = serializer_get_string(&dev->payload_buffer);
         if (dev->rid != 0 && strcmp(name, dev->imgname) != 0)
-        {
-        	printk("FATAL: Server provides different image than asked for.\n");
-        	goto error;
-        }
+        	error_dev_va("FATAL: Server offers image '%s', requested '%s'", name, dev->imgname);
         if (strlen(dev->imgname) < strlen(name))
         {
         	dev->imgname = krealloc(dev->imgname, strlen(name) + 1, GFP_ATOMIC);
         	if (dev->imgname == NULL)
-        	{
-        		printk("FATAL: Reallocating buffer for new image name failed");
-        		goto error;
-        	}
+        		error_dev("FATAL: Reallocating buffer for new image name failed");
         }
         strcpy(dev->imgname, name);
         rid = serializer_get_uint16(&dev->payload_buffer);
         if (dev->rid != 0 && dev->rid != rid)
-        {
-        	printk("FATAL: Server provides different rid of image than asked for.\n");
-        	goto error;
-        }
+        	error_dev_va("FATAL: Server provides rid %d, requested was %d.", (int)rid, (int)dev->rid);
         dev->rid = rid;
         dev->reported_size = serializer_get_uint64(&dev->payload_buffer);
         // store image information
         set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
-        printk("INFO: Filesize of %s: %llu\n", dev->disk->disk_name, dev->reported_size);
+        debug_dev_va("INFO: Filesize: %llu\n", dev->reported_size);
     }
     else // Switching server, connection is already established and size request was executed
     {
-    	printk("INFO: On-the-fly server change\n");
+    	debug_dev("INFO: On-the-fly server change.");
     	dev->sock = dev->better_sock;
     	dev->better_sock = NULL;
         kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
@@ -228,10 +233,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
     if (req1) // This connection is established to the initial server (from the ioctl call)
     {
-    	// Forget all known alt servers
-    	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
-    	memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
-		// And then enqueue request to request_queue_send for a fresh list of alt servers
+		// Enqueue request to request_queue_send for a fresh list of alt servers
 		req1->cmd_type = REQ_TYPE_SPECIAL;
 		req1->cmd_flags = CMD_GET_SERVERS;
 		list_add(&req1->queuelist, &dev->request_queue_send);
@@ -249,10 +251,11 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     wake_up(&dev->process_queue_send);
 
     // add heartbeat timer
+    dev->heartbeat_count = 0;
     init_timer(&dev->hb_timer);
     dev->hb_timer.data = (unsigned long) dev;
     dev->hb_timer.function = dnbd3_net_heartbeat;
-    dev->hb_timer.expires = jiffies + TIMER_INTERVAL_HEARTBEAT;
+    dev->hb_timer.expires = jiffies + HZ;
     add_timer(&dev->hb_timer);
 
     return 0;
@@ -270,7 +273,7 @@ error:
 
 int dnbd3_net_disconnect(dnbd3_device_t *dev)
 {
-    printk("INFO: Disconnecting device %s\n", dev->disk->disk_name);
+    debug_dev("INFO: Disconnecting device.");
 
     dev->disconnecting = 1;
 
@@ -318,36 +321,49 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 
 void dnbd3_net_heartbeat(unsigned long arg)
 {
+	// Because different events need different intervals, the timer is called once a second.
+	// Other intervals can be derived using dev->heartbeat_count.
+#define timeout_seconds(x) (dev->heartbeat_count % (x) == 0)
     dnbd3_device_t *dev = (dnbd3_device_t *) arg;
 
 
     if (!dev->panic)
     {
-		struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
-		// send keepalive
-		if (req)
-		{
-			req->cmd_type = REQ_TYPE_SPECIAL;
-			req->cmd_flags = CMD_KEEPALIVE;
-			list_add_tail(&req->queuelist, &dev->request_queue_send);
-			wake_up(&dev->process_queue_send);
-		}
-		else
-		{
-			printk("ERROR: Couldn't create keepalive request\n");
-		}
+    	if (timeout_seconds(TIMER_INTERVAL_KEEPALIVE_PACKET))
+    	{
+			struct request *req = kmalloc(sizeof(struct request), GFP_ATOMIC);
+			// send keepalive
+			if (req)
+			{
+				req->cmd_type = REQ_TYPE_SPECIAL;
+				req->cmd_flags = CMD_KEEPALIVE;
+				list_add_tail(&req->queuelist, &dev->request_queue_send);
+				wake_up(&dev->process_queue_send);
+			}
+			else
+			{
+				debug_dev("ERROR: Couldn't create keepalive request.");
+			}
+    	}
+    	if (timeout_seconds(TIMER_INTERVAL_PROBE_NORMAL))
+    	{
+			// Normal discovery
+			dev->discover = 1;
+			wake_up(&dev->process_queue_discover);
+    	}
+    }
+    else if (timeout_seconds(TIMER_INTERVAL_PROBE_PANIC))
+    {
+		// Panic discovery
+		dev->discover = 1;
+		wake_up(&dev->process_queue_discover);
     }
 
-    // start discover
-    dev->discover = 1;
-    wake_up(&dev->process_queue_discover);
+    dev->hb_timer.expires = jiffies + HZ;
 
-    if (dev->panic)
-        dev->hb_timer.expires = jiffies + TIMER_INTERVAL_PANIC;
-    else
-        dev->hb_timer.expires = jiffies + TIMER_INTERVAL_HEARTBEAT;
-
+    ++dev->heartbeat_count;
     add_timer(&dev->hb_timer);
+#undef timeout_seconds
 }
 
 int dnbd3_net_discover(void *data)
@@ -383,7 +399,7 @@ int dnbd3_net_discover(void *data)
     buf = kmalloc(4096, GFP_KERNEL);
     if (!buf)
     {
-        printk("FATAL: Kmalloc failed (discover)\n");
+        debug_dev("FATAL: Kmalloc failed (discover)");
         return -1;
     }
     payload = (serialized_buffer_t*)buf;
@@ -411,11 +427,19 @@ int dnbd3_net_discover(void *data)
         		if (dev->new_servers[i].hostaddrtype != AF_INET) // Invalid entry.. (Add IPv6)
         			continue;
         		alt_server = get_existing_server(&dev->new_servers[i], dev);
-        		if (alt_server != NULL) // Server already known, reset fail counter
+        		if (alt_server != NULL) // Server already known
         		{
+        			if (dev->new_servers[i].failures == 1)
+        			{	// REMOVE request
+        				alt_server->hostaddrtype = 0;
+        				continue;
+        			}
+        			// ADD, so just reset fail counter
         			alt_server->failures = 0;
         			continue;
         		}
+        		if (dev->new_servers[i].failures == 1) // REMOVE, but server is not in list anyways
+        			continue;
         		alt_server = get_free_alt_server(dev);
         		if (alt_server == NULL) // All NUMBER_SERVERS slots are taken, ignore entry
         			continue;
@@ -446,7 +470,7 @@ int dnbd3_net_discover(void *data)
             // Initialize socket and connect
             if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
             {
-                printk("ERROR: Couldn't create socket (discover)\n");
+                debug_alt("ERROR: Couldn't create socket (discover).");
                 sock = NULL;
                 continue;
             }
@@ -457,10 +481,7 @@ int dnbd3_net_discover(void *data)
             memcpy(&sin.sin_addr.s_addr, dev->alt_servers[i].hostaddr, 4);
             sin.sin_port = dev->alt_servers[i].port;
             if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
-            {
-                //printk("ERROR: Couldn't connect to host %s:%s (discover)\n", current_server, dev->cur_server.port);
-                goto error;
-            }
+            	goto error;
 
             // Request filesize
             dnbd3_request.cmd = CMD_GET_SIZE;
@@ -474,68 +495,42 @@ int dnbd3_net_discover(void *data)
             iov[1].iov_base = payload;
             dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(payload);
             if (kernel_sendmsg(sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
-            {
-            	printk("ERROR: Requesting image size failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Requesting image size failed.");
 
             // receive net reply
             iov[0].iov_base = &dnbd3_reply;
             iov[0].iov_len = sizeof(dnbd3_reply);
             if (kernel_recvmsg(sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
-            {
-            	printk("ERROR: Receiving image size packet (header) failed (%pI4 :%d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Receiving image size packet (header) failed (discover).");
             fixup_reply(dnbd3_reply);
             if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 4)
-            {
-            	printk("ERROR: Content of image size packet (header) mismatched (%pI4 :%d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Content of image size packet (header) mismatched (discover).");
 
             // receive data
             iov[0].iov_base = payload;
             iov[0].iov_len = dnbd3_reply.size;
             if (kernel_recvmsg(sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size)
-            {
-            	printk("ERROR: Receiving image size packet (payload) failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Receiving image size packet (payload) failed (discover).");
             serializer_reset_read(payload, dnbd3_reply.size);
 
             dev->alt_servers[i].protocol_version = serializer_get_uint16(payload);
             if (dev->alt_servers[i].protocol_version < MIN_SUPPORTED_SERVER)
-            {
-            	printk("ERROR: Server version too old (client: %d, server: %d, min supported: %d) (%pI4 : %d, discover)\n", (int)PROTOCOL_VERSION, (int)dev->alt_servers[i].protocol_version, (int)MIN_SUPPORTED_SERVER, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt_va("ERROR: Server version too old (client: %d, server: %d, min supported: %d).", (int)PROTOCOL_VERSION, (int)dev->alt_servers[i].protocol_version, (int)MIN_SUPPORTED_SERVER);
 
             name = serializer_get_string(payload);
             if (name == NULL)
-            {
-            	printk("ERROR: Server did not supply an image name (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Server did not supply an image name (discover).");
+
             if (strcmp(name, dev->imgname) != 0)
-            {
-            	printk("ERROR: Image name does not match requested one (client: '%s', server: '%s') (%pI4 : %d, discover)\n", dev->imgname, name, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt_va("ERROR: Image name does not match requested one (client: '%s', server: '%s') (discover).", dev->imgname, name);
 
             rid = serializer_get_uint16(payload);
             if (rid != dev->rid)
-            {
-            	printk("ERROR: Server supplied wrong rid (client: '%d', server: '%d') (%pI4 : %d, discover)\n", (int)dev->rid, (int)rid, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt_va("ERROR: Server supplied wrong rid (client: '%d', server: '%d') (discover).", (int)dev->rid, (int)rid);
 
             filesize = serializer_get_uint64(payload);
             if (filesize != dev->reported_size)
-            {
-            	printk("ERROR: Reported image size of %llu does not match expected value %llu. (%pI4 :%d, discover)\n", (unsigned long long)filesize, (unsigned long long)dev->reported_size, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-            	goto error;
-            }
+            	error_alt_va("ERROR: Reported image size of %llu does not match expected value %llu.(discover).", (unsigned long long)filesize, (unsigned long long)dev->reported_size);
 
             // panic mode, take first responding server
             if (dev->panic)
@@ -573,34 +568,22 @@ int dnbd3_net_discover(void *data)
             do_gettimeofday(&start);
 
             if (kernel_sendmsg(sock, &msg, iov, 1, sizeof(dnbd3_request)) <= 0)
-            {
-            	printk("ERROR: Requesting test block failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Requesting test block failed (discover).");
 
             // receive net reply
             iov[0].iov_base = &dnbd3_reply;
             iov[0].iov_len = sizeof(dnbd3_reply);
             if (kernel_recvmsg(sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
-            {
-            	printk("ERROR: Receiving test block header packet failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Receiving test block header packet failed (discover).");
             fixup_reply(dnbd3_reply);
             if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_GET_BLOCK || dnbd3_reply.size != RTT_BLOCK_SIZE)
-            {
-            	printk("ERROR: Unexpected reply to block request: cmd=%d, size=%d (%pI4 : %d, discover)\n", (int)dnbd3_reply.cmd, (int)dnbd3_reply.size, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt_va("ERROR: Unexpected reply to block request: cmd=%d, size=%d (discover).", (int)dnbd3_reply.cmd, (int)dnbd3_reply.size);
 
             // receive data
             iov[0].iov_base = buf;
             iov[0].iov_len = RTT_BLOCK_SIZE;
             if (kernel_recvmsg(sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != RTT_BLOCK_SIZE)
-            {
-            	printk("ERROR: Receiving test block payload failed (%pI4 : %d, discover)\n", dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
-                goto error;
-            }
+            	error_alt("ERROR: Receiving test block payload failed (discover).");
 
             do_gettimeofday(&end); // end rtt measurement
 
@@ -652,9 +635,10 @@ int dnbd3_net_discover(void *data)
 			continue;
         }
 
-        if (dev->panic && ++dev->panic_count == 21)
+        if (dev->panic)
 		{ // After 21 retries, bail out by reporting errors to block layer
-        	dnbd3_blk_fail_all_requests(dev);
+        	if (dev->panic_count < 255 && ++dev->panic_count == PROBE_COUNT_TIMEOUT+1)
+        		dnbd3_blk_fail_all_requests(dev);
 		}
 
         if (best_server == -1 || kthread_should_stop()) // No alt server could be reached at all or thread should stop
@@ -808,7 +792,7 @@ int dnbd3_net_receive(void *data)
     sigset_t blocked, oldset;
     uint16_t rid;
 
-    int count, remaining, ret;
+    int count, remaining, ret, recv_timeout = 0;
 
     init_msghdr(msg);
     set_user_nice(current, -20);
@@ -821,36 +805,23 @@ int dnbd3_net_receive(void *data)
         ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
         if (ret == -EAGAIN)
         {
-        	// Sleep at most 2 seconds, then check if we can receive something
-        	interruptible_sleep_on_timeout(&dev->process_queue_receive, 2*HZ);
-            // If a request for a block was sent, the thread is waken up immediately, so that we don't wait 2 seconds for the reply
-            // This change was made to allow unrequested information from the server to be received (push)
+        	if ((recv_timeout += SOCKET_TIMEOUT_CLIENT_DATA) > SOCKET_KEEPALIVE_TIMEOUT)
+        		error_dev("ERROR: Receive timeout reached.");
         	continue;
         }
         if (ret <= 0)
-        {
-        	printk("Connection closed (%d).\n", ret);
-        	goto error;
-        }
+        	error_dev_va("Connection closed (%d).", ret);
         if (ret != sizeof(dnbd3_reply))
-        {
-        	printk("ERROR: Recv msg header\n");
-            goto error;
-        }
+        	error_dev("ERROR: Recv msg header.");
         fixup_reply(dnbd3_reply);
 
         // check error
         if (dnbd3_reply.magic != dnbd3_packet_magic)
-        {
-         printk("ERROR: Wrong packet magic (Receive)\n");
-         goto error;
-        }
+        	error_dev("ERROR: Wrong packet magic (Receive).");
         if (dnbd3_reply.cmd == 0)
-        {
-         printk("ERROR: Command was 0 (Receive)\n");
-         goto error;
-        }
+        	error_dev("ERROR: Command was 0 (Receive).");
 
+        recv_timeout = 0;
 
         // what to do?
         switch (dnbd3_reply.cmd)
@@ -869,11 +840,8 @@ int dnbd3_net_receive(void *data)
             }
             spin_unlock_irqrestore(&dev->blk_lock, irqflags);
             if (blk_request == NULL)
-            {
-            	printk("ERROR: Received block data for unrequested handle (%llu: %llu).\n",
+            	error_dev_va("ERROR: Received block data for unrequested handle (%llu: %llu).\n",
             			(unsigned long long)dnbd3_reply.handle, (unsigned long long)dnbd3_reply.size);
-            	goto error;
-            }
             // receive data and answer to block layer
             rq_for_each_segment(bvec, blk_request, iter)
             {
@@ -885,9 +853,9 @@ int dnbd3_net_receive(void *data)
                 iov.iov_len = bvec->bv_len;
                 if (kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags) != bvec->bv_len)
                 {
-                	printk("ERROR: Receiving from net to block layer\n");
-                    kunmap(bvec->bv_page);
-                    goto error;
+                	kunmap(bvec->bv_page);
+                	sigprocmask(SIG_SETMASK, &oldset, NULL);
+                	error_dev("ERROR: Receiving from net to block layer.");
                 }
                 kunmap(bvec->bv_page);
 
@@ -900,8 +868,8 @@ int dnbd3_net_receive(void *data)
             continue;
 
         case CMD_GET_SERVERS:
-        	if (!is_same_server(&dev->cur_server, &dev->initial_server))
-        	{
+        	if (dev->mode == DEVICE_MODE_PROXY || !is_same_server(&dev->cur_server, &dev->initial_server))
+        	{	// If not connected to initial server, or device is in proxy mode, ignore this message
         		remaining = dnbd3_reply.size;
         		goto clear_remaining_payload;
         	}
@@ -915,23 +883,10 @@ int dnbd3_net_receive(void *data)
 				iov.iov_base = dev->new_servers;
 				iov.iov_len = count * sizeof(dnbd3_server_entry_t);
 				if (kernel_recvmsg(dev->sock, &msg, &iov, 1, (count * sizeof(dnbd3_server_entry_t)), msg.msg_flags) != (count * sizeof(dnbd3_server_entry_t)))
-				{
-					printk("ERROR: Recv CMD_GET_SERVERS payload.\n");
-					goto error;
-				}
-				for (remaining = 0; remaining < count; ++remaining)
-				{
-					if (dev->new_servers[remaining].hostaddrtype == AF_INET)
-						printk("New Server: %pI4 : %d\n", dev->new_servers[remaining].hostaddr, (int)ntohs(dev->new_servers[remaining].port));
-					else if (dev->new_servers[remaining].hostaddrtype == AF_INET6)
-						printk("New Server: %pI6 : %d\n", dev->new_servers[remaining].hostaddr, (int)ntohs(dev->new_servers[remaining].port));
-					else
-						printk("New Server of unknown address type (%d)\n", (int)dev->new_servers[remaining].hostaddrtype);
-				}
+					error_dev("ERROR: Recv CMD_GET_SERVERS payload.");
 	        	spin_lock_irqsave(&dev->blk_lock, irqflags);
 	        	dev->new_servers_num = count;
 	        	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-				// TODO: Re-Add update check
             }
             // If there were more servers than accepted, remove the remaining data from the socket buffer
             remaining = dnbd3_reply.size - (count * sizeof(dnbd3_server_entry_t));
@@ -943,10 +898,7 @@ clear_remaining_payload:
             	iov.iov_len = count;
             	ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags);
             	if (ret <= 0)
-            	{
-            		printk("ERROR: Recv additional payload from CMD_GET_SERVERS.\n");
-            		goto error;
-            	}
+            		error_dev("ERROR: Recv additional payload from CMD_GET_SERVERS.");
             	remaining -= ret;
             }
             continue;
@@ -954,14 +906,14 @@ clear_remaining_payload:
         case CMD_LATEST_RID:
         	if (dnbd3_reply.size != 2)
         	{
-        		printk("Error: CMD_LATEST_RID.size != 2.\n");
+        		printk("ERROR: CMD_LATEST_RID.size != 2.\n");
         		continue;
         	}
         	iov.iov_base = &rid;
         	iov.iov_len = sizeof(rid);
         	if (kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags) <= 0)
         	{
-        		printk("Error: Could not receive CMD_LATEST_RID payload.\n");
+        		printk("ERROR: Could not receive CMD_LATEST_RID payload.\n");
         	}
         	else
         	{
@@ -973,7 +925,7 @@ clear_remaining_payload:
 
         case CMD_KEEPALIVE:
         	if (dnbd3_reply.size != 0)
-        		printk("Error: keep alive packet with payload.\n");
+        		printk("ERROR: keep alive packet with payload.\n");
         	continue;
 
         default:
@@ -987,7 +939,6 @@ clear_remaining_payload:
     return 0;
 
 error:
-    printk("ERROR: Connection to server %pI4 : %d lost (receive)\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
 	// move already sent requests to request_queue_send again
 	while (!list_empty(&dev->request_queue_receive))
 	{
