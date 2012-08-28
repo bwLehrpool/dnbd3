@@ -29,7 +29,12 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
-#if 1 // Debug output
+/**
+ * Some macros for easier debug output. Location in source-code
+ * as well as server IP:port info will be printed.
+ * The error_* macros include a "goto error;" at the end
+ */
+#if 1 // Change to 0 to disable debug messages
 #define debug_print_va_host(_host, _fmt, ...) do { \
 	if (dev->cur_server.hostaddrtype == AF_INET) \
 		printk("%s:%d " _fmt " (%s, %pI4:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
@@ -216,7 +221,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         dev->reported_size = serializer_get_uint64(&dev->payload_buffer);
         // store image information
         set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
-        debug_dev_va("INFO: Filesize: %llu\n", dev->reported_size);
+        debug_dev_va("INFO: Filesize: %llu.", dev->reported_size);
     }
     else // Switching server, connection is already established and size request was executed
     {
