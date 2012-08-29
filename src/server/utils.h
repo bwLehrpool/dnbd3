@@ -26,13 +26,17 @@
 #ifndef UTILS_H_
 #define UTILS_H_
 
-#define ERROR_FILE_NOT_FOUND			1
-#define ERROR_IMAGE_ALREADY_EXISTS		2
-#define ERROR_CONFIG_FILE_PERMISSIONS	3
-#define ERROR_IMAGE_NOT_FOUND			4
-#define ERROR_RID						5
-#define ERROR_IMAGE_IN_USE				6
-#define ERROR_UNKNOWN					10
+#define ERROR_FILE_NOT_FOUND            1
+#define ERROR_IMAGE_ALREADY_EXISTS      2
+#define ERROR_CONFIG_FILE_PERMISSIONS   3
+#define ERROR_IMAGE_NOT_FOUND           4
+#define ERROR_RID                       5
+#define ERROR_IMAGE_IN_USE              6
+#define ERROR_MISSING_ARGUMENT          7
+#define ERROR_UNSPECIFIED_ERROR         8
+#define ERROR_INVALID_XML               9
+#define ERROR_UNKNOWN_COMMAND          10
+#define ERROR_SEE_LOG                  11
 
 void dnbd3_load_config(char *file);
 int dnbd3_add_image(dnbd3_image_t *image, char *file);

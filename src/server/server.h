@@ -25,12 +25,12 @@
 #include <stdio.h>
 #include <glib.h>
 
-#include "config.h"
+#include "../config.h"
 #include "../types.h"
 
 typedef struct
 {
-	char *name; // full name of image, eg. "uni-freiburg.ubuntu-12.04"
+	char *name; // full name of image, eg. "uni-freiburg/rz/ubuntu-12.04"
 	char *low_name; // full name of image, lowercased for comparison
     int rid; // revision of provided image
     char *file; // path to image file or device
@@ -53,7 +53,7 @@ typedef struct
 
 extern GSList *_dnbd3_clients; // of dnbd3_client_t
 extern pthread_spinlock_t _spinlock;
-extern char *_config_file_name;
+extern char *_config_file_name, *_local_namespace;
 extern GSList *_dnbd3_images; // of dnbd3_image_t
 
 
@@ -62,5 +62,9 @@ extern int _fake_delay;
 #endif
 
 void dnbd3_cleanup();
+
+#if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
+#error Please set _FILE_OFFSET_BITS to 64 in your makefile/configuration
+#endif
 
 #endif /* SERVER_H_ */

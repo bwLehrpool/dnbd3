@@ -44,7 +44,8 @@ pthread_spinlock_t _spinlock;
 
 GSList *_dnbd3_clients = NULL;
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
-GSList *_dnbd3_images; // of dnbd3_image_t
+char *_local_namespace = NULL;
+GSList *_dnbd3_images = NULL; // of dnbd3_image_t
 
 void dnbd3_print_help(char* argv_0)
 {
@@ -75,6 +76,8 @@ void dnbd3_cleanup()
     memlogf("INFO: Cleanup...\n");
 
     close(_sock);
+
+    dnbd3_ipc_shutdown();
 
     pthread_spin_lock(&_spinlock);
     GSList *iterator = NULL;
@@ -209,9 +212,9 @@ int main(int argc, char* argv[])
     timeout.tv_sec = SOCKET_TIMEOUT_SERVER;
     timeout.tv_usec = 0;
 
-    // setup icp
+    // setup ipc
     pthread_t thread_ipc;
-    pthread_create(&(thread_ipc), NULL, dnbd3_ipc_receive, NULL);
+    pthread_create(&(thread_ipc), NULL, &dnbd3_ipc_mainloop, NULL);
 
     memlogf("[INFO] Server is ready...");
 
@@ -246,7 +249,7 @@ int main(int argc, char* argv[])
 
         // This has to be done before creating the thread, otherwise a race condition might occur when the new thread dies faster than this thread adds the client to the list after creating the thread
         pthread_spin_lock(&_spinlock);
-        _dnbd3_clients = g_slist_append(_dnbd3_clients, dnbd3_client);
+        _dnbd3_clients = g_slist_prepend(_dnbd3_clients, dnbd3_client);
         pthread_spin_unlock(&_spinlock);
 
         if (0 != pthread_create(&(dnbd3_client->thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client))

@@ -42,7 +42,7 @@
 #define SOCKET_TIMEOUT_CLIENT_DATA 2
 #define SOCKET_TIMEOUT_CLIENT_DISCOVERY 1
 
-#define NUMBER_SERVERS 8
+#define NUMBER_SERVERS 8 // Number of alt servers per image/device
 #define RTT_THRESHOLD_FACTOR(us) (((us) * 2) / 3) // 2/3 = current to best must be 33% worse
 #define RTT_UNREACHABLE 0x7FFFFFFul // Use this value for timeout/unreachable as RTT. Don't set too high or you might get overflows. 0x7FFFFFF = 134 seconds
 // This must be a power of two:

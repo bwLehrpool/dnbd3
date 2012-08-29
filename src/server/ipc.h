@@ -27,7 +27,9 @@
 #define IPC_ADDIMG 3
 #define IPC_DELIMG 4
 
-void* dnbd3_ipc_receive();
+void* dnbd3_ipc_mainloop();
+
+void dnbd3_ipc_shutdown();
 
 void dnbd3_ipc_send(int cmd);
 
@@ -35,6 +37,7 @@ void dnbd3_ipc_send(int cmd);
 #pragma pack(1)
 typedef struct
 {
+	uint32_t handle;// 4byte
     uint32_t cmd;	// 4byte
     uint32_t size;	// 4byte
     uint32_t error;	// 4byte
