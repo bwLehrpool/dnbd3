@@ -38,9 +38,9 @@
 #define ERROR_UNKNOWN_COMMAND          10
 #define ERROR_SEE_LOG                  11
 
-void dnbd3_load_config(char *file);
-int dnbd3_add_image(dnbd3_image_t *image, char *file);
-int dnbd3_del_image(dnbd3_image_t *image, char *file);
+void dnbd3_load_config();
+int dnbd3_add_image(dnbd3_image_t *image);
+int dnbd3_del_image(dnbd3_image_t *image);
 
 dnbd3_image_t* dnbd3_get_image(char *name, int rid, const char do_lock);
 

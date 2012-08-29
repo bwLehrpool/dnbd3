@@ -261,7 +261,7 @@ int dnbd3_add_image(dnbd3_image_t *image)
 
 	 gchar* data = g_key_file_to_data(gkf, NULL, NULL);
 
-	 int f = fopen(_config_file_name, "w");
+	 FILE *f = fopen(_config_file_name, "w");
 	 if (f >= 0)
 	 {
 		 fputs((char*) data, f);
@@ -279,7 +279,7 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	 return ERROR_SEE_LOG;
 }
 
-int dnbd3_del_image(dnbd3_image_t *image, char *file)
+int dnbd3_del_image(dnbd3_image_t *image)
 {
 	return ERROR_IMAGE_NOT_FOUND; // TODO: Make it work with image names
 	/*

@@ -194,7 +194,7 @@ int main(int argc, char* argv[])
     memlogf("DNBD3 server starting.... Machine type: " ENDIAN_MODE);
 
     // load config file
-    dnbd3_load_config(_config_file_name);
+    dnbd3_load_config();
 
     // setup signal handler
     signal(SIGPIPE, dnbd3_handle_sigpipe);

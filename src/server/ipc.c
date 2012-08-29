@@ -53,7 +53,7 @@ static int recv_data(int client_sock, void *buffer_out, int len);
 static int get_highest_fd(GSList *sockets)
 {
 	GSList *iterator;
-	int max = 0;
+	int max = server_sock;
 
 	for (iterator = sockets; iterator; iterator = iterator->next)
 	{
@@ -61,6 +61,7 @@ static int get_highest_fd(GSList *sockets)
 		if (fd > max)
 			max = fd;
 	}
+	//printf("Max fd: %d\n", max);
 	return max;
 }
 
@@ -208,6 +209,7 @@ void *dnbd3_ipc_mainloop()
 				sockets = g_slist_prepend(sockets, (void *)(size_t)client_sock);
 				if (client_sock >= maxfd)
 					maxfd = client_sock + 1;
+				//printf("Max fd: %d\n", (maxfd-1));
 				FD_SET(client_sock, &all_sockets);
 			}
 			else if (FD_ISSET(server_sock, &exceptset))
@@ -519,9 +521,9 @@ get_info_reply_cleanup:
 				{
 					image.rid = atoi(rid_str);
 					if (cmd == IPC_ADDIMG)
-						header.error = htonl(dnbd3_add_image(&image, _config_file_name));
+						header.error = htonl(dnbd3_add_image(&image));
 					else
-						header.error = htonl(dnbd3_del_image(&image, _config_file_name));
+						header.error = htonl(dnbd3_del_image(&image));
 				}
 				else
 					header.error = htonl(ERROR_MISSING_ARGUMENT);
