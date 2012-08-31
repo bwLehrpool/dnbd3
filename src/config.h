@@ -24,7 +24,6 @@
 // +++++ Network +++++
 // Default port
 #define PORT 5003
-#define PORTSTR "5003"
 
 // Protocol version should be increased whenever new features/messages are added,
 // so either the client or server can run in compatibility mode, or they can
@@ -71,6 +70,6 @@
 #define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3/client.conf"
 #define UNIX_SOCKET "/run/dnbd3-server.sock"
 #define UNIX_SOCKET_GROUP "dnbd"
-#define IPC_PORT 5004
+#define MAX_IPC_PAYLOAD 3000
 
 #endif /* CONFIG_H_ */

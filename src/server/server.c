@@ -36,7 +36,7 @@
 #include "ipc.h"
 #include "memlog.h"
 
-int _sock;
+static int sock;
 #ifdef _DEBUG
 int _fake_delay = 0;
 #endif
@@ -45,6 +45,7 @@ pthread_spinlock_t _spinlock;
 GSList *_dnbd3_clients = NULL;
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_local_namespace = NULL;
+char *_ipc_password = NULL;
 GSList *_dnbd3_images = NULL; // of dnbd3_image_t
 
 void dnbd3_print_help(char* argv_0)
@@ -75,7 +76,8 @@ void dnbd3_cleanup()
     int fd;
     memlogf("INFO: Cleanup...\n");
 
-    close(_sock);
+    close(sock);
+    sock = -1;
 
     dnbd3_ipc_shutdown();
 
@@ -108,11 +110,12 @@ void dnbd3_cleanup()
             close(fd);
         }
 
-        free(image->name);
-        g_free(image->file);
-        g_free(image->cache_file);
-        free(image->cache_map);
-        g_free(image);
+     	free(image->cache_map);
+     	free(image->config_group);
+     	free(image->low_name);
+     	free(image->file);
+     	free(image->cache_file);
+     	g_free(image);
     }
     g_slist_free(_dnbd3_images);
 
@@ -202,12 +205,13 @@ int main(int argc, char* argv[])
     signal(SIGINT, dnbd3_handle_sigterm);
 
     // setup network
-    _sock = dnbd3_setup_socket();
-    if (_sock < 0)
+    sock = dnbd3_setup_socket();
+    if (sock < 0)
         exit(EXIT_FAILURE);
     struct sockaddr_in client;
     unsigned int len = sizeof(client);
     int fd;
+    time_t next_delete_invocation = 0;
     struct timeval timeout;
     timeout.tv_sec = SOCKET_TIMEOUT_SERVER;
     timeout.tv_usec = 0;
@@ -221,7 +225,7 @@ int main(int argc, char* argv[])
     // main loop
     while (1)
     {
-        fd = accept(_sock, (struct sockaddr*) &client, &len);
+        fd = accept(sock, (struct sockaddr*) &client, &len);
         if (fd < 0)
         {
         	memlogf("[ERROR] Accept failure");
@@ -263,6 +267,13 @@ int main(int argc, char* argv[])
         	continue;
         }
         pthread_detach(dnbd3_client->thread);
+        // Call image deletion function if last call is more than 5 minutes ago
+        const time_t now = time(NULL);
+        if (now < next_delete_invocation)
+        {
+      	  next_delete_invocation = now + 300;
+      	  dnbd3_exec_delete(TRUE);
+        }
     }
 
     dnbd3_cleanup();

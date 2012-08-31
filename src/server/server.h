@@ -30,8 +30,8 @@
 
 typedef struct
 {
-	char *name; // full name of image, eg. "uni-freiburg/rz/ubuntu-12.04"
-	char *low_name; // full name of image, lowercased for comparison
+	char *config_group; // exact name of group in config file that represents this image
+	char *low_name; // full (global) name of image, lowercased for comparison, eg. "uni-freiburg/rz/ubuntu-12.04"
     int rid; // revision of provided image
     char *file; // path to image file or device
     uint64_t filesize; // size of image
@@ -40,6 +40,8 @@ typedef struct
     uint8_t *cache_map; // cache map telling which parts are locally cached
     char *cache_file; // path to local cache of image (in case the image is read from a dnbd3 device)
     char working;	// whether this image is considered working. local images are "working" if the local file exists, proxied images have to have at least one working upstream server or a complete local cache file
+    time_t delete_soft; // unixtime telling when this image should be deleted. if there are still clients using this image it weill be kept, but new clients requesting the image will be rejected. 0 = never
+    time_t delete_hard; // unixtime telling when this image should be deleted, no matter if there are still clients connected. 0 = never
 } dnbd3_image_t;
 
 typedef struct
@@ -53,7 +55,7 @@ typedef struct
 
 extern GSList *_dnbd3_clients; // of dnbd3_client_t
 extern pthread_spinlock_t _spinlock;
-extern char *_config_file_name, *_local_namespace;
+extern char *_config_file_name, *_local_namespace, *_ipc_password;
 extern GSList *_dnbd3_images; // of dnbd3_image_t
 
 

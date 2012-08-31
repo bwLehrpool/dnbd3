@@ -175,9 +175,15 @@ void *dnbd3_handle_query(void *dnbd3_client)
 				{
 					pthread_spin_lock(&_spinlock);
 					image = dnbd3_get_image(image_name, rid, 0);
+					const time_t now = time(NULL);
 					if (!image)
 					{
-						printf("[DEBUG] Client requested non-existent image '%s' (rid:%d, protocol:%d)\n", image_name, (int)rid, (int)client_version);
+						printf("[DEBUG] Client requested non-existent image '%s' (rid:%d)\n", image_name, (int)rid);
+					}
+					else if ((image->delete_soft != 0 && image->delete_soft < now)
+							|| (image->delete_hard != 0 && image->delete_hard < now))
+					{
+						printf("[DEBUG] Client requested end-of-life image '%s' (rid:%d)\n", image_name, (int)rid);
 					}
 					else
 					{
@@ -267,6 +273,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 {
                 	printf("[ERROR] sendfile failed (image to net)\n");
                 	close(client->sock);
+                	client->sock = -1;
                 }
                 break;
             }
@@ -296,6 +303,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
                         {
                         	printf("[ERROR] sendfile failed (copy to cache 1)\n");
                         	close(client->sock);
+                        	client->sock = -1;
                         	// Reset these so we don't update the cache map with false information
                         	dirty = 0;
                         	todo_size = 0;
@@ -320,6 +328,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
                 {
                 	printf("[ERROR] sendfile failed (copy to cache 2)\n");
                 	close(client->sock);
+                	client->sock = -1;
                 	break;
                 }
                 dirty = 1;
@@ -344,6 +353,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
             {
             	memlogf("[ERROR] sendfile failed (cache to net)\n");
             	close(client->sock);
+            	client->sock = -1;
             }
             break;
 
@@ -374,13 +384,14 @@ void *dnbd3_handle_query(void *dnbd3_client)
         }
 
     }
-    close(client->sock);
-    if (image_file != -1) close(image_file);
-    if (image_cache != -1) close(image_cache);
     pthread_spin_lock(&_spinlock);
     _dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
     pthread_spin_unlock(&_spinlock);
-    free(client);
+    if (client->sock != -1)
+   	 close(client->sock);
+    if (image_file != -1) close(image_file);
+    if (image_cache != -1) close(image_cache);
+    g_free(client);
     pthread_exit((void *) 0);
 }
 

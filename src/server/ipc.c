@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <grp.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <netinet/in.h>
@@ -34,6 +35,7 @@
 
 #include <libxml/parser.h>
 #include <libxml/xpath.h>
+#include "xmlutil.h"
 
 #include "ipc.h"
 #include "../config.h"
@@ -41,14 +43,24 @@
 #include "utils.h"
 #include "memlog.h"
 
+#define IPC_PORT (PORT+1)
+
 static int server_sock = -1;
 static volatile int keep_running = 1;
 static char *payload = NULL;
+
+#define char_repeat_br(_c, _times) do { \
+	int _makro_i_ = (_times); \
+	while (--_makro_i_ >= 0) putchar(_c); \
+	putchar('\n'); \
+} while (0)
 
 static int ipc_receive(int client_sock);
 static int get_highest_fd(GSList *sockets);
 static int send_reply(int client_sock, void *data_in, int len);
 static int recv_data(int client_sock, void *buffer_out, int len);
+static int is_password_correct(xmlDocPtr doc);
+static int get_terminal_width();
 
 static int get_highest_fd(GSList *sockets)
 {
@@ -67,7 +79,11 @@ static int get_highest_fd(GSList *sockets)
 
 void *dnbd3_ipc_mainloop()
 {
-	payload = malloc(MAX_PAYLOAD);
+
+	// Check version and initialize
+	LIBXML_TEST_VERSION
+
+	payload = malloc(MAX_IPC_PAYLOAD);
 	if (payload == NULL)
 	{
 		memlogf("[CRITICAL] Couldn't allocate IPC payload buffer. IPC disabled.");
@@ -172,8 +188,6 @@ void *dnbd3_ipc_mainloop()
 	if (flags == -1)
 		flags = 0;
 	fcntl(server_sock, F_SETFL, flags | O_NONBLOCK);
-
-	xmlInitParser();
 
 	while (keep_running)
 	{
@@ -358,7 +372,7 @@ static int ipc_receive(int client_sock)
 
 	int ret, locked;
 	int return_value = 0;
-	xmlDocPtr doc = NULL;
+	xmlDocPtr docReply = NULL, docRequest = NULL;
 	xmlNodePtr root_node, images_node, clients_node, tmp_node, log_parent_node, log_node;
 	xmlChar *xmlbuff;
 	int buffersize;
@@ -374,7 +388,7 @@ static int ipc_receive(int client_sock)
 	if (header.size != 0)
 	{
 		// Message has payload, receive it
-		if (header.size > MAX_PAYLOAD)
+		if (header.size > MAX_IPC_PAYLOAD)
 		{
 			memlogf("[WARNING] IPC command with payload of %u bytes ignored.", (unsigned int)header.size);
 			return 0;
@@ -396,13 +410,13 @@ static int ipc_receive(int client_sock)
 	case IPC_INFO:
 		locked = 0;
 		xmlbuff = NULL;
-		doc = xmlNewDoc(BAD_CAST "1.0");
-		if (doc == NULL)
+		docReply = xmlNewDoc(BAD_CAST "1.0");
+		if (docReply == NULL)
 			goto get_info_reply_cleanup;
-		root_node = xmlNewNode(NULL, BAD_CAST "info");
+		root_node = xmlNewNode(NULL, BAD_CAST "data");
 		if (root_node == NULL)
 			goto get_info_reply_cleanup;
-		xmlDocSetRootElement(doc, root_node);
+		xmlDocSetRootElement(docReply, root_node);
 
 		// Images
 		images_node = xmlNewNode(NULL, BAD_CAST "images");
@@ -420,7 +434,7 @@ static int ipc_receive(int client_sock)
 			tmp_node = xmlNewNode(NULL, BAD_CAST "image");
 			if (tmp_node == NULL)
 				goto get_info_reply_cleanup;
-			xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->name);
+			xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->config_group);
 			xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST time_buff);
 			xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST rid);
 			xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST image->file);
@@ -458,13 +472,13 @@ static int ipc_receive(int client_sock)
 		char *log = fetchlog(0);
 		if (log == NULL)
 			log = "LOG IS NULL";
-		log_node = xmlNewCDataBlock(doc, BAD_CAST log, strlen(log));
+		log_node = xmlNewCDataBlock(docReply, BAD_CAST log, strlen(log));
 		if (log_node == NULL)
 			goto get_info_reply_cleanup;
 		xmlAddChild(log_parent_node, log_node);
 
 		// Dump and send
-		xmlDocDumpFormatMemory(doc, &xmlbuff, &buffersize, 1);
+		xmlDocDumpFormatMemory(docReply, &xmlbuff, &buffersize, 1);
 		header.size = htonl(buffersize);
 		header.error = htonl(0);
 
@@ -477,7 +491,6 @@ get_info_reply_cleanup:
 			return_value = send_reply(client_sock, xmlbuff, buffersize);
 		// Cleanup
 		xmlFree(xmlbuff);
-		xmlFreeDoc(doc);
 		free(log);
 		break;
 
@@ -490,55 +503,50 @@ get_info_reply_cleanup:
 			return_value = send_reply(client_sock, &header, sizeof(header));
 			break;
 		}
-		doc = xmlReadMemory(payload, header.size, "noname.xml", NULL, 0);
+		docRequest = xmlReadMemory(payload, header.size, "noname.xml", NULL, 0);
 
-		if (doc)
+		if (docRequest)
 		{
-			xmlXPathContextPtr xpathCtx = NULL;
-			xmlXPathObjectPtr xpathObj = NULL;
-			xmlNodeSetPtr nodes = NULL;
-			xmlNodePtr cur = NULL;
-
-			xpathCtx = xmlXPathNewContext(doc);
-			if (xpathCtx == NULL)
-				goto add_del_cleanup;
-			xpathObj = xmlXPathEvalExpression(BAD_CAST "/info/images/image", xpathCtx);
-			if (xpathObj == NULL)
-				goto add_del_cleanup;
-			nodes = xpathObj->nodesetval;
-			if (nodes == NULL || nodes->nodeNr < 1)
-				goto add_del_cleanup;
-			cur = nodes->nodeTab[0];
-			if (cur->type == XML_ELEMENT_NODE)
+			if (!is_password_correct(docRequest))
 			{
-				dnbd3_image_t image;
-				memset(&image, 0, sizeof(dnbd3_image_t));
-				image.name = (char *)xmlGetNoNsProp(cur, BAD_CAST "name");
-				char *rid_str = (char *)xmlGetNoNsProp(cur, BAD_CAST "rid");
-				image.file = (char *)xmlGetNoNsProp(cur, BAD_CAST "file");
-				image.cache_file = (char *)xmlGetNoNsProp(cur, BAD_CAST "cache");
-				if (image.name && rid_str && image.file && image.cache_file)
-				{
-					image.rid = atoi(rid_str);
-					if (cmd == IPC_ADDIMG)
-						header.error = htonl(dnbd3_add_image(&image));
-					else
-						header.error = htonl(dnbd3_del_image(&image));
-				}
-				else
-					header.error = htonl(ERROR_MISSING_ARGUMENT);
-				xmlFree(image.name);
-				xmlFree(rid_str);
-				xmlFree(image.file);
-				xmlFree(image.cache_file);
+				header.error = htonl(ERROR_WRONG_PASSWORD);
+				header.size = htonl(0);
+				return_value = send_reply(client_sock, &header, sizeof(header));
+				break;
 			}
-			else
-				header.error = htonl(ERROR_MISSING_ARGUMENT);
 
-add_del_cleanup:
-			xmlXPathFreeObject(xpathObj);
-			xmlXPathFreeContext(xpathCtx);
-			xmlFreeDoc(doc);
+			xmlNodePtr cur = NULL;
+			int count = 0;
+
+			FOR_EACH_NODE(docRequest, "/data/images/image", cur)
+			{
+				if (cur->type == XML_ELEMENT_NODE)
+				{
+					++count;
+					dnbd3_image_t image;
+					memset(&image, 0, sizeof(dnbd3_image_t));
+					image.config_group = (char *)xmlGetNoNsProp(cur, BAD_CAST "name");
+					char *rid_str = (char *)xmlGetNoNsProp(cur, BAD_CAST "rid");
+					image.file = (char *)xmlGetNoNsProp(cur, BAD_CAST "file");
+					image.cache_file = (char *)xmlGetNoNsProp(cur, BAD_CAST "cache");
+					if (image.config_group && rid_str && image.file && image.cache_file)
+					{
+						image.rid = atoi(rid_str);
+						if (cmd == IPC_ADDIMG)
+							header.error = htonl(dnbd3_add_image(&image));
+						else
+							header.error = htonl(dnbd3_del_image(&image));
+					}
+					else
+						header.error = htonl(ERROR_MISSING_ARGUMENT);
+					xmlFree(image.config_group);
+					xmlFree(rid_str);
+					xmlFree(image.file);
+					xmlFree(image.cache_file);
+				}
+			} END_FOR_EACH;
+			if (count == 0)
+				header.error = htonl(ERROR_MISSING_ARGUMENT);
 		}
 		else
 			header.error = htonl(ERROR_INVALID_XML);
@@ -555,12 +563,19 @@ add_del_cleanup:
 		break;
 
 	}
+
+	xmlFreeDoc(docReply);
+	xmlFreeDoc(docRequest);
+
 	return return_value;
 }
 
 void dnbd3_ipc_send(int cmd)
 {
 	int client_sock, size;
+
+	// Check version and initialize
+	LIBXML_TEST_VERSION
 
 #ifdef IPC_TCP
 	struct sockaddr_in server;
@@ -629,72 +644,76 @@ void dnbd3_ipc_send(int cmd)
 
 		if (doc)
 		{
-			int n, i;
-
-			xmlXPathContextPtr xpathCtx;
-			xmlXPathObjectPtr xpathObj;
-			xmlChar *xpathExpr;
-			xmlNodeSetPtr nodes;
+			int count;
+			int term_width = get_terminal_width();
 			xmlNodePtr cur;
 
 			// Print log
-			xpathExpr = BAD_CAST "/info/log";
-			xpathCtx = xmlXPathNewContext(doc);
-			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
-			if (xpathObj->nodesetval && xpathObj->nodesetval->nodeTab && xpathObj->nodesetval->nodeTab[0])
+			xmlChar *log = getTextFromPath(doc, "/data/log");
+			if (log)
 			{
-				printf("--- Last log lines ----\n%s\n\n", xmlNodeGetContent(xpathObj->nodesetval->nodeTab[0]));
+				printf("--- Last log lines ----\n%s\n\n", log);
 			}
-			xmlXPathFreeObject(xpathObj);
-			xmlXPathFreeContext(xpathCtx);
+
+			int watime = 0, wname = 0, wrid = 5;
+			FOR_EACH_NODE(doc, "/data/images/image", cur)
+			{
+				if (cur->type == XML_ELEMENT_NODE)
+				{
+					xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
+					xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
+					xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
+					watime = MAX(watime, xmlStrlen(atime));
+					wname = MAX(wname, xmlStrlen(vid));
+					wrid = MAX(wrid, xmlStrlen(rid));
+					// Too lazy to free vars, client will exit anyways
+				}
+			} END_FOR_EACH;
+
+			char format[100];
+			snprintf(format, 100,
+				"%%-%ds %%-%ds %%%ds %%s\n", watime, wname, wrid);
 
 			// Print images
-			xpathExpr = BAD_CAST "/info/images/image";
-			xpathCtx = xmlXPathNewContext(doc);
-			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
-			printf("Exported images (atime, name, rid, file):\n");
-			printf("========================================\n");
-			nodes = xpathObj->nodesetval;
-			n = (nodes) ? nodes->nodeNr : 0;
-			for (i = 0; i < n; ++i)
+			printf("Exported images\n");
+			printf(format, "atime", "name", "rid", "file");
+			char_repeat_br('=', term_width);
+			count = 0;
+			FOR_EACH_NODE(doc, "/data/images/image", cur)
 			{
-				if (nodes->nodeTab[i]->type == XML_ELEMENT_NODE)
+				if (cur->type == XML_ELEMENT_NODE)
 				{
-					cur = nodes->nodeTab[i];
+					++count;
 					xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
 					xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
 					xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
 					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
-					printf("%s\t%s\t%s\t%s\n", atime, vid, rid, file);
+					printf(format, atime, vid, rid, file);
+					// Too lazy to free vars, client will exit anyways
 				}
-			}
-			printf("\nNumber images: %d\n\n", n);
-			xmlXPathFreeObject(xpathObj);
-			xmlXPathFreeContext(xpathCtx);
+			} END_FOR_EACH;
+			char_repeat_br('=', term_width);
+			printf("\nNumber of images: %d\n\n", count);
 
 			// Print clients
-			xpathExpr = BAD_CAST "/info/clients/client";
-			xpathCtx = xmlXPathNewContext(doc);
-			xpathObj = xmlXPathEvalExpression(xpathExpr, xpathCtx);
 			printf("Connected clients (ip, file):\n");
-			printf("=============================\n");
-			nodes = xpathObj->nodesetval;
-			n = (nodes) ? nodes->nodeNr : 0;
-			for (i = 0; i < n; ++i)
+			char_repeat_br('=', term_width);
+			count = 0;
+			FOR_EACH_NODE(doc, "/data/clients/client", cur)
 			{
-				if (nodes->nodeTab[i]->type == XML_ELEMENT_NODE)
+				if (cur->type == XML_ELEMENT_NODE)
 				{
-					cur = nodes->nodeTab[i];
+					++count;
 					xmlChar *ip = xmlGetNoNsProp(cur, BAD_CAST "ip");
 					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
-					printf("%s\t%s\n", ip, file);
+					printf("%-40s %s\n", ip, file);
+					// Too lazy to free vars, client will exit anyways
 				}
-			}
-			printf("\nNumber clients: %d\n\n", n);
+			} END_FOR_EACH;
+			char_repeat_br('=', term_width);
+			printf("\nNumber clients: %d\n\n", count);
 
 			// Cleanup
-			xmlXPathFreeObject(xpathObj);
-			xmlXPathFreeContext(xpathCtx);
 			xmlFreeDoc(doc);
 			xmlCleanupParser();
 
@@ -709,4 +728,35 @@ void dnbd3_ipc_send(int cmd)
 	}
 
 	close(client_sock);
+}
+
+/**
+ * Check if the correct server password is present in xpath /data/password
+ * return !=0 if correct, 0 otherwise
+ */
+static int is_password_correct(xmlDocPtr doc)
+{
+	if (_ipc_password == NULL)
+	{
+		memlogf("[WARNING] IPC access granted as no password is set!");
+		return 1;
+	}
+	xmlChar *pass = getTextFromPath(doc, "/data/password");
+	if (pass == NULL)
+		return 0;
+	if (strcmp((char*)pass, _ipc_password) == 0)
+	{
+		xmlFree(pass);
+		return 1;
+	}
+	xmlFree(pass);
+	return 0;
+}
+
+static int get_terminal_width()
+{
+   struct winsize w;
+   if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) < 0)
+   	return 80;
+   return w.ws_col;
 }

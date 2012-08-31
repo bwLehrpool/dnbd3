@@ -31,15 +31,20 @@
 #include "utils.h"
 #include "memlog.h"
 
+// Keep parsed config file in memory so it doesn't need to be parsed again every time it's modified
+static GKeyFile* _config_handle = NULL;
+
 static char parse_address(char *string, uint8_t *af, uint8_t *addr, uint16_t *port);
 static char is_valid_namespace(char *namespace);
 static char is_valid_imagename(char *namespace);
 static void strtolower(char *string);
-static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file, char *cache_file, gchar **servers, gsize num_servers);
+static dnbd3_image_t* prepare_image(char *image_name, int rid, char *image_file, char *cache_file, gchar **servers, gsize num_servers);
+static int save_config();
+//static char* get_local_image_name(char *global_name);
 
 /**
  * Parse IPv4 or IPv6 address in string representation to a suitable format usable by the BSD socket library
- * @string eg. "1.2.3.4" or "2a01::10:5", optially with port appended, eg "1.2.3.4:6666" or "2a01::10:5:6666"
+ * @string eg. "1.2.3.4" or "2a01::10:5", optially with port appended, eg "1.2.3.4:6666" or "[2a01::10:5]:6666"
  * @af will contain either AF_INET or AF_INET6
  * @addr will contain the address in network representation
  * @port will contain the port in network representation, defaulting to #define PORT if none was given
@@ -153,22 +158,21 @@ static void strtolower(char *string)
 void dnbd3_load_config()
 {
 	gint i;
-	GKeyFile* gkf;
 
-	if (_local_namespace != NULL || _dnbd3_images != NULL)
+	if (_config_handle != NULL)
 	{
 		printf("dnbd3_load_config() called more than once\n\n");
 		exit(EXIT_FAILURE);
 	}
 
-	gkf = g_key_file_new();
-	if (!g_key_file_load_from_file(gkf, _config_file_name, G_KEY_FILE_NONE, NULL))
+	_config_handle = g_key_file_new();
+	if (!g_key_file_load_from_file(_config_handle, _config_file_name, G_KEY_FILE_NONE, NULL))
 	{
 		printf("ERROR: Config file not found: %s\n", _config_file_name);
 		exit(EXIT_FAILURE);
 	}
 
-	_local_namespace = g_key_file_get_string(gkf, "settings", "default_namespace", NULL);
+	_local_namespace = g_key_file_get_string(_config_handle, "settings", "default_namespace", NULL);
 	if (_local_namespace && !is_valid_namespace(_local_namespace))
 	{
 		memlogf("[ERROR] Ignoring default namespace: '%s' is not a valid namespace", _local_namespace);
@@ -176,13 +180,15 @@ void dnbd3_load_config()
 		_local_namespace = NULL;
 	}
 
+	_ipc_password = g_key_file_get_string(_config_handle, "settings", "password", NULL);
+
 	gchar **groups = NULL;
 	gsize section_count;
-	groups = g_key_file_get_groups(gkf, &section_count);
+	groups = g_key_file_get_groups(_config_handle, &section_count);
 
 	for (i = 0; i < section_count; i++)
 	{
-		// Special group
+		// Special group, ignore
 		if (strcmp(groups[i], "settings") == 0 || strcmp(groups[i], "trusted") == 0)
 		{
 			continue;
@@ -190,17 +196,25 @@ void dnbd3_load_config()
 
 		// An actual image definition
 
-		int rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
+		int rid = g_key_file_get_integer(_config_handle, groups[i], "rid", NULL);
 		if (rid <= 0)
 		{
 			memlogf("[ERROR] Invalid rid '%d' for image '%s'", rid, groups[i]);
 			continue;
 		}
 
-		char *image_file = g_key_file_get_string(gkf, groups[i], "file", NULL);
-		char *cache_file = g_key_file_get_string(gkf, groups[i], "cache", NULL);
+		const time_t delsoft = g_key_file_get_int64(_config_handle, groups[i], "delete_soft", NULL);
+		const time_t delhard = g_key_file_get_int64(_config_handle, groups[i], "delete_hard", NULL);
+		if ((delsoft != 0 && delsoft < time(NULL)) || (delhard != 0 && delhard < time(NULL)))
+		{
+			memlogf("[INFO] Ignoring image '%s' as its deletion is due", groups[i]);
+			continue;
+		}
+
+		char *image_file = g_key_file_get_string(_config_handle, groups[i], "file", NULL);
+		char *cache_file = g_key_file_get_string(_config_handle, groups[i], "cache", NULL);
 		gsize num_servers;
-		gchar **servers = g_key_file_get_string_list(gkf, groups[i], "servers", &num_servers, NULL);
+		gchar **servers = g_key_file_get_string_list(_config_handle, groups[i], "servers", &num_servers, NULL);
 
 		pthread_spin_lock(&_spinlock);
 		dnbd3_image_t *image = prepare_image(groups[i], rid, image_file, cache_file, servers, num_servers);
@@ -216,7 +230,6 @@ void dnbd3_load_config()
 	}
 
 	g_strfreev(groups);
-	g_key_file_free(gkf);
 }
 
 int dnbd3_add_image(dnbd3_image_t *image)
@@ -226,15 +239,15 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	// but better be safe for the future...
 	pthread_spin_lock(&_spinlock);
 	if (image->rid == 0)
-	{	// TODO: globalize image->name somewhere for this call
-		const dnbd3_image_t *latest = dnbd3_get_image(image->name, image->rid, 0);
+	{
+		const dnbd3_image_t *latest = dnbd3_get_image(image->config_group, 0, 0);
 		if (latest)
 			image->rid = latest->rid + 1;
 		else
 			image->rid = 1;
 	}
 
-	dnbd3_image_t *newimage = prepare_image(image->name, image->rid, image->file, image->cache_file, NULL, 0);
+	dnbd3_image_t *newimage = prepare_image(image->config_group, image->rid, image->file, image->cache_file, NULL, 0);
 	if (newimage)
 	{
 		_dnbd3_images = g_slist_prepend(_dnbd3_images, image);
@@ -246,105 +259,94 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	}
 
 	// Adding image was successful, write config file
-	 GKeyFile* gkf;
-	 gkf = g_key_file_new();
-	 if (!g_key_file_load_from_file(gkf, _config_file_name, G_KEY_FILE_NONE, NULL))
-	 {
-	 printf("ERROR: Config file not found: %s\n", _config_file_name);
-	 exit(EXIT_FAILURE);
-	 }
+	 g_key_file_set_integer(_config_handle, image->config_group, "rid", image->rid);
+	 g_key_file_set_string(_config_handle, image->config_group, "file", image->file);
+	 //g_key_file_set_string(_config_handle, image->name, "servers", image->serverss); // TODO: Save servers as string
+	 g_key_file_set_string(_config_handle, image->config_group, "cache", image->cache_file);
 
-	 g_key_file_set_integer(gkf, image->name, "rid", image->rid);
-	 g_key_file_set_string(gkf, image->name, "file", image->file);
-	 //g_key_file_set_string(gkf, image->name, "servers", image->serverss); // TODO: Save servers as string
-	 g_key_file_set_string(gkf, image->name, "cache", image->cache_file);
-
-	 gchar* data = g_key_file_to_data(gkf, NULL, NULL);
-
-	 FILE *f = fopen(_config_file_name, "w");
-	 if (f >= 0)
-	 {
-		 fputs((char*) data, f);
-		 fclose(f);
-		 pthread_spin_unlock(&_spinlock);
-		 g_free(data);
-		 g_key_file_free(gkf);
-		 memlogf("[INFO] Added new image '%s' (rid %d)", newimage->name, newimage->rid);
-		 return 0;
-	 }
 	 pthread_spin_unlock(&_spinlock);
-	 g_free(data);
-	 g_key_file_free(gkf);
-	 memlogf("[ERROR] Image added, but config file is not writable (%s)", _config_file_name);
-	 return ERROR_SEE_LOG;
+
+	 const int ret = save_config();
+	 if (ret == ERROR_OK)
+		 memlogf("[INFO] Added new image '%s' (rid %d)", newimage->config_group, newimage->rid);
+	 else
+		 memlogf("[INFO] Added new image '%s' (rid %d), but config file could not be written (%s)", newimage->config_group, newimage->rid, _config_file_name);
+	 return ret;
 }
 
 int dnbd3_del_image(dnbd3_image_t *image)
 {
-	return ERROR_IMAGE_NOT_FOUND; // TODO: Make it work with image names
-	/*
-	 if (image->rid == 0)
-	 {
-	 printf("ERROR: Delete with rid=0 is not allowed\n");
-	 return ERROR_RID;
-	 }
+	if (image->rid <= 0) // Require a specific rid on deletion
+		return ERROR_RID;
+	pthread_spin_lock(&_spinlock);
+	dnbd3_image_t *existing_image = dnbd3_get_image(image->config_group, image->rid, 0);
+	if(existing_image == NULL)
+	{
+		pthread_spin_unlock(&_spinlock);
+		return ERROR_IMAGE_NOT_FOUND;
+	}
 
-	 dnbd3_image_t* tmp = dnbd3_get_image(image->vid, image->rid);
-	 if (!tmp)
-	 {
-	 printf("ERROR: Image not found: (%d,%d)\n", image->vid, image->rid);
-	 return ERROR_IMAGE_NOT_FOUND;
-	 }
+	existing_image->delete_soft = 1; // TODO: Configurable.
+	existing_image->delete_hard = time(NULL) + 86400; // TODO: Configurable
+	g_key_file_set_int64(_config_handle, image->config_group, "delete_soft", existing_image->delete_soft);
+	g_key_file_set_int64(_config_handle, image->config_group, "delete_hard", existing_image->delete_hard);
 
-	 GSList *iterator = NULL;
-	 for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
-	 {
-	 dnbd3_client_t *client = iterator->data;
-	 if (tmp == client->image)
-	 {
-	 printf("ERROR: Delete is not allowed, image is in use (%d,%d)\n", tmp->vid, tmp->rid);
-	 return ERROR_IMAGE_IN_USE;
-	 }
-	 }
+	pthread_spin_unlock(&_spinlock);
+	dnbd3_exec_delete(FALSE);
+	existing_image = NULL;
 
-	 GKeyFile* gkf;
-	 gkf = g_key_file_new();
-	 if (!g_key_file_load_from_file(gkf, file, G_KEY_FILE_NONE, NULL))
-	 {
-	 printf("ERROR: Config file not found: %s\n", file);
-	 exit(EXIT_FAILURE);
-	 }
-
-	 g_key_file_remove_group(gkf, tmp->group, NULL);
-	 gchar* data = g_key_file_to_data(gkf, NULL, NULL);
-
-	 FILE* f = fopen(file,"w");
-	 if (f)
-	 {
-	 fputs((char*) data, f);
-	 fclose(f);
-	 g_free(data);
-	 g_key_file_free(gkf);
-	 // TODO: unlink image file
-	 return 0;
-	 }
+	 const int ret = save_config();
+	 if (ret == ERROR_OK)
+		 memlogf("[INFO] Marked for deletion: '%s' (rid %d)", image->config_group, image->rid);
 	 else
+		 memlogf("[WARNING] Marked for deletion: '%s' (rid %d), but config file could not be written (%s)", image->config_group, image->rid, _config_file_name);
+	 return ret;
+}
+
+static int save_config()
+{
+	pthread_spin_lock(&_spinlock);
+	 char* data = (char*)g_key_file_to_data(_config_handle, NULL, NULL);
+	 if (data == NULL)
 	 {
-	 g_free(data);
-	 g_key_file_free(gkf);
-	 printf("ERROR: Config file is not writable: %s\n", file);
-	 return ERROR_CONFIG_FILE_PERMISSIONS;
+		 pthread_spin_unlock(&_spinlock);
+		 memlogf("[ERROR] g_key_file_to_data() failed");
+		 return ERROR_UNSPECIFIED_ERROR;
 	 }
-	 */
+
+	 FILE *f = fopen(_config_file_name, "w");
+	 if (f < 0)
+	 {
+		 pthread_spin_unlock(&_spinlock);
+		 g_free(data);
+		 return ERROR_CONFIG_FILE_PERMISSIONS;
+	 }
+	 fputs("# Do not edit this file while dnbd3-server is running\n", f);
+	 fputs(data, f);
+	 fclose(f);
+	 pthread_spin_unlock(&_spinlock);
+	 g_free(data);
+	 return 0;
 }
 
 dnbd3_image_t* dnbd3_get_image(char *name_orig, int rid, const char do_lock)
 {
 	dnbd3_image_t *result = NULL, *image;
 	GSList *iterator;
-	char name[strlen(name_orig) + 1];
-	strcpy(name, name_orig);
+	// For comparison, make sure the name is global and lowercased
+	int slen;
+	int islocal = (strchr(name_orig, '/') == NULL);
+	if (islocal)
+		slen = strlen(name_orig) + strlen(_local_namespace) + 2;
+	else
+		slen = strlen(name_orig) + 1;
+	char name[slen];
+	if (islocal)
+		sprintf(name, "%s/%s", _local_namespace, name_orig);
+	else
+		strcpy(name, name_orig);
 	strtolower(name);
+	// Now find the image
 	if (do_lock)
 		pthread_spin_lock(&_spinlock);
 	for (iterator = _dnbd3_images; iterator; iterator = iterator->next)
@@ -418,22 +420,22 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 
 	if (strchr(image_name, '/') == NULL)
 	{	// Local image, build global name
-		image->name = calloc(strlen(_local_namespace) + strlen(image_name) + 2, sizeof(char));
-		sprintf(image->name, "%s/%s", _local_namespace, image_name);
+		image->low_name = calloc(strlen(_local_namespace) + strlen(image_name) + 2, sizeof(char));
+		sprintf(image->low_name, "%s/%s", _local_namespace, image_name);
 	}
 	else
 	{
-		image->name = strdup(image_name);
+		image->low_name = strdup(image_name);
 	}
 
-	if (dnbd3_get_image(image->name, rid, 0))
+	if (dnbd3_get_image(image->low_name, rid, 0))
 	{
-		memlogf("[ERROR] Duplicate image in config: '%s' rid:%d", image->name, rid);
+		memlogf("[ERROR] Duplicate image in config: '%s' rid:%d", image_name, rid);
 		goto error;
 	}
 
-	image->low_name = strdup(image->name);
 	strtolower(image->low_name);
+	image->config_group = strdup(image_name);
 
 	image->rid = rid;
 	const char relayed = (image_file == NULL || image_file == '\0');
@@ -460,7 +462,8 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		const off_t size = lseek(fd, 0, SEEK_END);
 		if (size <= 0)
 		{
-			memlogf("[ERROR] File '%s' of image '%s' has size '%lld'. Image ignored.", image->file, image->name, (long long)size);
+			memlogf("[ERROR] File '%s' of image '%s' has size '%lld'. Image ignored.",
+				image->file, image_name, (long long)size);
 			goto error;
 		}
 		image->filesize = (uint64_t)size;
@@ -512,7 +515,7 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 			// "+ (1 << 15) - 1" is required to account for the last bit of
 			// the image that is smaller than 32kib
 			// this would be the case whenever the image file size is not a
-			// multiple of 32kib (= the number of blocks is not dividable by 8)
+			// multiple of 32kib (= the number of blocks is not divisible by 8)
 			// ie: if the image is 49152 bytes and you do 49152 >> 15 you get 1,
 			// but you actually need 2 bytes to have a complete cache map
 			char tmp[strlen(image->cache_file) + 5];
@@ -543,7 +546,7 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 				if ((image->cache_map[map_len_bytes - 1] & last_byte) != last_byte)
 					image->working = 0;
 				else
-					memlogf("[INFO] Instantly publishing relayed image '%s' because the local cache copy is complete", image->name);
+					memlogf("[INFO] Instantly publishing relayed image '%s' because the local cache copy is complete", image_name);
 			}
 
 			/*
@@ -564,10 +567,113 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 error:
 	// Free stuff. Some pointers might be zero, but calling free() on those is safe.
 	free(image->cache_map);
-	free(image->name);
+	free(image->config_group);
 	free(image->low_name);
 	free(image->file);
 	free(image->cache_file);
 	g_free(image);
 	return NULL;
 }
+
+/**
+ * Iterate over all images and delete them if appropriate.
+ */
+void dnbd3_exec_delete(int save_if_changed)
+{
+	int changed = FALSE;
+	const time_t now = time(NULL);
+	GSList *image_iterator, *client_iterator;
+	char ipstr[100];
+
+	pthread_spin_lock(&_spinlock);
+	for (image_iterator = _dnbd3_images; image_iterator; image_iterator = image_iterator->next)
+	{
+		dnbd3_image_t *image = image_iterator->data;
+		int delete_now = TRUE;
+		if (image->delete_hard != 0 && image->delete_hard < now)
+		{
+			// Drop all clients still using it
+			for (client_iterator = _dnbd3_clients; client_iterator; client_iterator = client_iterator->next)
+			{
+				dnbd3_client_t *client = client_iterator->data;
+				if (client->image != image)
+					continue;
+				// Kill client's connection
+				*ipstr = '\0';
+				inet_ntop(client->addrtype, client->ipaddr, ipstr, 100);
+				memlogf("[INFO] delete_hard of %s reached; dropping client %s", image->config_group, ipstr);
+				const int fd = client->sock;
+				client->sock = -1;
+				close(fd);
+				delete_now = FALSE; // Wait for all clients being actually dropped; deletion will happen on next dnbd3_exec_delete()
+			}
+		} // END delete_hard image
+		else if (image->delete_soft != 0 && image->delete_soft < now)
+		{
+			// Image should be soft-deleted
+			// Check if it is still in use
+			for (client_iterator = _dnbd3_clients; client_iterator; client_iterator = client_iterator->next)
+			{
+				const dnbd3_client_t *client = client_iterator->data;
+				if (client->image == image)
+				{	// Yep, still in use, keep it
+					delete_now = FALSE;
+					break;
+				}
+			}
+		}
+		else	// Neither hard nor soft delete, keep it
+			delete_now = FALSE;
+		if (delete_now)
+		{
+			// Image was not in use and should be deleted, free it!
+			memlogf("[INFO] Freeing end-of-life image %s", image->config_group);
+			changed = TRUE;
+			_dnbd3_images = g_slist_remove(_dnbd3_images, image); // Remove from image list
+			g_key_file_remove_group(_config_handle, image->config_group, NULL); // Also remove from config file
+			// Free any allocated memory
+			free(image->cache_map);
+			free(image->config_group);
+			free(image->low_name);
+			free(image->file);
+			free(image->cache_file);
+			g_free(image);
+			// Restart iteration as it would be messed up now
+			image_iterator = _dnbd3_images;
+		}
+	} // END image iteration
+	pthread_spin_lock(&_spinlock);
+
+	if (changed && save_if_changed)
+		save_config();
+}
+
+/**
+ * Return local image name for a global image name
+ * eg. "uni-freiburg/rz/ubuntu 12.04" -> "ubuntu 12.04"
+ * ONLY IF the local name space really is "uni-freiburg/rz"
+ * Returns NULL otherwise
+ * The returned pointer points to memory inside the passed
+ * string (if not NULL), so do not modify or free
+ * / <---
+static char* get_local_image_name(char *global_name)
+{
+	if (_local_namespace == NULL)
+		return NULL; // No local namespace defined, so it cannot be local
+	char *first_slash = strchr(global_name, '/');
+	if (first_slash == NULL)
+		return global_name; // Already local
+	const size_t buflen = strlen(_local_namespace) + 1;
+	if (first_slash - global_name + 1 != buflen)
+		return NULL; // Namespaces have different length, cannot be same
+	char namespace[buflen];
+	char passedname[buflen];
+	strcpy(namespace, _local_namespace);
+	strncpy(passedname, global_name, buflen);
+	passedname[buflen] = '\0';
+	strtolower(namespace);
+	strtolower(passedname);
+	if (strcmp(namespace, passedname) == 0)
+		return global_name + buflen; // points somewhere into passed buffer
+	return NULL;
+} //*/

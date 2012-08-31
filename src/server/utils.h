@@ -26,6 +26,7 @@
 #ifndef UTILS_H_
 #define UTILS_H_
 
+#define ERROR_OK                        0
 #define ERROR_FILE_NOT_FOUND            1
 #define ERROR_IMAGE_ALREADY_EXISTS      2
 #define ERROR_CONFIG_FILE_PERMISSIONS   3
@@ -37,10 +38,13 @@
 #define ERROR_INVALID_XML               9
 #define ERROR_UNKNOWN_COMMAND          10
 #define ERROR_SEE_LOG                  11
+#define ERROR_WRONG_PASSWORD           12
 
 void dnbd3_load_config();
 int dnbd3_add_image(dnbd3_image_t *image);
 int dnbd3_del_image(dnbd3_image_t *image);
+
+void dnbd3_exec_delete(int save_if_changed);
 
 dnbd3_image_t* dnbd3_get_image(char *name, int rid, const char do_lock);
 
