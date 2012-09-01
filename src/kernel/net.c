@@ -134,7 +134,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     	// Forget all known alt servers
     	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
     	memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
-    	if (dev->mode == DEVICE_MODE_CLIENT)
+    	if (!dev->is_server)
     	{
 			req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
 			if (!req1)
@@ -181,6 +181,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         serializer_put_uint16(&dev->payload_buffer, PROTOCOL_VERSION);
         serializer_put_string(&dev->payload_buffer, dev->imgname);
         serializer_put_uint16(&dev->payload_buffer, dev->rid);
+        serializer_put_uint8(&dev->payload_buffer, dev->is_server);
         iov[1].iov_base = &dev->payload_buffer;
         iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
         if (kernel_sendmsg(dev->sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
@@ -407,7 +408,7 @@ int dnbd3_net_discover(void *data)
         debug_dev("FATAL: Kmalloc failed (discover)");
         return -1;
     }
-    payload = (serialized_buffer_t*)buf;
+    payload = (serialized_buffer_t*)buf; // Reuse this buffer to save kernel mem
 
     dnbd3_request.magic = dnbd3_packet_magic;
 
@@ -497,6 +498,7 @@ int dnbd3_net_discover(void *data)
             serializer_put_uint16(payload, PROTOCOL_VERSION);
             serializer_put_string(payload, dev->imgname);
             serializer_put_uint16(payload, dev->rid);
+            serializer_put_uint8(payload, 1); // Pretent we're a proxy here to prevent the server from updating the atime
             iov[1].iov_base = payload;
             dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(payload);
             if (kernel_sendmsg(sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
@@ -656,8 +658,8 @@ int dnbd3_net_discover(void *data)
             continue;
         }
 
-        // take server with lowest rtt
-        if (ready && best_server != current_server
+        // take server with lowest rtt (only if in client mode)
+        if (!dev->is_server && ready && best_server != current_server
         		&& RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt)
         {
             printk("INFO: Server %d on %s is faster (%lluµs vs. %lluµs)\n", best_server, dev->disk->disk_name, (unsigned long long)best_rtt, (unsigned long long)dev->cur_rtt);
@@ -873,7 +875,7 @@ int dnbd3_net_receive(void *data)
             continue;
 
         case CMD_GET_SERVERS:
-        	if (dev->mode == DEVICE_MODE_PROXY || !is_same_server(&dev->cur_server, &dev->initial_server))
+        	if (dev->is_server || !is_same_server(&dev->cur_server, &dev->initial_server))
         	{	// If not connected to initial server, or device is in proxy mode, ignore this message
         		remaining = dnbd3_reply.size;
         		goto clear_remaining_payload;

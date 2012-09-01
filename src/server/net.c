@@ -160,6 +160,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
     			client_version = serializer_get_uint16(&payload);
 				image_name = serializer_get_string(&payload);
 				rid = serializer_get_uint16(&payload);
+				client->is_server = serializer_get_uint8(&payload);
 				if (request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT)
 				{
 					if (client_version < MIN_SUPPORTED_CLIENT)
@@ -208,7 +209,8 @@ void *dnbd3_handle_query(void *dnbd3_client)
 							else
 							{
 								client->image = image;
-								image->atime = time(NULL); // TODO: check if mutex is needed
+								if (!client->is_server)
+									image->atime = time(NULL); // TODO: check if mutex is needed
 
 								if (image->cache_map && image->cache_file)
 									image_cache = open(image->cache_file, O_RDWR);
@@ -288,8 +290,8 @@ void *dnbd3_handle_query(void *dnbd3_client)
             // first make sure the whole requested part is in the local cache file
             while(cur_offset < last_offset)
             {
-                map_y = cur_offset >> 15;
-                map_x = (cur_offset >> 12) & 7; // mod 256
+                map_y = cur_offset >> 15; // div 32768
+                map_x = (cur_offset >> 12) & 7; // (X div 4096) mod 8
                 bit_mask = 0b00000001 << (map_x);
 
                 cur_offset += 4096;

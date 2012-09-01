@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
     msg.port = htons(PORT);
     msg.addrtype = 0;
     msg.imgname = NULL;
-    msg.mode = DEVICE_MODE_CLIENT;
+    msg.is_server = FALSE;
 
     int opt = 0;
     int longIndex = 0;

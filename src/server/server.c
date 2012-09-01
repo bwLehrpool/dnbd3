@@ -52,16 +52,16 @@ void dnbd3_print_help(char* argv_0)
 {
     printf("Usage: %s [OPTIONS]...\n", argv_0);
     printf("Start the DNBD3 server\n");
-    printf("-f or --file \t\t Configuration file (default /etc/dnbd3-server.conf)\n");
+    printf("-f or --file        Configuration file (default /etc/dnbd3-server.conf)\n");
 #ifdef _DEBUG
-    printf("-d or --delay \t\t Add a fake network delay of X µs\n");
+    printf("-d or --delay       Add a fake network delay of X µs\n");
 #endif
-    printf("-n or --nodaemon \t Start server in foreground\n");
-    printf("-r or --reload \t\t Reload configuration file\n");
-    printf("-s or --stop \t\t Stop running dnbd3-server\n");
-    printf("-i or --info \t\t Print connected clients and used images\n");
-    printf("-H or --help \t\t Show this help text and quit\n");
-    printf("-V or --version \t Show version and quit\n");
+    printf("-n or --nodaemon    Start server in foreground\n");
+    printf("-r or --reload      Reload configuration file\n");
+    printf("-s or --stop        Stop running dnbd3-server\n");
+    printf("-i or --info        Print connected clients and used images\n");
+    printf("-H or --help        Show this help text and quit\n");
+    printf("-V or --version     Show version and quit\n");
     exit(0);
 }
 

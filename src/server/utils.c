@@ -438,9 +438,9 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 	image->config_group = strdup(image_name);
 
 	image->rid = rid;
-	const char relayed = (image_file == NULL || image_file == '\0');
+	image->relayed = (image_file == NULL || image_file == '\0');
 
-	if (relayed)	// Image is relayed (this server acts as proxy)
+	if (image->relayed)	// Image is relayed (this server acts as proxy)
 	{
 		if (strchr(image_name, '/') == NULL)
 		{
@@ -508,45 +508,47 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		}
 		else if (image->filesize > 0)
 		{
-			const size_t map_len_bytes = (image->filesize + (1 << 15) - 1) >> 15;
+			const size_t map_len_bytes = IMGSIZE_TO_MAPBYTES(image->filesize);
 			image->cache_map = calloc(map_len_bytes, sizeof(uint8_t));
 			// read cache map from file
-			// one byte in the map covers 8 4kib blocks, so 32kib per byte
-			// "+ (1 << 15) - 1" is required to account for the last bit of
-			// the image that is smaller than 32kib
-			// this would be the case whenever the image file size is not a
-			// multiple of 32kib (= the number of blocks is not divisible by 8)
-			// ie: if the image is 49152 bytes and you do 49152 >> 15 you get 1,
-			// but you actually need 2 bytes to have a complete cache map
 			char tmp[strlen(image->cache_file) + 5];
 			strcpy(tmp, image->cache_file);
 			strcat(tmp, ".map");
-			fd = open(tmp, O_RDONLY); // TODO: Check if map file has expected size
+			fd = open(tmp, O_RDONLY);
 			if (fd >= 0)
 			{
-				read(fd, image->cache_map, map_len_bytes * sizeof(uint8_t));
-				close(fd);
-				// If the whole image is cached, mark it as working right away without waiting for an upstream server
-				image->working = 1;
-				for (j = 0; j < map_len_bytes - 1; ++j)
+				const off_t size = lseek(fd, 0, SEEK_END);
+				if (size != map_len_bytes)
 				{
-					if (image->cache_map[j] != 0xFF)
-					{
-						image->working = 0;
-						break;
-					}
+					memlogf("[DEBUG] Cache-Map of %s is corrupted (%d != %d)", image_name, (int)size, (int)map_len_bytes);
 				}
-				const int blocks_in_last_byte = (image->filesize >> 12) & 7;
-				uint8_t last_byte = 0;
-				if (blocks_in_last_byte == 0)
-					last_byte = 0xFF;
 				else
-					for (j = 0; j < blocks_in_last_byte; ++j)
-						last_byte = (last_byte << 1) | 1;
-				if ((image->cache_map[map_len_bytes - 1] & last_byte) != last_byte)
-					image->working = 0;
-				else
-					memlogf("[INFO] Instantly publishing relayed image '%s' because the local cache copy is complete", image_name);
+				{
+					lseek(fd, 0, SEEK_SET);
+					read(fd, image->cache_map, map_len_bytes);
+					// If the whole image is cached, mark it as working right away without waiting for an upstream server
+					image->working = 1;
+					for (j = 0; j < map_len_bytes - 1; ++j)
+					{
+						if (image->cache_map[j] != 0xFF)
+						{
+							image->working = 0;
+							break;
+						}
+					}
+					const int blocks_in_last_byte = (image->filesize >> 12) & 7;
+					uint8_t last_byte = 0;
+					if (blocks_in_last_byte == 0)
+						last_byte = 0xFF;
+					else
+						for (j = 0; j < blocks_in_last_byte; ++j)
+							last_byte |= (1 << j);
+					if ((image->cache_map[map_len_bytes - 1] & last_byte) != last_byte)
+						image->working = 0;
+					else
+						memlogf("[INFO] Instantly publishing relayed image '%s' because the local cache copy is complete", image_name);
+				}
+				close(fd);
 			}
 
 			/*

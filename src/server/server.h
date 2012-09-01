@@ -28,6 +28,15 @@
 #include "../config.h"
 #include "../types.h"
 
+// one byte in the map covers 8 4kib blocks, so 32kib per byte
+// "+ (1 << 15) - 1" is required to account for the last bit of
+// the image that is smaller than 32kib
+// this would be the case whenever the image file size is not a
+// multiple of 32kib (= the number of blocks is not divisible by 8)
+// ie: if the image is 49152 bytes and you do 49152 >> 15 you get 1,
+// but you actually need 2 bytes to have a complete cache map
+#define IMGSIZE_TO_MAPBYTES(bytes) ((int)(((bytes) + (1 << 15) - 1) >> 15))
+
 typedef struct
 {
 	char *config_group; // exact name of group in config file that represents this image
@@ -42,13 +51,15 @@ typedef struct
     char working;	// whether this image is considered working. local images are "working" if the local file exists, proxied images have to have at least one working upstream server or a complete local cache file
     time_t delete_soft; // unixtime telling when this image should be deleted. if there are still clients using this image it weill be kept, but new clients requesting the image will be rejected. 0 = never
     time_t delete_hard; // unixtime telling when this image should be deleted, no matter if there are still clients connected. 0 = never
+    uint8_t relayed;		// TRUE if relayed from other server (needs dnbd3 client module loaded)
 } dnbd3_image_t;
 
 typedef struct
 {
     int sock;
     uint8_t ipaddr[16];
-    uint8_t addrtype; 	// ip version (AF_INET or AF_INET6)
+    uint8_t addrtype; 	       // ip version (AF_INET or AF_INET6)
+    uint8_t is_server;         // TRUE if a server in proxy mode, FALSE if real client
     pthread_t thread;
     dnbd3_image_t *image;
 } dnbd3_client_t;

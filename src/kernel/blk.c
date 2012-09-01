@@ -147,7 +147,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
 			dev->imgname = imgname;
 			dev->rid = msg->rid;
-			dev->mode = msg->mode;
+			dev->is_server = msg->is_server;
 			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_CACHE_SIZE;
 			if (dnbd3_net_connect(dev) == 0)
 			{

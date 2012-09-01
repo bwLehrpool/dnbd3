@@ -64,16 +64,14 @@ typedef struct
 {
 	uint16_t len;
     uint8_t addrtype;
-    uint8_t addr[16];	// network representation
-    uint16_t port;		// network representation
+    uint8_t addr[16];	   // network representation
+    uint16_t port;		   // network representation
     uint16_t imgnamelen;
     char *imgname;
     int rid;
     int read_ahead_kb;
-    uint8_t mode;		// 0 = automatic (real client), 1 = manual control (proxy)
+    uint8_t is_server;     // FALSE = automatic (real client), TRUE = manual control (proxy)
 } dnbd3_ioctl_t;
-#define DEVICE_MODE_CLIENT		0
-#define DEVICE_MODE_PROXY		1
 
 // network
 #define CMD_GET_BLOCK   1

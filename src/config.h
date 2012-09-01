@@ -28,11 +28,11 @@
 // Protocol version should be increased whenever new features/messages are added,
 // so either the client or server can run in compatibility mode, or they can
 // cancel the connection right away if the protocol has changed too much
-#define PROTOCOL_VERSION 1
+#define PROTOCOL_VERSION 2
 // Which is the minimum protocol version the server expects from the client
-#define MIN_SUPPORTED_CLIENT 1
+#define MIN_SUPPORTED_CLIENT 2
 // Which is the minimum protocol version the client expects from the server
-#define MIN_SUPPORTED_SERVER 1
+#define MIN_SUPPORTED_SERVER 2
 
 // No payload allowed exceeding this many bytes (actual data from client->server is not affected by this limit!)
 #define MAX_PAYLOAD 1000

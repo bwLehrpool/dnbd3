@@ -364,7 +364,8 @@ static int ipc_receive(int client_sock)
 	GSList *iterator = NULL;
 
 	struct tm *timeinfo;
-	char time_buff[64], rid[20], ipaddr[100];
+#define STRBUFLEN 100
+	char strbuffer[STRBUFLEN];
 
 	dnbd3_ipc_t header;
 
@@ -428,18 +429,27 @@ static int ipc_receive(int client_sock)
 		for (iterator = _dnbd3_images; iterator; iterator = iterator->next)
 		{
 			const dnbd3_image_t *image = iterator->data;
-			sprintf(rid, "%d", image->rid);
-			timeinfo = localtime(&image->atime);
-			strftime(time_buff, 64, "%d.%m.%y %H:%M:%S", timeinfo);
 			tmp_node = xmlNewNode(NULL, BAD_CAST "image");
 			if (tmp_node == NULL)
 				goto get_info_reply_cleanup;
 			xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->config_group);
-			xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST time_buff);
-			xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST rid);
+			timeinfo = localtime(&image->atime);
+			strftime(strbuffer, STRBUFLEN, "%d.%m.%y %H:%M:%S", timeinfo);
+			xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST strbuffer);
+			sprintf(strbuffer, "%d", image->rid);
+			xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST strbuffer);
 			xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST image->file);
-			xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST "???");
-			xmlNewProp(tmp_node, BAD_CAST "cache", BAD_CAST image->cache_file);
+			xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST "???"); // TODO
+			if (image->cache_file && image->cache_map)
+			{
+				xmlNewProp(tmp_node, BAD_CAST "cachefile", BAD_CAST image->cache_file);
+				int i, complete = 0, size = IMGSIZE_TO_MAPBYTES(image->filesize);
+				for (i = 0; i < size; ++i)
+					if (image->cache_map[i])
+						complete += 100;
+				sprintf(strbuffer, "%d", complete / size);
+				xmlNewProp(tmp_node, BAD_CAST "cachefill", BAD_CAST image->cache_file);
+			}
 			xmlAddChild(images_node, tmp_node);
 		}
 		// Clients
@@ -455,9 +465,9 @@ static int ipc_receive(int client_sock)
 				tmp_node = xmlNewNode(NULL, BAD_CAST "client");
 				if (tmp_node == NULL)
 					goto get_info_reply_cleanup;
-				*ipaddr = '\0';
-				inet_ntop(client->addrtype, client->ipaddr, ipaddr, 100);
-				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST ipaddr);
+				*strbuffer = '\0';
+				inet_ntop(client->addrtype, client->ipaddr, strbuffer, STRBUFLEN);
+				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
 				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST client->image->file);
 				xmlAddChild(clients_node, tmp_node);
 			}

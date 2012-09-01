@@ -17,6 +17,12 @@ void serializer_reset_write(serialized_buffer_t *buffer)
 	buffer->buffer_pointer = buffer->buffer;
 }
 
+uint8_t serializer_get_uint8(serialized_buffer_t *buffer)
+{
+	if (buffer->buffer_pointer + 1 > buffer->buffer_end) return 0;
+	return (uint8_t)*buffer->buffer_pointer++;
+}
+
 uint16_t serializer_get_uint16(serialized_buffer_t *buffer)
 {
 	uint16_t ret;
@@ -43,6 +49,12 @@ char* serializer_get_string(serialized_buffer_t *buffer)
 	if (*ptr) return NULL; // String did not terminate within buffer (possibly corrupted/malicious packet)
 	buffer->buffer_pointer = ptr + 1;
 	return start;
+}
+
+void serializer_put_uint8(serialized_buffer_t *buffer, uint8_t value)
+{
+	if (buffer->buffer_pointer + 1 > buffer->buffer_end) return;
+	*buffer->buffer_pointer++ = (char)value;
 }
 
 void serializer_put_uint16(serialized_buffer_t *buffer, uint16_t value)

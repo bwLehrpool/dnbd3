@@ -14,18 +14,26 @@ void serializer_reset_read(serialized_buffer_t *buffer, size_t data_len);
 
 void serializer_reset_write(serialized_buffer_t *buffer);
 
+ssize_t serializer_get_written_length(serialized_buffer_t *buffer);
+
+//
+
+uint8_t serializer_get_uint8(serialized_buffer_t *buffer);
+
 uint16_t serializer_get_uint16(serialized_buffer_t *buffer);
 
 uint64_t serializer_get_uint64(serialized_buffer_t *buffer);
 
 char* serializer_get_string(serialized_buffer_t *buffer);
 
+//
+
+void serializer_put_uint8(serialized_buffer_t *buffer, uint16_t value);
+
 void serializer_put_uint16(serialized_buffer_t *buffer, uint16_t value);
 
 void serializer_put_uint64(serialized_buffer_t *buffer, uint64_t value);
 
 void serializer_put_string(serialized_buffer_t *buffer, char *value);
-
-ssize_t serializer_get_written_length(serialized_buffer_t *buffer);
 
 #endif
