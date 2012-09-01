@@ -498,7 +498,7 @@ int dnbd3_net_discover(void *data)
             serializer_put_uint16(payload, PROTOCOL_VERSION);
             serializer_put_string(payload, dev->imgname);
             serializer_put_uint16(payload, dev->rid);
-            serializer_put_uint8(payload, 1); // Pretent we're a proxy here to prevent the server from updating the atime
+            serializer_put_uint8(payload, 1); // Pretend we're a proxy here to prevent the server from updating the atime TODO: Update status on server switch
             iov[1].iov_base = payload;
             dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(payload);
             if (kernel_sendmsg(sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)

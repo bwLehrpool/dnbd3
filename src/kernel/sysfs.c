@@ -33,7 +33,8 @@ ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
 		return MIN(snprintf(buf, PAGE_SIZE, "%pI4,%d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port)), PAGE_SIZE);
 	else if (dev->cur_server.hostaddrtype == AF_INET6)
 		return MIN(snprintf(buf, PAGE_SIZE, "%pI6,%d\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port)), PAGE_SIZE);
-	return snprintf(buf, PAGE_SIZE, "");
+	*buf = '\0';
+	return 0;
 }
 
 ssize_t show_cur_server_rtt(char *buf, dnbd3_device_t *dev)

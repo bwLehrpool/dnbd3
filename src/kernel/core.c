@@ -48,7 +48,7 @@ static int __init dnbd3_init(void)
         if (dnbd3_blk_add_device(&dnbd3_device[i], i) != 0)
         {
             printk("ERROR: adding device failed.\n");
-            return -EIO;
+            return -EIO; // TODO: delete all devices added so far. it could happen that it's not the first one that fails. also call unregister_blkdev and free memory
         }
     }
 

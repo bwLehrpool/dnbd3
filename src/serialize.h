@@ -28,7 +28,7 @@ char* serializer_get_string(serialized_buffer_t *buffer);
 
 //
 
-void serializer_put_uint8(serialized_buffer_t *buffer, uint16_t value);
+void serializer_put_uint8(serialized_buffer_t *buffer, uint8_t value);
 
 void serializer_put_uint16(serialized_buffer_t *buffer, uint16_t value);
 
