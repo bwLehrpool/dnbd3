@@ -159,6 +159,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         struct kvec iov[2];
         uint16_t rid;
         char *name;
+        int mlen;
         init_msghdr(msg);
 		if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
 			error_dev("ERROR: Couldn't create socket.");
@@ -173,8 +174,6 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         // Request filesize
 		dnbd3_request.magic = dnbd3_packet_magic;
         dnbd3_request.cmd = CMD_GET_SIZE;
-        dnbd3_request.size = strlen(dev->imgname) + 1 + 2 + 2; // str+\0, version, rid
-        fixup_request(dnbd3_request);
         iov[0].iov_base = &dnbd3_request;
         iov[0].iov_len = sizeof(dnbd3_request);
         serializer_reset_write(&dev->payload_buffer);
@@ -183,8 +182,10 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         serializer_put_uint16(&dev->payload_buffer, dev->rid);
         serializer_put_uint8(&dev->payload_buffer, dev->is_server);
         iov[1].iov_base = &dev->payload_buffer;
-        iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
-        if (kernel_sendmsg(dev->sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
+        dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
+        fixup_request(dnbd3_request);
+        mlen = sizeof(dnbd3_request) + iov[1].iov_len;
+        if (kernel_sendmsg(dev->sock, &msg, iov, 2, mlen) != mlen)
         	error_dev("ERROR: Couldn't send CMD_SIZE_REQUEST.");
         // receive reply header
         iov[0].iov_base = &dnbd3_reply;
@@ -395,6 +396,7 @@ int dnbd3_net_discover(void *data)
     int i, best_server, current_server;
     int turn = 0;
     int ready = 0;
+    int mlen;
 
     struct timeval timeout;
     timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DISCOVERY;
@@ -491,7 +493,6 @@ int dnbd3_net_discover(void *data)
 
             // Request filesize
             dnbd3_request.cmd = CMD_GET_SIZE;
-            fixup_request(dnbd3_request);
             iov[0].iov_base = &dnbd3_request;
             iov[0].iov_len = sizeof(dnbd3_request);
             serializer_reset_write(payload);
@@ -501,7 +502,9 @@ int dnbd3_net_discover(void *data)
             serializer_put_uint8(payload, 1); // Pretend we're a proxy here to prevent the server from updating the atime TODO: Update status on server switch
             iov[1].iov_base = payload;
             dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(payload);
-            if (kernel_sendmsg(sock, &msg, iov, 2, sizeof(dnbd3_request) + iov[1].iov_len) != sizeof(dnbd3_request) + iov[1].iov_len)
+            fixup_request(dnbd3_request);
+            mlen = iov[1].iov_len + sizeof(dnbd3_request);
+            if (kernel_sendmsg(sock, &msg, iov, 2, mlen) != mlen)
             	error_alt("ERROR: Requesting image size failed.");
 
             // receive net reply

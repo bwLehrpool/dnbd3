@@ -53,7 +53,7 @@ static inline char recv_request_header(int sock, dnbd3_request_t *request)
     fixup_request(*request);
     if (request->magic != dnbd3_packet_magic)
     {
-    	printf("[DEBUG] Magic in client request incorrect\n");
+    	printf("[DEBUG] Magic in client request incorrect (cmd: %d, len: %d)\n", (int)request->cmd, (int)request->size);
     	return 0;
     }
     // Payload sanity check
