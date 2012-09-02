@@ -120,7 +120,8 @@ static char is_valid_namespace(char *namespace)
 	while (*namespace)
 	{
 		if (*namespace != '/' && *namespace != '-' && (*namespace < 'a' || *namespace > 'z')
-		   && (*namespace < 'A' || *namespace > 'Z'))
+		   && (*namespace < 'A' || *namespace > 'Z')
+		   && (*namespace < '0' || *namespace > '9'))
 			return 0;
 		++namespace;
 	}
@@ -135,14 +136,23 @@ static char is_valid_imagename(char *namespace)
 		return 0; // Invalid: Length = 0 or starting with a space
 	while (*namespace)
 	{	// Check for invalid chars
-		if (*namespace != '.' && *namespace != '-' && *namespace != ' ' && *namespace != '(' && *namespace != ')'
-		   && (*namespace < 'a' || *namespace > 'z') && (*namespace < 'A' || *namespace > 'Z'))
+		if (*namespace != '.' && *namespace != '-' && *namespace != ' '
+			&& *namespace != '(' && *namespace != ')'
+		   && (*namespace < 'a' || *namespace > 'z') && (*namespace < 'A' || *namespace > 'Z')
+		   && (*namespace < '0' || *namespace > '9'))
 			return 0;
 		++namespace;
 	}
 	if (*(namespace - 1) == ' ')
 		return 0; // Invalid: Ends in a space
 	return 1;
+}
+
+static inline int is_same_server(const dnbd3_trusted_server_t * const a, const dnbd3_trusted_server_t * const b)
+{
+	return (a->hostaddrtype == b->hostaddrtype)
+		&& (a->port == b->port)
+		&& (0 == memcmp(a->hostaddr, b->hostaddr, (a->hostaddrtype == AF_INET ? 4 : 16)));
 }
 
 static void strtolower(char *string)
@@ -157,7 +167,7 @@ static void strtolower(char *string)
 
 void dnbd3_load_config()
 {
-	gint i;
+	gint i, j;
 
 	if (_config_handle != NULL)
 	{
@@ -188,9 +198,32 @@ void dnbd3_load_config()
 
 	for (i = 0; i < section_count; i++)
 	{
-		// Special group, ignore
-		if (strcmp(groups[i], "settings") == 0 || strcmp(groups[i], "trusted") == 0)
+		// Ignore settings section
+		if (strcmp(groups[i], "settings") == 0)
+			continue;
+
+		// List of trusted servers/namespaces
+		if (strncmp(groups[i], "trust:", 6) == 0)
 		{
+			gchar *addr = g_key_file_get_string(_config_handle, groups[i], "address", NULL);
+			if (addr == NULL)
+				continue;
+			dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(addr, TRUE);
+			g_free(addr);
+			if (server == NULL)
+				continue;
+			server->comment = strdup(groups[i]+6);
+			gsize key_count;
+			gchar **keys = g_key_file_get_keys(_config_handle, groups[i], &key_count, NULL);
+			for (j = 0; j < key_count; ++j)
+			{
+				if (strcmp(keys[j], "address") == 0)
+					continue;
+				char *flags = g_key_file_get_string(_config_handle, groups[i], keys[j], NULL);
+				dnbd3_add_trusted_namespace(server, keys[j], flags);
+				g_free(flags);
+			}
+			g_strfreev(keys);
 			continue;
 		}
 
@@ -216,13 +249,11 @@ void dnbd3_load_config()
 		gsize num_servers;
 		gchar **servers = g_key_file_get_string_list(_config_handle, groups[i], "servers", &num_servers, NULL);
 
-		pthread_spin_lock(&_spinlock);
 		dnbd3_image_t *image = prepare_image(groups[i], rid, image_file, cache_file, servers, num_servers);
 		if (image)
 		{
 			_dnbd3_images = g_slist_prepend(_dnbd3_images, image);
 		}
-		pthread_spin_unlock(&_spinlock);
 
 		g_free(image_file);
 		g_free(cache_file);
@@ -648,6 +679,70 @@ void dnbd3_exec_delete(int save_if_changed)
 
 	if (changed && save_if_changed)
 		save_config();
+}
+
+/**
+ * Return pointer to trusted_server matching given address.
+ * If not found and create_if_not_found is TRUE, a new entry will be created,
+ * added to the list and then returned
+ * Returns NULL otherwise, or if the address could not be parsed
+ * !! Lock before calling this function !!
+ */
+dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_not_found)
+{
+	dnbd3_trusted_server_t server;
+	memset(&server, 0, sizeof(server));
+	if (!parse_address(address, &server.hostaddrtype, server.hostaddr, &server.port))
+	{
+		memlogf("[WARNING] Could not parse address '%s' of trusted server", address);
+		return NULL;
+	}
+	GSList *iterator;
+	for (iterator = _trusted_servers; iterator; iterator = iterator->next)
+	{
+		dnbd3_trusted_server_t *comp = iterator->data;
+		if (is_same_server(comp, &server))
+			return comp;
+	}
+	if (!create_if_not_found)
+		return NULL;
+	dnbd3_trusted_server_t *copy = malloc(sizeof(server));
+	memcpy(copy, &server, sizeof(*copy));
+	_trusted_servers = g_slist_prepend(_trusted_servers, copy);
+	return copy;
+}
+
+/**
+ * Add new trusted namespace to given trusted server, using given flags.
+ * Overwrites any existing entry for the given server and namespace
+ * !! Lock before calling this function !!
+ */
+int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace, char *flags)
+{
+	int nslen = strlen(namespace) + 1;
+	char nslow[nslen];
+	memcpy(nslow, namespace, nslen);
+	strtolower(nslow);
+	GSList *iterator;
+	dnbd3_namespace_t *ns = NULL;
+	for (iterator = server->namespaces; iterator; iterator = iterator->next)
+	{
+		dnbd3_namespace_t *cmp = iterator->data;
+		if (strcmp(nslow, cmp->name) == 0)
+		{
+			ns = cmp;
+			break;
+		}
+	}
+	if (ns == NULL)
+	{
+		ns = calloc(1, sizeof(*ns));
+		ns->name = strdup(nslow);
+		server->namespaces = g_slist_prepend(server->namespaces, ns);
+	}
+	ns->auto_replicate = (flags && strstr(flags, "replicate"));
+	ns->recursive = (flags && strstr(flags, "recursive"));
+	return TRUE;
 }
 
 /**

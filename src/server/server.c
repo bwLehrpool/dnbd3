@@ -47,6 +47,7 @@ char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_local_namespace = NULL;
 char *_ipc_password = NULL;
 GSList *_dnbd3_images = NULL; // of dnbd3_image_t
+GSList *_trusted_servers = NULL;
 
 void dnbd3_print_help(char* argv_0)
 {
@@ -211,7 +212,6 @@ int main(int argc, char* argv[])
     struct sockaddr_in client;
     unsigned int len = sizeof(client);
     int fd;
-    time_t next_delete_invocation = 0;
     struct timeval timeout;
     timeout.tv_sec = SOCKET_TIMEOUT_SERVER;
     timeout.tv_usec = 0;
@@ -267,13 +267,6 @@ int main(int argc, char* argv[])
         	continue;
         }
         pthread_detach(dnbd3_client->thread);
-        // Call image deletion function if last call is more than 5 minutes ago
-        const time_t now = time(NULL);
-        if (now < next_delete_invocation)
-        {
-      	  next_delete_invocation = now + 300;
-      	  dnbd3_exec_delete(TRUE);
-        }
     }
 
     dnbd3_cleanup();

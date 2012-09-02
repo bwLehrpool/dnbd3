@@ -74,12 +74,13 @@ typedef struct
 } dnbd3_ioctl_t;
 
 // network
-#define CMD_GET_BLOCK   1
-#define CMD_GET_SIZE    2
-#define CMD_GET_SERVERS 3
-#define CMD_ERROR		4
-#define CMD_KEEPALIVE	5
-#define CMD_LATEST_RID	6
+#define CMD_GET_BLOCK           1
+#define CMD_GET_SIZE            2
+#define CMD_GET_SERVERS         3
+#define CMD_ERROR               4
+#define CMD_KEEPALIVE           5
+#define CMD_LATEST_RID          6
+#define CMD_SET_CLIENT_MODE     7
 
 #pragma pack(1)
 typedef struct

@@ -124,6 +124,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
     struct timeval timeout;
 
+    char get_servers = 0, set_client = 0;
+
     timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
     timeout.tv_usec = 0;
 
@@ -136,11 +138,21 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
     	memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
     	if (!dev->is_server)
     	{
-			req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
-			if (!req1)
-				error_dev("FATAL: Kmalloc(1) failed.");
+    		get_servers = 1;
     	}
     }
+    if (dev->better_sock)
+    {
+   	 set_client = 1;
+    }
+
+    if (get_servers || set_client)
+    {
+		req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
+		if (!req1)
+			error_dev("FATAL: Kmalloc(1) failed.");
+    }
+
     if (dev->cur_server.port == 0 || dev->cur_server.hostaddrtype == 0 || dev->imgname == NULL)
     	error_dev("FATAL: Host, port or image name not set.");
     if (dev->sock)
@@ -224,6 +236,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
         // store image information
         set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
         debug_dev_va("INFO: Filesize: %llu.", dev->reported_size);
+        dev->update_available = 0;
     }
     else // Switching server, connection is already established and size request was executed
     {
@@ -236,14 +249,19 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
     dev->panic = 0;
     dev->panic_count = 0;
-    dev->update_available = 0;
 
-    if (req1) // This connection is established to the initial server (from the ioctl call)
+    if (get_servers) // This connection is established to the initial server (from the ioctl call)
     {
 		// Enqueue request to request_queue_send for a fresh list of alt servers
 		req1->cmd_type = REQ_TYPE_SPECIAL;
 		req1->cmd_flags = CMD_GET_SERVERS;
 		list_add(&req1->queuelist, &dev->request_queue_send);
+    }
+    else if (set_client)
+    {
+ 		req1->cmd_type = REQ_TYPE_SPECIAL;
+ 		req1->cmd_flags = CMD_SET_CLIENT_MODE;
+ 		list_add(&req1->queuelist, &dev->request_queue_send);
     }
 
     // create required threads

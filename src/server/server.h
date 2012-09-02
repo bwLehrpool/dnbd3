@@ -64,10 +64,27 @@ typedef struct
     dnbd3_image_t *image;
 } dnbd3_client_t;
 
+typedef struct
+{
+	uint8_t  hostaddr[16];
+	uint16_t port;
+	uint8_t  hostaddrtype;
+	gchar    *comment;
+	GSList   *namespaces; // List of dnbd3_namespace_t
+} dnbd3_trusted_server_t;
+
+typedef struct
+{
+	char     *name;
+	uint8_t  auto_replicate;
+	uint8_t  recursive;
+} dnbd3_namespace_t;
+
 extern GSList *_dnbd3_clients; // of dnbd3_client_t
 extern pthread_spinlock_t _spinlock;
 extern char *_config_file_name, *_local_namespace, *_ipc_password;
 extern GSList *_dnbd3_images; // of dnbd3_image_t
+extern GSList *_trusted_servers;
 
 
 #ifdef _DEBUG

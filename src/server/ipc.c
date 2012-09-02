@@ -361,7 +361,7 @@ static int recv_data(int client_sock, void *buffer_out, int len)
  */
 static int ipc_receive(int client_sock)
 {
-	GSList *iterator = NULL;
+	GSList *iterator, *iterator2;
 
 	struct tm *timeinfo;
 #define STRBUFLEN 100
@@ -374,7 +374,7 @@ static int ipc_receive(int client_sock)
 	int ret, locked;
 	int return_value = 0;
 	xmlDocPtr docReply = NULL, docRequest = NULL;
-	xmlNodePtr root_node, images_node, clients_node, tmp_node, log_parent_node, log_node;
+	xmlNodePtr root_node, parent_node, tmp_node, log_parent_node, log_node, server_node;
 	xmlChar *xmlbuff;
 	int buffersize;
 
@@ -420,10 +420,10 @@ static int ipc_receive(int client_sock)
 		xmlDocSetRootElement(docReply, root_node);
 
 		// Images
-		images_node = xmlNewNode(NULL, BAD_CAST "images");
-		if (images_node == NULL)
+		parent_node = xmlNewNode(NULL, BAD_CAST "images");
+		if (parent_node == NULL)
 			goto get_info_reply_cleanup;
-		xmlAddChild(root_node, images_node);
+		xmlAddChild(root_node, parent_node);
 		locked = 1;
 		pthread_spin_lock(&_spinlock);
 		for (iterator = _dnbd3_images; iterator; iterator = iterator->next)
@@ -450,13 +450,18 @@ static int ipc_receive(int client_sock)
 				sprintf(strbuffer, "%d", complete / size);
 				xmlNewProp(tmp_node, BAD_CAST "cachefill", BAD_CAST image->cache_file);
 			}
-			xmlAddChild(images_node, tmp_node);
+			xmlAddChild(parent_node, tmp_node);
 		}
+		pthread_spin_unlock(&_spinlock);
+		locked = 0;
+
 		// Clients
-		clients_node = xmlNewNode(NULL, BAD_CAST "clients");
-		if (clients_node == NULL)
+		parent_node = xmlNewNode(NULL, BAD_CAST "clients");
+		if (parent_node == NULL)
 			goto get_info_reply_cleanup;
-		xmlAddChild(root_node, clients_node);
+		xmlAddChild(root_node, parent_node);
+		locked = 1;
+		pthread_spin_lock(&_spinlock);
 		for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
 		{
 			dnbd3_client_t *client = iterator->data;
@@ -469,7 +474,48 @@ static int ipc_receive(int client_sock)
 				inet_ntop(client->addrtype, client->ipaddr, strbuffer, STRBUFLEN);
 				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
 				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST client->image->file);
-				xmlAddChild(clients_node, tmp_node);
+				xmlAddChild(parent_node, tmp_node);
+			}
+		}
+		pthread_spin_unlock(&_spinlock);
+		locked = 0;
+
+		// Trusted servers
+		parent_node = xmlNewNode(NULL, BAD_CAST "trusted");
+		if (parent_node == NULL)
+			goto get_info_reply_cleanup;
+		xmlAddChild(root_node, parent_node);
+		locked = 1;
+		pthread_spin_lock(&_spinlock);
+		for (iterator = _trusted_servers; iterator; iterator = iterator->next)
+		{
+			dnbd3_trusted_server_t *server = iterator->data;
+			if (server->hostaddrtype != 0)
+			{
+				tmp_node = xmlNewNode(NULL, BAD_CAST "server");
+				if (tmp_node == NULL)
+					goto get_info_reply_cleanup;
+				*strbuffer = '\0';
+				inet_ntop(server->hostaddrtype, server->hostaddr, strbuffer, STRBUFLEN);
+				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
+				sprintf(strbuffer, "%d", (int)server->port);
+				xmlNewProp(tmp_node, BAD_CAST "port", BAD_CAST strbuffer);
+				if (server->comment)
+					xmlNewProp(tmp_node, BAD_CAST "comment", BAD_CAST server->comment);
+				for (iterator2 = server->namespaces; iterator2; iterator2 = iterator2->next)
+				{
+					const dnbd3_namespace_t *ns = iterator2->data;
+					server_node = xmlNewNode(NULL, BAD_CAST "namespace");
+					if (server_node == NULL)
+						goto get_info_reply_cleanup;
+					xmlAddChild(tmp_node, server_node);
+					xmlNewProp(server_node, BAD_CAST "name", BAD_CAST ns->name);
+					if (ns->auto_replicate)
+						xmlNewProp(server_node, BAD_CAST "replicate", BAD_CAST "1");
+					if (ns->recursive)
+						xmlNewProp(server_node, BAD_CAST "recursive", BAD_CAST "1");
+				}
+				xmlAddChild(parent_node, tmp_node);
 			}
 		}
 		pthread_spin_unlock(&_spinlock);
@@ -656,7 +702,7 @@ void dnbd3_ipc_send(int cmd)
 		{
 			int count;
 			int term_width = get_terminal_width();
-			xmlNodePtr cur;
+			xmlNodePtr cur, childit;
 
 			// Print log
 			xmlChar *log = getTextFromPath(doc, "/data/log");
@@ -668,16 +714,15 @@ void dnbd3_ipc_send(int cmd)
 			int watime = 0, wname = 0, wrid = 5;
 			FOR_EACH_NODE(doc, "/data/images/image", cur)
 			{
-				if (cur->type == XML_ELEMENT_NODE)
-				{
-					xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
-					xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
-					xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
-					watime = MAX(watime, xmlStrlen(atime));
-					wname = MAX(wname, xmlStrlen(vid));
-					wrid = MAX(wrid, xmlStrlen(rid));
-					// Too lazy to free vars, client will exit anyways
-				}
+				if (cur->type != XML_ELEMENT_NODE)
+					continue;
+				xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
+				xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
+				xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
+				watime = MAX(watime, xmlStrlen(atime));
+				wname = MAX(wname, xmlStrlen(vid));
+				wrid = MAX(wrid, xmlStrlen(rid));
+				// Too lazy to free vars, client will exit anyways
 			} END_FOR_EACH;
 
 			char format[100];
@@ -691,16 +736,15 @@ void dnbd3_ipc_send(int cmd)
 			count = 0;
 			FOR_EACH_NODE(doc, "/data/images/image", cur)
 			{
-				if (cur->type == XML_ELEMENT_NODE)
-				{
-					++count;
-					xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
-					xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
-					xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
-					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
-					printf(format, atime, vid, rid, file);
-					// Too lazy to free vars, client will exit anyways
-				}
+				if (cur->type != XML_ELEMENT_NODE)
+					continue;
+				++count;
+				xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
+				xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
+				xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
+				xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
+				printf(format, atime, vid, rid, file);
+				// Too lazy to free vars, client will exit anyways
 			} END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber of images: %d\n\n", count);
@@ -711,17 +755,50 @@ void dnbd3_ipc_send(int cmd)
 			count = 0;
 			FOR_EACH_NODE(doc, "/data/clients/client", cur)
 			{
-				if (cur->type == XML_ELEMENT_NODE)
-				{
-					++count;
-					xmlChar *ip = xmlGetNoNsProp(cur, BAD_CAST "ip");
-					xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
-					printf("%-40s %s\n", ip, file);
-					// Too lazy to free vars, client will exit anyways
-				}
+				if (cur->type != XML_ELEMENT_NODE)
+					continue;
+				++count;
+				xmlChar *ip = xmlGetNoNsProp(cur, BAD_CAST "ip");
+				xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
+				printf("%-40s %s\n", ip, file);
+				// Too lazy to free vars, client will exit anyways
 			} END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber clients: %d\n\n", count);
+
+			// Print trusted servers
+			printf("Trusted servers:\n");
+			char_repeat_br('=', term_width);
+			count = 0;
+			FOR_EACH_NODE(doc, "/data/trusted/server", cur)
+			{
+				if (cur->type != XML_ELEMENT_NODE)
+					continue;
+				++count;
+				xmlChar *ip = xmlGetNoNsProp(cur, BAD_CAST "ip");
+				xmlChar *comment = xmlGetNoNsProp(cur, BAD_CAST "comment");
+				if (comment)
+					printf("%-30s (%s)\n", ip, comment);
+				else
+					printf("%-30s\n", ip);
+				for (childit = cur->children; childit; childit = childit->next)
+				{
+					if (childit->type != XML_ELEMENT_NODE || childit->name == NULL || strcmp(childit->name, "namespace") != 0)
+						continue;
+					xmlChar *name = xmlGetNoNsProp(childit, BAD_CAST "name");
+					xmlChar *replicate = xmlGetNoNsProp(childit, BAD_CAST "replicate");
+					xmlChar *recursive = xmlGetNoNsProp(childit, BAD_CAST "recursive");
+					printf("     %-40s ", name);
+					if (replicate && *replicate != '0')
+						printf(" replicate");
+					if (recursive && *recursive != '0')
+						printf(" recursive");
+					putchar('\n');
+				}
+				// Too lazy to free vars, client will exit anyways
+			} END_FOR_EACH;
+			char_repeat_br('=', term_width);
+			printf("\nNumber servers: %d\n\n", count);
 
 			// Cleanup
 			xmlFreeDoc(doc);

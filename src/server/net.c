@@ -361,6 +361,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
 
         case CMD_GET_SERVERS:
+      	  client->is_server = FALSE; // Only clients request list of servers
             // Build list of known working alt servers
             num = 0;
             for (i = 0; i < NUMBER_SERVERS; i++)
@@ -378,6 +379,10 @@ void *dnbd3_handle_query(void *dnbd3_client)
         	reply.size = 0;
         	send_reply(client->sock, &reply, NULL);
         	break;
+
+        case CMD_SET_CLIENT_MODE:
+      	  client->is_server = FALSE;
+      	  break;
 
         default:
         	memlogf("ERROR: Unknown command\n");

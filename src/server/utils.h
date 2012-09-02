@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 
+#include "server.h"
 #include "../config.h"
 
 #ifndef UTILS_H_
@@ -47,6 +48,9 @@ int dnbd3_del_image(dnbd3_image_t *image);
 void dnbd3_exec_delete(int save_if_changed);
 
 dnbd3_image_t* dnbd3_get_image(char *name, int rid, const char do_lock);
+
+dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_not_found);
+int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace, char *flags);
 
 void dnbd3_handle_sigpipe(int signum);
 void dnbd3_handle_sigterm(int signum);
