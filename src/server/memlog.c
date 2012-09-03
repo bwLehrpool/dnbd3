@@ -58,11 +58,11 @@ void memlogf(const char *fmt, ...)
 	va_list ap;
 	int ret;
 	time_t rawtime;
-	struct tm * timeinfo;
+	struct tm *timeinfo;
 	time(&rawtime);
 	timeinfo = localtime(&rawtime);
 	pthread_spin_lock(&logLock);
-	LogLine * const line = (LogLine *)&(logBuffer[bufferPos % LINE_COUNT]);
+	LogLine *const line = (LogLine *)&(logBuffer[bufferPos % LINE_COUNT]);
 	const size_t offset = strftime(line->text, LINE_LEN, "[%d.%m. %H:%M:%S] ", timeinfo);
 	if (offset == 0) *line->text = '\0';
 	va_start(ap, fmt);
@@ -79,7 +79,7 @@ void memlogf(const char *fmt, ...)
 	puts(line->text);
 }
 
-char * fetchlog(int maxlines)
+char *fetchlog(int maxlines)
 {
 	if (!logBuffer) return NULL;
 	if (maxlines <= 0 || maxlines > LINE_COUNT) maxlines = LINE_COUNT;
@@ -88,8 +88,10 @@ char * fetchlog(int maxlines)
 	//printf("Outputting log from %d to %d\n", start, bufferPos);
 	pthread_spin_lock(&logLock);
 	// Determine required buffer space for all log lines
-	for (i = start; i < bufferPos; ++i) {
-		if (logBuffer[i % LINE_COUNT].len > 0) {
+	for (i = start; i < bufferPos; ++i)
+	{
+		if (logBuffer[i % LINE_COUNT].len > 0)
+		{
 			len += logBuffer[i % LINE_COUNT].len + 1;
 		}
 	}
@@ -99,9 +101,11 @@ char * fetchlog(int maxlines)
 	if (retval == NULL) goto endFunction;
 	// Concatenate all log lines, delimit using '\n'
 	char *pos = retval;
-	for (i = start; i < bufferPos; ++i) {
-		LogLine * const line = (LogLine *)&(logBuffer[i % LINE_COUNT]);
-		if (line->len > 0) {
+	for (i = start; i < bufferPos; ++i)
+	{
+		LogLine *const line = (LogLine *)&(logBuffer[i % LINE_COUNT]);
+		if (line->len > 0)
+		{
 			memcpy(pos, (char *)line->text, line->len);
 			pos += line->len;
 			*pos++ = '\n';

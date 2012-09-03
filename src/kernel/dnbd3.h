@@ -35,48 +35,48 @@ extern int major;
 
 typedef struct
 {
-    unsigned long rtts[4];		// Last four round trip time measurements in µs
-    uint16_t port;				// Port in network representation
-    uint16_t protocol_version;	// dnbd3 protocol version of this server
-    uint8_t hostaddr[16];		// Address in network representation (IPv4 or IPv6)
-    uint8_t hostaddrtype;		// Address type (AF_INET or AF_INET6)
-    uint8_t failures;			// How many times the server was unreachable
+	unsigned long rtts[4];		// Last four round trip time measurements in µs
+	uint16_t port;				// Port in network representation
+	uint16_t protocol_version;	// dnbd3 protocol version of this server
+	uint8_t hostaddr[16];		// Address in network representation (IPv4 or IPv6)
+	uint8_t hostaddrtype;		// Address type (AF_INET or AF_INET6)
+	uint8_t failures;			// How many times the server was unreachable
 } dnbd3_server_t;
 
 typedef struct
 {
-    // block
-    struct gendisk *disk;
-    spinlock_t blk_lock;
+	// block
+	struct gendisk *disk;
+	spinlock_t blk_lock;
 
-    // sysfs
-    struct kobject kobj;
+	// sysfs
+	struct kobject kobj;
 
-    // network
-    char *imgname;
-    struct socket *sock;
-    dnbd3_server_t cur_server, initial_server;
-    unsigned long cur_rtt;
-    serialized_buffer_t payload_buffer;
-    dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
-    int new_servers_num;	// number of new alt servers that are waiting to be copied to above array
-    dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers
-    uint8_t discover, panic, disconnecting, is_server, update_available, panic_count;
-    uint16_t rid, heartbeat_count;
-    uint64_t reported_size;
-    // server switch
-    struct socket *better_sock;
+	// network
+	char *imgname;
+	struct socket *sock;
+	dnbd3_server_t cur_server, initial_server;
+	unsigned long cur_rtt;
+	serialized_buffer_t payload_buffer;
+	dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
+	int new_servers_num;	// number of new alt servers that are waiting to be copied to above array
+	dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers
+	uint8_t discover, panic, disconnecting, is_server, update_available, panic_count;
+	uint16_t rid, heartbeat_count;
+	uint64_t reported_size;
+	// server switch
+	struct socket *better_sock;
 
-    // process
-    struct task_struct *thread_send;
-    struct task_struct *thread_receive;
-    struct task_struct *thread_discover;
-    struct timer_list hb_timer;
-    wait_queue_head_t process_queue_send;
-    wait_queue_head_t process_queue_receive;
-    wait_queue_head_t process_queue_discover;
-    struct list_head request_queue_send;
-    struct list_head request_queue_receive;
+	// process
+	struct task_struct *thread_send;
+	struct task_struct *thread_receive;
+	struct task_struct *thread_discover;
+	struct timer_list hb_timer;
+	wait_queue_head_t process_queue_send;
+	wait_queue_head_t process_queue_receive;
+	wait_queue_head_t process_queue_discover;
+	struct list_head request_queue_send;
+	struct list_head request_queue_receive;
 
 } dnbd3_device_t;
 

@@ -32,12 +32,12 @@ static int num_devices = 0;
 static char keep_running = TRUE;
 
 // Private functions
-static char* get_free_device();
+static char *get_free_device();
 static void query_servers();
 
 //
 
-void* dnbd3_job_thread(void *data)
+void *dnbd3_job_thread(void *data)
 {
 	int i, j;
 	// Determine number of available dnbd3 devices, which are needed for proxy mode
@@ -74,18 +74,18 @@ void* dnbd3_job_thread(void *data)
 		const time_t starttime = time(NULL);
 		//
 		// TODO: Update image atime
-      // Call image deletion function if last call is more than 5 minutes ago
-      if (starttime < next_delete_invocation)
-      {
-    	  next_delete_invocation = starttime + 300;
-    	  dnbd3_exec_delete(TRUE);
-      }
+		// Call image deletion function if last call is more than 5 minutes ago
+		if (starttime < next_delete_invocation)
+		{
+			next_delete_invocation = starttime + 300;
+			dnbd3_exec_delete(TRUE);
+		}
 		// TODO: Replicate proxied images (limited bandwidth)
 		// Query other servers for new images/status/...
-      query_servers();
+		query_servers();
 		// TODO: Switch server of dnbd device based on more sophisticated inputs than just rtt
-      // Calc sleep timeout for next iteration
-      sleep(30 - (time(NULL) - starttime)); // Sleep 30 seconds, but account for the time it took to execute the loop
+		// Calc sleep timeout for next iteration
+		sleep(30 - (time(NULL) - starttime)); // Sleep 30 seconds, but account for the time it took to execute the loop
 	}
 	//
 	free(devices);
@@ -114,7 +114,7 @@ static void query_servers()
  * Get full name of an available dnbd3 device, eg. /dev/dnbd4
  * Returned buffer is owned by this module, do not modify or free!
  */
-static char* get_free_device()
+static char *get_free_device()
 {
 	if (devices == NULL)
 		return NULL;

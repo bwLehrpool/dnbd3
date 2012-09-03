@@ -600,7 +600,8 @@ get_info_reply_cleanup:
 					xmlFree(image.file);
 					xmlFree(image.cache_file);
 				}
-			} END_FOR_EACH;
+			}
+			END_FOR_EACH;
 			if (count == 0)
 				header.error = htonl(ERROR_MISSING_ARGUMENT);
 		}
@@ -723,11 +724,12 @@ void dnbd3_ipc_send(int cmd)
 				wname = MAX(wname, xmlStrlen(vid));
 				wrid = MAX(wrid, xmlStrlen(rid));
 				// Too lazy to free vars, client will exit anyways
-			} END_FOR_EACH;
+			}
+			END_FOR_EACH;
 
 			char format[100];
 			snprintf(format, 100,
-				"%%-%ds %%-%ds %%%ds %%s\n", watime, wname, wrid);
+			         "%%-%ds %%-%ds %%%ds %%s\n", watime, wname, wrid);
 
 			// Print images
 			printf("Exported images\n");
@@ -745,7 +747,8 @@ void dnbd3_ipc_send(int cmd)
 				xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
 				printf(format, atime, vid, rid, file);
 				// Too lazy to free vars, client will exit anyways
-			} END_FOR_EACH;
+			}
+			END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber of images: %d\n\n", count);
 
@@ -762,7 +765,8 @@ void dnbd3_ipc_send(int cmd)
 				xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
 				printf("%-40s %s\n", ip, file);
 				// Too lazy to free vars, client will exit anyways
-			} END_FOR_EACH;
+			}
+			END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber clients: %d\n\n", count);
 
@@ -796,7 +800,8 @@ void dnbd3_ipc_send(int cmd)
 					putchar('\n');
 				}
 				// Too lazy to free vars, client will exit anyways
-			} END_FOR_EACH;
+			}
+			END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber servers: %d\n\n", count);
 
@@ -831,7 +836,7 @@ static int is_password_correct(xmlDocPtr doc)
 	xmlChar *pass = getTextFromPath(doc, "/data/password");
 	if (pass == NULL)
 		return 0;
-	if (strcmp((char*)pass, _ipc_password) == 0)
+	if (strcmp((char *)pass, _ipc_password) == 0)
 	{
 		xmlFree(pass);
 		return 1;
@@ -842,8 +847,8 @@ static int is_password_correct(xmlDocPtr doc)
 
 static int get_terminal_width()
 {
-   struct winsize w;
-   if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) < 0)
-   	return 80;
-   return w.ws_col;
+	struct winsize w;
+	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) < 0)
+		return 80;
+	return w.ws_col;
 }

@@ -24,7 +24,7 @@ uint16_t serializer_get_uint16(serialized_buffer_t *buffer);
 
 uint64_t serializer_get_uint64(serialized_buffer_t *buffer);
 
-char* serializer_get_string(serialized_buffer_t *buffer);
+char *serializer_get_string(serialized_buffer_t *buffer);
 
 //
 

@@ -63,14 +63,14 @@ static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 typedef struct
 {
 	uint16_t len;
-    uint8_t addrtype;
-    uint8_t addr[16];	   // network representation
-    uint16_t port;		   // network representation
-    uint16_t imgnamelen;
-    char *imgname;
-    int rid;
-    int read_ahead_kb;
-    uint8_t is_server;     // FALSE = automatic (real client), TRUE = manual control (proxy)
+	uint8_t addrtype;
+	uint8_t addr[16];	   // network representation
+	uint16_t port;		   // network representation
+	uint16_t imgnamelen;
+	char *imgname;
+	int rid;
+	int read_ahead_kb;
+	uint8_t is_server;     // FALSE = automatic (real client), TRUE = manual control (proxy)
 } dnbd3_ioctl_t;
 
 // network
@@ -86,10 +86,10 @@ typedef struct
 typedef struct
 {
 	uint16_t magic;		// 2byte
-    uint16_t cmd;       // 2byte
-    uint32_t size;      // 4byte
-    uint64_t offset;	// 8byte
-    uint64_t handle;    // 8byte
+	uint16_t cmd;       // 2byte
+	uint32_t size;      // 4byte
+	uint64_t offset;	// 8byte
+	uint64_t handle;    // 8byte
 } dnbd3_request_t;
 #pragma pack(0)
 
@@ -97,9 +97,9 @@ typedef struct
 typedef struct
 {
 	uint16_t magic;		// 2byte
-    uint16_t cmd;		// 2byte
-    uint32_t size;		// 4byte
-    uint64_t handle;	// 8byte
+	uint16_t cmd;		// 2byte
+	uint32_t size;		// 4byte
+	uint64_t handle;	// 8byte
 } dnbd3_reply_t;
 #pragma pack(0)
 

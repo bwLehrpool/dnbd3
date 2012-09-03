@@ -41,27 +41,27 @@ typedef struct
 {
 	char *config_group; // exact name of group in config file that represents this image
 	char *low_name; // full (global) name of image, lowercased for comparison, eg. "uni-freiburg/rz/ubuntu-12.04"
-    int rid; // revision of provided image
-    char *file; // path to image file or device
-    uint64_t filesize; // size of image
-    dnbd3_server_entry_t servers[NUMBER_SERVERS]; // known alt servers that also offer that image
-    time_t atime; // last access time
-    uint8_t *cache_map; // cache map telling which parts are locally cached
-    char *cache_file; // path to local cache of image (in case the image is read from a dnbd3 device)
-    char working;	// whether this image is considered working. local images are "working" if the local file exists, proxied images have to have at least one working upstream server or a complete local cache file
-    time_t delete_soft; // unixtime telling when this image should be deleted. if there are still clients using this image it weill be kept, but new clients requesting the image will be rejected. 0 = never
-    time_t delete_hard; // unixtime telling when this image should be deleted, no matter if there are still clients connected. 0 = never
-    uint8_t relayed;		// TRUE if relayed from other server (needs dnbd3 client module loaded)
+	int rid; // revision of provided image
+	char *file; // path to image file or device
+	uint64_t filesize; // size of image
+	dnbd3_server_entry_t servers[NUMBER_SERVERS]; // known alt servers that also offer that image
+	time_t atime; // last access time
+	uint8_t *cache_map; // cache map telling which parts are locally cached
+	char *cache_file; // path to local cache of image (in case the image is read from a dnbd3 device)
+	char working;	// whether this image is considered working. local images are "working" if the local file exists, proxied images have to have at least one working upstream server or a complete local cache file
+	time_t delete_soft; // unixtime telling when this image should be deleted. if there are still clients using this image it weill be kept, but new clients requesting the image will be rejected. 0 = never
+	time_t delete_hard; // unixtime telling when this image should be deleted, no matter if there are still clients connected. 0 = never
+	uint8_t relayed;		// TRUE if relayed from other server (needs dnbd3 client module loaded)
 } dnbd3_image_t;
 
 typedef struct
 {
-    int sock;
-    uint8_t ipaddr[16];
-    uint8_t addrtype; 	       // ip version (AF_INET or AF_INET6)
-    uint8_t is_server;         // TRUE if a server in proxy mode, FALSE if real client
-    pthread_t thread;
-    dnbd3_image_t *image;
+	int sock;
+	uint8_t ipaddr[16];
+	uint8_t addrtype; 	       // ip version (AF_INET or AF_INET6)
+	uint8_t is_server;         // TRUE if a server in proxy mode, FALSE if real client
+	pthread_t thread;
+	dnbd3_image_t *image;
 } dnbd3_client_t;
 
 typedef struct

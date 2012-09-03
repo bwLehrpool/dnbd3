@@ -41,7 +41,7 @@ uint64_t serializer_get_uint64(serialized_buffer_t *buffer)
 	return net_order_64(ret);
 }
 
-char* serializer_get_string(serialized_buffer_t *buffer)
+char *serializer_get_string(serialized_buffer_t *buffer)
 {
 	char *ptr = buffer->buffer_pointer, *start = buffer->buffer_pointer;
 	if (ptr >= buffer->buffer_end) return NULL;

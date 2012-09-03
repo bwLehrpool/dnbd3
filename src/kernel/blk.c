@@ -26,120 +26,120 @@
 
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
-    struct gendisk *disk;
-    struct request_queue *blk_queue;
+	struct gendisk *disk;
+	struct request_queue *blk_queue;
 
-    init_waitqueue_head(&dev->process_queue_send);
-    init_waitqueue_head(&dev->process_queue_receive);
-    init_waitqueue_head(&dev->process_queue_discover);
-    INIT_LIST_HEAD(&dev->request_queue_send);
-    INIT_LIST_HEAD(&dev->request_queue_receive);
+	init_waitqueue_head(&dev->process_queue_send);
+	init_waitqueue_head(&dev->process_queue_receive);
+	init_waitqueue_head(&dev->process_queue_discover);
+	INIT_LIST_HEAD(&dev->request_queue_send);
+	INIT_LIST_HEAD(&dev->request_queue_receive);
 
-    memset(&dev->cur_server, 0, sizeof(dev->cur_server));
-    memset(&dev->initial_server, 0, sizeof(dev->initial_server));
-    dev->better_sock = NULL;
+	memset(&dev->cur_server, 0, sizeof(dev->cur_server));
+	memset(&dev->initial_server, 0, sizeof(dev->initial_server));
+	dev->better_sock = NULL;
 
-    dev->imgname = NULL;
-    dev->rid = 0;
-    dev->update_available = 0;
-    memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
-    dev->thread_send = NULL;
-    dev->thread_receive = NULL;
-    dev->thread_discover = NULL;
-    dev->discover = 0;
-    dev->panic = 0;
-    dev->panic_count = 0;
-    dev->reported_size = 0;
+	dev->imgname = NULL;
+	dev->rid = 0;
+	dev->update_available = 0;
+	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
+	dev->thread_send = NULL;
+	dev->thread_receive = NULL;
+	dev->thread_discover = NULL;
+	dev->discover = 0;
+	dev->panic = 0;
+	dev->panic_count = 0;
+	dev->reported_size = 0;
 
-    if (!(disk = alloc_disk(1)))
-    {
-        printk("ERROR: dnbd3 alloc_disk failed.\n");
-        return -EIO;
-    }
+	if (!(disk = alloc_disk(1)))
+	{
+		printk("ERROR: dnbd3 alloc_disk failed.\n");
+		return -EIO;
+	}
 
-    disk->major = major;
-    disk->first_minor = minor;
-    sprintf(disk->disk_name, "dnbd%d", minor);
-    set_capacity(disk, 0);
-    set_disk_ro(disk, 1);
-    disk->fops = &dnbd3_blk_ops;
+	disk->major = major;
+	disk->first_minor = minor;
+	sprintf(disk->disk_name, "dnbd%d", minor);
+	set_capacity(disk, 0);
+	set_disk_ro(disk, 1);
+	disk->fops = &dnbd3_blk_ops;
 
-    spin_lock_init(&dev->blk_lock);
-    if ((blk_queue = blk_init_queue(&dnbd3_blk_request, &dev->blk_lock)) == NULL)
-    {
-        printk("ERROR: dnbd3 blk_init_queue failed.\n");
-        return -EIO;
-    }
+	spin_lock_init(&dev->blk_lock);
+	if ((blk_queue = blk_init_queue(&dnbd3_blk_request, &dev->blk_lock)) == NULL)
+	{
+		printk("ERROR: dnbd3 blk_init_queue failed.\n");
+		return -EIO;
+	}
 
-    blk_queue_logical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
-    blk_queue_physical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
+	blk_queue_logical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
+	blk_queue_physical_block_size(blk_queue, DNBD3_BLOCK_SIZE);
 
-    disk->queue = blk_queue;
-    disk->private_data = dev;
-    queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
-    dev->disk = disk;
+	disk->queue = blk_queue;
+	disk->private_data = dev;
+	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, disk->queue);
+	dev->disk = disk;
 
-    add_disk(disk);
-    dnbd3_sysfs_init(dev);
-    return 0;
+	add_disk(disk);
+	dnbd3_sysfs_init(dev);
+	return 0;
 }
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
 	dnbd3_sysfs_exit(dev);
 	dnbd3_net_disconnect(dev);
-    del_gendisk(dev->disk);
-    put_disk(dev->disk);
-    blk_cleanup_queue(dev->disk->queue);
-    return 0;
+	del_gendisk(dev->disk);
+	put_disk(dev->disk);
+	blk_cleanup_queue(dev->disk->queue);
+	return 0;
 }
 
 struct block_device_operations dnbd3_blk_ops =
-{ .owner = THIS_MODULE, .ioctl = dnbd3_blk_ioctl, };
+	{ .owner = THIS_MODULE, .ioctl = dnbd3_blk_ioctl, };
 
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
-    int result = 0;
-    dnbd3_device_t *dev = bdev->bd_disk->private_data;
-    struct request_queue *blk_queue = dev->disk->queue;
-    char *imgname = NULL;
-    dnbd3_ioctl_t *msg = kmalloc(sizeof(*msg), GFP_KERNEL);
-    unsigned long irqflags;
+	int result = 0;
+	dnbd3_device_t *dev = bdev->bd_disk->private_data;
+	struct request_queue *blk_queue = dev->disk->queue;
+	char *imgname = NULL;
+	dnbd3_ioctl_t *msg = kmalloc(sizeof(*msg), GFP_KERNEL);
+	unsigned long irqflags;
 
-    if (msg == NULL) return -ENOMEM;
-    copy_from_user((char *)msg, (char *)arg, 2);
-    if (msg->len != sizeof(*msg))
-    {
-    	result = -ENOEXEC;
-    	goto cleanup_return;
-    }
-    copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
-    if (msg->imgname != NULL && msg->imgnamelen > 0)
-    {
-    	imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
-    	if (imgname == NULL)
-    	{
-    		result = -ENOMEM;
-    		goto cleanup_return;
-    	}
-    	copy_from_user(imgname, msg->imgname, msg->imgnamelen);
-    	imgname[msg->imgnamelen] = '\0';
-    	//printk("IOCTL Image name of len %d is %s\n", (int)msg->imgnamelen, imgname);
-    }
+	if (msg == NULL) return -ENOMEM;
+	copy_from_user((char *)msg, (char *)arg, 2);
+	if (msg->len != sizeof(*msg))
+	{
+		result = -ENOEXEC;
+		goto cleanup_return;
+	}
+	copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
+	if (msg->imgname != NULL && msg->imgnamelen > 0)
+	{
+		imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
+		if (imgname == NULL)
+		{
+			result = -ENOMEM;
+			goto cleanup_return;
+		}
+		copy_from_user(imgname, msg->imgname, msg->imgnamelen);
+		imgname[msg->imgnamelen] = '\0';
+		//printk("IOCTL Image name of len %d is %s\n", (int)msg->imgnamelen, imgname);
+	}
 
-    switch (cmd)
-    {
-    case IOCTL_OPEN:
-    	if (dev->imgname != NULL)
-    	{
-    		result = -EBUSY;
-    	}
-    	else if (imgname == NULL)
-    	{
-    		result = -EINVAL;
-    	}
-    	else
-    	{
+	switch (cmd)
+	{
+	case IOCTL_OPEN:
+		if (dev->imgname != NULL)
+		{
+			result = -EBUSY;
+		}
+		else if (imgname == NULL)
+		{
+			result = -EINVAL;
+		}
+		else
+		{
 			memcpy(dev->cur_server.hostaddr, msg->addr, 16);
 			dev->cur_server.port = msg->port;
 			dev->cur_server.hostaddrtype = msg->addrtype;
@@ -159,105 +159,105 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 				result = -ENOENT;
 				dev->imgname = NULL;
 			}
-    	}
-        break;
+		}
+		break;
 
-    case IOCTL_CLOSE:
-    	dnbd3_blk_fail_all_requests(dev);
-        result = dnbd3_net_disconnect(dev);
-        dnbd3_blk_fail_all_requests(dev);
-        set_capacity(dev->disk, 0);
-        if (dev->imgname)
-        {
-        	kfree(dev->imgname);
-        	dev->imgname = NULL;
-        }
-        break;
+	case IOCTL_CLOSE:
+		dnbd3_blk_fail_all_requests(dev);
+		result = dnbd3_net_disconnect(dev);
+		dnbd3_blk_fail_all_requests(dev);
+		set_capacity(dev->disk, 0);
+		if (dev->imgname)
+		{
+			kfree(dev->imgname);
+			dev->imgname = NULL;
+		}
+		break;
 
-    case IOCTL_SWITCH:
-        dnbd3_net_disconnect(dev);
+	case IOCTL_SWITCH:
+		dnbd3_net_disconnect(dev);
 		memcpy(dev->cur_server.hostaddr, msg->addr, 16);
 		dev->cur_server.port = msg->port;
 		dev->cur_server.hostaddrtype = msg->addrtype;
-        result = dnbd3_net_connect(dev);
-        break;
+		result = dnbd3_net_connect(dev);
+		break;
 
-    case IOCTL_ADD_SRV:
-    case IOCTL_REM_SRV:
-    	if (dev->imgname == NULL)
-    	{
-    		result = -ENOENT;
-    	}
-    	else
-    	{
-    		spin_lock_irqsave(&dev->blk_lock, irqflags);
-    		if (dev->new_servers_num >= NUMBER_SERVERS)
-    			result = -EAGAIN;
-    		else
-    		{
+	case IOCTL_ADD_SRV:
+	case IOCTL_REM_SRV:
+		if (dev->imgname == NULL)
+		{
+			result = -ENOENT;
+		}
+		else
+		{
+			spin_lock_irqsave(&dev->blk_lock, irqflags);
+			if (dev->new_servers_num >= NUMBER_SERVERS)
+				result = -EAGAIN;
+			else
+			{
 				memcpy(dev->new_servers[dev->new_servers_num].hostaddr, msg->addr, 16);
 				dev->new_servers[dev->new_servers_num].port = msg->port;
 				dev->new_servers[dev->new_servers_num].hostaddrtype = msg->addrtype;
 				dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
 				++dev->new_servers_num;
 				result = 0;
-    		}
-    		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-    	}
-    	break;
+			}
+			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+		}
+		break;
 
-    case BLKFLSBUF:
-        break;
+	case BLKFLSBUF:
+		break;
 
-    default:
-        result = -EIO;
-        break;
-    }
+	default:
+		result = -EIO;
+		break;
+	}
 
 cleanup_return:
-    if (msg) kfree(msg);
-    if (imgname) kfree(imgname);
-    return result;
+	if (msg) kfree(msg);
+	if (imgname) kfree(imgname);
+	return result;
 }
 
 void dnbd3_blk_request(struct request_queue *q)
 {
-    struct request *req;
-    dnbd3_device_t *dev;
+	struct request *req;
+	dnbd3_device_t *dev;
 
-    while ((req = blk_fetch_request(q)) != NULL)
-    {
-        dev = req->rq_disk->private_data;
+	while ((req = blk_fetch_request(q)) != NULL)
+	{
+		dev = req->rq_disk->private_data;
 
-        if (dev->imgname == NULL)
-        {
-        	__blk_end_request_all(req, -EIO);
-        	continue;
-        }
+		if (dev->imgname == NULL)
+		{
+			__blk_end_request_all(req, -EIO);
+			continue;
+		}
 
-        if (req->cmd_type != REQ_TYPE_FS)
-        {
-            __blk_end_request_all(req, 0);
-            continue;
-        }
+		if (req->cmd_type != REQ_TYPE_FS)
+		{
+			__blk_end_request_all(req, 0);
+			continue;
+		}
 
-        if (dev->panic_count >= PROBE_COUNT_TIMEOUT)
-        {
-        	__blk_end_request_all(req, -EIO);
-        	continue;
-        }
+		if (dev->panic_count >= PROBE_COUNT_TIMEOUT)
+		{
+			__blk_end_request_all(req, -EIO);
+			continue;
+		}
 
-        if (rq_data_dir(req) != READ)
-        {
-        	__blk_end_request_all(req, -EACCES);
-        	continue;
-        }
+		if (rq_data_dir(req) != READ)
+		{
+			__blk_end_request_all(req, -EACCES);
+			continue;
+		}
 
 		list_add_tail(&req->queuelist, &dev->request_queue_send);
 		spin_unlock_irq(q->queue_lock);
 		wake_up(&dev->process_queue_send);
 		spin_lock_irq(q->queue_lock);
-    }
+	}
 }
 
 void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)

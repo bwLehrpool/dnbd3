@@ -39,7 +39,7 @@ ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
 
 ssize_t show_cur_server_rtt(char *buf, dnbd3_device_t *dev)
 {
-    return MIN(snprintf(buf, PAGE_SIZE, "%llu\n", (unsigned long long)dev->cur_rtt), PAGE_SIZE);
+	return MIN(snprintf(buf, PAGE_SIZE, "%llu\n", (unsigned long long)dev->cur_rtt), PAGE_SIZE);
 }
 
 ssize_t show_alt_server_num(char *buf, dnbd3_device_t *dev)
@@ -49,7 +49,7 @@ ssize_t show_alt_server_num(char *buf, dnbd3_device_t *dev)
 	{
 		if (dev->alt_servers[i].hostaddrtype) ++num;
 	}
-    return MIN(snprintf(buf, PAGE_SIZE, "%d\n", num), PAGE_SIZE);
+	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", num), PAGE_SIZE);
 }
 
 ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
@@ -59,18 +59,18 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 	{
 		if (dev->alt_servers[i].hostaddrtype == AF_INET)
 			ret = MIN(snprintf(buf, size, "%pI4,%d,%llu,%d\n",
-					dev->alt_servers[i].hostaddr,
-					(int)ntohs(dev->alt_servers[i].port),
-					(unsigned long long)((dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3]) / 4),
-					(int)dev->alt_servers[i].failures)
-				, size);
+			                   dev->alt_servers[i].hostaddr,
+			                   (int)ntohs(dev->alt_servers[i].port),
+			                   (unsigned long long)((dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3]) / 4),
+			                   (int)dev->alt_servers[i].failures)
+			          , size);
 		else if (dev->alt_servers[i].hostaddrtype == AF_INET6)
 			ret = MIN(snprintf(buf, size, "%pI6,%d,%llu,%d\n",
-					dev->alt_servers[i].hostaddr,
-					(int)ntohs(dev->alt_servers[i].port),
-					(unsigned long long)((dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3]) / 4),
-					(int)dev->alt_servers[i].failures)
-				, size);
+			                   dev->alt_servers[i].hostaddr,
+			                   (int)ntohs(dev->alt_servers[i].port),
+			                   (unsigned long long)((dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3]) / 4),
+			                   (int)dev->alt_servers[i].failures)
+			          , size);
 		else
 			continue;
 		size -= ret;
@@ -81,122 +81,122 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 			break;
 		}
 	}
-    return PAGE_SIZE - size;
+	return PAGE_SIZE - size;
 }
 
 ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
 {
 	if (dev->imgname == NULL) return sprintf(buf, "(null)");
-    return MIN(snprintf(buf, PAGE_SIZE, "%s\n", dev->imgname), PAGE_SIZE);
+	return MIN(snprintf(buf, PAGE_SIZE, "%s\n", dev->imgname), PAGE_SIZE);
 }
 
 ssize_t show_rid(char *buf, dnbd3_device_t *dev)
 {
-    return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->rid), PAGE_SIZE);
+	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->rid), PAGE_SIZE);
 }
 
 ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
 {
-    return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->update_available), PAGE_SIZE);
+	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->update_available), PAGE_SIZE);
 }
 
 device_attr_t cur_server_addr =
 {
-    .attr = {.name = "cur_server_addr", .mode = 0444 },
-    .show   = show_cur_server_addr,
-    .store  = NULL,
+	.attr = {.name = "cur_server_addr", .mode = 0444 },
+	.show   = show_cur_server_addr,
+	.store  = NULL,
 };
 
 device_attr_t cur_server_rtt =
 {
-    .attr = {.name = "cur_server_rtt", .mode = 0444 },
-    .show   = show_cur_server_rtt,
-    .store  = NULL,
+	.attr = {.name = "cur_server_rtt", .mode = 0444 },
+	.show   = show_cur_server_rtt,
+	.store  = NULL,
 };
 
 device_attr_t alt_server_num =
 {
-    .attr = {.name = "alt_server_num", .mode = 0444 },
-    .show   = show_alt_server_num,
-    .store  = NULL,
+	.attr = {.name = "alt_server_num", .mode = 0444 },
+	.show   = show_alt_server_num,
+	.store  = NULL,
 };
 
 device_attr_t alt_servers =
 {
-    .attr = {.name = "alt_servers", .mode = 0444 },
-    .show   = show_alt_servers,
-    .store  = NULL,
+	.attr = {.name = "alt_servers", .mode = 0444 },
+	.show   = show_alt_servers,
+	.store  = NULL,
 };
 
 device_attr_t image_name =
 {
-    .attr = {.name = "image_name", .mode = 0444 },
-    .show   = show_image_name,
-    .store  = NULL,
+	.attr = {.name = "image_name", .mode = 0444 },
+	.show   = show_image_name,
+	.store  = NULL,
 };
 
 device_attr_t rid =
 {
-    .attr = {.name = "rid", .mode = 0444 },
-    .show   = show_rid,
-    .store  = NULL,
+	.attr = {.name = "rid", .mode = 0444 },
+	.show   = show_rid,
+	.store  = NULL,
 };
 
 device_attr_t update_available =
 {
-    .attr = {.name = "update_available", .mode = 0444 },
-    .show   = show_update_available,
-    .store  = NULL,
+	.attr = {.name = "update_available", .mode = 0444 },
+	.show   = show_update_available,
+	.store  = NULL,
 };
 
 ssize_t device_show(struct kobject *kobj, struct attribute *attr, char *buf)
 {
-    device_attr_t *device_attr = container_of(attr, device_attr_t, attr);
-    dnbd3_device_t *dev = container_of(kobj, dnbd3_device_t, kobj);
-    return device_attr->show(buf, dev);
+	device_attr_t *device_attr = container_of(attr, device_attr_t, attr);
+	dnbd3_device_t *dev = container_of(kobj, dnbd3_device_t, kobj);
+	return device_attr->show(buf, dev);
 }
 
 struct attribute *device_attrs[] =
 {
-    &cur_server_addr.attr,
-    &cur_server_rtt.attr,
-    &alt_server_num.attr,
-    &alt_servers.attr,
-    &image_name.attr,
-    &rid.attr,
-    &update_available.attr,
-    NULL,
+	&cur_server_addr.attr,
+	&cur_server_rtt.attr,
+	&alt_server_num.attr,
+	&alt_servers.attr,
+	&image_name.attr,
+	&rid.attr,
+	&update_available.attr,
+	NULL,
 };
 
 
 struct sysfs_ops device_ops =
 {
-    .show = device_show,
+	.show = device_show,
 };
 
 void release(struct kobject *kobj)
 {
-    kobj->state_initialized = 0;
+	kobj->state_initialized = 0;
 }
 
 struct kobj_type device_ktype =
 {
-    .default_attrs = device_attrs,
-    .sysfs_ops = &device_ops,
-    .release = release,
+	.default_attrs = device_attrs,
+	.sysfs_ops = &device_ops,
+	.release = release,
 };
 
 
 void dnbd3_sysfs_init(dnbd3_device_t *dev)
 {
-    struct kobject *kobj = &dev->kobj;
-    struct kobj_type *ktype = &device_ktype;
-    struct kobject *parent = &disk_to_dev(dev->disk)->kobj;
+	struct kobject *kobj = &dev->kobj;
+	struct kobj_type *ktype = &device_ktype;
+	struct kobject *parent = &disk_to_dev(dev->disk)->kobj;
 
-    kobject_init_and_add(kobj, ktype, parent, "net");
+	kobject_init_and_add(kobj, ktype, parent, "net");
 }
 
 void dnbd3_sysfs_exit(dnbd3_device_t *dev)
 {
-    kobject_put(&dev->kobj);
+	kobject_put(&dev->kobj);
 }

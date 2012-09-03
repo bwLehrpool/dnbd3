@@ -34,6 +34,6 @@ void memlogf(char *text, ...);
  * Returns NULL on error
  * maxlines - Limit number of lines returned, 0 = everything
  */
-char * fetchlog(int maxlines);
+char *fetchlog(int maxlines);
 
 #endif /* MEMLOG_H_ */

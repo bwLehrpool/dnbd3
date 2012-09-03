@@ -32,13 +32,13 @@
 #include "memlog.h"
 
 // Keep parsed config file in memory so it doesn't need to be parsed again every time it's modified
-static GKeyFile* _config_handle = NULL;
+static GKeyFile *_config_handle = NULL;
 
 static char parse_address(char *string, uint8_t *af, uint8_t *addr, uint16_t *port);
 static char is_valid_namespace(char *namespace);
 static char is_valid_imagename(char *namespace);
 static void strtolower(char *string);
-static dnbd3_image_t* prepare_image(char *image_name, int rid, char *image_file, char *cache_file, gchar **servers, gsize num_servers);
+static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file, char *cache_file, gchar **servers, gsize num_servers);
 static int save_config();
 //static char* get_local_image_name(char *global_name);
 
@@ -120,8 +120,8 @@ static char is_valid_namespace(char *namespace)
 	while (*namespace)
 	{
 		if (*namespace != '/' && *namespace != '-' && (*namespace < 'a' || *namespace > 'z')
-		   && (*namespace < 'A' || *namespace > 'Z')
-		   && (*namespace < '0' || *namespace > '9'))
+		        && (*namespace < 'A' || *namespace > 'Z')
+		        && (*namespace < '0' || *namespace > '9'))
 			return 0;
 		++namespace;
 	}
@@ -135,11 +135,12 @@ static char is_valid_imagename(char *namespace)
 	if (*namespace == '\0' || *namespace == ' ')
 		return 0; // Invalid: Length = 0 or starting with a space
 	while (*namespace)
-	{	// Check for invalid chars
+	{
+		// Check for invalid chars
 		if (*namespace != '.' && *namespace != '-' && *namespace != ' '
-			&& *namespace != '(' && *namespace != ')'
-		   && (*namespace < 'a' || *namespace > 'z') && (*namespace < 'A' || *namespace > 'Z')
-		   && (*namespace < '0' || *namespace > '9'))
+		        && *namespace != '(' && *namespace != ')'
+		        && (*namespace < 'a' || *namespace > 'z') && (*namespace < 'A' || *namespace > 'Z')
+		        && (*namespace < '0' || *namespace > '9'))
 			return 0;
 		++namespace;
 	}
@@ -148,11 +149,11 @@ static char is_valid_imagename(char *namespace)
 	return 1;
 }
 
-static inline int is_same_server(const dnbd3_trusted_server_t * const a, const dnbd3_trusted_server_t * const b)
+static inline int is_same_server(const dnbd3_trusted_server_t *const a, const dnbd3_trusted_server_t *const b)
 {
 	return (a->hostaddrtype == b->hostaddrtype)
-		&& (a->port == b->port)
-		&& (0 == memcmp(a->hostaddr, b->hostaddr, (a->hostaddrtype == AF_INET ? 4 : 16)));
+	       && (a->port == b->port)
+	       && (0 == memcmp(a->hostaddr, b->hostaddr, (a->hostaddrtype == AF_INET ? 4 : 16)));
 }
 
 static void strtolower(char *string)
@@ -220,6 +221,7 @@ void dnbd3_load_config()
 				if (strcmp(keys[j], "address") == 0)
 					continue;
 				char *flags = g_key_file_get_string(_config_handle, groups[i], keys[j], NULL);
+				g_key_file_remove_key(_config_handle, groups[i], keys[j], NULL);
 				dnbd3_add_trusted_namespace(server, keys[j], flags);
 				g_free(flags);
 			}
@@ -290,19 +292,19 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	}
 
 	// Adding image was successful, write config file
-	 g_key_file_set_integer(_config_handle, image->config_group, "rid", image->rid);
-	 g_key_file_set_string(_config_handle, image->config_group, "file", image->file);
-	 //g_key_file_set_string(_config_handle, image->name, "servers", image->serverss); // TODO: Save servers as string
-	 g_key_file_set_string(_config_handle, image->config_group, "cache", image->cache_file);
+	g_key_file_set_integer(_config_handle, image->config_group, "rid", image->rid);
+	g_key_file_set_string(_config_handle, image->config_group, "file", image->file);
+	//g_key_file_set_string(_config_handle, image->name, "servers", image->serverss); // TODO: Save servers as string
+	g_key_file_set_string(_config_handle, image->config_group, "cache", image->cache_file);
 
-	 pthread_spin_unlock(&_spinlock);
+	pthread_spin_unlock(&_spinlock);
 
-	 const int ret = save_config();
-	 if (ret == ERROR_OK)
-		 memlogf("[INFO] Added new image '%s' (rid %d)", newimage->config_group, newimage->rid);
-	 else
-		 memlogf("[INFO] Added new image '%s' (rid %d), but config file could not be written (%s)", newimage->config_group, newimage->rid, _config_file_name);
-	 return ret;
+	const int ret = save_config();
+	if (ret == ERROR_OK)
+		memlogf("[INFO] Added new image '%s' (rid %d)", newimage->config_group, newimage->rid);
+	else
+		memlogf("[INFO] Added new image '%s' (rid %d), but config file could not be written (%s)", newimage->config_group, newimage->rid, _config_file_name);
+	return ret;
 }
 
 int dnbd3_del_image(dnbd3_image_t *image)
@@ -326,41 +328,41 @@ int dnbd3_del_image(dnbd3_image_t *image)
 	dnbd3_exec_delete(FALSE);
 	existing_image = NULL;
 
-	 const int ret = save_config();
-	 if (ret == ERROR_OK)
-		 memlogf("[INFO] Marked for deletion: '%s' (rid %d)", image->config_group, image->rid);
-	 else
-		 memlogf("[WARNING] Marked for deletion: '%s' (rid %d), but config file could not be written (%s)", image->config_group, image->rid, _config_file_name);
-	 return ret;
+	const int ret = save_config();
+	if (ret == ERROR_OK)
+		memlogf("[INFO] Marked for deletion: '%s' (rid %d)", image->config_group, image->rid);
+	else
+		memlogf("[WARNING] Marked for deletion: '%s' (rid %d), but config file could not be written (%s)", image->config_group, image->rid, _config_file_name);
+	return ret;
 }
 
 static int save_config()
 {
 	pthread_spin_lock(&_spinlock);
-	 char* data = (char*)g_key_file_to_data(_config_handle, NULL, NULL);
-	 if (data == NULL)
-	 {
-		 pthread_spin_unlock(&_spinlock);
-		 memlogf("[ERROR] g_key_file_to_data() failed");
-		 return ERROR_UNSPECIFIED_ERROR;
-	 }
+	char *data = (char *)g_key_file_to_data(_config_handle, NULL, NULL);
+	if (data == NULL)
+	{
+		pthread_spin_unlock(&_spinlock);
+		memlogf("[ERROR] g_key_file_to_data() failed");
+		return ERROR_UNSPECIFIED_ERROR;
+	}
 
-	 FILE *f = fopen(_config_file_name, "w");
-	 if (f < 0)
-	 {
-		 pthread_spin_unlock(&_spinlock);
-		 g_free(data);
-		 return ERROR_CONFIG_FILE_PERMISSIONS;
-	 }
-	 fputs("# Do not edit this file while dnbd3-server is running\n", f);
-	 fputs(data, f);
-	 fclose(f);
-	 pthread_spin_unlock(&_spinlock);
-	 g_free(data);
-	 return 0;
+	FILE *f = fopen(_config_file_name, "w");
+	if (f < 0)
+	{
+		pthread_spin_unlock(&_spinlock);
+		g_free(data);
+		return ERROR_CONFIG_FILE_PERMISSIONS;
+	}
+	fputs("# Do not edit this file while dnbd3-server is running\n", f);
+	fputs(data, f);
+	fclose(f);
+	pthread_spin_unlock(&_spinlock);
+	g_free(data);
+	return 0;
 }
 
-dnbd3_image_t* dnbd3_get_image(char *name_orig, int rid, const char do_lock)
+dnbd3_image_t *dnbd3_get_image(char *name_orig, int rid, const char do_lock)
 {
 	dnbd3_image_t *result = NULL, *image;
 	GSList *iterator;
@@ -450,7 +452,8 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 	}
 
 	if (strchr(image_name, '/') == NULL)
-	{	// Local image, build global name
+	{
+		// Local image, build global name
 		image->low_name = calloc(strlen(_local_namespace) + strlen(image_name) + 2, sizeof(char));
 		sprintf(image->low_name, "%s/%s", _local_namespace, image_name);
 	}
@@ -494,14 +497,14 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		if (size <= 0)
 		{
 			memlogf("[ERROR] File '%s' of image '%s' has size '%lld'. Image ignored.",
-				image->file, image_name, (long long)size);
+			        image->file, image_name, (long long)size);
 			goto error;
 		}
 		image->filesize = (uint64_t)size;
 		if (image->filesize & 4095)
 		{
 			memlogf("[WARNING] Size of image '%s' is not a multiple of 4096. Last incomplete block will be ignored!",
-				image->file);
+			        image->file);
 			image->filesize &= ~(uint64_t)4095;
 		}
 		close(fd);
@@ -513,7 +516,7 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		for (k = 0, j = 0; j < MIN(num_servers, NUMBER_SERVERS); ++j)
 		{
 			if (parse_address(servers[j], &(image->servers[k].hostaddrtype), image->servers[k].hostaddr,
-			   &(image->servers[k].port)))
+			                  &(image->servers[k].port)))
 			{
 				++k;
 				continue;
@@ -533,7 +536,8 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 			close(fd);
 		}
 		if (image->filesize & 4095)
-		{	// Cache files should always be truncated to 4kib boundaries already
+		{
+			// Cache files should always be truncated to 4kib boundaries already
 			memlogf("[WARNING] Size of cache file '%s' is not a multiple of 4096. Something's fishy!", image->cache_file);
 			image->filesize = 0;
 		}
@@ -649,7 +653,8 @@ void dnbd3_exec_delete(int save_if_changed)
 			{
 				const dnbd3_client_t *client = client_iterator->data;
 				if (client->image == image)
-				{	// Yep, still in use, keep it
+				{
+					// Yep, still in use, keep it
 					delete_now = FALSE;
 					break;
 				}
