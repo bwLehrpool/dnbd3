@@ -93,8 +93,8 @@ int main(int argc, char *argv[])
 	memset(&msg, 0, sizeof(dnbd3_ioctl_t));
 	msg.len = (uint16_t)sizeof(dnbd3_ioctl_t);
 	msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
-	msg.port = htons(PORT);
-	msg.addrtype = 0;
+	msg.host.port = htons(PORT);
+	msg.host.type = 0;
 	msg.imgname = NULL;
 	msg.is_server = FALSE;
 
@@ -125,8 +125,8 @@ int main(int argc, char *argv[])
 			_config_file_name = strdup(optarg);
 			break;
 		case 'h':
-			dnbd3_get_ip(optarg, msg.addr, &msg.addrtype);
-			printf("Host set to %s (type %d)\n", inet_ntoa(*(struct in_addr *)msg.addr), (int)msg.addrtype);
+			dnbd3_get_ip(optarg, msg.host.addr, &msg.host.type);
+			printf("Host set to %s (type %d)\n", inet_ntoa(*(struct in_addr *)msg.host.addr), (int)msg.host.type);
 			break;
 		case 'i':
 			msg.imgname = strdup(optarg);
@@ -147,7 +147,7 @@ int main(int argc, char *argv[])
 			close_dev = 1;
 			break;
 		case 's':
-			dnbd3_get_ip(optarg, msg.addr, &msg.addrtype);
+			dnbd3_get_ip(optarg, msg.host.addr, &msg.host.type);
 			switch_host = 1;
 			break;
 		case 'H':
@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
 	}
 
 	// close device
-	if (close_dev && msg.addrtype == 0 && dev && (msg.imgname == NULL))
+	if (close_dev && msg.host.type == 0 && dev && (msg.imgname == NULL))
 	{
 		fd = open(dev, O_WRONLY);
 		printf("INFO: Closing device %s\n", dev);
@@ -181,7 +181,7 @@ int main(int argc, char *argv[])
 	}
 
 	// switch host
-	if (switch_host && msg.addrtype != 0 && dev && (msg.imgname == NULL))
+	if (switch_host && msg.host.type != 0 && dev && (msg.imgname == NULL))
 	{
 		fd = open(dev, O_WRONLY);
 		printf("INFO: Switching device %s to %s\n", dev, "<fixme>");
@@ -198,7 +198,7 @@ int main(int argc, char *argv[])
 	}
 
 	// connect
-	if (msg.addrtype != 0 && dev && (msg.imgname != NULL))
+	if (msg.host.type != 0 && dev && (msg.imgname != NULL))
 	{
 		msg.imgnamelen = (uint16_t)strlen(msg.imgname);
 		fd = open(dev, O_WRONLY);
@@ -229,7 +229,7 @@ int main(int argc, char *argv[])
 
 		for (i = 0; i < j; i++)
 		{
-			dnbd3_get_ip(g_key_file_get_string(gkf, groups[i], "server", NULL), msg.addr, &msg.addrtype);
+			dnbd3_get_ip(g_key_file_get_string(gkf, groups[i], "server", NULL), msg.host.addr, &msg.host.type);
 			msg.imgname = g_key_file_get_string(gkf, groups[i], "name", NULL);
 			msg.rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
 			dev = g_key_file_get_string(gkf, groups[i], "device", NULL);

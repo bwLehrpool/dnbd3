@@ -60,12 +60,19 @@ static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 #error "Unknown Endianness"
 #endif
 
+#pragma pack(1)
+typedef struct
+{
+	uint8_t addr[16];	   // 16byte (network representation, so it can be directly passed to socket functions)
+	uint16_t port;		   // 2byte (network representation, so it can be directly passed to socket functions)
+	uint8_t type;        // 1byte (ip version. AF_INET or AF_INET6. 0 means this struct is empty and should be ignored)
+} dnbd3_host_t;
+#pragma pack(0)
+
 typedef struct
 {
 	uint16_t len;
-	uint8_t addrtype;
-	uint8_t addr[16];	   // network representation
-	uint16_t port;		   // network representation
+	dnbd3_host_t host;
 	uint16_t imgnamelen;
 	char *imgname;
 	int rid;
@@ -106,10 +113,8 @@ typedef struct
 #pragma pack(1)
 typedef struct
 {
-	uint8_t hostaddr[16];	// 16byte (network representation, so it can be directly passed to socket functions)
-	uint16_t port; 			// 2byte (network representation, so it can be directly passed to socket functions)
-	uint8_t hostaddrtype; 	// 1byte (ip version. AF_INET or AF_INET6. 0 means this struct is empty and should be ignored)
-	uint8_t failures;		// 1byte (number of times server has been consecutively unreachable)
+	dnbd3_host_t host;
+	uint8_t  failures;		// 1byte (number of times server has been consecutively unreachable)
 } dnbd3_server_entry_t;
 #pragma pack(0)
 

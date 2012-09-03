@@ -22,5 +22,17 @@ xmlChar *getTextFromPath(xmlDocPtr doc, char *xpath);
 	xmlXPathFreeContext(_makro_xpathCtx); \
 	} while(0)
 
+#define NUM_POINTERS_IN_LIST 20
+#define NEW_POINTERLIST \
+	void *_makro_ptrlist[NUM_POINTERS_IN_LIST]; \
+	int _makro_usedcount = 0
+
+#define FREE_POINTERLIST do { \
+	int _makro_i_; \
+	for (_makro_i_ = 0; _makro_i_ < _makro_usedcount; ++_makro_i_) { \
+		xmlFree(_makro_ptrlist[_makro_i_]); \
+	} } while(0)
+
+#define XML_GETPROP(_node, _name) (xmlChar*)(_makro_ptrlist[(_makro_usedcount >= NUM_POINTERS_IN_LIST ? 0 : _makro_usedcount++)] = xmlGetNoNsProp(_node, BAD_CAST _name))
 
 #endif

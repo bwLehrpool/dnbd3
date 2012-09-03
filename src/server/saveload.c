@@ -24,147 +24,20 @@
 #include <pthread.h>
 #include <string.h>
 #include <glib.h>
+#include <math.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
 
 #include "server.h"
-#include "utils.h"
+#include "saveload.h"
 #include "memlog.h"
+#include "helper.h"
 
 // Keep parsed config file in memory so it doesn't need to be parsed again every time it's modified
 static GKeyFile *_config_handle = NULL;
 
-static char parse_address(char *string, uint8_t *af, uint8_t *addr, uint16_t *port);
-static char is_valid_namespace(char *namespace);
-static char is_valid_imagename(char *namespace);
-static void strtolower(char *string);
-static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file, char *cache_file, gchar **servers, gsize num_servers);
-static int save_config();
+static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file, char *cache_file);
 //static char* get_local_image_name(char *global_name);
 
-/**
- * Parse IPv4 or IPv6 address in string representation to a suitable format usable by the BSD socket library
- * @string eg. "1.2.3.4" or "2a01::10:5", optially with port appended, eg "1.2.3.4:6666" or "[2a01::10:5]:6666"
- * @af will contain either AF_INET or AF_INET6
- * @addr will contain the address in network representation
- * @port will contain the port in network representation, defaulting to #define PORT if none was given
- * returns 1 on success, 0 in failure. contents of af, addr and port are undefined in the latter case
- */
-static char parse_address(char *string, uint8_t *af, uint8_t *addr, uint16_t *port)
-{
-	struct in_addr v4;
-	struct in6_addr v6;
-
-	// Try IPv4 without port
-	if (1 == inet_pton(AF_INET, string, &v4))
-	{
-		*af = AF_INET;
-		memcpy(addr, &v4, 4);
-		*port = htons(PORT);
-		return 1;
-	}
-	// Try IPv6 without port
-	if (1 == inet_pton(AF_INET6, string, &v6))
-	{
-		*af = AF_INET6;
-		memcpy(addr, &v6, 16);
-		*port = htons(PORT);
-		return 1;
-	}
-
-	// Scan for port
-	char *portpos = NULL, *ptr = string;
-	while (*ptr)
-	{
-		if (*ptr == ':')
-			portpos = ptr;
-		++ptr;
-	}
-	if (portpos == NULL)
-		return 0; // No port in string
-	// Consider IP being surrounded by [ ]
-	if (*string == '[' && *(portpos - 1) == ']')
-	{
-		++string;
-		*(portpos - 1) = '\0';
-	}
-	*portpos++ = '\0';
-	int p = atoi(portpos);
-	if (p < 1 || p > 65535)
-		return 0; // Invalid port
-	*port = htons((uint16_t)p);
-
-	// Try IPv4 with port
-	if (1 == inet_pton(AF_INET, string, &v4))
-	{
-		*af = AF_INET;
-		memcpy(addr, &v4, 4);
-		return 1;
-	}
-	// Try IPv6 with port
-	if (1 == inet_pton(AF_INET6, string, &v6))
-	{
-		*af = AF_INET6;
-		memcpy(addr, &v6, 16);
-		return 1;
-	}
-
-	// FAIL
-	return 0;
-}
-
-static char is_valid_namespace(char *namespace)
-{
-	if (*namespace == '\0' || *namespace == '/')
-		return 0; // Invalid: Length = 0 or starting with a slash
-	while (*namespace)
-	{
-		if (*namespace != '/' && *namespace != '-' && (*namespace < 'a' || *namespace > 'z')
-		        && (*namespace < 'A' || *namespace > 'Z')
-		        && (*namespace < '0' || *namespace > '9'))
-			return 0;
-		++namespace;
-	}
-	if (*(namespace - 1) == '/')
-		return 0; // Invalid: Ends in a slash
-	return 1;
-}
-
-static char is_valid_imagename(char *namespace)
-{
-	if (*namespace == '\0' || *namespace == ' ')
-		return 0; // Invalid: Length = 0 or starting with a space
-	while (*namespace)
-	{
-		// Check for invalid chars
-		if (*namespace != '.' && *namespace != '-' && *namespace != ' '
-		        && *namespace != '(' && *namespace != ')'
-		        && (*namespace < 'a' || *namespace > 'z') && (*namespace < 'A' || *namespace > 'Z')
-		        && (*namespace < '0' || *namespace > '9'))
-			return 0;
-		++namespace;
-	}
-	if (*(namespace - 1) == ' ')
-		return 0; // Invalid: Ends in a space
-	return 1;
-}
-
-static inline int is_same_server(const dnbd3_trusted_server_t *const a, const dnbd3_trusted_server_t *const b)
-{
-	return (a->hostaddrtype == b->hostaddrtype)
-	       && (a->port == b->port)
-	       && (0 == memcmp(a->hostaddr, b->hostaddr, (a->hostaddrtype == AF_INET ? 4 : 16)));
-}
-
-static void strtolower(char *string)
-{
-	while (*string)
-	{
-		if (*string >= 'A' && *string <= 'Z')
-			*string += 32;
-		++string;
-	}
-}
 
 void dnbd3_load_config()
 {
@@ -191,6 +64,8 @@ void dnbd3_load_config()
 		_local_namespace = NULL;
 	}
 
+	srand(time(NULL));
+
 	_ipc_password = g_key_file_get_string(_config_handle, "settings", "password", NULL);
 
 	gchar **groups = NULL;
@@ -209,11 +84,10 @@ void dnbd3_load_config()
 			gchar *addr = g_key_file_get_string(_config_handle, groups[i], "address", NULL);
 			if (addr == NULL)
 				continue;
-			dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(addr, TRUE);
+			dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(addr, TRUE, groups[i]+6);
 			g_free(addr);
 			if (server == NULL)
 				continue;
-			server->comment = strdup(groups[i]+6);
 			gsize key_count;
 			gchar **keys = g_key_file_get_keys(_config_handle, groups[i], &key_count, NULL);
 			for (j = 0; j < key_count; ++j)
@@ -248,10 +122,8 @@ void dnbd3_load_config()
 
 		char *image_file = g_key_file_get_string(_config_handle, groups[i], "file", NULL);
 		char *cache_file = g_key_file_get_string(_config_handle, groups[i], "cache", NULL);
-		gsize num_servers;
-		gchar **servers = g_key_file_get_string_list(_config_handle, groups[i], "servers", &num_servers, NULL);
 
-		dnbd3_image_t *image = prepare_image(groups[i], rid, image_file, cache_file, servers, num_servers);
+		dnbd3_image_t *image = prepare_image(groups[i], rid, image_file, cache_file);
 		if (image)
 		{
 			_dnbd3_images = g_slist_prepend(_dnbd3_images, image);
@@ -259,7 +131,6 @@ void dnbd3_load_config()
 
 		g_free(image_file);
 		g_free(cache_file);
-		g_strfreev(servers);
 	}
 
 	g_strfreev(groups);
@@ -280,7 +151,7 @@ int dnbd3_add_image(dnbd3_image_t *image)
 			image->rid = 1;
 	}
 
-	dnbd3_image_t *newimage = prepare_image(image->config_group, image->rid, image->file, image->cache_file, NULL, 0);
+	dnbd3_image_t *newimage = prepare_image(image->config_group, image->rid, image->file, image->cache_file);
 	if (newimage)
 	{
 		_dnbd3_images = g_slist_prepend(_dnbd3_images, image);
@@ -299,7 +170,7 @@ int dnbd3_add_image(dnbd3_image_t *image)
 
 	pthread_spin_unlock(&_spinlock);
 
-	const int ret = save_config();
+	const int ret = dnbd3_save_config();
 	if (ret == ERROR_OK)
 		memlogf("[INFO] Added new image '%s' (rid %d)", newimage->config_group, newimage->rid);
 	else
@@ -328,7 +199,7 @@ int dnbd3_del_image(dnbd3_image_t *image)
 	dnbd3_exec_delete(FALSE);
 	existing_image = NULL;
 
-	const int ret = save_config();
+	const int ret = dnbd3_save_config();
 	if (ret == ERROR_OK)
 		memlogf("[INFO] Marked for deletion: '%s' (rid %d)", image->config_group, image->rid);
 	else
@@ -336,7 +207,7 @@ int dnbd3_del_image(dnbd3_image_t *image)
 	return ret;
 }
 
-static int save_config()
+int dnbd3_save_config()
 {
 	pthread_spin_lock(&_spinlock);
 	char *data = (char *)g_key_file_to_data(_config_handle, NULL, NULL);
@@ -408,12 +279,12 @@ dnbd3_image_t *dnbd3_get_image(char *name_orig, int rid, const char do_lock)
 
 void dnbd3_handle_sigpipe(int signum)
 {
-	memlogf("ERROR: SIGPIPE received!\n");
+	memlogf("ERROR: SIGPIPE received (%s)", strsignal(signum));
 }
 
 void dnbd3_handle_sigterm(int signum)
 {
-	memlogf("INFO: SIGTERM or SIGINT received!\n");
+	memlogf("INFO: SIGTERM or SIGINT received (%s)", strsignal(signum));
 	dnbd3_cleanup();
 }
 
@@ -423,9 +294,9 @@ void dnbd3_handle_sigterm(int signum)
  * Note: This function calls dnbd3_get_image without locking, so make sure you lock
  * before calling this function while the server is active.
  */
-static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file, char *cache_file, gchar **servers, gsize num_servers)
+static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file, char *cache_file)
 {
-	int j, k;
+	int j;
 	if (image_name == NULL)
 	{
 		memlogf("[ERROR] Null Image-Name");
@@ -510,19 +381,6 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		close(fd);
 		image->working = 1;
 	}
-
-	// A list of servers that are known to also host or relay this image
-	if (servers)
-		for (k = 0, j = 0; j < MIN(num_servers, NUMBER_SERVERS); ++j)
-		{
-			if (parse_address(servers[j], &(image->servers[k].hostaddrtype), image->servers[k].hostaddr,
-			                  &(image->servers[k].port)))
-			{
-				++k;
-				continue;
-			}
-			image->servers[k].hostaddrtype = 0;
-		}
 
 	if (image->cache_file)
 	{
@@ -637,7 +495,7 @@ void dnbd3_exec_delete(int save_if_changed)
 					continue;
 				// Kill client's connection
 				*ipstr = '\0';
-				inet_ntop(client->addrtype, client->ipaddr, ipstr, 100);
+				host_to_string(&client->host, ipstr, 100);
 				memlogf("[INFO] delete_hard of %s reached; dropping client %s", image->config_group, ipstr);
 				const int fd = client->sock;
 				client->sock = -1;
@@ -645,7 +503,7 @@ void dnbd3_exec_delete(int save_if_changed)
 				delete_now = FALSE; // Wait for all clients being actually dropped; deletion will happen on next dnbd3_exec_delete()
 			}
 		} // END delete_hard image
-		else if (image->delete_soft != 0 && image->delete_soft < now)
+		else if (image->delete_soft != 0 && image->delete_soft < now && image->atime + 3600 < now)
 		{
 			// Image should be soft-deleted
 			// Check if it is still in use
@@ -683,7 +541,7 @@ void dnbd3_exec_delete(int save_if_changed)
 	pthread_spin_lock(&_spinlock);
 
 	if (changed && save_if_changed)
-		save_config();
+		dnbd3_save_config();
 }
 
 /**
@@ -693,11 +551,11 @@ void dnbd3_exec_delete(int save_if_changed)
  * Returns NULL otherwise, or if the address could not be parsed
  * !! Lock before calling this function !!
  */
-dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_not_found)
+dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_not_found, char *comment)
 {
 	dnbd3_trusted_server_t server;
 	memset(&server, 0, sizeof(server));
-	if (!parse_address(address, &server.hostaddrtype, server.hostaddr, &server.port))
+	if (!parse_address(address, &server.host))
 	{
 		memlogf("[WARNING] Could not parse address '%s' of trusted server", address);
 		return NULL;
@@ -711,6 +569,22 @@ dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_n
 	}
 	if (!create_if_not_found)
 		return NULL;
+	char *groupname = NULL;
+	if (comment == NULL)
+	{
+		groupname = malloc(50);
+		snprintf(groupname, 50, "trust:%x%x", rand(), (int)clock());
+	}
+	else
+	{
+		const size_t len = strlen(comment) + 8;
+		groupname = malloc(len);
+		snprintf(groupname, len, "trust:%s", comment);
+	}
+	char addrbuffer[50];
+	host_to_string(&server.host, addrbuffer, 50);
+	g_key_file_set_string(_config_handle, groupname, "address", addrbuffer);
+	free(groupname);
 	dnbd3_trusted_server_t *copy = malloc(sizeof(server));
 	memcpy(copy, &server, sizeof(*copy));
 	_trusted_servers = g_slist_prepend(_trusted_servers, copy);

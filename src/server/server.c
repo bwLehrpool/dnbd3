@@ -31,7 +31,7 @@
 #include "../version.h"
 
 #include "server.h"
-#include "utils.h"
+#include "saveload.h"
 #include "net.h"
 #include "ipc.h"
 #include "memlog.h"
@@ -245,10 +245,11 @@ int main(int argc, char *argv[])
 			continue;
 		}
 		// TODO: Extend this if you ever want to add IPv6 (something like:)
-		// dnbd3_client->addrtype = AF_INET6;
-		// memcpy(dnbd3_client->ipaddr, &(client.sin6_addr), 16);
-		dnbd3_client->addrtype = AF_INET;
-		memcpy(dnbd3_client->ipaddr, &(client.sin_addr), 4);
+		// dnbd3_client->host.type = AF_INET6;
+		// memcpy(dnbd3_client->host.addr, &(client.sin6_addr), 16);
+		dnbd3_client->host.type = AF_INET;
+		memcpy(dnbd3_client->host.addr, &(client.sin_addr), 4);
+		dnbd3_client->host.port = client.sin_port;
 		dnbd3_client->sock = fd;
 		dnbd3_client->image = NULL;
 

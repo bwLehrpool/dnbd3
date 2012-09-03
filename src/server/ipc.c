@@ -18,6 +18,13 @@
  *
  */
 
+#include "ipc.h"
+#include "../config.h"
+#include "server.h"
+#include "saveload.h"
+#include "memlog.h"
+#include "helper.h"
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -36,12 +43,6 @@
 #include <libxml/parser.h>
 #include <libxml/xpath.h>
 #include "xmlutil.h"
-
-#include "ipc.h"
-#include "../config.h"
-#include "server.h"
-#include "utils.h"
-#include "memlog.h"
 
 #define IPC_PORT (PORT+1)
 
@@ -363,7 +364,6 @@ static int ipc_receive(int client_sock)
 {
 	GSList *iterator, *iterator2;
 
-	struct tm *timeinfo;
 #define STRBUFLEN 100
 	char strbuffer[STRBUFLEN];
 
@@ -433,8 +433,7 @@ static int ipc_receive(int client_sock)
 			if (tmp_node == NULL)
 				goto get_info_reply_cleanup;
 			xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->config_group);
-			timeinfo = localtime(&image->atime);
-			strftime(strbuffer, STRBUFLEN, "%d.%m.%y %H:%M:%S", timeinfo);
+			sprintf(strbuffer, "%u", (unsigned int)image->atime);
 			xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST strbuffer);
 			sprintf(strbuffer, "%d", image->rid);
 			xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST strbuffer);
@@ -471,7 +470,7 @@ static int ipc_receive(int client_sock)
 				if (tmp_node == NULL)
 					goto get_info_reply_cleanup;
 				*strbuffer = '\0';
-				inet_ntop(client->addrtype, client->ipaddr, strbuffer, STRBUFLEN);
+				host_to_string(&client->host, strbuffer, STRBUFLEN);
 				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
 				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST client->image->file);
 				xmlAddChild(parent_node, tmp_node);
@@ -490,15 +489,14 @@ static int ipc_receive(int client_sock)
 		for (iterator = _trusted_servers; iterator; iterator = iterator->next)
 		{
 			dnbd3_trusted_server_t *server = iterator->data;
-			if (server->hostaddrtype != 0)
+			if (server->host.type != 0)
 			{
 				tmp_node = xmlNewNode(NULL, BAD_CAST "server");
 				if (tmp_node == NULL)
 					goto get_info_reply_cleanup;
-				*strbuffer = '\0';
-				inet_ntop(server->hostaddrtype, server->hostaddr, strbuffer, STRBUFLEN);
+				host_to_string(&server->host, strbuffer, STRBUFLEN);
 				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
-				sprintf(strbuffer, "%d", (int)server->port);
+				sprintf(strbuffer, "%d", (int)server->host.port);
 				xmlNewProp(tmp_node, BAD_CAST "port", BAD_CAST strbuffer);
 				if (server->comment)
 					xmlNewProp(tmp_node, BAD_CAST "comment", BAD_CAST server->comment);
@@ -576,32 +574,28 @@ get_info_reply_cleanup:
 
 			FOR_EACH_NODE(docRequest, "/data/images/image", cur)
 			{
-				if (cur->type == XML_ELEMENT_NODE)
+				if (cur->type != XML_ELEMENT_NODE)
+					continue;
+				NEW_POINTERLIST;
+				++count;
+				dnbd3_image_t image;
+				memset(&image, 0, sizeof(dnbd3_image_t));
+				image.config_group = (char *)XML_GETPROP(cur, "name");
+				char *rid_str = (char *)XML_GETPROP(cur, "rid");
+				image.file = (char *)XML_GETPROP(cur, "file");
+				image.cache_file = (char *)XML_GETPROP(cur, "cache");
+				if (image.config_group && rid_str && image.file && image.cache_file)
 				{
-					++count;
-					dnbd3_image_t image;
-					memset(&image, 0, sizeof(dnbd3_image_t));
-					image.config_group = (char *)xmlGetNoNsProp(cur, BAD_CAST "name");
-					char *rid_str = (char *)xmlGetNoNsProp(cur, BAD_CAST "rid");
-					image.file = (char *)xmlGetNoNsProp(cur, BAD_CAST "file");
-					image.cache_file = (char *)xmlGetNoNsProp(cur, BAD_CAST "cache");
-					if (image.config_group && rid_str && image.file && image.cache_file)
-					{
-						image.rid = atoi(rid_str);
-						if (cmd == IPC_ADDIMG)
-							header.error = htonl(dnbd3_add_image(&image));
-						else
-							header.error = htonl(dnbd3_del_image(&image));
-					}
+					image.rid = atoi(rid_str);
+					if (cmd == IPC_ADDIMG)
+						header.error = htonl(dnbd3_add_image(&image));
 					else
-						header.error = htonl(ERROR_MISSING_ARGUMENT);
-					xmlFree(image.config_group);
-					xmlFree(rid_str);
-					xmlFree(image.file);
-					xmlFree(image.cache_file);
+						header.error = htonl(dnbd3_del_image(&image));
 				}
-			}
-			END_FOR_EACH;
+				else
+					header.error = htonl(ERROR_MISSING_ARGUMENT);
+				FREE_POINTERLIST;
+			} END_FOR_EACH;
 			if (count == 0)
 				header.error = htonl(ERROR_MISSING_ARGUMENT);
 		}
@@ -712,22 +706,20 @@ void dnbd3_ipc_send(int cmd)
 				printf("--- Last log lines ----\n%s\n\n", log);
 			}
 
-			int watime = 0, wname = 0, wrid = 5;
+			int watime = 17, wname = 0, wrid = 5;
 			FOR_EACH_NODE(doc, "/data/images/image", cur)
 			{
 				if (cur->type != XML_ELEMENT_NODE)
 					continue;
-				xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
-				xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
-				xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
-				watime = MAX(watime, xmlStrlen(atime));
+				NEW_POINTERLIST; // This macro defines an array of pointers
+				xmlChar *vid = XML_GETPROP(cur, "name"); // XML_GETPROP is a macro wrapping xmlGetNoNsProp()
+				xmlChar *rid = XML_GETPROP(cur, "rid"); // Each of these calls allocates memory for the string
 				wname = MAX(wname, xmlStrlen(vid));
 				wrid = MAX(wrid, xmlStrlen(rid));
-				// Too lazy to free vars, client will exit anyways
-			}
-			END_FOR_EACH;
+				FREE_POINTERLIST; // This macro simply frees all pointers in the above array
+			} END_FOR_EACH;
 
-			char format[100];
+			char format[100], strbuffer[STRBUFLEN];
 			snprintf(format, 100,
 			         "%%-%ds %%-%ds %%%ds %%s\n", watime, wname, wrid);
 
@@ -740,15 +732,18 @@ void dnbd3_ipc_send(int cmd)
 			{
 				if (cur->type != XML_ELEMENT_NODE)
 					continue;
+				NEW_POINTERLIST;
 				++count;
-				xmlChar *atime = xmlGetNoNsProp(cur, BAD_CAST "atime");
-				xmlChar *vid = xmlGetNoNsProp(cur, BAD_CAST "name");
-				xmlChar *rid = xmlGetNoNsProp(cur, BAD_CAST "rid");
-				xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
-				printf(format, atime, vid, rid, file);
-				// Too lazy to free vars, client will exit anyways
-			}
-			END_FOR_EACH;
+				xmlChar *numatime = XML_GETPROP(cur, "atime");
+				xmlChar *vid = XML_GETPROP(cur, "name");
+				xmlChar *rid = XML_GETPROP(cur, "rid");
+				xmlChar *file = XML_GETPROP(cur, "file");
+				time_t at = (time_t)atol((char*)numatime);
+				struct tm *timeinfo = localtime(&at);
+				strftime(strbuffer, STRBUFLEN, "%d.%m.%y %H:%M:%S", timeinfo);
+				printf(format, strbuffer, vid, rid, file);
+				FREE_POINTERLIST;
+			} END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber of images: %d\n\n", count);
 
@@ -765,8 +760,7 @@ void dnbd3_ipc_send(int cmd)
 				xmlChar *file = xmlGetNoNsProp(cur, BAD_CAST "file");
 				printf("%-40s %s\n", ip, file);
 				// Too lazy to free vars, client will exit anyways
-			}
-			END_FOR_EACH;
+			} END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber clients: %d\n\n", count);
 
@@ -778,30 +772,32 @@ void dnbd3_ipc_send(int cmd)
 			{
 				if (cur->type != XML_ELEMENT_NODE)
 					continue;
+				NEW_POINTERLIST;
 				++count;
-				xmlChar *ip = xmlGetNoNsProp(cur, BAD_CAST "ip");
-				xmlChar *comment = xmlGetNoNsProp(cur, BAD_CAST "comment");
+				xmlChar *ip = XML_GETPROP(cur, "ip");
+				xmlChar *comment = XML_GETPROP(cur, "comment");
 				if (comment)
 					printf("%-30s (%s)\n", ip, comment);
 				else
 					printf("%-30s\n", ip);
 				for (childit = cur->children; childit; childit = childit->next)
 				{
-					if (childit->type != XML_ELEMENT_NODE || childit->name == NULL || strcmp(childit->name, "namespace") != 0)
+					if (childit->type != XML_ELEMENT_NODE || childit->name == NULL || strcmp((const char*)childit->name, "namespace") != 0)
 						continue;
-					xmlChar *name = xmlGetNoNsProp(childit, BAD_CAST "name");
-					xmlChar *replicate = xmlGetNoNsProp(childit, BAD_CAST "replicate");
-					xmlChar *recursive = xmlGetNoNsProp(childit, BAD_CAST "recursive");
+					NEW_POINTERLIST;
+					xmlChar *name = XML_GETPROP(childit, "name");
+					xmlChar *replicate = XML_GETPROP(childit, "replicate");
+					xmlChar *recursive = XML_GETPROP(childit, "recursive");
 					printf("     %-40s ", name);
 					if (replicate && *replicate != '0')
 						printf(" replicate");
 					if (recursive && *recursive != '0')
 						printf(" recursive");
 					putchar('\n');
+					FREE_POINTERLIST;
 				}
-				// Too lazy to free vars, client will exit anyways
-			}
-			END_FOR_EACH;
+				FREE_POINTERLIST;
+			} END_FOR_EACH;
 			char_repeat_br('=', term_width);
 			printf("\nNumber servers: %d\n\n", count);
 

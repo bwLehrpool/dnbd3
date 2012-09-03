@@ -140,9 +140,9 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 		}
 		else
 		{
-			memcpy(dev->cur_server.hostaddr, msg->addr, 16);
-			dev->cur_server.port = msg->port;
-			dev->cur_server.hostaddrtype = msg->addrtype;
+			if (sizeof(msg->host) != sizeof(dev->cur_server.host))
+				printk("Odd size bug#1 triggered in IOCTL\n");
+			memcpy(&dev->cur_server.host, &msg->host, sizeof(msg->host));
 			dev->cur_server.failures = 0;
 			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
 			dev->imgname = imgname;
@@ -176,9 +176,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 
 	case IOCTL_SWITCH:
 		dnbd3_net_disconnect(dev);
-		memcpy(dev->cur_server.hostaddr, msg->addr, 16);
-		dev->cur_server.port = msg->port;
-		dev->cur_server.hostaddrtype = msg->addrtype;
+		memcpy(&dev->cur_server.host, &msg->host, sizeof(msg->host));
 		result = dnbd3_net_connect(dev);
 		break;
 
@@ -195,9 +193,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 				result = -EAGAIN;
 			else
 			{
-				memcpy(dev->new_servers[dev->new_servers_num].hostaddr, msg->addr, 16);
-				dev->new_servers[dev->new_servers_num].port = msg->port;
-				dev->new_servers[dev->new_servers_num].hostaddrtype = msg->addrtype;
+				memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->host, sizeof(msg->host));
 				dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
 				++dev->new_servers_num;
 				result = 0;

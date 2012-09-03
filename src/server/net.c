@@ -33,7 +33,7 @@
 #include <netinet/tcp.h>
 
 #include "server.h"
-#include "utils.h"
+#include "saveload.h"
 #include "memlog.h"
 #include "../serialize.h"
 #include "../config.h"
@@ -369,7 +369,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 				num = 0;
 				for (i = 0; i < NUMBER_SERVERS; i++)
 				{
-					if (image->servers[i].hostaddrtype == 0 || image->servers[i].failures > 200) continue;
+					if (image->servers[i].host.type == 0 || image->servers[i].failures > 200) continue;
 					memcpy(server_list + num++, image->servers + i, sizeof(dnbd3_server_entry_t));
 				}
 				reply.cmd = CMD_GET_SERVERS;

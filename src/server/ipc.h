@@ -21,6 +21,8 @@
 #ifndef IPC_H_
 #define IPC_H_
 
+#include <stdint.h>
+
 #define IPC_EXIT 0
 #define IPC_RELOAD 1
 #define IPC_INFO 2

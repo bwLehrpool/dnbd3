@@ -36,34 +36,34 @@
  */
 #if 1 // Change to 0 to disable debug messages
 #define debug_print_va_host(_host, _fmt, ...) do { \
-	if (dev->cur_server.hostaddrtype == AF_INET) \
-		printk("%s:%d " _fmt " (%s, %pI4:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+	if ((_host).type == AF_INET) \
+		printk("%s:%d " _fmt " (%s, %pI4:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
 	else \
-		printk("%s:%d " _fmt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+		printk("%s:%d " _fmt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
 } while(0)
 #define debug_error_va_host(_host, _fmt, ...) do { \
 	debug_print_va_host(_host, _fmt, __VA_ARGS__); \
 	goto error; \
 } while(0)
-#define debug_dev_va(_fmt, ...) debug_print_va_host(dev->cur_server, _fmt, __VA_ARGS__)
-#define error_dev_va(_fmt, ...) debug_error_va_host(dev->cur_server, _fmt, __VA_ARGS__)
-#define debug_alt_va(_fmt, ...) debug_print_va_host(dev->alt_servers[i], _fmt, __VA_ARGS__)
-#define error_alt_va(_fmt, ...) debug_error_va_host(dev->alt_servers[i], _fmt, __VA_ARGS__)
+#define debug_dev_va(_fmt, ...) debug_print_va_host(dev->cur_server.host, _fmt, __VA_ARGS__)
+#define error_dev_va(_fmt, ...) debug_error_va_host(dev->cur_server.host, _fmt, __VA_ARGS__)
+#define debug_alt_va(_fmt, ...) debug_print_va_host(dev->alt_servers[i].host, _fmt, __VA_ARGS__)
+#define error_alt_va(_fmt, ...) debug_error_va_host(dev->alt_servers[i].host, _fmt, __VA_ARGS__)
 
 #define debug_print_host(_host, txt) do { \
-	if (dev->cur_server.hostaddrtype == AF_INET) \
-		printk("%s:%d " txt " (%s, %pI4:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+	if ((_host).type == AF_INET) \
+		printk("%s:%d " txt " (%s, %pI4:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
 	else \
-		printk("%s:%d " txt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).hostaddr, (int)ntohs((_host).port)); \
+		printk("%s:%d " txt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
 } while(0)
 #define debug_error_host(_host, txt) do { \
 	debug_print_host(_host, txt); \
 	goto error; \
 } while(0)
-#define debug_dev(txt) debug_print_host(dev->cur_server, txt)
-#define error_dev(txt) debug_error_host(dev->cur_server, txt)
-#define debug_alt(txt) debug_print_host(dev->alt_servers[i], txt)
-#define error_alt(txt) debug_error_host(dev->alt_servers[i], txt)
+#define debug_dev(txt) debug_print_host(dev->cur_server.host, txt)
+#define error_dev(txt) debug_error_host(dev->cur_server.host, txt)
+#define debug_alt(txt) debug_print_host(dev->alt_servers[i].host, txt)
+#define error_alt(txt) debug_error_host(dev->alt_servers[i].host, txt)
 
 #else // Silent
 
@@ -79,9 +79,9 @@
 
 static inline int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b)
 {
-	return (a->hostaddrtype == b->hostaddrtype)
-	       && (a->port == b->port)
-	       && (0 == memcmp(a->hostaddr, b->hostaddr, (a->hostaddrtype == AF_INET ? 4 : 16)));
+	return (a->host.type == b->host.type)
+	       && (a->host.port == b->host.port)
+	       && (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == AF_INET ? 4 : 16)));
 }
 
 static inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t *const newserver, dnbd3_device_t *const dev)
@@ -89,9 +89,9 @@ static inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t *co
 	int i;
 	for (i = 0; i < NUMBER_SERVERS; ++i)
 	{
-		if ((newserver->hostaddrtype == dev->alt_servers[i].hostaddrtype)
-		        && (newserver->port == dev->alt_servers[i].port)
-		        && (0 == memcmp(newserver->hostaddr, dev->alt_servers[i].hostaddr, (newserver->hostaddrtype == AF_INET ? 4 : 16))))
+		if ((newserver->host.type == dev->alt_servers[i].host.type)
+		        && (newserver->host.port == dev->alt_servers[i].host.port)
+		        && (0 == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr, (newserver->host.type == AF_INET ? 4 : 16))))
 		{
 			return &dev->alt_servers[i];
 			break;
@@ -105,7 +105,7 @@ static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t *const dev)
 	int i;
 	for (i = 0; i < NUMBER_SERVERS; ++i)
 	{
-		if (dev->alt_servers[i].hostaddrtype == 0)
+		if (dev->alt_servers[i].host.type == 0)
 			return &dev->alt_servers[i];
 	}
 	for (i = 0; i < NUMBER_SERVERS; ++i)
@@ -153,12 +153,12 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 			error_dev("FATAL: Kmalloc(1) failed.");
 	}
 
-	if (dev->cur_server.port == 0 || dev->cur_server.hostaddrtype == 0 || dev->imgname == NULL)
+	if (dev->cur_server.host.port == 0 || dev->cur_server.host.type == 0 || dev->imgname == NULL)
 		error_dev("FATAL: Host, port or image name not set.");
 	if (dev->sock)
 		error_dev("ERROR: Already connected.");
 
-	if (dev->cur_server.hostaddrtype != AF_INET)
+	if (dev->cur_server.host.type != AF_INET)
 		error_dev("ERROR: IPv6 not implemented.");
 	else
 		debug_dev("INFO: Connecting...");
@@ -180,8 +180,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
 		dev->sock->sk->sk_allocation = GFP_NOIO;
 		sin.sin_family = AF_INET;
-		memcpy(&(sin.sin_addr.s_addr), dev->cur_server.hostaddr, 4);
-		sin.sin_port = dev->cur_server.port;
+		memcpy(&(sin.sin_addr.s_addr), dev->cur_server.host.addr, 4);
+		sin.sin_port = dev->cur_server.host.port;
 		if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) != 0)
 			error_dev("FATAL: Connection to host failed.");
 		// Request filesize
@@ -291,8 +291,8 @@ error:
 		sock_release(dev->sock);
 		dev->sock = NULL;
 	}
-	dev->cur_server.hostaddrtype = 0;
-	dev->cur_server.port = 0;
+	dev->cur_server.host.type = 0;
+	dev->cur_server.host.port = 0;
 	if (req1) kfree(req1);
 	return -1;
 }
@@ -337,8 +337,8 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 		sock_release(dev->sock);
 		dev->sock = NULL;
 	}
-	dev->cur_server.hostaddrtype = 0;
-	dev->cur_server.port = 0;
+	dev->cur_server.host.type = 0;
+	dev->cur_server.host.port = 0;
 
 	dev->disconnecting = 0;
 
@@ -451,7 +451,7 @@ int dnbd3_net_discover(void *data)
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			for (i = 0; i < dev->new_servers_num; ++i)
 			{
-				if (dev->new_servers[i].hostaddrtype != AF_INET) // Invalid entry.. (Add IPv6)
+				if (dev->new_servers[i].host.type != AF_INET) // Invalid entry.. (Add IPv6)
 					continue;
 				alt_server = get_existing_server(&dev->new_servers[i], dev);
 				if (alt_server != NULL) // Server already known
@@ -459,7 +459,7 @@ int dnbd3_net_discover(void *data)
 					if (dev->new_servers[i].failures == 1)
 					{
 						// REMOVE request
-						alt_server->hostaddrtype = 0;
+						alt_server->host.type = 0;
 						continue;
 					}
 					// ADD, so just reset fail counter
@@ -472,9 +472,9 @@ int dnbd3_net_discover(void *data)
 				if (alt_server == NULL) // All NUMBER_SERVERS slots are taken, ignore entry
 					continue;
 				// Add new server entry
-				memcpy(alt_server->hostaddr, dev->new_servers[i].hostaddr, 16);
-				alt_server->hostaddrtype = dev->new_servers[i].hostaddrtype;
-				alt_server->port = dev->new_servers[i].port;
+				memcpy(alt_server->host.addr, dev->new_servers[i].host.addr, 16);
+				alt_server->host.type = dev->new_servers[i].host.type;
+				alt_server->host.port = dev->new_servers[i].host.port;
 				alt_server->rtts[0] = alt_server->rtts[1]
 				                      = alt_server->rtts[2] = alt_server->rtts[3]
 				                              = RTT_UNREACHABLE;
@@ -490,7 +490,7 @@ int dnbd3_net_discover(void *data)
 
 		for (i=0; i < NUMBER_SERVERS; ++i)
 		{
-			if (dev->alt_servers[i].hostaddrtype == 0) // Empty slot
+			if (dev->alt_servers[i].host.type == 0) // Empty slot
 				continue;
 			if (!dev->panic && dev->alt_servers[i].failures > 50) // If not in panic mode, skip server if it failed too many times
 				continue;
@@ -506,8 +506,8 @@ int dnbd3_net_discover(void *data)
 			kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
 			sock->sk->sk_allocation = GFP_NOIO;
 			sin.sin_family = AF_INET; // add IPv6.....
-			memcpy(&sin.sin_addr.s_addr, dev->alt_servers[i].hostaddr, 4);
-			sin.sin_port = dev->alt_servers[i].port;
+			memcpy(&sin.sin_addr.s_addr, dev->alt_servers[i].host.addr, 4);
+			sin.sin_port = dev->alt_servers[i].host.port;
 			if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
 				goto error;
 
@@ -565,7 +565,7 @@ int dnbd3_net_discover(void *data)
 			// panic mode, take first responding server
 			if (dev->panic)
 			{
-				printk("WARN: Panic mode (%s), taking server %pI4 : %d\n", dev->disk->disk_name, dev->alt_servers[i].hostaddr, (int)ntohs(dev->alt_servers[i].port));
+				debug_alt("WARN: Panic mode, changing server:");
 				if (best_sock != NULL) sock_release(best_sock);
 				dev->better_sock = sock; // Pass over socket to take a shortcut in *_connect();
 				kfree(buf);
@@ -796,7 +796,7 @@ int dnbd3_net_send(void *data)
 	return 0;
 
 error:
-	printk("ERROR: Connection to server %pI4 : %d lost (send)\n", dev->cur_server.hostaddr, (int)ntohs(dev->cur_server.port));
+	debug_dev("ERROR: Connection to server lost (send)");
 	if (dev->sock)
 		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 	dev->thread_send = NULL;

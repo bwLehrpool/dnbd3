@@ -35,11 +35,9 @@ extern int major;
 
 typedef struct
 {
+	dnbd3_host_t host;
 	unsigned long rtts[4];		// Last four round trip time measurements in µs
-	uint16_t port;				// Port in network representation
 	uint16_t protocol_version;	// dnbd3 protocol version of this server
-	uint8_t hostaddr[16];		// Address in network representation (IPv4 or IPv6)
-	uint8_t hostaddrtype;		// Address type (AF_INET or AF_INET6)
 	uint8_t failures;			// How many times the server was unreachable
 } dnbd3_server_t;
 

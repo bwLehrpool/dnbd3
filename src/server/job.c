@@ -1,5 +1,7 @@
 #include "job.h"
-#include "utils.h"
+#include "saveload.h"
+#include "memlog.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,7 +9,14 @@
 #include <string.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include <glib/gslist.h>
+
+#include <libxml/parser.h>
+#include <libxml/xpath.h>
+#include "xmlutil.h"
 
 #define DEV_STRLEN 12 // INCLUDING NULLCHAR (increase to 13 if you need more than 100 (0-99) devices)
 #define MAX_NUM_DEVICES_TO_CHECK 100
@@ -34,6 +43,7 @@ static char keep_running = TRUE;
 // Private functions
 static char *get_free_device();
 static void query_servers();
+static void update_image_atimes(time_t now);
 
 //
 
@@ -73,7 +83,8 @@ void *dnbd3_job_thread(void *data)
 	{
 		const time_t starttime = time(NULL);
 		//
-		// TODO: Update image atime
+		// Update image atime
+		update_image_atimes(starttime);
 		// Call image deletion function if last call is more than 5 minutes ago
 		if (starttime < next_delete_invocation)
 		{
@@ -99,32 +110,116 @@ void dnbd3_job_shutdown()
 	keep_running = FALSE;
 }
 
+static void update_image_atimes(time_t now)
+{
+	GSList *iterator;
+	pthread_spin_lock(&_spinlock);
+	for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
+	{
+		dnbd3_client_t *client = iterator->data;
+		if (client && client->image && !client->is_server)
+			client->image->atime = now;
+	}
+	pthread_spin_unlock(&_spinlock);
+}
+
 static void query_servers()
 {
-	struct timeval client_timeout;
+	if (_trusted_servers == NULL)
+		return;
+	struct timeval client_timeout, connect_timeout;
 	client_timeout.tv_sec = 0;
 	client_timeout.tv_usec = 500 * 1000;
-	int client_sock;
-	// Apply read/write timeout
-	setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &client_timeout, sizeof(client_timeout));
-	setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &client_timeout, sizeof(client_timeout));
+	connect_timeout.tv_sec = 2;
+	connect_timeout.tv_usec = 0;
+	int client_sock, num;
+	dnbd3_trusted_server_t *server;
+	dnbd3_host_t host;
+	struct sockaddr_in addr4;
+	for (num = 0;; ++num)
+	{
+		// "Iterate" this way to prevent holding the lock for a long time, although it is possible to skip a server this way...
+		pthread_spin_lock(&_spinlock);
+		server = g_slist_nth_data(_trusted_servers, num);
+		if (server == NULL)
+		{
+			pthread_spin_unlock(&_spinlock);
+			break; // Done
+		}
+		memcpy(&host, &server->host, sizeof(host));
+		pthread_spin_unlock(&_spinlock);
+		// Connect
+		if (host.type != AF_INET)
+		{
+			printf("[DEBUG] Unsupported addr type '%d', ignoring trusted server.\n", (int)host.type);
+			continue;
+		}
+		// Create socket (Extend for IPv6)
+		if ((client_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+		{
+			printf("[DEBUG] Error creating server-to-server socket.\n");
+			continue;
+		}
+		// Set host (IPv4)
+		memset(&addr4, 0, sizeof(addr4));
+		addr4.sin_family = AF_INET;
+		memcpy(&addr4.sin_addr.s_addr, host.addr, 4);
+		addr4.sin_port = host.port;
+		// Connect to server
+		setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &connect_timeout, sizeof(connect_timeout));
+		setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &connect_timeout, sizeof(connect_timeout));
+		if (connect(client_sock, (struct sockaddr *)&addr4, sizeof(addr4)) < 0)
+		{
+			printf("[DEBUG] Could not connect to other server...\n");
+			close(client_sock); // TODO: Remove from alt server list if failed too often
+			continue;
+		}
+		// Apply read/write timeout
+		setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &client_timeout, sizeof(client_timeout));
+		setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &client_timeout, sizeof(client_timeout));
+		//
+		// TODO: Send and receive info from server
+		//
+		close(client_sock);
+		//
+		// TODO: Process data, update server info, add/remove this server as alt server for images, replicate images, etc.
+	}
 }
 
 /**
  * Get full name of an available dnbd3 device, eg. /dev/dnbd4
  * Returned buffer is owned by this module, do not modify or free!
+ * Returns NULL if all devices are in use
  */
 static char *get_free_device()
 {
 	if (devices == NULL)
 		return NULL;
-	int i;
+	int i, c;
+	char buffer[100];
 	for (i = 0; i < num_devices; ++i)
 	{
 		if (!devices[i].available)
 			continue;
-		// TODO: Check sysfs if device is maybe already connected
+		devices[i].available = FALSE;
+		// Check sysfs if device is maybe already connected
+		snprintf(buffer, 100, "/sys/devices/virtual/block/%s/net/cur_server_addr", devices[i].name + 5);
+		FILE *f = fopen(buffer, "r");
+		if (f == NULL)
+		{
+			printf("[DEBUG] Could not open %s - device marked as used.\n", buffer);
+			continue;
+		}
+		c = fgetc(f);
+		fclose(f);
+		if (c > 0)
+		{
+			// Could read something, so the device is connected
+			printf("[DEBUG] Free device %s is actually in use - marked as such.\n", devices[i].name);
+			continue;
+		}
 		return devices[i].name;
 	}
+	memlogf("[WARNING] No more free dnbd3 devices - proxy mode probably affected.");
 	return NULL;
 }
