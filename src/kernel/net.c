@@ -451,7 +451,7 @@ int dnbd3_net_discover(void *data)
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			for (i = 0; i < dev->new_servers_num; ++i)
 			{
-				if (dev->new_servers[i].host.type != AF_INET) // Invalid entry.. (Add IPv6)
+				if (dev->new_servers[i].host.type != AF_INET) // Invalid entry.. (Add IPv6 someday)
 					continue;
 				alt_server = get_existing_server(&dev->new_servers[i], dev);
 				if (alt_server != NULL) // Server already known

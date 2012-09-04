@@ -264,7 +264,7 @@ int main(int argc, char *argv[])
 			pthread_spin_lock(&_spinlock);
 			_dnbd3_clients = g_slist_remove(_dnbd3_clients, dnbd3_client);
 			pthread_spin_unlock(&_spinlock);
-			g_free(dnbd3_client);
+			dnbd3_free_client(dnbd3_client);
 			close(fd);
 			continue;
 		}
@@ -272,4 +272,18 @@ int main(int argc, char *argv[])
 	}
 
 	dnbd3_cleanup();
+}
+
+/**
+ * Free the client struct recursively
+ */
+void dnbd3_free_client(dnbd3_client_t *client)
+{
+	GSList *it; // Doesn't lock, so call this function after removing the client from _dnbd3_clients
+	for (it = client->sendqueue; it; it = it->next)
+	{
+		free(it->data);
+	}
+	g_slist_free(client->sendqueue);
+	g_free(client);
 }

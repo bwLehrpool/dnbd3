@@ -32,6 +32,7 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 
+#include "helper.h"
 #include "server.h"
 #include "saveload.h"
 #include "memlog.h"
@@ -223,6 +224,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 		}
 	}
 
+	// client handling mainloop
 	if (image) while (recv_request_header(client->sock, &request))
 		{
 			switch (request.cmd)
@@ -393,6 +395,21 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
 			}
 
+			// Check for messages that have been queued from another thread
+			while (client->sendqueue != NULL)
+			{
+				dnbd3_binstring_t *message = NULL;
+				pthread_spin_lock(&_spinlock);
+				if (client->sendqueue != NULL)
+				{
+					message = client->sendqueue->data;
+					client->sendqueue = g_slist_remove(client->sendqueue, message);
+				}
+				pthread_spin_unlock(&_spinlock);
+				send_data(client->sock, message->data, message->len);
+				free(message);
+			}
+
 		}
 	pthread_spin_lock(&_spinlock);
 	_dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
@@ -401,7 +418,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 		close(client->sock);
 	if (image_file != -1) close(image_file);
 	if (image_cache != -1) close(image_cache);
-	g_free(client);
+	dnbd3_free_client(client);
 	pthread_exit((void *) 0);
 }
 

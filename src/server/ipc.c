@@ -58,8 +58,6 @@ static char *payload = NULL;
 
 static int ipc_receive(int client_sock);
 static int get_highest_fd(GSList *sockets);
-static int send_reply(int client_sock, void *data_in, int len);
-static int recv_data(int client_sock, void *buffer_out, int len);
 static int is_password_correct(xmlDocPtr doc);
 static int get_terminal_width();
 
@@ -300,64 +298,6 @@ void dnbd3_ipc_shutdown()
 }
 
 /**
- * Send message to client, return !=0 on success, 0 on failure
- */
-static int send_reply(int client_sock, void *data_in, int len)
-{
-	if (len <= 0) // Nothing to send
-		return 1;
-	char *data = data_in; // Needed for pointer arithmetic
-	int ret, i;
-	for (i = 0; i < 3; ++i) // Retry at most 3 times, each try takes at most 0.5 seconds (socket timeout)
-	{
-		ret = send(client_sock, data, len, 0);
-		if (ret == 0) // Connection closed
-			return 0;
-		if (ret < 0)
-		{
-			if (errno != EAGAIN) // Some unexpected error
-				return 0;
-			usleep(1000); // 1ms
-			continue;
-		}
-		len -= ret;
-		if (len <= 0) // Sent everything
-			return 1;
-		data += ret; // move target buffer pointer
-	}
-	return 0;
-}
-
-/**
- * Receive data from client, return !=0 on success, 0 on failure
- */
-static int recv_data(int client_sock, void *buffer_out, int len)
-{
-	if (len <= 0) // Nothing to receive
-		return 1;
-	char *data = buffer_out; // Needed for pointer arithmetic
-	int ret, i;
-	for (i = 0; i < 3; ++i) // Retry at most 3 times, each try takes at most 0.5 seconds (socket timeout)
-	{
-		ret = recv(client_sock, data, len, MSG_WAITALL);
-		if (ret == 0) // Connection closed
-			return 0;
-		if (ret < 0)
-		{
-			if (errno != EAGAIN) // Some unexpected error
-				return 0;
-			usleep(1000); // 1ms
-			continue;
-		}
-		len -= ret;
-		if (len <= 0) // Received everything
-			return 1;
-		data += ret; // move target buffer pointer
-	}
-	return 0;
-}
-
-/**
  * Returns !=0 if send/recv successful, 0 on any kind of network failure
  */
 static int ipc_receive(int client_sock)
@@ -404,7 +344,7 @@ static int ipc_receive(int client_sock)
 		memlogf("[INFO] Server shutdown by IPC request");
 		header.size = ntohl(0);
 		header.error = ntohl(0);
-		return_value = send_reply(client_sock, &header, sizeof(header));
+		return_value = send_data(client_sock, &header, sizeof(header));
 		dnbd3_cleanup();
 		break;
 
@@ -418,6 +358,8 @@ static int ipc_receive(int client_sock)
 		if (root_node == NULL)
 			goto get_info_reply_cleanup;
 		xmlDocSetRootElement(docReply, root_node);
+
+		xmlNewChild(root_node, NULL, BAD_CAST "namespace", BAD_CAST _local_namespace);
 
 		// Images
 		parent_node = xmlNewNode(NULL, BAD_CAST "images");
@@ -496,7 +438,7 @@ static int ipc_receive(int client_sock)
 					goto get_info_reply_cleanup;
 				host_to_string(&server->host, strbuffer, STRBUFLEN);
 				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
-				sprintf(strbuffer, "%d", (int)server->host.port);
+				sprintf(strbuffer, "%d", (int)ntohs(server->host.port));
 				xmlNewProp(tmp_node, BAD_CAST "port", BAD_CAST strbuffer);
 				if (server->comment)
 					xmlNewProp(tmp_node, BAD_CAST "comment", BAD_CAST server->comment);
@@ -540,9 +482,9 @@ get_info_reply_cleanup:
 		if (locked)
 			pthread_spin_unlock(&_spinlock);
 		// Send reply
-		return_value = send_reply(client_sock, &header, sizeof(header));
+		return_value = send_data(client_sock, &header, sizeof(header));
 		if (return_value && xmlbuff)
-			return_value = send_reply(client_sock, xmlbuff, buffersize);
+			return_value = send_data(client_sock, xmlbuff, buffersize);
 		// Cleanup
 		xmlFree(xmlbuff);
 		free(log);
@@ -554,7 +496,7 @@ get_info_reply_cleanup:
 		{
 			header.size = htonl(0);
 			header.error = htonl(ERROR_MISSING_ARGUMENT);
-			return_value = send_reply(client_sock, &header, sizeof(header));
+			return_value = send_data(client_sock, &header, sizeof(header));
 			break;
 		}
 		docRequest = xmlReadMemory(payload, header.size, "noname.xml", NULL, 0);
@@ -565,7 +507,7 @@ get_info_reply_cleanup:
 			{
 				header.error = htonl(ERROR_WRONG_PASSWORD);
 				header.size = htonl(0);
-				return_value = send_reply(client_sock, &header, sizeof(header));
+				return_value = send_data(client_sock, &header, sizeof(header));
 				break;
 			}
 
@@ -603,14 +545,14 @@ get_info_reply_cleanup:
 			header.error = htonl(ERROR_INVALID_XML);
 
 		header.size = htonl(0);
-		return_value = send_reply(client_sock, &header, sizeof(header));
+		return_value = send_data(client_sock, &header, sizeof(header));
 		break;
 
 	default:
 		memlogf("[ERROR] Unknown IPC command: %u", (unsigned int)header.cmd);
 		header.size = htonl(0);
 		header.error = htonl(ERROR_UNKNOWN_COMMAND);
-		return_value = send_reply(client_sock, &header, sizeof(header));
+		return_value = send_data(client_sock, &header, sizeof(header));
 		break;
 
 	}
@@ -690,6 +632,7 @@ void dnbd3_ipc_send(int cmd)
 	{
 		char *buf = malloc(header.size + 1);
 		size = recv(client_sock, buf, header.size, MSG_WAITALL);
+		printf("\n%s\n\n", buf);
 		xmlDocPtr doc = xmlReadMemory(buf, size, "noname.xml", NULL, 0);
 		buf[header.size] = 0;
 

@@ -564,7 +564,7 @@ dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_n
 	for (iterator = _trusted_servers; iterator; iterator = iterator->next)
 	{
 		dnbd3_trusted_server_t *comp = iterator->data;
-		if (is_same_server(comp, &server))
+		if (is_same_server(&comp->host, &server.host))
 			return comp;
 	}
 	if (!create_if_not_found)

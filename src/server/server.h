@@ -48,18 +48,30 @@ typedef struct
 
 typedef struct
 {
+	uint16_t len;
+	uint8_t data[65535];
+} dnbd3_binstring_t;
+// Do not always allocate as much memory as required to hold the entire binstring struct, but only as much as is required to hold the actual data
+#define NEW_BINSTRING(_name, _len) \
+	dnbd3_binstring_t *_name = malloc(sizeof(uint16_t) + _len); \
+	_name->len = _len
+
+typedef struct
+{
 	int sock;
 	dnbd3_host_t host;
 	uint8_t is_server;         // TRUE if a server in proxy mode, FALSE if real client
 	pthread_t thread;
 	dnbd3_image_t *image;
+	GSList *sendqueue;         // list of dnbd3_binstring_t*
 } dnbd3_client_t;
 
 typedef struct
 {
-	dnbd3_host_t host;
 	gchar    *comment;
 	GSList   *namespaces;    // List of dnbd3_namespace_t
+	dnbd3_host_t host;
+	uint8_t  unreachable;
 } dnbd3_trusted_server_t;
 
 typedef struct
@@ -81,6 +93,7 @@ extern int _fake_delay;
 #endif
 
 void dnbd3_cleanup();
+void dnbd3_free_client(dnbd3_client_t *client);
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
 #error Please set _FILE_OFFSET_BITS to 64 in your makefile/configuration
