@@ -46,7 +46,8 @@ static char keep_running = TRUE;
 // Private functions
 static char *get_free_device();
 static void query_servers();
-static void dnbd3_remove_alt_server(dnbd3_trusted_server_t *server);
+static void add_alt_server(dnbd3_image_t *image, dnbd3_host_t *host);
+static void remove_alt_server(dnbd3_trusted_server_t *server);
 static void update_image_atimes(time_t now);
 
 //
@@ -217,14 +218,105 @@ static void query_servers()
 		//
 		// Process data, update server info, add/remove this server as alt server for images, replicate images, etc.
 		xmlDocPtr doc = xmlReadMemory(xmlbuffer, header.size, "noname.xml", NULL, 0);
-		free(xmlbuffer);
-		xmlbuffer = NULL;
+
 		if (doc == NULL)
 		{
 			memlogf("[WARNING] Could not parse XML data received by other server.");
 			goto communication_error;
 		}
 		// Data seems ok
+		char *ns = getTextFromPath(doc, "/data/namespace");
+		if (ns && *ns == '\0')
+		{
+			xmlFree(ns);
+			ns = NULL;
+		}
+		else
+		{
+			printf("[DEBUG] Other server's default namespace is '%s'\n", ns);
+			if  (!is_valid_namespace(ns))
+			{
+				printf("[DEBUG] Ignoring invalid namespace from other server.\n");
+				xmlFree(ns);
+				ns = NULL;
+			}
+		}
+
+		xmlNodePtr cur;
+		FOR_EACH_NODE(doc, "/data/images/image", cur)
+		{
+			if (cur->type != XML_ELEMENT_NODE)
+				continue;
+			NEW_POINTERLIST;
+			char *image = XML_GETPROP(cur, "name");
+			char *ridstr = XML_GETPROP(cur, "rid");
+			if (!image || !ridstr)
+				goto free_current_image;
+			int rid = atoi(ridstr);
+			if (rid <= 0)
+			{
+				printf("[DEBUG] Ignoring remote image with rid %d\n", rid);
+				goto free_current_image;
+			}
+			char *slash = strrchr(image, '/');
+			if (slash == NULL)
+			{
+				if (!ns)
+					goto free_current_image;
+				if (!is_valid_imagename(image))
+				{
+					printf("[DEBUG] Invalid image name: '%s'\n", image);
+					goto free_current_image;
+				}
+				snprintf(xmlbuffer, MAX_IPC_PAYLOAD, "%s/%s", ns, image);
+			}
+			else
+			{
+				*slash++ = '\0';
+				if (!is_valid_namespace(image))
+				{
+					printf("[DEBUG] Ignoring remote image with invalid namespace '%s'\n", image);
+					goto free_current_image;
+				}
+				if (!is_valid_imagename(slash))
+				{
+					printf("[DEBUG] Ignoring remote image with invalid name '%s'\n", slash);
+					goto free_current_image;
+				}
+				snprintf(xmlbuffer, MAX_IPC_PAYLOAD, "%s/%s", image, slash);
+			}
+			// Image seems legit, check if there's a local copy
+			pthread_spin_lock(&_spinlock);
+			dnbd3_image_t *local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
+			if (local_image == NULL)
+			{
+				pthread_spin_unlock(&_spinlock);
+				// Image is NEW, add it!
+				// TODO: Check if replication is requested for this namespace
+				dnbd3_image_t newimage;
+				memset(&newimage, 0, sizeof(newimage));
+				newimage.config_group = xmlbuffer;
+				newimage.rid = rid;
+				dnbd3_add_image(&newimage);
+				pthread_spin_lock(&_spinlock);
+				local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
+				if (local_image)
+					add_alt_server(local_image, &server->host);
+				pthread_spin_unlock(&_spinlock);
+			}
+			else
+			{
+				// Image is already KNOWN, add alt server if appropriate
+				// TODO: Check if requested for namespace
+				add_alt_server(local_image, &server->host);
+				pthread_spin_unlock(&_spinlock);
+			}
+			// Cleanup
+free_current_image:
+			FREE_POINTERLIST;
+		} END_FOR_EACH;
+
+
 		// ...
 		xmlFreeDoc(doc);
 		//
@@ -236,7 +328,7 @@ communication_error:
 		if (g_slist_find(_trusted_servers, server))
 		{
 			if (server->unreachable < 10 && ++server->unreachable == 5)
-				dnbd3_remove_alt_server(server);
+				remove_alt_server(server);
 		}
 		pthread_spin_unlock(&_spinlock);
 	}
@@ -245,7 +337,57 @@ communication_error:
 /**
  * !! Call this while holding the lock !!
  */
-static void dnbd3_remove_alt_server(dnbd3_trusted_server_t *server)
+static void add_alt_server(dnbd3_image_t *image, dnbd3_host_t *host)
+{
+	int i;
+	for (i = 0; i < NUMBER_SERVERS; ++i)
+	{
+		if (is_same_server(host, &image->servers[i].host))
+		{	// Alt server already known for this image
+			if (image->servers[i].failures)
+			{	// It was disabled, re-enable and send info to clients
+				image->servers[i].failures = 0;
+				break;
+			}
+			else	// Alt-Server already known and active, do nothing
+				return;
+		}
+	}
+	// Add to list if it wasn't in there
+	if (i >= NUMBER_SERVERS)
+		for (i = 0; i < NUMBER_SERVERS; ++i)
+		{
+			if (image->servers[i].host.type == 0)
+			{
+				image->servers[i].host = *host;
+				break;
+			}
+		}
+	// Broadcast to connected clients
+	GSList *itc;
+	dnbd3_reply_t header;
+	header.cmd = CMD_GET_SERVERS;
+	header.magic = dnbd3_packet_magic;
+	header.size = sizeof(dnbd3_server_entry_t);
+	fixup_reply(header);
+	for (itc = _dnbd3_clients; itc; itc = itc->next)
+	{
+		dnbd3_client_t *const client = itc->data;
+		if (client->image == image)
+		{
+			// Don't send message directly as the lock is being held; instead, enqueue it
+			NEW_BINSTRING(message, sizeof(header) + sizeof(*host));
+			memcpy(message->data, &header, sizeof(header));
+			memcpy(message->data + sizeof(header), host, sizeof(*host));
+			client->sendqueue = g_slist_append(client->sendqueue, message);
+		}
+	}
+}
+
+/**
+ * !! Call this while holding the lock !!
+ */
+static void remove_alt_server(dnbd3_trusted_server_t *server)
 {
 	GSList *iti, *itc;
 	int i;

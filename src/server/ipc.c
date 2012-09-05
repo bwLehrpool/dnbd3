@@ -359,7 +359,7 @@ static int ipc_receive(int client_sock)
 			goto get_info_reply_cleanup;
 		xmlDocSetRootElement(docReply, root_node);
 
-		xmlNewChild(root_node, NULL, BAD_CAST "namespace", BAD_CAST _local_namespace);
+		xmlNewTextChild(root_node, NULL, BAD_CAST "namespace", BAD_CAST _local_namespace);
 
 		// Images
 		parent_node = xmlNewNode(NULL, BAD_CAST "images");
@@ -379,6 +379,8 @@ static int ipc_receive(int client_sock)
 			xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST strbuffer);
 			sprintf(strbuffer, "%d", image->rid);
 			xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST strbuffer);
+			sprintf(strbuffer, "%llu", (unsigned long long)image->filesize);
+			xmlNewProp(tmp_node, BAD_CAST "size", BAD_CAST strbuffer);
 			xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST image->file);
 			xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST "???"); // TODO
 			if (image->cache_file && image->cache_map)
@@ -643,10 +645,11 @@ void dnbd3_ipc_send(int cmd)
 			xmlNodePtr cur, childit;
 
 			// Print log
-			xmlChar *log = getTextFromPath(doc, "/data/log");
+			char *log = getTextFromPath(doc, "/data/log");
 			if (log)
 			{
 				printf("--- Last log lines ----\n%s\n\n", log);
+				xmlFree(log);
 			}
 
 			int watime = 17, wname = 0, wrid = 5;
@@ -655,10 +658,10 @@ void dnbd3_ipc_send(int cmd)
 				if (cur->type != XML_ELEMENT_NODE)
 					continue;
 				NEW_POINTERLIST; // This macro defines an array of pointers
-				xmlChar *vid = XML_GETPROP(cur, "name"); // XML_GETPROP is a macro wrapping xmlGetNoNsProp()
-				xmlChar *rid = XML_GETPROP(cur, "rid"); // Each of these calls allocates memory for the string
-				wname = MAX(wname, xmlStrlen(vid));
-				wrid = MAX(wrid, xmlStrlen(rid));
+				char *vid = XML_GETPROP(cur, "name"); // XML_GETPROP is a macro wrapping xmlGetNoNsProp()
+				char *rid = XML_GETPROP(cur, "rid"); // Each of these calls allocates memory for the string
+				wname = MAX(wname, strlen(vid));
+				wrid = MAX(wrid, strlen(rid));
 				FREE_POINTERLIST; // This macro simply frees all pointers in the above array
 			} END_FOR_EACH;
 
@@ -677,11 +680,11 @@ void dnbd3_ipc_send(int cmd)
 					continue;
 				NEW_POINTERLIST;
 				++count;
-				xmlChar *numatime = XML_GETPROP(cur, "atime");
-				xmlChar *vid = XML_GETPROP(cur, "name");
-				xmlChar *rid = XML_GETPROP(cur, "rid");
-				xmlChar *file = XML_GETPROP(cur, "file");
-				time_t at = (time_t)atol((char*)numatime);
+				char *numatime = XML_GETPROP(cur, "atime");
+				char *vid = XML_GETPROP(cur, "name");
+				char *rid = XML_GETPROP(cur, "rid");
+				char *file = XML_GETPROP(cur, "file");
+				time_t at = (time_t)atol(numatime);
 				struct tm *timeinfo = localtime(&at);
 				strftime(strbuffer, STRBUFLEN, "%d.%m.%y %H:%M:%S", timeinfo);
 				printf(format, strbuffer, vid, rid, file);
@@ -717,8 +720,8 @@ void dnbd3_ipc_send(int cmd)
 					continue;
 				NEW_POINTERLIST;
 				++count;
-				xmlChar *ip = XML_GETPROP(cur, "ip");
-				xmlChar *comment = XML_GETPROP(cur, "comment");
+				char *ip = XML_GETPROP(cur, "ip");
+				char *comment = XML_GETPROP(cur, "comment");
 				if (comment)
 					printf("%-30s (%s)\n", ip, comment);
 				else
@@ -728,9 +731,9 @@ void dnbd3_ipc_send(int cmd)
 					if (childit->type != XML_ELEMENT_NODE || childit->name == NULL || strcmp((const char*)childit->name, "namespace") != 0)
 						continue;
 					NEW_POINTERLIST;
-					xmlChar *name = XML_GETPROP(childit, "name");
-					xmlChar *replicate = XML_GETPROP(childit, "replicate");
-					xmlChar *recursive = XML_GETPROP(childit, "recursive");
+					char *name = XML_GETPROP(childit, "name");
+					char *replicate = XML_GETPROP(childit, "replicate");
+					char *recursive = XML_GETPROP(childit, "recursive");
 					printf("     %-40s ", name);
 					if (replicate && *replicate != '0')
 						printf(" replicate");
@@ -772,10 +775,10 @@ static int is_password_correct(xmlDocPtr doc)
 		memlogf("[WARNING] IPC access granted as no password is set!");
 		return 1;
 	}
-	xmlChar *pass = getTextFromPath(doc, "/data/password");
+	char *pass = getTextFromPath(doc, "/data/password");
 	if (pass == NULL)
 		return 0;
-	if (strcmp((char *)pass, _ipc_password) == 0)
+	if (strcmp(pass, _ipc_password) == 0)
 	{
 		xmlFree(pass);
 		return 1;

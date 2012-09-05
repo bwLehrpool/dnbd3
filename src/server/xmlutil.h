@@ -4,7 +4,7 @@
 #include <libxml/xmlstring.h>
 #include <libxml/tree.h>
 
-xmlChar *getTextFromPath(xmlDocPtr doc, char *xpath);
+char *getTextFromPath(xmlDocPtr doc, char *xpath);
 
 #define FOR_EACH_NODE(_doc, _path, _node) do { \
 	xmlXPathContextPtr _makro_xpathCtx = xmlXPathNewContext(_doc); \
@@ -33,6 +33,6 @@ xmlChar *getTextFromPath(xmlDocPtr doc, char *xpath);
 		xmlFree(_makro_ptrlist[_makro_i_]); \
 	} } while(0)
 
-#define XML_GETPROP(_node, _name) (xmlChar*)(_makro_ptrlist[(_makro_usedcount >= NUM_POINTERS_IN_LIST ? 0 : _makro_usedcount++)] = xmlGetNoNsProp(_node, BAD_CAST _name))
+#define XML_GETPROP(_node, _name) (char*)(_makro_ptrlist[(_makro_usedcount >= NUM_POINTERS_IN_LIST ? 0 : _makro_usedcount++)] = xmlGetNoNsProp(_node, BAD_CAST _name))
 
 #endif

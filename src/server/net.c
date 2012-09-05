@@ -180,12 +180,16 @@ void *dnbd3_handle_query(void *dnbd3_client)
 					const time_t now = time(NULL);
 					if (!image)
 					{
-						printf("[DEBUG] Client requested non-existent image '%s' (rid:%d)\n", image_name, (int)rid);
+						printf("[DEBUG] Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid);
+					}
+					else if (!image->working)
+					{
+						printf("[DEBUG] Client requested non-working image '%s' (rid:%d), rejected\n", image_name, (int)rid);
 					}
 					else if ((image->delete_soft != 0 && image->delete_soft < now)
 					         || (image->delete_hard != 0 && image->delete_hard < now))
 					{
-						printf("[DEBUG] Client requested end-of-life image '%s' (rid:%d)\n", image_name, (int)rid);
+						printf("[DEBUG] Client requested end-of-life image '%s' (rid:%d), rejected\n", image_name, (int)rid);
 					}
 					else
 					{

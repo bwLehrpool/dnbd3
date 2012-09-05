@@ -152,9 +152,11 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	}
 
 	dnbd3_image_t *newimage = prepare_image(image->config_group, image->rid, image->file, image->cache_file);
+	image = NULL;
 	if (newimage)
 	{
-		_dnbd3_images = g_slist_prepend(_dnbd3_images, image);
+		memlogf("[INFO] Added image '%s'", newimage->low_name);
+		_dnbd3_images = g_slist_prepend(_dnbd3_images, newimage);
 	}
 	else
 	{
@@ -163,10 +165,10 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	}
 
 	// Adding image was successful, write config file
-	g_key_file_set_integer(_config_handle, image->config_group, "rid", image->rid);
-	g_key_file_set_string(_config_handle, image->config_group, "file", image->file);
+	g_key_file_set_integer(_config_handle, newimage->config_group, "rid", newimage->rid);
+	g_key_file_set_string(_config_handle, newimage->config_group, "file", newimage->file);
 	//g_key_file_set_string(_config_handle, image->name, "servers", image->serverss); // TODO: Save servers as string
-	g_key_file_set_string(_config_handle, image->config_group, "cache", image->cache_file);
+	g_key_file_set_string(_config_handle, newimage->config_group, "cache", newimage->cache_file);
 
 	pthread_spin_unlock(&_spinlock);
 
@@ -308,7 +310,7 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		return NULL;
 	}
 
-	if (strchr(image_name, '.') == NULL && _local_namespace == NULL)
+	if (strchr(image_name, '/') == NULL && _local_namespace == NULL)
 	{
 		memlogf("[ERROR] Image '%s' has local name and no default namespace is defined; entry ignored.", image_name);
 		return NULL;

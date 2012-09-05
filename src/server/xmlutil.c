@@ -3,7 +3,7 @@
 #include <libxml/xpath.h>
 
 
-xmlChar *getTextFromPath(xmlDocPtr doc, char *xpath)
+char *getTextFromPath(xmlDocPtr doc, char *xpath)
 {
 	xmlXPathContextPtr xpathCtx = xmlXPathNewContext(doc);
 	if (xpathCtx == NULL)
@@ -14,12 +14,12 @@ xmlChar *getTextFromPath(xmlDocPtr doc, char *xpath)
 		xmlXPathFreeContext(xpathCtx);
 		return NULL;
 	}
-	xmlChar *retval = NULL;
+	char *retval = NULL;
 	if (xpathObj->stringval)
-		retval = xmlStrdup(xpathObj->stringval);
+		retval = (char*)xmlStrdup(xpathObj->stringval);
 	else if (xpathObj->nodesetval && xpathObj->nodesetval->nodeNr > 0 && xpathObj->nodesetval->nodeTab && xpathObj->nodesetval->nodeTab[0])
 	{
-		retval = xmlNodeGetContent(xpathObj->nodesetval->nodeTab[0]);
+		retval = (char*)xmlNodeGetContent(xpathObj->nodesetval->nodeTab[0]);
 	}
 	xmlXPathFreeObject(xpathObj);
 	xmlXPathFreeContext(xpathCtx);
