@@ -166,9 +166,10 @@ int dnbd3_add_image(dnbd3_image_t *image)
 
 	// Adding image was successful, write config file
 	g_key_file_set_integer(_config_handle, newimage->config_group, "rid", newimage->rid);
-	g_key_file_set_string(_config_handle, newimage->config_group, "file", newimage->file);
-	//g_key_file_set_string(_config_handle, image->name, "servers", image->serverss); // TODO: Save servers as string
-	g_key_file_set_string(_config_handle, newimage->config_group, "cache", newimage->cache_file);
+	if (newimage->file)
+		g_key_file_set_string(_config_handle, newimage->config_group, "file", newimage->file);
+	if (newimage->cache_file)
+		g_key_file_set_string(_config_handle, newimage->config_group, "cache", newimage->cache_file);
 
 	pthread_spin_unlock(&_spinlock);
 
@@ -304,16 +305,37 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		memlogf("[ERROR] Null Image-Name");
 		return NULL;
 	}
-	if (!is_valid_imagename(image_name))
-	{
-		memlogf("[ERROR] Invalid image name: '%s'", image_name);
-		return NULL;
-	}
 
-	if (strchr(image_name, '/') == NULL && _local_namespace == NULL)
+	char *slash = strrchr(image_name, '/');
+
+	if (slash == NULL)
 	{
-		memlogf("[ERROR] Image '%s' has local name and no default namespace is defined; entry ignored.", image_name);
-		return NULL;
+		if (!is_valid_imagename(image_name))
+		{
+			memlogf("[ERROR] Invalid image name: '%s'", image_name);
+			return NULL;
+		}
+		if (_local_namespace == NULL)
+		{
+			memlogf("[ERROR] Image '%s' has local name and no default namespace is defined; entry ignored.", image_name);
+			return NULL;
+		}
+	}
+	else
+	{
+		*slash = '\0';
+		if (!is_valid_imagename(slash+1))
+		{
+			memlogf("[ERROR] Invalid image name: '%s'", slash+1);
+			return NULL;
+		}
+		if (!is_valid_namespace(image_name))
+		{
+			memlogf("[ERROR] Invalid namespace: '%s'", image_name);
+			*slash = '/';
+			return NULL;
+		}
+		*slash = '/';
 	}
 
 	// Allocate image struct and zero it out by using g_new0
@@ -324,7 +346,7 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		return NULL;
 	}
 
-	if (strchr(image_name, '/') == NULL)
+	if (slash == NULL)
 	{
 		// Local image, build global name
 		image->low_name = calloc(strlen(_local_namespace) + strlen(image_name) + 2, sizeof(char));
@@ -560,6 +582,11 @@ dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_n
 	if (!parse_address(address, &server.host))
 	{
 		memlogf("[WARNING] Could not parse address '%s' of trusted server", address);
+		return NULL;
+	}
+	if (server.host.type == AF_INET6)
+	{
+		printf("[DEBUG] Ignoring IPv6 trusted server.\n");
 		return NULL;
 	}
 	GSList *iterator;

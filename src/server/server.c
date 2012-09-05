@@ -32,6 +32,7 @@
 
 #include "server.h"
 #include "saveload.h"
+#include "job.h"
 #include "net.h"
 #include "ipc.h"
 #include "memlog.h"
@@ -81,6 +82,7 @@ void dnbd3_cleanup()
 	sock = -1;
 
 	dnbd3_ipc_shutdown();
+	dnbd3_job_shutdown();
 
 	pthread_spin_lock(&_spinlock);
 	GSList *iterator = NULL;
@@ -220,6 +222,9 @@ int main(int argc, char *argv[])
 	// setup ipc
 	pthread_t thread_ipc;
 	pthread_create(&(thread_ipc), NULL, &dnbd3_ipc_mainloop, NULL);
+
+	pthread_t thread_job;
+	pthread_create(&(thread_job), NULL, &dnbd3_job_thread, NULL);
 
 	memlogf("[INFO] Server is ready...");
 

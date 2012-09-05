@@ -80,6 +80,7 @@ void *dnbd3_job_thread(void *data)
 			++j;
 		}
 	}
+	memlogf("[INFO] %d available dnbd3 devices for proxy mode", j);
 	//
 	time_t next_delete_invocation = 0;
 	//
@@ -152,7 +153,7 @@ static void query_servers()
 			pthread_spin_unlock(&_spinlock);
 			break; // Done
 		}
-		memcpy(&host, &server->host, sizeof(host));
+		host = server->host;
 		pthread_spin_unlock(&_spinlock);
 		// Connect
 		if (host.type != AF_INET)
