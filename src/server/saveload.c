@@ -613,10 +613,11 @@ dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_n
 	char addrbuffer[50];
 	host_to_string(&server.host, addrbuffer, 50);
 	g_key_file_set_string(_config_handle, groupname, "address", addrbuffer);
-	free(groupname);
 	dnbd3_trusted_server_t *copy = malloc(sizeof(server));
 	memcpy(copy, &server, sizeof(*copy));
+	copy->comment = strdup(groupname+6);
 	_trusted_servers = g_slist_prepend(_trusted_servers, copy);
+	free(groupname);
 	return copy;
 }
 
@@ -650,6 +651,17 @@ int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace,
 	}
 	ns->auto_replicate = (flags && strstr(flags, "replicate"));
 	ns->recursive = (flags && strstr(flags, "recursive"));
+	size_t len = strlen(server->comment) + 7;
+	char groupname[len];
+	snprintf(groupname, len, "trust:%s", server->comment);
+	if (ns->auto_replicate && ns->recursive)
+		g_key_file_set_string(_config_handle, groupname, ns->name, "replicate,recursive");
+	else if (ns->auto_replicate)
+		g_key_file_set_string(_config_handle, groupname, ns->name, "replicate");
+	else if (ns->recursive)
+		g_key_file_set_string(_config_handle, groupname, ns->name, "recursive");
+	else
+		g_key_file_set_string(_config_handle, groupname, ns->name, "-");
 	return TRUE;
 }
 

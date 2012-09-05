@@ -361,10 +361,14 @@ static void add_alt_server(dnbd3_image_t *image, dnbd3_host_t *host)
 			if (image->servers[i].host.type == 0)
 			{
 				image->servers[i].host = *host;
+				image->servers[i].failures = 0;
 				break;
 			}
 		}
-	// Broadcast to connected clients
+	if (i >= NUMBER_SERVERS) // To many known alt servers already
+		return;
+	// Broadcast to connected clients. Note that i now points to the new server
+	printf("[DEBUG] Adding alt server to %s\n", image->low_name);
 	GSList *itc;
 	dnbd3_reply_t header;
 	header.cmd = CMD_GET_SERVERS;
@@ -377,9 +381,9 @@ static void add_alt_server(dnbd3_image_t *image, dnbd3_host_t *host)
 		if (client->image == image)
 		{
 			// Don't send message directly as the lock is being held; instead, enqueue it
-			NEW_BINSTRING(message, sizeof(header) + sizeof(*host));
+			NEW_BINSTRING(message, sizeof(header) + sizeof(image->servers[i]));
 			memcpy(message->data, &header, sizeof(header));
-			memcpy(message->data + sizeof(header), host, sizeof(*host));
+			memcpy(message->data + sizeof(header), &image->servers[i], sizeof(image->servers[i]));
 			client->sendqueue = g_slist_append(client->sendqueue, message);
 		}
 	}
