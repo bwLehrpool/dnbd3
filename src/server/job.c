@@ -294,6 +294,7 @@ static void query_servers()
 				pthread_spin_unlock(&_spinlock);
 				// Image is NEW, add it!
 				// TODO: Check if replication is requested for this namespace
+				// TODO: Automatically generate cache file
 				dnbd3_image_t newimage;
 				memset(&newimage, 0, sizeof(newimage));
 				newimage.config_group = xmlbuffer;
@@ -367,7 +368,7 @@ static void add_alt_server(dnbd3_image_t *image, dnbd3_host_t *host)
 		}
 	if (i >= NUMBER_SERVERS) // To many known alt servers already
 		return;
-	// Broadcast to connected clients. Note that i now points to the new server
+	// Broadcast to connected clients. Note that 'i' now points to the new server
 	printf("[DEBUG] Adding alt server to %s\n", image->low_name);
 	GSList *itc;
 	dnbd3_reply_t header;

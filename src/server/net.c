@@ -394,7 +394,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 				break;
 
 			default:
-				memlogf("ERROR: Unknown command\n");
+				memlogf("[ERROR] Unknown command: %d", (int)request.cmd);
 				break;
 
 			}
