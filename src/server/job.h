@@ -2,5 +2,6 @@
 #define JOB_H_
 
 void *dnbd3_job_thread(void *data);
+void dnbd3_job_shutdown();
 
 #endif

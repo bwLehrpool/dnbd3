@@ -83,7 +83,7 @@ typedef struct
 
 extern GSList *_dnbd3_clients; // of dnbd3_client_t
 extern pthread_spinlock_t _spinlock;
-extern char *_config_file_name, *_local_namespace, *_ipc_password;
+extern char *_config_file_name, *_local_namespace, *_ipc_password, *_cache_dir;
 extern GSList *_dnbd3_images; // of dnbd3_image_t
 extern GSList *_trusted_servers;
 

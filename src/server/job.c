@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -45,7 +47,10 @@ static char keep_running = TRUE;
 
 // Private functions
 static char *get_free_device();
+static void return_free_device(char *name);
+static void connect_proxy_images();
 static void query_servers();
+static char *create_cache_filename(char *name, int rid, char *buffer, int maxlen);
 static void add_alt_server(dnbd3_image_t *image, dnbd3_host_t *host);
 static void remove_alt_server(dnbd3_trusted_server_t *server);
 static void update_image_atimes(time_t now);
@@ -97,6 +102,8 @@ void *dnbd3_job_thread(void *data)
 			next_delete_invocation = starttime + 300;
 			dnbd3_exec_delete(TRUE);
 		}
+		// Check for proxied images that have not been set up yet
+		connect_proxy_images();
 		// TODO: Replicate proxied images (limited bandwidth)
 		// Query other servers for new images/status/...
 		query_servers();
@@ -114,6 +121,125 @@ void *dnbd3_job_thread(void *data)
 void dnbd3_job_shutdown()
 {
 	keep_running = FALSE;
+}
+
+static void connect_proxy_images()
+{
+	int s, n;
+	dnbd3_server_entry_t servers[NUMBER_SERVERS];
+	char imagename[1000];
+	int rid;
+	dnbd3_ioctl_t msg;
+	memset(&msg, 0, sizeof(dnbd3_ioctl_t));
+	msg.len = (uint16_t)sizeof(dnbd3_ioctl_t);
+	msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
+	msg.is_server = TRUE;
+	for (n = 0 ;; ++n)
+	{
+		pthread_spin_lock(&_spinlock);
+		dnbd3_image_t *image = g_slist_nth_data(_dnbd3_images, n);
+		if (image == NULL)
+		{	// End of list reached
+			pthread_spin_unlock(&_spinlock);
+			break;
+		}
+		if (image->working || image->file || image->low_name == NULL)
+		{	// Nothing to do
+			pthread_spin_unlock(&_spinlock);
+			continue;
+		}
+		char *devname = get_free_device();
+		if (devname == NULL)
+		{	// All devices busy
+			pthread_spin_unlock(&_spinlock);
+			continue;
+		}
+		// Remember image information as the image pointer isn't
+		// guaranteed to stay valid after unlocking
+		snprintf(imagename, 1000, "%s", image->low_name);
+		rid = image->rid;
+		memcpy(servers, image->servers, sizeof(servers[0]) * NUMBER_SERVERS);
+		pthread_spin_unlock(&_spinlock);
+		int dh = open(devname, O_WRONLY);
+		if (dh < 0)
+			continue;
+		for (s = 0; s < NUMBER_SERVERS; ++s)
+		{
+			if (servers[s].host.type == 0)
+				continue;
+			// connect device
+			msg.host = servers[s].host;
+			msg.imgname = imagename;
+			msg.imgnamelen = strlen(imagename);
+			msg.rid = rid;
+			if (ioctl(dh, IOCTL_OPEN, &msg) < 0)
+				continue;
+			// connected
+			for (++s; s < NUMBER_SERVERS; ++s)
+			{
+				if (servers[s].host.type == 0)
+					continue;
+				msg.host = servers[s].host;
+				if (ioctl(dh, IOCTL_ADD_SRV, &msg) < 0)
+					memlogf("[WARNING] Could not add alt server to proxy device");
+			}
+			// LOCK + UPDATE
+			pthread_spin_lock(&_spinlock);
+			if (g_slist_find(_dnbd3_images, image) == NULL)
+			{	// Image not in list anymore, was deleted in meantime...
+				if (ioctl(dh, IOCTL_CLOSE, &msg) < 0)
+					memlogf("[WARNING] Could not close device after use - lost %s", devname);
+				else
+					return_free_device(devname);
+			}
+			else
+			{
+				image->file = strdup(devname);
+				const off_t off = lseek(dh, 0, SEEK_END);
+				if (off < 0)
+					memlogf("[ERROR] Could not get image size from connected device %s", devname);
+				else if (image->filesize != 0 && image->filesize != off)
+					memlogf("[ERROR] Remote and local size of image do not match: %llu != %llu for %s", (unsigned long long)off, (unsigned long long)image->filesize, image->low_name);
+				else
+					image->working = TRUE;
+				image->filesize = (uint64_t)off;
+				if (image->cache_file != NULL && image->working && image->cache_map == NULL)
+				{
+					const int mapsize = IMGSIZE_TO_MAPBYTES(image->filesize);
+					image->cache_map = calloc(mapsize, 1);
+					off_t cachelen = -1;
+					int ch = open(image->cache_file, O_RDONLY);
+					if (ch >= 0)
+					{
+						cachelen = lseek(ch, 0, SEEK_END);
+						close(ch);
+					}
+					if (cachelen == image->filesize)
+					{
+						char mapfile[strlen(image->cache_file) + 5];
+						sprintf(mapfile, "%s.map", image->cache_file);
+						int cmh = open(mapfile, O_RDONLY);
+						if (cmh >= 0)
+						{
+							if (lseek(cmh, 0, SEEK_END) != mapsize)
+								memlogf("[WARNING] Existing cache map has wrong size.");
+							else
+							{
+								lseek(cmh, 0, SEEK_CUR);
+								read(cmh, image->cache_map, mapsize);
+								printf("[DEBUG] Found existing cache file and map for %s\n", image->low_name);
+							}
+							close(cmh);
+						}
+					}
+				}
+				memlogf("[INFO] Enabled relayed image %s", image->low_name);
+			}
+			pthread_spin_unlock(&_spinlock);
+			break;
+		}
+		close(dh);
+	}
 }
 
 static void update_image_atimes(time_t now)
@@ -142,9 +268,9 @@ static void query_servers()
 	dnbd3_trusted_server_t *server;
 	dnbd3_host_t host;
 	struct sockaddr_in addr4;
+	char xmlbuffer[MAX_IPC_PAYLOAD];
 	for (num = 0;; ++num)
 	{
-		char *xmlbuffer = NULL;
 		// "Iterate" this way to prevent holding the lock for a long time, although it is possible to skip a server this way...
 		pthread_spin_lock(&_spinlock);
 		server = g_slist_nth_data(_trusted_servers, num);
@@ -209,7 +335,6 @@ static void query_servers()
 			memlogf("[WARNING] XML payload from other server exceeds MAX_IPC_PAYLOAD (%d > %d)", (int)header.size, (int)MAX_IPC_PAYLOAD);
 			goto communication_error;
 		}
-		xmlbuffer = malloc(header.size);
 		if (!recv_data(client_sock, xmlbuffer, header.size))
 		{
 			printf("[DEBUG] Error reading XML payload from other server.\n");
@@ -294,11 +419,13 @@ static void query_servers()
 				pthread_spin_unlock(&_spinlock);
 				// Image is NEW, add it!
 				// TODO: Check if replication is requested for this namespace
-				// TODO: Automatically generate cache file
 				dnbd3_image_t newimage;
+				char cachefile[70];
 				memset(&newimage, 0, sizeof(newimage));
 				newimage.config_group = xmlbuffer;
 				newimage.rid = rid;
+				if (_cache_dir)
+					newimage.cache_file = create_cache_filename(xmlbuffer, rid, cachefile, 70);
 				dnbd3_add_image(&newimage);
 				pthread_spin_lock(&_spinlock);
 				local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
@@ -325,7 +452,6 @@ free_current_image:
 		continue;
 communication_error:
 		close(client_sock);
-		free(xmlbuffer);
 		pthread_spin_lock(&_spinlock);
 		if (g_slist_find(_trusted_servers, server))
 		{
@@ -334,6 +460,46 @@ communication_error:
 		}
 		pthread_spin_unlock(&_spinlock);
 	}
+}
+
+static char *create_cache_filename(char *name, int rid, char *buffer, int maxlen)
+{
+	if (_cache_dir == NULL)
+		return NULL;
+	size_t cdl = strlen(_cache_dir);
+	if (maxlen < 15 + cdl)
+		return NULL;
+	if (strlen(name) + 16 + cdl < maxlen)
+		snprintf(buffer, maxlen, "%s/%s_rid_%d.cache", _cache_dir, name, rid);
+	else
+	{
+		char *slash = strrchr(name, '/');
+		if (slash == NULL)
+		{
+			snprintf(buffer, maxlen - 17, "%s/%s", _cache_dir, name);
+			snprintf(buffer + maxlen - 17, 17, "_rid_%d.cache", rid);
+		}
+		else
+		{
+			snprintf(buffer, maxlen, "%s/%s", _cache_dir, name);
+			snprintf(buffer + cdl, maxlen - cdl, "%s_rid_%d.cache", slash, rid);
+		}
+	}
+	char *ptr = buffer + cdl + 1;
+	while (*ptr)
+	{
+		if (*ptr == '/' || *ptr < 32 || *ptr == ' ' || *ptr == '\\' || *ptr == '*' || *ptr == '?')
+			*ptr = '_';
+		++ptr;
+	}
+	FILE *fh;
+	while ((fh = fopen(buffer, "rb")))
+	{	// Alter file name as long as a file by that name already exists
+		fclose(fh);
+		char *c = buffer + rand() % strlen(buffer);
+		*c = rand() % 26 + 'A';
+	}
+	return buffer;
 }
 
 /**
@@ -467,4 +633,18 @@ static char *get_free_device()
 	}
 	memlogf("[WARNING] No more free dnbd3 devices - proxy mode probably affected.");
 	return NULL;
+}
+
+static void return_free_device(char *name)
+{
+	if (devices == NULL)
+		return;
+	int i;
+	for (i = 0; i < num_devices; ++i)
+	{
+		if (devices[i].available || strcmp(devices[i].name, name) != 0)
+			continue;
+		devices[i].available = TRUE;
+		break;
+	}
 }

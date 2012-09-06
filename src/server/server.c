@@ -47,6 +47,7 @@ GSList *_dnbd3_clients = NULL;
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_local_namespace = NULL;
 char *_ipc_password = NULL;
+char *_cache_dir = NULL;
 GSList *_dnbd3_images = NULL; // of dnbd3_image_t
 GSList *_trusted_servers = NULL;
 

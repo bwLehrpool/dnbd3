@@ -67,6 +67,12 @@ void dnbd3_load_config()
 	srand(time(NULL));
 
 	_ipc_password = g_key_file_get_string(_config_handle, "settings", "password", NULL);
+	_cache_dir = g_key_file_get_string(_config_handle, "settings", "cache_dir", NULL);
+
+	if (_cache_dir == NULL)
+		memlogf("[WARNING] No cache dir set! Automatic replication will not work.");
+	else if (access(_cache_dir, R_OK | W_OK) != 0)
+		memlogf("[WARNING] Cache dir '%s' is not readable or writable", _cache_dir);
 
 	gchar **groups = NULL;
 	gsize section_count;

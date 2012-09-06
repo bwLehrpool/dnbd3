@@ -148,6 +148,9 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			dev->imgname = imgname;
 			dev->rid = msg->rid;
 			dev->is_server = msg->is_server;
+			// Forget all alt servers on explicit connect, set first al server to initial server
+			memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
+			memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
 			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_CACHE_SIZE;
 			if (dnbd3_net_connect(dev) == 0)
 			{
@@ -175,9 +178,14 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 		break;
 
 	case IOCTL_SWITCH:
-		dnbd3_net_disconnect(dev);
-		memcpy(&dev->cur_server.host, &msg->host, sizeof(msg->host));
-		result = dnbd3_net_connect(dev);
+		if (memcmp(&dev->cur_server.host, &msg->host, sizeof(msg->host)))
+		{
+			dnbd3_net_disconnect(dev);
+			dev->cur_server.host = msg->host;
+			result = dnbd3_net_connect(dev);
+		}
+		else
+			result = 0;
 		break;
 
 	case IOCTL_ADD_SRV:

@@ -131,15 +131,12 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
 	// do some checks before connecting
 
-	if (is_same_server(&dev->cur_server, &dev->initial_server))
+	if (!dev->is_server && is_same_server(&dev->cur_server, &dev->initial_server))
 	{
 		// Forget all known alt servers
 		memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
 		memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
-		if (!dev->is_server)
-		{
-			get_servers = 1;
-		}
+		get_servers = 1;
 	}
 	if (dev->better_sock)
 	{
