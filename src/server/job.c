@@ -11,6 +11,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <linux/fs.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -84,8 +85,9 @@ void *dnbd3_job_thread(void *data)
 			devices[j].available = TRUE;
 			++j;
 		}
+		num_devices = j;
 	}
-	memlogf("[INFO] %d available dnbd3 devices for proxy mode", j);
+	memlogf("[INFO] %d available dnbd3 devices for proxy mode", num_devices);
 	//
 	time_t next_delete_invocation = 0;
 	//
@@ -143,6 +145,52 @@ static void connect_proxy_images()
 			pthread_spin_unlock(&_spinlock);
 			break;
 		}
+		if (image->working && image->cache_map && image->file)
+		{	// Check if cache is complete
+			int complete = TRUE, j;
+			const int map_len_bytes = IMGSIZE_TO_MAPBYTES(image->filesize);
+			for (j = 0; j < map_len_bytes - 1; ++j)
+			{
+				if (image->cache_map[j] != 0xFF)
+				{
+					complete = FALSE;
+					break;
+				}
+			}
+			if (complete)
+			{
+				const int blocks_in_last_byte = (image->filesize >> 12) & 7;
+				uint8_t last_byte = 0;
+				if (blocks_in_last_byte == 0)
+					last_byte = 0xFF;
+				else
+					for (j = 0; j < blocks_in_last_byte; ++j)
+						last_byte |= (1 << j);
+				complete = ((image->cache_map[map_len_bytes - 1] & last_byte) == last_byte);
+			}
+			if (!complete)
+			{
+				pthread_spin_unlock(&_spinlock);
+				continue;
+			}
+			// Image is 100% cached, disconnect dnbd3 device
+			memlogf("[INFO] Disconnecting %s because local copy of %s is complete.", image->file, image->config_group);
+			int dh = open(image->file, O_RDONLY);
+			if (dh < 0)
+				memlogf("[ERROR] Could not open() device '%s'", image->file);
+			else
+			{
+				if (ioctl(dh, IOCTL_CLOSE, (void*)0) != 0)
+					memlogf("[ERROR] Could not IOCTL_CLOSE device '%s'", image->file);
+				else
+					return_free_device(image->file);
+				close(dh);
+			}
+			free(image->file);
+			image->file = NULL;
+			pthread_spin_unlock(&_spinlock);
+			continue;
+		}
 		if (image->working || image->file || image->low_name == NULL)
 		{	// Nothing to do
 			pthread_spin_unlock(&_spinlock);
@@ -160,7 +208,7 @@ static void connect_proxy_images()
 		rid = image->rid;
 		memcpy(servers, image->servers, sizeof(servers[0]) * NUMBER_SERVERS);
 		pthread_spin_unlock(&_spinlock);
-		int dh = open(devname, O_WRONLY);
+		int dh = open(devname, O_RDWR);
 		if (dh < 0)
 			continue;
 		for (s = 0; s < NUMBER_SERVERS; ++s)
@@ -168,12 +216,14 @@ static void connect_proxy_images()
 			if (servers[s].host.type == 0)
 				continue;
 			// connect device
+			printf("[DEBUG] Connecting device....\n");
 			msg.host = servers[s].host;
 			msg.imgname = imagename;
 			msg.imgnamelen = strlen(imagename);
 			msg.rid = rid;
 			if (ioctl(dh, IOCTL_OPEN, &msg) < 0)
 				continue;
+			printf("[DEBUG] Connected! Adding alt servers...\n");
 			// connected
 			for (++s; s < NUMBER_SERVERS; ++s)
 			{
@@ -182,7 +232,10 @@ static void connect_proxy_images()
 				msg.host = servers[s].host;
 				if (ioctl(dh, IOCTL_ADD_SRV, &msg) < 0)
 					memlogf("[WARNING] Could not add alt server to proxy device");
+				else
+					printf("[DEBUG] Added an alt server\n");
 			}
+			printf("[DEBUG] Done, handling file size...\n");
 			// LOCK + UPDATE
 			pthread_spin_lock(&_spinlock);
 			if (g_slist_find(_dnbd3_images, image) == NULL)
@@ -195,16 +248,29 @@ static void connect_proxy_images()
 			else
 			{
 				image->file = strdup(devname);
-				const off_t off = lseek(dh, 0, SEEK_END);
-				if (off < 0)
-					memlogf("[ERROR] Could not get image size from connected device %s", devname);
-				else if (image->filesize != 0 && image->filesize != off)
-					memlogf("[ERROR] Remote and local size of image do not match: %llu != %llu for %s", (unsigned long long)off, (unsigned long long)image->filesize, image->low_name);
+				long long oct = 0;
+				int t, ret;
+				for (t = 0; t < 10 && dh >= 0; ++t)
+				{	// For some reason the ioctl might return 0 right after connecting
+					ret = ioctl(dh, BLKGETSIZE64, &oct);
+					if (ret == 0 && oct > 0)
+						break;
+					close(dh);
+					usleep(100 * 1000);
+					dh = open(devname, O_RDONLY);
+				}
+				if (dh < 0 || ret != 0)
+					memlogf("[ERROR] SIZE fail on %s (ret=%d, oct=%lld)", devname, ret, oct);
+				else if (oct == 0)
+					memlogf("[ERROR] Reported disk size is 0.");
+				else if (image->filesize != 0 && image->filesize != oct)
+					memlogf("[ERROR] Remote and local size of image do not match: %llu != %llu for %s", (unsigned long long)oct, (unsigned long long)image->filesize, image->low_name);
 				else
 					image->working = TRUE;
-				image->filesize = (uint64_t)off;
+				image->filesize = (uint64_t)oct;
 				if (image->cache_file != NULL && image->working && image->cache_map == NULL)
 				{
+					printf("[DEBUG] Image has cache file %s\n", image->cache_file);
 					const int mapsize = IMGSIZE_TO_MAPBYTES(image->filesize);
 					image->cache_map = calloc(mapsize, 1);
 					off_t cachelen = -1;
@@ -213,6 +279,19 @@ static void connect_proxy_images()
 					{
 						cachelen = lseek(ch, 0, SEEK_END);
 						close(ch);
+					}
+					else
+					{
+						ch = open(image->cache_file, O_WRONLY | O_CREAT, 0600);
+						if (ch >= 0)
+						{
+							// Pre-allocate disk space
+							printf("[DEBUG] Pre-allocating disk space...\n");
+							lseek(ch, image->filesize - 1, SEEK_SET);
+							write(ch, &ch, 1);
+							close(ch);
+							printf("[DEBUG] Allocation complete.\n");
+						}
 					}
 					if (cachelen == image->filesize)
 					{
@@ -225,7 +304,7 @@ static void connect_proxy_images()
 								memlogf("[WARNING] Existing cache map has wrong size.");
 							else
 							{
-								lseek(cmh, 0, SEEK_CUR);
+								lseek(cmh, 0, SEEK_SET);
 								read(cmh, image->cache_map, mapsize);
 								printf("[DEBUG] Found existing cache file and map for %s\n", image->low_name);
 							}
@@ -233,7 +312,8 @@ static void connect_proxy_images()
 						}
 					}
 				}
-				memlogf("[INFO] Enabled relayed image %s", image->low_name);
+				if (image->working)
+					memlogf("[INFO] Enabled relayed image %s (%lld)", image->low_name, oct);
 			}
 			pthread_spin_unlock(&_spinlock);
 			break;
@@ -376,9 +456,11 @@ static void query_servers()
 			NEW_POINTERLIST;
 			char *image = XML_GETPROP(cur, "name");
 			char *ridstr = XML_GETPROP(cur, "rid");
-			if (!image || !ridstr)
+			char *sizestr = XML_GETPROP(cur, "size");
+			if (!image || !ridstr || !sizestr)
 				goto free_current_image;
-			int rid = atoi(ridstr);
+			const int rid = atoi(ridstr);
+			const long long size = atoll(sizestr);
 			if (rid <= 0)
 			{
 				printf("[DEBUG] Ignoring remote image with rid %d\n", rid);
@@ -425,7 +507,10 @@ static void query_servers()
 				newimage.config_group = xmlbuffer;
 				newimage.rid = rid;
 				if (_cache_dir)
+				{
 					newimage.cache_file = create_cache_filename(xmlbuffer, rid, cachefile, 70);
+					printf("[DEBUG] Cache file is %s\n", newimage.cache_file);
+				}
 				dnbd3_add_image(&newimage);
 				pthread_spin_lock(&_spinlock);
 				local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
@@ -437,7 +522,10 @@ static void query_servers()
 			{
 				// Image is already KNOWN, add alt server if appropriate
 				// TODO: Check if requested for namespace
-				add_alt_server(local_image, &server->host);
+				if (size != local_image->filesize)
+					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version!\n", local_image->config_group);
+				else
+					add_alt_server(local_image, &server->host);
 				pthread_spin_unlock(&_spinlock);
 			}
 			// Cleanup

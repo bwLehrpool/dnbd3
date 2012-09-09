@@ -161,7 +161,6 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	image = NULL;
 	if (newimage)
 	{
-		memlogf("[INFO] Added image '%s'", newimage->low_name);
 		_dnbd3_images = g_slist_prepend(_dnbd3_images, newimage);
 	}
 	else
@@ -375,6 +374,12 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 	image->rid = rid;
 	image->relayed = (image_file == NULL || image_file == '\0');
 
+	if (image_file && strncmp(image_file, "/dev/dnbd", 9) == 0)
+	{
+		printf("[BUG BUG BUG] Image file is %s\n", image_file);
+		image->relayed = TRUE;
+	}
+
 	if (image->relayed)	// Image is relayed (this server acts as proxy)
 	{
 		if (strchr(image_name, '/') == NULL)
@@ -431,6 +436,7 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		}
 		else if (image->filesize > 0)
 		{
+			printf("[DEBUG] Size known %llu for %s\n", (unsigned long long)image->filesize, image->cache_file);
 			const size_t map_len_bytes = IMGSIZE_TO_MAPBYTES(image->filesize);
 			image->cache_map = calloc(map_len_bytes, sizeof(uint8_t));
 			// read cache map from file

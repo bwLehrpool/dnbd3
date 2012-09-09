@@ -381,7 +381,8 @@ static int ipc_receive(int client_sock)
 			xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST strbuffer);
 			sprintf(strbuffer, "%llu", (unsigned long long)image->filesize);
 			xmlNewProp(tmp_node, BAD_CAST "size", BAD_CAST strbuffer);
-			xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST image->file);
+			if (image->file)
+				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST image->file);
 			xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST "???"); // TODO
 			if (image->cache_file && image->cache_map)
 			{
@@ -391,7 +392,7 @@ static int ipc_receive(int client_sock)
 					if (image->cache_map[i])
 						complete += 100;
 				sprintf(strbuffer, "%d", complete / size);
-				xmlNewProp(tmp_node, BAD_CAST "cachefill", BAD_CAST image->cache_file);
+				xmlNewProp(tmp_node, BAD_CAST "cachefill", BAD_CAST strbuffer);
 			}
 			xmlAddChild(parent_node, tmp_node);
 		}

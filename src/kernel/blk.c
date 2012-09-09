@@ -99,33 +99,38 @@ struct block_device_operations dnbd3_blk_ops =
 
 int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
-	int result = 0;
+	int result = -100;
 	dnbd3_device_t *dev = bdev->bd_disk->private_data;
 	struct request_queue *blk_queue = dev->disk->queue;
 	char *imgname = NULL;
-	dnbd3_ioctl_t *msg = kmalloc(sizeof(*msg), GFP_KERNEL);
-	unsigned long irqflags;
+	dnbd3_ioctl_t *msg = NULL;
+	//unsigned long irqflags;
 
-	if (msg == NULL) return -ENOMEM;
-	copy_from_user((char *)msg, (char *)arg, 2);
-	if (msg->len != sizeof(*msg))
+	if (arg != 0)
 	{
-		result = -ENOEXEC;
-		goto cleanup_return;
-	}
-	copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
-	if (msg->imgname != NULL && msg->imgnamelen > 0)
-	{
-		imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
-		if (imgname == NULL)
+		msg = kmalloc(sizeof(*msg), GFP_KERNEL);
+		if (msg == NULL) return -ENOMEM;
+		copy_from_user((char *)msg, (char *)arg, 2);
+		if (msg->len != sizeof(*msg))
 		{
-			result = -ENOMEM;
+			result = -ENOEXEC;
 			goto cleanup_return;
 		}
-		copy_from_user(imgname, msg->imgname, msg->imgnamelen);
-		imgname[msg->imgnamelen] = '\0';
-		//printk("IOCTL Image name of len %d is %s\n", (int)msg->imgnamelen, imgname);
+		copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
+		if (msg->imgname != NULL && msg->imgnamelen > 0)
+		{
+			imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
+			if (imgname == NULL)
+			{
+				result = -ENOMEM;
+				goto cleanup_return;
+			}
+			copy_from_user(imgname, msg->imgname, msg->imgnamelen);
+			imgname[msg->imgnamelen] = '\0';
+			//printk("IOCTL Image name of len %d is %s\n", (int)msg->imgnamelen, imgname);
+		}
 	}
+
 
 	switch (cmd)
 	{
@@ -196,7 +201,6 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 		}
 		else
 		{
-			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			if (dev->new_servers_num >= NUMBER_SERVERS)
 				result = -EAGAIN;
 			else
@@ -206,11 +210,11 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 				++dev->new_servers_num;
 				result = 0;
 			}
-			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 		}
 		break;
 
 	case BLKFLSBUF:
+		result = 0;
 		break;
 
 	default:

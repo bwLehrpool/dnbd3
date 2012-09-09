@@ -231,6 +231,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 			error_dev_va("FATAL: Server provides rid %d, requested was %d.", (int)rid, (int)dev->rid);
 		dev->rid = rid;
 		dev->reported_size = serializer_get_uint64(&dev->payload_buffer);
+		if (dev->reported_size < 4096)
+			error_dev("ERROR: Reported size by server is < 4096");
 		// store image information
 		set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
 		debug_dev_va("INFO: Filesize: %llu.", dev->reported_size);
@@ -442,6 +444,9 @@ int dnbd3_net_discover(void *data)
 			continue;
 		dev->discover = 0;
 
+		if (dev->reported_size < 4096)
+			continue;
+
 		// Check if the list of alt servers needs to be updated and do so if neccessary
 		if (dev->new_servers_num)
 		{
@@ -457,6 +462,7 @@ int dnbd3_net_discover(void *data)
 					{
 						// REMOVE request
 						alt_server->host.type = 0;
+						debug_dev_va("Removing alt server %pI4", alt_server->host.addr);
 						continue;
 					}
 					// ADD, so just reset fail counter
@@ -469,9 +475,8 @@ int dnbd3_net_discover(void *data)
 				if (alt_server == NULL) // All NUMBER_SERVERS slots are taken, ignore entry
 					continue;
 				// Add new server entry
-				memcpy(alt_server->host.addr, dev->new_servers[i].host.addr, 16);
-				alt_server->host.type = dev->new_servers[i].host.type;
-				alt_server->host.port = dev->new_servers[i].host.port;
+				alt_server->host = dev->new_servers[i].host;
+				debug_dev_va("Adding alt server %pI4", alt_server->host.addr);
 				alt_server->rtts[0] = alt_server->rtts[1]
 				                      = alt_server->rtts[2] = alt_server->rtts[3]
 				                              = RTT_UNREACHABLE;
@@ -576,7 +581,11 @@ int dnbd3_net_discover(void *data)
 			// Request block
 			dnbd3_request.cmd = CMD_GET_BLOCK;
 			// Pick random block
-			if (sizeof(size_t) >= 8)
+			if (dev->reported_size == 0)
+			{
+				dnbd3_request.offset = 0;
+			}
+			else if (sizeof(size_t) >= 8)
 			{
 				dnbd3_request.offset = ((((start.tv_usec << 12) ^ start.tv_usec) << 4) % dev->reported_size) & ~(uint64_t)(RTT_BLOCK_SIZE-1);
 				//printk("Random offset 64bit: %lluMiB\n", (unsigned long long)(dnbd3_request.offset >> 20));

@@ -206,12 +206,15 @@ void *dnbd3_handle_query(void *dnbd3_client)
 						}
 						else
 						{
-							image_file = open(image->file, O_RDONLY);
-							if (image_file == -1)
+							if (image->file)
 							{
-								image = NULL;
+								image_file = open(image->file, O_RDONLY);
+								if (image_file == -1)
+								{
+									image = NULL;
+								}
 							}
-							else
+							if (image)
 							{
 								client->image = image;
 								if (!client->is_server)
@@ -219,6 +222,10 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
 								if (image->cache_map && image->cache_file)
 									image_cache = open(image->cache_file, O_RDWR);
+								else if (image->cache_map)
+									printf("[BUG] Image has cache_map but no cache file!\n");
+								else if (image->cache_file)
+									printf("[BUG] Image has cache_file but not cache map!\n");
 							}
 						}
 					}
@@ -312,6 +319,8 @@ void *dnbd3_handle_query(void *dnbd3_client)
 							lseek(image_cache, todo_offset, SEEK_SET);
 							if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) != todo_size)
 							{
+								if (image->file == NULL)
+									printf("[ERROR] Device was closed when local copy was incomplete.");
 								printf("[ERROR] sendfile failed (copy to cache 1)\n");
 								close(client->sock);
 								client->sock = -1;
