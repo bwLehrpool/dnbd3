@@ -237,6 +237,7 @@ static void connect_proxy_images()
 			}
 			printf("[DEBUG] Done, handling file size...\n");
 			// LOCK + UPDATE
+			int isworking = FALSE, alloc_cache = FALSE;
 			pthread_spin_lock(&_spinlock);
 			if (g_slist_find(_dnbd3_images, image) == NULL)
 			{	// Image not in list anymore, was deleted in meantime...
@@ -266,9 +267,9 @@ static void connect_proxy_images()
 				else if (image->filesize != 0 && image->filesize != oct)
 					memlogf("[ERROR] Remote and local size of image do not match: %llu != %llu for %s", (unsigned long long)oct, (unsigned long long)image->filesize, image->low_name);
 				else
-					image->working = TRUE;
+					isworking = TRUE;
 				image->filesize = (uint64_t)oct;
-				if (image->cache_file != NULL && image->working && image->cache_map == NULL)
+				if (image->cache_file != NULL && isworking && image->cache_map == NULL)
 				{
 					printf("[DEBUG] Image has cache file %s\n", image->cache_file);
 					const int mapsize = IMGSIZE_TO_MAPBYTES(image->filesize);
@@ -280,19 +281,8 @@ static void connect_proxy_images()
 						cachelen = lseek(ch, 0, SEEK_END);
 						close(ch);
 					}
-					else
-					{
-						ch = open(image->cache_file, O_WRONLY | O_CREAT, 0600);
-						if (ch >= 0)
-						{
-							// Pre-allocate disk space
-							printf("[DEBUG] Pre-allocating disk space...\n");
-							lseek(ch, image->filesize - 1, SEEK_SET);
-							write(ch, &ch, 1);
-							close(ch);
-							printf("[DEBUG] Allocation complete.\n");
-						}
-					}
+					if (ch < 0 || cachelen != image->filesize)
+						alloc_cache = TRUE;
 					if (cachelen == image->filesize)
 					{
 						char mapfile[strlen(image->cache_file) + 5];
@@ -312,10 +302,38 @@ static void connect_proxy_images()
 						}
 					}
 				}
-				if (image->working)
-					memlogf("[INFO] Enabled relayed image %s (%lld)", image->low_name, oct);
 			}
+			char cfname[1000] = {0};
+			off_t fs = image->filesize;
+			if (isworking && alloc_cache && image->cache_file)
+				snprintf(cfname, 1000, "%s", image->cache_file);
+			else if (isworking)
+				image->working = TRUE;
 			pthread_spin_unlock(&_spinlock);
+			if (isworking && *cfname)
+			{
+				int ch = open(cfname, O_WRONLY | O_CREAT, 0600);
+				if (ch >= 0)
+				{
+					// Pre-allocate disk space
+					printf("[DEBUG] Pre-allocating disk space...\n");
+					lseek(ch, fs - 1, SEEK_SET);
+					write(ch, &ch, 1);
+					close(ch);
+					printf("[DEBUG] Allocation complete.\n");
+					pthread_spin_lock(&_spinlock);
+					if (g_slist_find(_dnbd3_images, image) == NULL)
+						memlogf("[WARNING] Image has gone away");
+					else
+					{
+						image->working = TRUE;
+						memlogf("[INFO] Enabled relayed image %s (%lld)", image->low_name, (long long)fs);
+					}
+					pthread_spin_unlock(&_spinlock);
+				}
+				else
+					memlogf("[WARNING] Could not pre-allocate %s", cfname);
+			}
 			break;
 		}
 		close(dh);
