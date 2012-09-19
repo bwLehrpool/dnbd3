@@ -160,3 +160,10 @@ void strtolower(char *string)
 		++string;
 	}
 }
+
+void remove_trailing_slash(char *string)
+{
+	char *ptr = string + strlen(string) - 1;
+	while (ptr >= string && *ptr == '/')
+		*ptr-- = '\0';
+}

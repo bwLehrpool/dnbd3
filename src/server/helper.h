@@ -12,6 +12,7 @@ char host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen);
 char is_valid_namespace(char *namespace);
 char is_valid_imagename(char *namespace);
 void strtolower(char *string);
+void remove_trailing_slash(char *string);
 
 static inline int is_same_server(const dnbd3_host_t *const a, const dnbd3_host_t *const b)
 {

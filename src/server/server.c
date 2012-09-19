@@ -26,6 +26,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 
 #include "../types.h"
 #include "../version.h"
@@ -111,6 +112,16 @@ void dnbd3_cleanup()
 			if (fd > 0)
 				write(fd, image->cache_map,  ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char));
 
+			close(fd);
+		}
+		// Close bock devices of proxied images
+		if (image->file && strncmp(image->file, "/dev/dnbd", 9) == 0)
+		{
+			int fd = open(image->file, O_RDONLY);
+			dnbd3_ioctl_t msg;
+			memset(&msg, 0, sizeof(msg));
+			msg.len = sizeof(msg);
+			ioctl(fd, IOCTL_CLOSE, &msg);
 			close(fd);
 		}
 

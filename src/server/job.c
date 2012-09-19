@@ -512,38 +512,53 @@ static void query_servers()
 				snprintf(xmlbuffer, MAX_IPC_PAYLOAD, "%s/%s", image, slash);
 			}
 			// Image seems legit, check if there's a local copy
+			dnbd3_namespace_t *trust;
 			pthread_spin_lock(&_spinlock);
+			if (slash == NULL)
+				trust = dnbd3_get_trust_level(&host, ns);
+			else
+				trust = dnbd3_get_trust_level(&host, image);
+			if (trust == NULL)
+			{	// Namespace of image is not trusted
+				pthread_spin_unlock(&_spinlock);
+				goto free_current_image;
+			}
 			dnbd3_image_t *local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
-			if (local_image == NULL)
+			if (local_image == NULL && trust->auto_replicate)
 			{
 				pthread_spin_unlock(&_spinlock);
 				// Image is NEW, add it!
 				// TODO: Check if replication is requested for this namespace
 				dnbd3_image_t newimage;
-				char cachefile[70];
+				char cachefile[90];
 				memset(&newimage, 0, sizeof(newimage));
 				newimage.config_group = xmlbuffer;
 				newimage.rid = rid;
 				if (_cache_dir)
 				{
-					newimage.cache_file = create_cache_filename(xmlbuffer, rid, cachefile, 70);
+					newimage.cache_file = create_cache_filename(xmlbuffer, rid, cachefile, 90);
 					printf("[DEBUG] Cache file is %s\n", newimage.cache_file);
 				}
 				dnbd3_add_image(&newimage);
 				pthread_spin_lock(&_spinlock);
 				local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
 				if (local_image)
-					add_alt_server(local_image, &server->host);
+					add_alt_server(local_image, &host);
 				pthread_spin_unlock(&_spinlock);
 			}
-			else
+			else if (local_image != NULL)
 			{
 				// Image is already KNOWN, add alt server if appropriate
 				// TODO: Check if requested for namespace
 				if (size != local_image->filesize)
 					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version!\n", local_image->config_group);
 				else
-					add_alt_server(local_image, &server->host);
+					add_alt_server(local_image, &host);
+				pthread_spin_unlock(&_spinlock);
+			}
+			else
+			{
+				printf("[DEBUG] No NS match: '%s'\n", xmlbuffer);
 				pthread_spin_unlock(&_spinlock);
 			}
 			// Cleanup

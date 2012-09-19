@@ -643,6 +643,7 @@ int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace,
 	int nslen = strlen(namespace) + 1;
 	char nslow[nslen];
 	memcpy(nslow, namespace, nslen);
+	remove_trailing_slash(nslow);
 	strtolower(nslow);
 	GSList *iterator;
 	dnbd3_namespace_t *ns = NULL;
@@ -675,6 +676,50 @@ int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace,
 	else
 		g_key_file_set_string(_config_handle, groupname, ns->name, "-");
 	return TRUE;
+}
+
+/**
+ * Gives the closest match of a namespace rule that can be applied to
+ * the given namespace
+ * Returns NULL if none
+ * !! Lock before calling this function !!
+ */
+dnbd3_namespace_t *dnbd3_get_trust_level(dnbd3_host_t *host, char *namespace)
+{
+	dnbd3_trusted_server_t *server = NULL;
+	GSList *iterator;
+	for (iterator = _trusted_servers; iterator; iterator = iterator->next)
+	{
+		dnbd3_trusted_server_t *comp = iterator->data;
+		if (!is_same_server(host, &comp->host))
+			continue;
+		server = comp;
+		break;
+	}
+	if (server == NULL)
+		return NULL;
+	dnbd3_namespace_t *best = NULL;
+	int bestlen = 0;
+	char nslow[strlen(namespace)+1];
+	strcpy(nslow, namespace);
+	remove_trailing_slash(nslow);
+	strtolower(nslow);
+	for (iterator = server->namespaces; iterator; iterator = iterator-> next)
+	{
+		dnbd3_namespace_t *comp = iterator->data;
+		const int cmplen = strlen(comp->name);
+		if (strncmp(nslow, comp->name, cmplen) != 0) // names do not match at all
+			continue;
+		if (nslow[cmplen] == '/' && !comp->recursive) // partial match, but recursion is disabled
+			continue;
+		if (nslow[cmplen] != '\0') // in mid-string
+			continue;
+		if (cmplen < bestlen) // Match is not better than one found before
+			continue;
+		bestlen = cmplen;
+		best = comp;
+	}
+	return best;
 }
 
 /**
