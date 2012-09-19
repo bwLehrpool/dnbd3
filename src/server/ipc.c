@@ -336,6 +336,8 @@ static int ipc_receive(int client_sock)
 		}
 		if (!recv_data(client_sock, payload, header.size))
 			return 0;
+
+		docRequest = xmlReadMemory(payload, header.size, "noname.xml", NULL, 0);
 	}
 
 	switch (cmd)
@@ -495,15 +497,6 @@ get_info_reply_cleanup:
 
 	case IPC_ADDIMG:
 	case IPC_DELIMG:
-		if (header.size == 0)
-		{
-			header.size = htonl(0);
-			header.error = htonl(ERROR_MISSING_ARGUMENT);
-			return_value = send_data(client_sock, &header, sizeof(header));
-			break;
-		}
-		docRequest = xmlReadMemory(payload, header.size, "noname.xml", NULL, 0);
-
 		if (docRequest)
 		{
 			if (!is_password_correct(docRequest))
@@ -543,6 +536,57 @@ get_info_reply_cleanup:
 			} END_FOR_EACH;
 			if (count == 0)
 				header.error = htonl(ERROR_MISSING_ARGUMENT);
+		}
+		else
+			header.error = htonl(ERROR_INVALID_XML);
+
+		header.size = htonl(0);
+		return_value = send_data(client_sock, &header, sizeof(header));
+		break;
+
+	case IPC_ADDNS:
+	case IPC_DELNS:
+		if (docRequest)
+		{
+			if (!is_password_correct(docRequest))
+			{
+				header.error = htonl(ERROR_WRONG_PASSWORD);
+				header.size = htonl(0);
+				return_value = send_data(client_sock, &header, sizeof(header));
+				break;
+			}
+
+			xmlNodePtr cur = NULL;
+
+			FOR_EACH_NODE(docRequest, "/data/namespaces/namespace", cur)
+			{
+				if (cur->type != XML_ELEMENT_NODE)
+					continue;
+				NEW_POINTERLIST;
+				char *host = (char *)XML_GETPROP(cur, "server");
+				char *ns = (char *)XML_GETPROP(cur, "name");
+				char *flags = (char *)XML_GETPROP(cur, "flags");
+				char *comment = (char *)XML_GETPROP(cur, "comment");
+				pthread_spin_lock(&_spinlock);
+				if (host && ns)
+				{
+					if (cmd == IPC_ADDNS)
+					{
+						dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(host, TRUE, comment);
+						if (server)
+							dnbd3_add_trusted_namespace(server, ns, flags);
+					}
+					else
+					{
+						dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(host, FALSE, comment);
+						if (server)
+							dnbd3_del_trusted_namespace(server, ns);
+					}
+				}
+				pthread_spin_unlock(&_spinlock);
+				FREE_POINTERLIST;
+			} END_FOR_EACH;
+
 		}
 		else
 			header.error = htonl(ERROR_INVALID_XML);

@@ -53,6 +53,7 @@ dnbd3_image_t *dnbd3_get_image(char *name, int rid, const char do_lock);
 
 dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_not_found, char *comment);
 int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace, char *flags);
+int dnbd3_del_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace);
 dnbd3_namespace_t *dnbd3_get_trust_level(dnbd3_host_t *host, char *namespace);
 
 void dnbd3_handle_sigpipe(int signum);

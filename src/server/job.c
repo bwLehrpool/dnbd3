@@ -521,6 +521,7 @@ static void query_servers()
 			if (trust == NULL)
 			{	// Namespace of image is not trusted
 				pthread_spin_unlock(&_spinlock);
+				printf("[DEBUG] No NS match: '%s'\n", xmlbuffer);
 				goto free_current_image;
 			}
 			dnbd3_image_t *local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
@@ -528,7 +529,6 @@ static void query_servers()
 			{
 				pthread_spin_unlock(&_spinlock);
 				// Image is NEW, add it!
-				// TODO: Check if replication is requested for this namespace
 				dnbd3_image_t newimage;
 				char cachefile[90];
 				memset(&newimage, 0, sizeof(newimage));
@@ -549,7 +549,6 @@ static void query_servers()
 			else if (local_image != NULL)
 			{
 				// Image is already KNOWN, add alt server if appropriate
-				// TODO: Check if requested for namespace
 				if (size != local_image->filesize)
 					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version!\n", local_image->config_group);
 				else

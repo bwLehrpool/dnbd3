@@ -144,6 +144,15 @@ void dnbd3_load_config()
 
 int dnbd3_add_image(dnbd3_image_t *image)
 {
+	if (image->file)
+	{
+		if (strncmp(image->file, "/dev/dnbd", 9) == 0)
+			return ERROR_IMAGE_NOT_FOUND;
+		int fh = open(image->file, O_RDONLY);
+		if (fh < 0)
+			return ERROR_IMAGE_NOT_FOUND;
+		close(fh);
+	}
 	// Lock here to prevent concurrent add calls to mess rids up. Cannot happen currently
 	// as IPC clients are not threaded and they're the only place where this is called,
 	// but better be safe for the future...
@@ -676,6 +685,31 @@ int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace,
 	else
 		g_key_file_set_string(_config_handle, groupname, ns->name, "-");
 	return TRUE;
+}
+
+/**
+ * Remove trusted namespace from given trusted server.
+ * !! Lock before calling this function !!
+ */
+int dnbd3_del_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace)
+{
+	int nslen = strlen(namespace) + 1;
+	char nslow[nslen];
+	memcpy(nslow, namespace, nslen);
+	remove_trailing_slash(nslow);
+	strtolower(nslow);
+	GSList *iterator;
+	for (iterator = server->namespaces; iterator; iterator = iterator->next)
+	{
+		dnbd3_namespace_t *cmp = iterator->data;
+		if (strcmp(nslow, cmp->name) == 0)
+		{
+			free(cmp->name);
+			server->namespaces = g_slist_remove(server->namespaces, cmp);
+			return TRUE;
+		}
+	}
+	return FALSE;
 }
 
 /**
