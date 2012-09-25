@@ -361,7 +361,7 @@ static int ipc_receive(int client_sock)
 			goto get_info_reply_cleanup;
 		xmlDocSetRootElement(docReply, root_node);
 
-		xmlNewTextChild(root_node, NULL, BAD_CAST "namespace", BAD_CAST _local_namespace);
+		xmlNewTextChild(root_node, NULL, BAD_CAST "defaultns", BAD_CAST _local_namespace);
 
 		// Images
 		parent_node = xmlNewNode(NULL, BAD_CAST "images");
@@ -441,10 +441,11 @@ static int ipc_receive(int client_sock)
 				tmp_node = xmlNewNode(NULL, BAD_CAST "server");
 				if (tmp_node == NULL)
 					goto get_info_reply_cleanup;
+				xmlNodePtr namespace_root = xmlNewNode(NULL, BAD_CAST "namespaces");
+				if (namespace_root == NULL)
+					goto get_info_reply_cleanup;
 				host_to_string(&server->host, strbuffer, STRBUFLEN);
-				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
-				sprintf(strbuffer, "%d", (int)ntohs(server->host.port));
-				xmlNewProp(tmp_node, BAD_CAST "port", BAD_CAST strbuffer);
+				xmlNewProp(tmp_node, BAD_CAST "address", BAD_CAST strbuffer);
 				if (server->comment)
 					xmlNewProp(tmp_node, BAD_CAST "comment", BAD_CAST server->comment);
 				for (iterator2 = server->namespaces; iterator2; iterator2 = iterator2->next)
@@ -453,7 +454,7 @@ static int ipc_receive(int client_sock)
 					server_node = xmlNewNode(NULL, BAD_CAST "namespace");
 					if (server_node == NULL)
 						goto get_info_reply_cleanup;
-					xmlAddChild(tmp_node, server_node);
+					xmlAddChild(namespace_root, server_node);
 					xmlNewProp(server_node, BAD_CAST "name", BAD_CAST ns->name);
 					if (ns->auto_replicate)
 						xmlNewProp(server_node, BAD_CAST "replicate", BAD_CAST "1");
@@ -461,6 +462,7 @@ static int ipc_receive(int client_sock)
 						xmlNewProp(server_node, BAD_CAST "recursive", BAD_CAST "1");
 				}
 				xmlAddChild(parent_node, tmp_node);
+				xmlAddChild(tmp_node, namespace_root);
 			}
 		}
 		pthread_spin_unlock(&_spinlock);
@@ -522,16 +524,27 @@ get_info_reply_cleanup:
 				char *rid_str = (char *)XML_GETPROP(cur, "rid");
 				image.file = (char *)XML_GETPROP(cur, "file");
 				image.cache_file = (char *)XML_GETPROP(cur, "cache");
-				if (image.config_group && rid_str && image.file && image.cache_file)
+				if (image.file && !file_exists(image.file))
 				{
-					image.rid = atoi(rid_str);
-					if (cmd == IPC_ADDIMG)
-						header.error = htonl(dnbd3_add_image(&image));
-					else
-						header.error = htonl(dnbd3_del_image(&image));
+					header.error = htonl(ERROR_FILE_NOT_FOUND);
+				}
+				else if (image.cache_file && !file_writable(image.cache_file))
+				{
+					header.error = htonl(ERROR_NOT_WRITABLE);
 				}
 				else
-					header.error = htonl(ERROR_MISSING_ARGUMENT);
+				{
+					if (image.config_group && rid_str)
+					{
+						image.rid = atoi(rid_str);
+						if (cmd == IPC_ADDIMG)
+							header.error = htonl(dnbd3_add_image(&image));
+						else
+							header.error = htonl(dnbd3_del_image(&image));
+					}
+					else
+						header.error = htonl(ERROR_MISSING_ARGUMENT);
+				}
 				FREE_POINTERLIST;
 			} END_FOR_EACH;
 			if (count == 0)
@@ -541,6 +554,7 @@ get_info_reply_cleanup:
 			header.error = htonl(ERROR_INVALID_XML);
 
 		header.size = htonl(0);
+		printf("Code: %d\n", (int)ntohl(header.error));
 		return_value = send_data(client_sock, &header, sizeof(header));
 		break;
 
@@ -765,12 +779,12 @@ void dnbd3_ipc_send(int cmd)
 					continue;
 				NEW_POINTERLIST;
 				++count;
-				char *ip = XML_GETPROP(cur, "ip");
+				char *address = XML_GETPROP(cur, "address");
 				char *comment = XML_GETPROP(cur, "comment");
 				if (comment)
-					printf("%-30s (%s)\n", ip, comment);
+					printf("%-30s (%s)\n", address, comment);
 				else
-					printf("%-30s\n", ip);
+					printf("%-30s\n", address);
 				for (childit = cur->children; childit; childit = childit->next)
 				{
 					if (childit->type != XML_ELEMENT_NODE || childit->name == NULL || strcmp((const char*)childit->name, "namespace") != 0)

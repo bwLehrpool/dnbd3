@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <glib/gmacros.h>
+#include <fcntl.h>
 #include "../config.h"
 
 /**
@@ -166,4 +167,29 @@ void remove_trailing_slash(char *string)
 	char *ptr = string + strlen(string) - 1;
 	while (ptr >= string && *ptr == '/')
 		*ptr-- = '\0';
+}
+
+int file_exists(char *file)
+{
+	int fd = open(file, O_RDONLY);
+	if (fd < 0)
+		return FALSE;
+	close(fd);
+	return TRUE;
+}
+
+int file_writable(char *file)
+{
+	int fd = open(file, O_WRONLY);
+	if (fd >= 0)
+	{
+		close(fd);
+		return TRUE;
+	}
+	fd = open(file, O_WRONLY | O_CREAT, 0600);
+	if (fd < 0)
+		return FALSE;
+	close(fd);
+	unlink(file);
+	return TRUE;
 }

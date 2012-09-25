@@ -210,7 +210,12 @@ static void connect_proxy_images()
 		pthread_spin_unlock(&_spinlock);
 		int dh = open(devname, O_RDWR);
 		if (dh < 0)
+		{
+			pthread_spin_lock(&_spinlock);
+			return_free_device(devname);
+			pthread_spin_unlock(&_spinlock);
 			continue;
+		}
 		for (s = 0; s < NUMBER_SERVERS; ++s)
 		{
 			if (servers[s].host.type == 0)
@@ -449,7 +454,7 @@ static void query_servers()
 			goto communication_error;
 		}
 		// Data seems ok
-		char *ns = getTextFromPath(doc, "/data/namespace");
+		char *ns = getTextFromPath(doc, "/data/defaultns");
 		if (ns && *ns == '\0')
 		{
 			xmlFree(ns);

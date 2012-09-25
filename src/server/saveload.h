@@ -40,6 +40,7 @@
 #define ERROR_UNKNOWN_COMMAND          10
 #define ERROR_SEE_LOG                  11
 #define ERROR_WRONG_PASSWORD           12
+#define ERROR_NOT_WRITABLE             13
 
 void dnbd3_load_config();
 int dnbd3_save_config();

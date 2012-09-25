@@ -13,6 +13,8 @@ char is_valid_namespace(char *namespace);
 char is_valid_imagename(char *namespace);
 void strtolower(char *string);
 void remove_trailing_slash(char *string);
+int file_exists(char *file);
+int file_writable(char *file);
 
 static inline int is_same_server(const dnbd3_host_t *const a, const dnbd3_host_t *const b)
 {
