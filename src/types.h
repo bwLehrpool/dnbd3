@@ -32,7 +32,7 @@
 #define IOCTL_REM_SRV	_IO(0xab, 5)
 
 #if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && __BYTE_ORDER == __BIG_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
-const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
+static const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
 // Flip bytes around on big endian when putting stuff on the net
 #define net_order_64(a) ((uint64_t)((((a) & 0xFFull) << 56) | (((a) & 0xFF00ull) << 40) | (((a) & 0xFF0000ull) << 24) | (((a) & 0xFF000000ull) << 8) | (((a) & 0xFF00000000ull) >> 8) | (((a) & 0xFF0000000000ull) >> 24) | (((a) & 0xFF000000000000ull) >> 40) | (((a) & 0xFF00000000000000ull) >> 56)))
 #define net_order_32(a) ((uint32_t)((((a) & (uint32_t)0xFF) << 24) | (((a) & (uint32_t)0xFF00) << 8) | (((a) & (uint32_t)0xFF0000) >> 8) | (((a) & (uint32_t)0xFF000000) >> 24)))
@@ -82,7 +82,7 @@ typedef struct
 
 // network
 #define CMD_GET_BLOCK           1
-#define CMD_GET_SIZE            2
+#define CMD_SELECT_IMAGE        2
 #define CMD_GET_SERVERS         3
 #define CMD_ERROR               4
 #define CMD_KEEPALIVE           5

@@ -416,9 +416,8 @@ static void query_servers()
 		// Send and receive info from server
 		// Send message
 		dnbd3_ipc_t header;
-		header.cmd = htonl(IPC_INFO);
+		header.cmd = htonl(IPC_IMG_LIST);
 		header.size = 0;
-		header.error = 0;
 		send(client_sock, (char *)&header, sizeof(header), 0);
 		if (!recv_data(client_sock, &header, sizeof(header)))
 		{
@@ -427,10 +426,9 @@ static void query_servers()
 		}
 		header.cmd = ntohl(header.cmd);
 		header.size = ntohl(header.size);
-		header.error = ntohl(header.error);
-		if (header.cmd != IPC_INFO || header.error != 0)
+		if (header.cmd != IPC_IMG_LIST)
 		{
-			printf("[DEBUG] Error. Reply from other server was cmd:%d, error:%d\n", (int)header.cmd, (int)header.error);
+			printf("[DEBUG] Error. Reply from other server was cmd:%d, error:%d\n", (int)header.cmd, (int)-1);
 			goto communication_error;
 		}
 		if (header.size > MAX_IPC_PAYLOAD)

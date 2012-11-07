@@ -25,11 +25,16 @@
 
 #define IPC_EXIT           0
 #define IPC_RELOAD         1
-#define IPC_INFO           2
-#define IPC_ADDIMG         3
-#define IPC_DELIMG         4
-#define IPC_ADDNS          5
-#define IPC_DELNS          6
+#define IPC_IMG_LIST       2
+#define IPC_ADD_IMG        3
+#define IPC_DEL_IMG        4
+#define IPC_ADD_NS         5
+#define IPC_DEL_NS         6
+#define IPC_CLIENT_LIST    7
+#define IPC_TRUSTED_LIST   8
+#define IPC_GET_LOG        9
+#define IPC_FIX_IMAGE     10
+#define IPC_ERROR         11
 
 void *dnbd3_ipc_mainloop();
 
@@ -44,7 +49,6 @@ typedef struct
 	uint32_t handle;// 4byte
 	uint32_t cmd;	// 4byte
 	uint32_t size;	// 4byte
-	uint32_t error;	// 4byte
 } dnbd3_ipc_t;
 #pragma pack(0)
 

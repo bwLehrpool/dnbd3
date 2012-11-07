@@ -189,7 +189,7 @@ int main(int argc, char *argv[])
 			return EXIT_SUCCESS;
 		case 'i':
 			printf("INFO: Requesting information...\n\n");
-			dnbd3_ipc_send(IPC_INFO);
+			dnbd3_ipc_send(IPC_IMG_LIST);
 			return EXIT_SUCCESS;
 		case 'H':
 			dnbd3_print_help(argv[0]);

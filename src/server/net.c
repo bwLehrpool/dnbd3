@@ -147,10 +147,10 @@ void *dnbd3_handle_query(void *dnbd3_client)
 
 	reply.magic = dnbd3_packet_magic;
 
-	// Receive first packet. This must be CMD_GET_SIZE by protocol specification
+	// Receive first packet. This must be CMD_SELECT_IMAGE by protocol specification
 	if (recv_request_header(client->sock, &request))
 	{
-		if (request.cmd != CMD_GET_SIZE)
+		if (request.cmd != CMD_SELECT_IMAGE)
 		{
 			printf("[DEBUG] Client sent invalid handshake (%d). Dropping Client\n", (int)request.cmd);
 		}
@@ -198,7 +198,7 @@ void *dnbd3_handle_query(void *dnbd3_client)
 						serializer_put_string(&payload, image->low_name);
 						serializer_put_uint16(&payload, image->rid);
 						serializer_put_uint64(&payload, image->filesize);
-						reply.cmd = CMD_GET_SIZE;
+						reply.cmd = CMD_SELECT_IMAGE;
 						reply.size = serializer_get_written_length(&payload);
 						if (!send_reply(client->sock, &reply, &payload))
 						{

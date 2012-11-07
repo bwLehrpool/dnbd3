@@ -183,7 +183,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 			error_dev("FATAL: Connection to host failed.");
 		// Request filesize
 		dnbd3_request.magic = dnbd3_packet_magic;
-		dnbd3_request.cmd = CMD_GET_SIZE;
+		dnbd3_request.cmd = CMD_SELECT_IMAGE;
 		iov[0].iov_base = &dnbd3_request;
 		iov[0].iov_len = sizeof(dnbd3_request);
 		serializer_reset_write(&dev->payload_buffer);
@@ -204,13 +204,13 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 			error_dev("FATAL: Received corrupted reply header after CMD_SIZE_REQUEST.");
 		// check reply header
 		fixup_reply(dnbd3_reply);
-		if (dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD || dnbd3_reply.magic != dnbd3_packet_magic)
+		if (dnbd3_reply.cmd != CMD_SELECT_IMAGE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD || dnbd3_reply.magic != dnbd3_packet_magic)
 			error_dev("FATAL: Received invalid reply to CMD_SIZE_REQUEST, image doesn't exist on server.");
 		// receive reply payload
 		iov[0].iov_base = &dev->payload_buffer;
 		iov[0].iov_len = dnbd3_reply.size;
 		if (kernel_recvmsg(dev->sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size)
-			error_dev("FATAL: Cold not read CMD_GET_SIZE payload on handshake.");
+			error_dev("FATAL: Cold not read CMD_SELECT_IMAGE payload on handshake.");
 		// handle/check reply payload
 		serializer_reset_read(&dev->payload_buffer, dnbd3_reply.size);
 		dev->cur_server.protocol_version = serializer_get_uint16(&dev->payload_buffer);
@@ -298,7 +298,8 @@ error:
 
 int dnbd3_net_disconnect(dnbd3_device_t *dev)
 {
-	debug_dev("INFO: Disconnecting device.");
+	if (dev->cur_server.host.port)
+		debug_dev("INFO: Disconnecting device.");
 
 	dev->disconnecting = 1;
 
@@ -514,7 +515,7 @@ int dnbd3_net_discover(void *data)
 				goto error;
 
 			// Request filesize
-			dnbd3_request.cmd = CMD_GET_SIZE;
+			dnbd3_request.cmd = CMD_SELECT_IMAGE;
 			iov[0].iov_base = &dnbd3_request;
 			iov[0].iov_len = sizeof(dnbd3_request);
 			serializer_reset_write(payload);
@@ -535,7 +536,7 @@ int dnbd3_net_discover(void *data)
 			if (kernel_recvmsg(sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
 				error_alt("ERROR: Receiving image size packet (header) failed (discover).");
 			fixup_reply(dnbd3_reply);
-			if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_GET_SIZE || dnbd3_reply.size < 4)
+			if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_SELECT_IMAGE || dnbd3_reply.size < 4)
 				error_alt("ERROR: Content of image size packet (header) mismatched (discover).");
 
 			// receive data

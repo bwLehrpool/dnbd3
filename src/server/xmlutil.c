@@ -25,3 +25,19 @@ char *getTextFromPath(xmlDocPtr doc, char *xpath)
 	xmlXPathFreeContext(xpathCtx);
 	return retval;
 }
+
+
+char createXmlDoc(xmlDocPtr *doc, xmlNodePtr* root, char* rootName)
+{
+	*doc = xmlNewDoc(BAD_CAST "1.0");
+	if (*doc == NULL)
+		return 0;
+	*root = xmlNewNode(NULL, BAD_CAST rootName);
+	if (*root == NULL)
+	{
+		xmlFreeDoc(*doc);
+		return 0;
+	}
+	xmlDocSetRootElement(*doc, *root);
+	return 1;
+}

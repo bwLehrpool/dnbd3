@@ -5,6 +5,7 @@
 #include <libxml/tree.h>
 
 char *getTextFromPath(xmlDocPtr doc, char *xpath);
+char createXmlDoc(xmlDocPtr *doc, xmlNodePtr* root, char* rootName);
 
 #define FOR_EACH_NODE(_doc, _path, _node) do { \
 	xmlXPathContextPtr _makro_xpathCtx = xmlXPathNewContext(_doc); \

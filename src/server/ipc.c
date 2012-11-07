@@ -60,6 +60,7 @@ static int ipc_receive(int client_sock);
 static int get_highest_fd(GSList *sockets);
 static int is_password_correct(xmlDocPtr doc);
 static int get_terminal_width();
+static int ipc_send_reply(int sock, dnbd3_ipc_t* header, int result_code, xmlDocPtr payload);
 
 static int get_highest_fd(GSList *sockets)
 {
@@ -90,7 +91,6 @@ void *dnbd3_ipc_mainloop()
 		return NULL;
 	}
 
-#ifdef IPC_TCP
 	struct sockaddr_in server, client;
 	socklen_t len = sizeof(client);
 
@@ -122,48 +122,6 @@ void *dnbd3_ipc_mainloop()
 		perror("ERROR: IPC listen");
 		exit(EXIT_FAILURE);
 	}
-#else
-	struct sockaddr_un server, client;
-	socklen_t len = sizeof(client);
-
-	// Create socket
-	if ((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
-	{
-		perror("ERROR: IPC socket");
-		exit(EXIT_FAILURE);
-	}
-
-	server.sun_family = AF_UNIX;
-	strcpy(server.sun_path, UNIX_SOCKET);
-	unlink(UNIX_SOCKET);
-
-	// Bind to socket
-	if (bind(server_sock, &server, sizeof(server.sun_family) + strlen(server.sun_path)) < 0)
-	{
-		perror("ERROR: IPC bind");
-		exit(EXIT_FAILURE);
-	}
-
-	// Listen on socket
-	if (listen(server_sock, 5) < 0)
-	{
-		perror("ERROR: IPC listen");
-		exit(EXIT_FAILURE);
-	}
-
-	// Set groupID and permissions on ipc socket
-	struct group *grp;
-	grp = getgrnam(UNIX_SOCKET_GROUP);
-	if (grp == NULL)
-	{
-		memlogf("WARN: Group '%s' not found.\n", UNIX_SOCKET_GROUP);
-	}
-	else
-	{
-		chmod(UNIX_SOCKET, 0775);
-		chown(UNIX_SOCKET, -1, grp->gr_gid);
-	}
-#endif
 
 	// Run connection-accepting loop
 
@@ -311,12 +269,10 @@ static int ipc_receive(int client_sock)
 
 	uint32_t cmd;
 
-	int ret, locked;
+	int ret, locked = 0;
 	int return_value = 0;
 	xmlDocPtr docReply = NULL, docRequest = NULL;
 	xmlNodePtr root_node, parent_node, tmp_node, log_parent_node, log_node, server_node;
-	xmlChar *xmlbuff;
-	int buffersize;
 
 	ret = recv(client_sock, &header, sizeof(header), MSG_WAITALL);
 	if (ret != sizeof(header))
@@ -324,7 +280,7 @@ static int ipc_receive(int client_sock)
 	cmd = ntohl(header.cmd); // Leave header.cmd in network byte order for reply
 	header.size = ntohl(header.size);
 
-	header.error = htonl(ERROR_UNSPECIFIED_ERROR); // Default value of error, so remember to set it for the reply if call succeeded
+	int rpc_error = ERROR_UNSPECIFIED_ERROR; // Default value of error, so remember to set it for the reply if call succeeded
 
 	if (header.size != 0)
 	{
@@ -345,28 +301,20 @@ static int ipc_receive(int client_sock)
 	case IPC_EXIT:
 		memlogf("[INFO] Server shutdown by IPC request");
 		header.size = ntohl(0);
-		header.error = ntohl(0);
 		return_value = send_data(client_sock, &header, sizeof(header));
 		dnbd3_cleanup();
 		break;
 
-	case IPC_INFO:
-		locked = 0;
-		xmlbuff = NULL;
-		docReply = xmlNewDoc(BAD_CAST "1.0");
-		if (docReply == NULL)
-			goto get_info_reply_cleanup;
-		root_node = xmlNewNode(NULL, BAD_CAST "data");
-		if (root_node == NULL)
-			goto get_info_reply_cleanup;
-		xmlDocSetRootElement(docReply, root_node);
+	case IPC_IMG_LIST:
+		if (!createXmlDoc(&docReply, &root_node, "data"))
+			goto case_end;
 
 		xmlNewTextChild(root_node, NULL, BAD_CAST "defaultns", BAD_CAST _local_namespace);
 
 		// Images
 		parent_node = xmlNewNode(NULL, BAD_CAST "images");
 		if (parent_node == NULL)
-			goto get_info_reply_cleanup;
+			goto case_end;
 		xmlAddChild(root_node, parent_node);
 		locked = 1;
 		pthread_spin_lock(&_spinlock);
@@ -375,7 +323,7 @@ static int ipc_receive(int client_sock)
 			const dnbd3_image_t *image = iterator->data;
 			tmp_node = xmlNewNode(NULL, BAD_CAST "image");
 			if (tmp_node == NULL)
-				goto get_info_reply_cleanup;
+				goto case_end;
 			xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->config_group);
 			sprintf(strbuffer, "%u", (unsigned int)image->atime);
 			xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST strbuffer);
@@ -401,10 +349,18 @@ static int ipc_receive(int client_sock)
 		pthread_spin_unlock(&_spinlock);
 		locked = 0;
 
+		// Dump and send
+		rpc_error = 0;
+		break;
+
+	case IPC_CLIENT_LIST:
+		if (!createXmlDoc(&docReply, &root_node, "data"))
+			goto case_end;
+
 		// Clients
 		parent_node = xmlNewNode(NULL, BAD_CAST "clients");
 		if (parent_node == NULL)
-			goto get_info_reply_cleanup;
+			goto case_end;
 		xmlAddChild(root_node, parent_node);
 		locked = 1;
 		pthread_spin_lock(&_spinlock);
@@ -415,21 +371,31 @@ static int ipc_receive(int client_sock)
 			{
 				tmp_node = xmlNewNode(NULL, BAD_CAST "client");
 				if (tmp_node == NULL)
-					goto get_info_reply_cleanup;
+					goto case_end;
 				*strbuffer = '\0';
 				host_to_string(&client->host, strbuffer, STRBUFLEN);
-				xmlNewProp(tmp_node, BAD_CAST "ip", BAD_CAST strbuffer);
-				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST client->image->file);
+				xmlNewProp(tmp_node, BAD_CAST "address", BAD_CAST strbuffer);
+				xmlNewProp(tmp_node, BAD_CAST "image", BAD_CAST client->image->config_group);
+				sprintf(strbuffer, "%d", client->image->rid);
+				xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST strbuffer);
 				xmlAddChild(parent_node, tmp_node);
 			}
 		}
 		pthread_spin_unlock(&_spinlock);
 		locked = 0;
 
+		// Dump and send
+		rpc_error = 0;
+		break;
+
+	case IPC_TRUSTED_LIST:
+		if (!createXmlDoc(&docReply, &root_node, "data"))
+			goto case_end;
+
 		// Trusted servers
 		parent_node = xmlNewNode(NULL, BAD_CAST "trusted");
 		if (parent_node == NULL)
-			goto get_info_reply_cleanup;
+			goto case_end;
 		xmlAddChild(root_node, parent_node);
 		locked = 1;
 		pthread_spin_lock(&_spinlock);
@@ -440,10 +406,10 @@ static int ipc_receive(int client_sock)
 			{
 				tmp_node = xmlNewNode(NULL, BAD_CAST "server");
 				if (tmp_node == NULL)
-					goto get_info_reply_cleanup;
+					goto case_end;
 				xmlNodePtr namespace_root = xmlNewNode(NULL, BAD_CAST "namespaces");
 				if (namespace_root == NULL)
-					goto get_info_reply_cleanup;
+					goto case_end;
 				host_to_string(&server->host, strbuffer, STRBUFLEN);
 				xmlNewProp(tmp_node, BAD_CAST "address", BAD_CAST strbuffer);
 				if (server->comment)
@@ -453,7 +419,7 @@ static int ipc_receive(int client_sock)
 					const dnbd3_namespace_t *ns = iterator2->data;
 					server_node = xmlNewNode(NULL, BAD_CAST "namespace");
 					if (server_node == NULL)
-						goto get_info_reply_cleanup;
+						goto case_end;
 					xmlAddChild(namespace_root, server_node);
 					xmlNewProp(server_node, BAD_CAST "name", BAD_CAST ns->name);
 					if (ns->auto_replicate)
@@ -468,44 +434,38 @@ static int ipc_receive(int client_sock)
 		pthread_spin_unlock(&_spinlock);
 		locked = 0;
 
+		// Dump and send
+		rpc_error = 0;
+		break;
+
+	case IPC_GET_LOG:
+		if (!createXmlDoc(&docReply, &root_node, "data"))
+			goto case_end;
+
 		// Log
 		log_parent_node = xmlNewChild(root_node, NULL, BAD_CAST "log", NULL);
 		if (log_parent_node == NULL)
-			goto get_info_reply_cleanup;
+			goto case_end;
 		char *log = fetchlog(0);
 		if (log == NULL)
-			log = "LOG IS NULL";
+			log = strdup("LOG IS NULL");
 		log_node = xmlNewCDataBlock(docReply, BAD_CAST log, strlen(log));
+		free(log);
 		if (log_node == NULL)
-			goto get_info_reply_cleanup;
+			goto case_end;
 		xmlAddChild(log_parent_node, log_node);
 
 		// Dump and send
-		xmlDocDumpFormatMemory(docReply, &xmlbuff, &buffersize, 1);
-		header.size = htonl(buffersize);
-		header.error = htonl(0);
-
-get_info_reply_cleanup:
-		if (locked)
-			pthread_spin_unlock(&_spinlock);
-		// Send reply
-		return_value = send_data(client_sock, &header, sizeof(header));
-		if (return_value && xmlbuff)
-			return_value = send_data(client_sock, xmlbuff, buffersize);
-		// Cleanup
-		xmlFree(xmlbuff);
-		free(log);
+		rpc_error = 0;
 		break;
 
-	case IPC_ADDIMG:
-	case IPC_DELIMG:
+	case IPC_ADD_IMG:
+	case IPC_DEL_IMG:
 		if (docRequest)
 		{
 			if (!is_password_correct(docRequest))
 			{
-				header.error = htonl(ERROR_WRONG_PASSWORD);
-				header.size = htonl(0);
-				return_value = send_data(client_sock, &header, sizeof(header));
+				rpc_error = ERROR_WRONG_PASSWORD;
 				break;
 			}
 
@@ -526,47 +486,42 @@ get_info_reply_cleanup:
 				image.cache_file = (char *)XML_GETPROP(cur, "cache");
 				if (image.file && !file_exists(image.file))
 				{
-					header.error = htonl(ERROR_FILE_NOT_FOUND);
+					rpc_error = ERROR_FILE_NOT_FOUND;
 				}
 				else if (image.cache_file && !file_writable(image.cache_file))
 				{
-					header.error = htonl(ERROR_NOT_WRITABLE);
+					rpc_error = ERROR_NOT_WRITABLE;
 				}
 				else
 				{
 					if (image.config_group && rid_str)
 					{
 						image.rid = atoi(rid_str);
-						if (cmd == IPC_ADDIMG)
-							header.error = htonl(dnbd3_add_image(&image));
+						if (cmd == IPC_ADD_IMG)
+							rpc_error = dnbd3_add_image(&image);
 						else
-							header.error = htonl(dnbd3_del_image(&image));
+							rpc_error = dnbd3_del_image(&image);
 					}
 					else
-						header.error = htonl(ERROR_MISSING_ARGUMENT);
+						rpc_error = ERROR_MISSING_ARGUMENT;
 				}
 				FREE_POINTERLIST;
 			} END_FOR_EACH;
 			if (count == 0)
-				header.error = htonl(ERROR_MISSING_ARGUMENT);
+				rpc_error = ERROR_MISSING_ARGUMENT;
 		}
 		else
-			header.error = htonl(ERROR_INVALID_XML);
+			rpc_error = ERROR_INVALID_XML;
 
-		header.size = htonl(0);
-		printf("Code: %d\n", (int)ntohl(header.error));
-		return_value = send_data(client_sock, &header, sizeof(header));
 		break;
 
-	case IPC_ADDNS:
-	case IPC_DELNS:
+	case IPC_ADD_NS:
+	case IPC_DEL_NS:
 		if (docRequest)
 		{
 			if (!is_password_correct(docRequest))
 			{
-				header.error = htonl(ERROR_WRONG_PASSWORD);
-				header.size = htonl(0);
-				return_value = send_data(client_sock, &header, sizeof(header));
+				rpc_error = ERROR_WRONG_PASSWORD;
 				break;
 			}
 
@@ -577,14 +532,14 @@ get_info_reply_cleanup:
 				if (cur->type != XML_ELEMENT_NODE)
 					continue;
 				NEW_POINTERLIST;
-				char *host = (char *)XML_GETPROP(cur, "server");
+				char *host = (char *)XML_GETPROP(cur, "address");
 				char *ns = (char *)XML_GETPROP(cur, "name");
 				char *flags = (char *)XML_GETPROP(cur, "flags");
 				char *comment = (char *)XML_GETPROP(cur, "comment");
 				pthread_spin_lock(&_spinlock);
 				if (host && ns)
 				{
-					if (cmd == IPC_ADDNS)
+					if (cmd == IPC_ADD_NS)
 					{
 						dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(host, TRUE, comment);
 						if (server)
@@ -603,20 +558,22 @@ get_info_reply_cleanup:
 
 		}
 		else
-			header.error = htonl(ERROR_INVALID_XML);
+			rpc_error = ERROR_INVALID_XML;
 
-		header.size = htonl(0);
-		return_value = send_data(client_sock, &header, sizeof(header));
 		break;
 
 	default:
 		memlogf("[ERROR] Unknown IPC command: %u", (unsigned int)header.cmd);
-		header.size = htonl(0);
-		header.error = htonl(ERROR_UNKNOWN_COMMAND);
-		return_value = send_data(client_sock, &header, sizeof(header));
+		rpc_error = htonl(ERROR_UNKNOWN_COMMAND);
 		break;
 
 	}
+case_end:
+
+	if (locked)
+		pthread_spin_unlock(&_spinlock);
+	// Send reply
+	return_value = ipc_send_reply(client_sock, &header, rpc_error, docReply);
 
 	xmlFreeDoc(docReply);
 	xmlFreeDoc(docRequest);
@@ -631,7 +588,6 @@ void dnbd3_ipc_send(int cmd)
 	// Check version and initialize
 	LIBXML_TEST_VERSION
 
-#ifdef IPC_TCP
 	struct sockaddr_in server;
 	struct timeval client_timeout;
 
@@ -658,38 +614,17 @@ void dnbd3_ipc_send(int cmd)
 		perror("ERROR: IPC connect");
 		exit(EXIT_FAILURE);
 	}
-#else
-	struct sockaddr_un server;
-
-	// Create socket
-	if ((client_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
-	{
-		perror("ERROR: IPC socket");
-		exit(EXIT_FAILURE);
-	}
-	server.sun_family = AF_UNIX;
-	strcpy(server.sun_path, UNIX_SOCKET);
-
-	// Connect to server
-	if (connect(client_sock, &server, sizeof(server.sun_family) + strlen(server.sun_path)) < 0)
-	{
-		perror("ERROR: IPC connect");
-		exit(EXIT_FAILURE);
-	}
-#endif
 
 	// Send message
 	dnbd3_ipc_t header;
 	header.cmd = htonl(cmd);
 	header.size = 0;
-	header.error = 0;
 	send(client_sock, (char *)&header, sizeof(header), MSG_WAITALL);
 	recv(client_sock, &header, sizeof(header), MSG_WAITALL);
 	header.cmd = ntohl(header.cmd);
 	header.size = ntohl(header.size);
-	header.error = ntohl(header.error);
 
-	if (cmd == IPC_INFO && header.size > 0)
+	if (cmd == IPC_IMG_LIST && header.size > 0)
 	{
 		char *buf = malloc(header.size + 1);
 		size = recv(client_sock, buf, header.size, MSG_WAITALL);
@@ -852,4 +787,35 @@ static int get_terminal_width()
 	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) < 0)
 		return 80;
 	return w.ws_col;
+}
+
+#define RETBUFLEN 8000
+static char returnbuffer[RETBUFLEN];
+static int ipc_send_reply(int sock, dnbd3_ipc_t* header, int result_code, xmlDocPtr payload)
+{
+	if (result_code == 0 && payload != NULL)
+	{
+		// No error
+		xmlChar *xmlbuff = NULL;
+		int buffersize;
+		xmlDocDumpFormatMemory(payload, &xmlbuff, &buffersize, 1);
+		header->size = htonl(buffersize);
+		if (!send_data(sock, header, sizeof(*header)))
+			return FALSE;
+		if (xmlbuff)
+			return send_data(sock, xmlbuff, buffersize);
+		return TRUE;
+	}
+	// Error code, build xml struct (lazy shortcut)
+	int len = snprintf(returnbuffer, RETBUFLEN, "<?xml version=\"1.0\"?>\n"
+		"<data>\n"
+		"<result retcode=\"%d\" retstr=\"%s\">\n"
+		"</data>", result_code, "TODO");
+	if (len >= RETBUFLEN)
+		len = 10;
+	header->size = htonl(len);
+	header->cmd = htonl(IPC_ERROR);
+	if (!send_data(sock, header, sizeof(*header)))
+		return FALSE;
+	return send_data(sock, returnbuffer, len);
 }
