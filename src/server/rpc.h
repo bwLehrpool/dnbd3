@@ -18,29 +18,29 @@
  *
  */
 
-#ifndef IPC_H_
-#define IPC_H_
+#ifndef RPC_H_
+#define RPC_H_
 
 #include <stdint.h>
 
-#define IPC_EXIT           0
-#define IPC_RELOAD         1
-#define IPC_IMG_LIST       2
-#define IPC_ADD_IMG        3
-#define IPC_DEL_IMG        4
-#define IPC_ADD_NS         5
-#define IPC_DEL_NS         6
-#define IPC_CLIENT_LIST    7
-#define IPC_TRUSTED_LIST   8
-#define IPC_GET_LOG        9
-#define IPC_FIX_IMAGE     10
-#define IPC_ERROR         11
+#define RPC_EXIT           0
+#define RPC_RELOAD         1
+#define RPC_IMG_LIST       2
+#define RPC_ADD_IMG        3
+#define RPC_DEL_IMG        4
+#define RPC_ADD_NS         5
+#define RPC_DEL_NS         6
+#define RPC_CLIENT_LIST    7
+#define RPC_TRUSTED_LIST   8
+#define RPC_GET_LOG        9
+#define RPC_FIX_IMAGE     10
+#define RPC_ERROR         11
 
-void *dnbd3_ipc_mainloop();
+void *dnbd3_rpc_mainloop();
 
-void dnbd3_ipc_shutdown();
+void dnbd3_rpc_shutdown();
 
-void dnbd3_ipc_send(int cmd);
+void dnbd3_rpc_send(int cmd);
 
 
 #pragma pack(1)
@@ -49,7 +49,7 @@ typedef struct
 	uint32_t handle;// 4byte
 	uint32_t cmd;	// 4byte
 	uint32_t size;	// 4byte
-} dnbd3_ipc_t;
+} dnbd3_rpc_t;
 #pragma pack(0)
 
-#endif /* IPC_H_ */
+#endif /* RPC_H_ */

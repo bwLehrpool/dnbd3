@@ -2,7 +2,7 @@
 #include "saveload.h"
 #include "helper.h"
 #include "memlog.h"
-#include "ipc.h"
+#include "rpc.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -54,7 +54,7 @@ static void query_servers();
 static char *create_cache_filename(char *name, int rid, char *buffer, int maxlen);
 static void add_alt_server(dnbd3_image_t *image, dnbd3_host_t *host);
 static void remove_alt_server(dnbd3_trusted_server_t *server);
-static void update_image_atimes(time_t now);
+static void dnbd3_update_atimes(time_t now);
 
 //
 
@@ -97,7 +97,7 @@ void *dnbd3_job_thread(void *data)
 		const time_t starttime = time(NULL);
 		//
 		// Update image atime
-		update_image_atimes(starttime);
+		dnbd3_update_atimes(starttime);
 		// Call image deletion function if last call is more than 5 minutes ago
 		if (starttime < next_delete_invocation)
 		{
@@ -345,7 +345,7 @@ static void connect_proxy_images()
 	}
 }
 
-static void update_image_atimes(time_t now)
+static void dnbd3_update_atimes(time_t now)
 {
 	GSList *iterator;
 	pthread_spin_lock(&_spinlock);
@@ -371,10 +371,11 @@ static void query_servers()
 	dnbd3_trusted_server_t *server;
 	dnbd3_host_t host;
 	struct sockaddr_in addr4;
-	char xmlbuffer[MAX_IPC_PAYLOAD];
+	char xmlbuffer[MAX_RPC_PAYLOAD];
 	for (num = 0;; ++num)
 	{
-		// "Iterate" this way to prevent holding the lock for a long time, although it is possible to skip a server this way...
+		// "Iterate" this way to prevent holding the lock for a long time,
+		// although there is a very small chance to skip a server this way...
 		pthread_spin_lock(&_spinlock);
 		server = g_slist_nth_data(_trusted_servers, num);
 		if (server == NULL)
@@ -382,7 +383,7 @@ static void query_servers()
 			pthread_spin_unlock(&_spinlock);
 			break; // Done
 		}
-		host = server->host;
+		host = server->host; // Copy host, in case server gets deleted by another thread
 		pthread_spin_unlock(&_spinlock);
 		// Connect
 		if (host.type != AF_INET)
@@ -415,8 +416,8 @@ static void query_servers()
 		//
 		// Send and receive info from server
 		// Send message
-		dnbd3_ipc_t header;
-		header.cmd = htonl(IPC_IMG_LIST);
+		dnbd3_rpc_t header;
+		header.cmd = htonl(RPC_IMG_LIST);
 		header.size = 0;
 		send(client_sock, (char *)&header, sizeof(header), 0);
 		if (!recv_data(client_sock, &header, sizeof(header)))
@@ -426,14 +427,14 @@ static void query_servers()
 		}
 		header.cmd = ntohl(header.cmd);
 		header.size = ntohl(header.size);
-		if (header.cmd != IPC_IMG_LIST)
+		if (header.cmd != RPC_IMG_LIST)
 		{
 			printf("[DEBUG] Error. Reply from other server was cmd:%d, error:%d\n", (int)header.cmd, (int)-1);
 			goto communication_error;
 		}
-		if (header.size > MAX_IPC_PAYLOAD)
+		if (header.size > MAX_RPC_PAYLOAD)
 		{
-			memlogf("[WARNING] XML payload from other server exceeds MAX_IPC_PAYLOAD (%d > %d)", (int)header.size, (int)MAX_IPC_PAYLOAD);
+			memlogf("[WARNING] XML payload from other server exceeds MAX_RPC_PAYLOAD (%d > %d)", (int)header.size, (int)MAX_RPC_PAYLOAD);
 			goto communication_error;
 		}
 		if (!recv_data(client_sock, xmlbuffer, header.size))
@@ -497,7 +498,7 @@ static void query_servers()
 					printf("[DEBUG] Invalid image name: '%s'\n", image);
 					goto free_current_image;
 				}
-				snprintf(xmlbuffer, MAX_IPC_PAYLOAD, "%s/%s", ns, image);
+				snprintf(xmlbuffer, MAX_RPC_PAYLOAD, "%s/%s", ns, image);
 			}
 			else
 			{
@@ -512,7 +513,7 @@ static void query_servers()
 					printf("[DEBUG] Ignoring remote image with invalid name '%s'\n", slash);
 					goto free_current_image;
 				}
-				snprintf(xmlbuffer, MAX_IPC_PAYLOAD, "%s/%s", image, slash);
+				snprintf(xmlbuffer, MAX_RPC_PAYLOAD, "%s/%s", image, slash);
 			}
 			// Image seems legit, check if there's a local copy
 			dnbd3_namespace_t *trust;

@@ -35,7 +35,7 @@
 #include "saveload.h"
 #include "job.h"
 #include "net.h"
-#include "ipc.h"
+#include "rpc.h"
 #include "memlog.h"
 
 static int sock;
@@ -47,7 +47,7 @@ pthread_spinlock_t _spinlock;
 GSList *_dnbd3_clients = NULL;
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_local_namespace = NULL;
-char *_ipc_password = NULL;
+char *_rpc_password = NULL;
 char *_cache_dir = NULL;
 GSList *_dnbd3_images = NULL; // of dnbd3_image_t
 GSList *_trusted_servers = NULL;
@@ -83,7 +83,7 @@ void dnbd3_cleanup()
 	close(sock);
 	sock = -1;
 
-	dnbd3_ipc_shutdown();
+	dnbd3_rpc_shutdown();
 	dnbd3_job_shutdown();
 
 	pthread_spin_lock(&_spinlock);
@@ -135,9 +135,6 @@ void dnbd3_cleanup()
 	g_slist_free(_dnbd3_images);
 
 	pthread_spin_unlock(&_spinlock);
-#ifndef IPC_TCP
-	unlink(UNIX_SOCKET);
-#endif
 	exit(EXIT_SUCCESS);
 }
 
@@ -181,15 +178,15 @@ int main(int argc, char *argv[])
 			break;
 		case 'r':
 			printf("INFO: Reloading configuration file...\n\n");
-			dnbd3_ipc_send(IPC_RELOAD);
+			dnbd3_rpc_send(RPC_RELOAD);
 			return EXIT_SUCCESS;
 		case 's':
 			printf("INFO: Stopping running server...\n\n");
-			dnbd3_ipc_send(IPC_EXIT);
+			dnbd3_rpc_send(RPC_EXIT);
 			return EXIT_SUCCESS;
 		case 'i':
 			printf("INFO: Requesting information...\n\n");
-			dnbd3_ipc_send(IPC_IMG_LIST);
+			dnbd3_rpc_send(RPC_IMG_LIST);
 			return EXIT_SUCCESS;
 		case 'H':
 			dnbd3_print_help(argv[0]);
@@ -231,9 +228,9 @@ int main(int argc, char *argv[])
 	timeout.tv_sec = SOCKET_TIMEOUT_SERVER;
 	timeout.tv_usec = 0;
 
-	// setup ipc
-	pthread_t thread_ipc;
-	pthread_create(&(thread_ipc), NULL, &dnbd3_ipc_mainloop, NULL);
+	// setup rpc
+	pthread_t thread_rpc;
+	pthread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
 
 	pthread_t thread_job;
 	pthread_create(&(thread_job), NULL, &dnbd3_job_thread, NULL);

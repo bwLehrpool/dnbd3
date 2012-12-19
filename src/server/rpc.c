@@ -18,7 +18,7 @@
  *
  */
 
-#include "ipc.h"
+#include "rpc.h"
 #include "../config.h"
 #include "server.h"
 #include "saveload.h"
@@ -44,7 +44,7 @@
 #include <libxml/xpath.h>
 #include "xmlutil.h"
 
-#define IPC_PORT (PORT+1)
+#define RPC_PORT (PORT+1)
 
 static int server_sock = -1;
 static volatile int keep_running = 1;
@@ -56,11 +56,11 @@ static char *payload = NULL;
 	putchar('\n'); \
 } while (0)
 
-static int ipc_receive(int client_sock);
+static int rpc_receive(int client_sock);
 static int get_highest_fd(GSList *sockets);
 static int is_password_correct(xmlDocPtr doc);
 static int get_terminal_width();
-static int ipc_send_reply(int sock, dnbd3_ipc_t* header, int result_code, xmlDocPtr payload);
+static int rpc_send_reply(int sock, dnbd3_rpc_t* header, int result_code, xmlDocPtr payload);
 
 static int get_highest_fd(GSList *sockets)
 {
@@ -77,16 +77,16 @@ static int get_highest_fd(GSList *sockets)
 	return max;
 }
 
-void *dnbd3_ipc_mainloop()
+void *dnbd3_rpc_mainloop()
 {
 
 	// Check version and initialize
 	LIBXML_TEST_VERSION
 
-	payload = malloc(MAX_IPC_PAYLOAD);
+	payload = malloc(MAX_RPC_PAYLOAD);
 	if (payload == NULL)
 	{
-		memlogf("[CRITICAL] Couldn't allocate IPC payload buffer. IPC disabled.");
+		memlogf("[CRITICAL] Couldn't allocate RPC payload buffer. RPC disabled.");
 		pthread_exit((void *)0);
 		return NULL;
 	}
@@ -97,14 +97,14 @@ void *dnbd3_ipc_mainloop()
 	// Create socket
 	if ((server_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
 	{
-		perror("ERROR: IPC socket");
+		perror("ERROR: RPC socket");
 		exit(EXIT_FAILURE);
 	}
 
 	memset(&server, 0, sizeof(server));
 	server.sin_family = AF_INET; // IPv4
 	server.sin_addr.s_addr = INADDR_ANY;
-	server.sin_port = htons(IPC_PORT); // set port number
+	server.sin_port = htons(RPC_PORT); // set port number
 
 	const int optval = 1;
 	setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
@@ -112,14 +112,14 @@ void *dnbd3_ipc_mainloop()
 	// Bind to socket
 	if (bind(server_sock, (struct sockaddr *)&server, sizeof(server)) < 0)
 	{
-		perror("ERROR: IPC bind");
+		perror("ERROR: RPC bind");
 		exit(EXIT_FAILURE);
 	}
 
 	// Listen on socket
 	if (listen(server_sock, 5) < 0)
 	{
-		perror("ERROR: IPC listen");
+		perror("ERROR: RPC listen");
 		exit(EXIT_FAILURE);
 	}
 
@@ -162,7 +162,7 @@ void *dnbd3_ipc_mainloop()
 				{
 					if (errno != EAGAIN)
 					{
-						memlogf("[ERROR] Error accepting an IPC connection");
+						memlogf("[ERROR] Error accepting an RPC connection");
 						if (++error_count > 10)
 							goto end_loop;
 					}
@@ -185,13 +185,13 @@ void *dnbd3_ipc_mainloop()
 			}
 			else if (FD_ISSET(server_sock, &exceptset))
 			{
-				memlogf("[ERROR] An exception occurred on the IPC listening socket.");
+				memlogf("[ERROR] An exception occurred on the RPC listening socket.");
 				if (++error_count > 10)
 					goto end_loop;
 			}
 			else
 			{
-				// Must be an active IPC connection
+				// Must be an active RPC connection
 				int del = -1;
 				for (iterator = sockets; iterator; iterator = iterator->next)
 				{
@@ -206,7 +206,7 @@ void *dnbd3_ipc_mainloop()
 					if (FD_ISSET(client_sock, &readset))
 					{
 						// Client sending data
-						if (!ipc_receive(client_sock))
+						if (!rpc_receive(client_sock))
 						{
 							// Connection has been closed
 							close(client_sock);
@@ -233,7 +233,7 @@ void *dnbd3_ipc_mainloop()
 	} // End mainloop
 
 end_loop:
-	memlogf("[INFO] Shutting down IPC interface.");
+	memlogf("[INFO] Shutting down RPC interface.");
 	if (server_sock != -1)
 	{
 		close(server_sock);
@@ -246,7 +246,7 @@ end_loop:
 	return NULL;
 }
 
-void dnbd3_ipc_shutdown()
+void dnbd3_rpc_shutdown()
 {
 	keep_running = 0;
 	if (server_sock == -1)
@@ -258,14 +258,14 @@ void dnbd3_ipc_shutdown()
 /**
  * Returns !=0 if send/recv successful, 0 on any kind of network failure
  */
-static int ipc_receive(int client_sock)
+static int rpc_receive(int client_sock)
 {
 	GSList *iterator, *iterator2;
 
 #define STRBUFLEN 100
 	char strbuffer[STRBUFLEN];
 
-	dnbd3_ipc_t header;
+	dnbd3_rpc_t header;
 
 	uint32_t cmd;
 
@@ -285,9 +285,9 @@ static int ipc_receive(int client_sock)
 	if (header.size != 0)
 	{
 		// Message has payload, receive it
-		if (header.size > MAX_IPC_PAYLOAD)
+		if (header.size > MAX_RPC_PAYLOAD)
 		{
-			memlogf("[WARNING] IPC command with payload of %u bytes ignored.", (unsigned int)header.size);
+			memlogf("[WARNING] RPC command with payload of %u bytes ignored.", (unsigned int)header.size);
 			return 0;
 		}
 		if (!recv_data(client_sock, payload, header.size))
@@ -298,18 +298,16 @@ static int ipc_receive(int client_sock)
 
 	switch (cmd)
 	{
-	case IPC_EXIT:
-		memlogf("[INFO] Server shutdown by IPC request");
+	case RPC_EXIT:
+		memlogf("[INFO] Server shutdown by RPC request");
 		header.size = ntohl(0);
 		return_value = send_data(client_sock, &header, sizeof(header));
 		dnbd3_cleanup();
 		break;
 
-	case IPC_IMG_LIST:
+	case RPC_IMG_LIST:
 		if (!createXmlDoc(&docReply, &root_node, "data"))
 			goto case_end;
-
-		xmlNewTextChild(root_node, NULL, BAD_CAST "defaultns", BAD_CAST _local_namespace);
 
 		// Images
 		parent_node = xmlNewNode(NULL, BAD_CAST "images");
@@ -324,16 +322,14 @@ static int ipc_receive(int client_sock)
 			tmp_node = xmlNewNode(NULL, BAD_CAST "image");
 			if (tmp_node == NULL)
 				goto case_end;
-			xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->config_group);
-			sprintf(strbuffer, "%u", (unsigned int)image->atime);
-			xmlNewProp(tmp_node, BAD_CAST "atime", BAD_CAST strbuffer);
-			sprintf(strbuffer, "%d", image->rid);
-			xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST strbuffer);
-			sprintf(strbuffer, "%llu", (unsigned long long)image->filesize);
-			xmlNewProp(tmp_node, BAD_CAST "size", BAD_CAST strbuffer);
+			xmlNewProp(tmp_node, BAD_CAST "name", BAD_CAST image->low_name);
+			xmlAddDecimalProp(image->rid, tmp_node, "rid");
+			xmlAddDecimalProp(image->atime, tmp_node, "atime");
+			xmlAddDecimalProp(image->delete_soft, tmp_node, "softdelete");
+			xmlAddDecimalProp(image->delete_hard, tmp_node, "harddelete");
+			xmlAddDecimalProp(image->filesize, tmp_node, "size");
 			if (image->file)
 				xmlNewProp(tmp_node, BAD_CAST "file", BAD_CAST image->file);
-			xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST "???"); // TODO
 			if (image->cache_file && image->cache_map)
 			{
 				xmlNewProp(tmp_node, BAD_CAST "cachefile", BAD_CAST image->cache_file);
@@ -341,9 +337,17 @@ static int ipc_receive(int client_sock)
 				for (i = 0; i < size; ++i)
 					if (image->cache_map[i])
 						complete += 100;
-				sprintf(strbuffer, "%d", complete / size);
-				xmlNewProp(tmp_node, BAD_CAST "cachefill", BAD_CAST strbuffer);
+				xmlAddDecimalProp(complete / size, tmp_node, "cachefill");
 			}
+			int i;
+			char serverstr[1000] = {0}, target[100];
+			for (i = 0; i < NUMBER_SERVERS; ++i)
+			{
+				if (image->servers[i].host.type == 0) continue;
+				if (!host_to_string(&(image->servers[i].host), target, 100)) continue;
+				strcat(serverstr, target);
+			}
+			xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST serverstr); // TODO
 			xmlAddChild(parent_node, tmp_node);
 		}
 		pthread_spin_unlock(&_spinlock);
@@ -353,7 +357,7 @@ static int ipc_receive(int client_sock)
 		rpc_error = 0;
 		break;
 
-	case IPC_CLIENT_LIST:
+	case RPC_CLIENT_LIST:
 		if (!createXmlDoc(&docReply, &root_node, "data"))
 			goto case_end;
 
@@ -372,12 +376,10 @@ static int ipc_receive(int client_sock)
 				tmp_node = xmlNewNode(NULL, BAD_CAST "client");
 				if (tmp_node == NULL)
 					goto case_end;
-				*strbuffer = '\0';
 				host_to_string(&client->host, strbuffer, STRBUFLEN);
 				xmlNewProp(tmp_node, BAD_CAST "address", BAD_CAST strbuffer);
-				xmlNewProp(tmp_node, BAD_CAST "image", BAD_CAST client->image->config_group);
-				sprintf(strbuffer, "%d", client->image->rid);
-				xmlNewProp(tmp_node, BAD_CAST "rid", BAD_CAST strbuffer);
+				xmlNewProp(tmp_node, BAD_CAST "image", BAD_CAST client->image->low_name);
+				xmlAddDecimalProp(client->image->rid, tmp_node, "rid");
 				xmlAddChild(parent_node, tmp_node);
 			}
 		}
@@ -388,7 +390,7 @@ static int ipc_receive(int client_sock)
 		rpc_error = 0;
 		break;
 
-	case IPC_TRUSTED_LIST:
+	case RPC_TRUSTED_LIST:
 		if (!createXmlDoc(&docReply, &root_node, "data"))
 			goto case_end;
 
@@ -438,7 +440,7 @@ static int ipc_receive(int client_sock)
 		rpc_error = 0;
 		break;
 
-	case IPC_GET_LOG:
+	case RPC_GET_LOG:
 		if (!createXmlDoc(&docReply, &root_node, "data"))
 			goto case_end;
 
@@ -459,8 +461,8 @@ static int ipc_receive(int client_sock)
 		rpc_error = 0;
 		break;
 
-	case IPC_ADD_IMG:
-	case IPC_DEL_IMG:
+	case RPC_ADD_IMG:
+	case RPC_DEL_IMG:
 		if (docRequest)
 		{
 			if (!is_password_correct(docRequest))
@@ -497,7 +499,7 @@ static int ipc_receive(int client_sock)
 					if (image.config_group && rid_str)
 					{
 						image.rid = atoi(rid_str);
-						if (cmd == IPC_ADD_IMG)
+						if (cmd == RPC_ADD_IMG)
 							rpc_error = dnbd3_add_image(&image);
 						else
 							rpc_error = dnbd3_del_image(&image);
@@ -515,8 +517,8 @@ static int ipc_receive(int client_sock)
 
 		break;
 
-	case IPC_ADD_NS:
-	case IPC_DEL_NS:
+	case RPC_ADD_NS:
+	case RPC_DEL_NS:
 		if (docRequest)
 		{
 			if (!is_password_correct(docRequest))
@@ -532,14 +534,14 @@ static int ipc_receive(int client_sock)
 				if (cur->type != XML_ELEMENT_NODE)
 					continue;
 				NEW_POINTERLIST;
-				char *host = (char *)XML_GETPROP(cur, "address");
-				char *ns = (char *)XML_GETPROP(cur, "name");
-				char *flags = (char *)XML_GETPROP(cur, "flags");
-				char *comment = (char *)XML_GETPROP(cur, "comment");
+				char *host = XML_GETPROP(cur, "address");
+				char *ns = XML_GETPROP(cur, "name");
+				char *flags = XML_GETPROP(cur, "flags");
+				char *comment = XML_GETPROP(cur, "comment");
 				pthread_spin_lock(&_spinlock);
 				if (host && ns)
 				{
-					if (cmd == IPC_ADD_NS)
+					if (cmd == RPC_ADD_NS)
 					{
 						dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(host, TRUE, comment);
 						if (server)
@@ -563,7 +565,7 @@ static int ipc_receive(int client_sock)
 		break;
 
 	default:
-		memlogf("[ERROR] Unknown IPC command: %u", (unsigned int)header.cmd);
+		memlogf("[ERROR] Unknown RPC command: %u", (unsigned int)header.cmd);
 		rpc_error = htonl(ERROR_UNKNOWN_COMMAND);
 		break;
 
@@ -573,7 +575,7 @@ case_end:
 	if (locked)
 		pthread_spin_unlock(&_spinlock);
 	// Send reply
-	return_value = ipc_send_reply(client_sock, &header, rpc_error, docReply);
+	return_value = rpc_send_reply(client_sock, &header, rpc_error, docReply);
 
 	xmlFreeDoc(docReply);
 	xmlFreeDoc(docRequest);
@@ -581,7 +583,7 @@ case_end:
 	return return_value;
 }
 
-void dnbd3_ipc_send(int cmd)
+void dnbd3_rpc_send(int cmd)
 {
 	int client_sock, size;
 
@@ -594,7 +596,7 @@ void dnbd3_ipc_send(int cmd)
 	// Create socket
 	if ((client_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
 	{
-		perror("ERROR: IPC socket");
+		perror("ERROR: RPC socket");
 		exit(EXIT_FAILURE);
 	}
 
@@ -606,17 +608,17 @@ void dnbd3_ipc_send(int cmd)
 	memset(&server, 0, sizeof(server));
 	server.sin_family = AF_INET; // IPv4
 	server.sin_addr.s_addr = inet_addr("127.0.0.1");
-	server.sin_port = htons(IPC_PORT); // set port number
+	server.sin_port = htons(RPC_PORT); // set port number
 
 	// Connect to server
 	if (connect(client_sock, (struct sockaddr *)&server, sizeof(server)) < 0)
 	{
-		perror("ERROR: IPC connect");
+		perror("ERROR: RPC connect");
 		exit(EXIT_FAILURE);
 	}
 
 	// Send message
-	dnbd3_ipc_t header;
+	dnbd3_rpc_t header;
 	header.cmd = htonl(cmd);
 	header.size = 0;
 	send(client_sock, (char *)&header, sizeof(header), MSG_WAITALL);
@@ -624,7 +626,7 @@ void dnbd3_ipc_send(int cmd)
 	header.cmd = ntohl(header.cmd);
 	header.size = ntohl(header.size);
 
-	if (cmd == IPC_IMG_LIST && header.size > 0)
+	if (cmd == RPC_IMG_LIST && header.size > 0)
 	{
 		char *buf = malloc(header.size + 1);
 		size = recv(client_sock, buf, header.size, MSG_WAITALL);
@@ -764,15 +766,15 @@ void dnbd3_ipc_send(int cmd)
  */
 static int is_password_correct(xmlDocPtr doc)
 {
-	if (_ipc_password == NULL)
+	if (_rpc_password == NULL)
 	{
-		memlogf("[WARNING] IPC access granted as no password is set!");
+		memlogf("[WARNING] RPC access granted as no password is set!");
 		return 1;
 	}
 	char *pass = getTextFromPath(doc, "/data/password");
 	if (pass == NULL)
 		return 0;
-	if (strcmp(pass, _ipc_password) == 0)
+	if (strcmp(pass, _rpc_password) == 0)
 	{
 		xmlFree(pass);
 		return 1;
@@ -791,7 +793,7 @@ static int get_terminal_width()
 
 #define RETBUFLEN 8000
 static char returnbuffer[RETBUFLEN];
-static int ipc_send_reply(int sock, dnbd3_ipc_t* header, int result_code, xmlDocPtr payload)
+static int rpc_send_reply(int sock, dnbd3_rpc_t* header, int result_code, xmlDocPtr payload)
 {
 	if (result_code == 0 && payload != NULL)
 	{
@@ -814,7 +816,7 @@ static int ipc_send_reply(int sock, dnbd3_ipc_t* header, int result_code, xmlDoc
 	if (len >= RETBUFLEN)
 		len = 10;
 	header->size = htonl(len);
-	header->cmd = htonl(IPC_ERROR);
+	header->cmd = htonl(RPC_ERROR);
 	if (!send_data(sock, header, sizeof(*header)))
 		return FALSE;
 	return send_data(sock, returnbuffer, len);

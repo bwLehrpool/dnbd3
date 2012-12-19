@@ -66,7 +66,7 @@ void dnbd3_load_config()
 
 	srand(time(NULL));
 
-	_ipc_password = g_key_file_get_string(_config_handle, "settings", "password", NULL);
+	_rpc_password = g_key_file_get_string(_config_handle, "settings", "password", NULL);
 	_cache_dir = g_key_file_get_string(_config_handle, "settings", "cache_dir", NULL);
 
 	if (_cache_dir == NULL)
@@ -154,7 +154,7 @@ int dnbd3_add_image(dnbd3_image_t *image)
 		close(fh);
 	}
 	// Lock here to prevent concurrent add calls to mess rids up. Cannot happen currently
-	// as IPC clients are not threaded and they're the only place where this is called,
+	// as RPC clients are not threaded and they're the only place where this is called,
 	// but better be safe for the future...
 	pthread_spin_lock(&_spinlock);
 	if (image->rid == 0)
@@ -371,13 +371,15 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		image->low_name = strdup(image_name);
 	}
 
+	strtolower(image->low_name);
+	memlogf("[INFO] Loading image '%s'", image->low_name);
+
 	if (dnbd3_get_image(image->low_name, rid, 0))
 	{
 		memlogf("[ERROR] Duplicate image in config: '%s' rid:%d", image_name, rid);
 		goto error;
 	}
 
-	strtolower(image->low_name);
 	image->config_group = strdup(image_name);
 
 	image->rid = rid;

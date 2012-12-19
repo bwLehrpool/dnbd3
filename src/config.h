@@ -68,8 +68,6 @@
 // +++++ Misc +++++
 #define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3/server.conf"
 #define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3/client.conf"
-#define UNIX_SOCKET "/run/dnbd3-server.sock"
-#define UNIX_SOCKET_GROUP "dnbd"
-#define MAX_IPC_PAYLOAD 3000
+#define MAX_RPC_PAYLOAD 3000
 
 #endif /* CONFIG_H_ */
