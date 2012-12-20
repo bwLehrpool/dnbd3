@@ -287,9 +287,10 @@ void *dnbd3_handle_query(void *dnbd3_client)
 				// caching is off
 				if (image_cache == -1)
 				{
-					if (sendfile(client->sock, image_file, (off_t *)&request.offset, request.size) != request.size)
+					const ssize_t ret = sendfile(client->sock, image_file, (off_t *)&request.offset, request.size);
+					if (ret != request.size)
 					{
-						printf("[ERROR] sendfile failed (image to net)\n");
+						printf("[ERROR] sendfile failed (image to net %d/%d)\n", (int)ret, (int)request.size);
 						close(client->sock);
 						client->sock = -1;
 					}

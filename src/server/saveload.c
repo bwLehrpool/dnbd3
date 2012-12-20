@@ -750,7 +750,7 @@ dnbd3_namespace_t *dnbd3_get_trust_level(dnbd3_host_t *host, char *namespace)
 			continue;
 		if (nslow[cmplen] == '/' && !comp->recursive) // partial match, but recursion is disabled
 			continue;
-		if (nslow[cmplen] != '\0') // in mid-string
+		if (nslow[cmplen] != '\0' && nslow[cmplen] != '/') // in mid-string
 			continue;
 		if (cmplen < bestlen) // Match is not better than one found before
 			continue;
@@ -759,33 +759,3 @@ dnbd3_namespace_t *dnbd3_get_trust_level(dnbd3_host_t *host, char *namespace)
 	}
 	return best;
 }
-
-/**
- * Return local image name for a global image name
- * eg. "uni-freiburg/rz/ubuntu 12.04" -> "ubuntu 12.04"
- * ONLY IF the local name space really is "uni-freiburg/rz"
- * Returns NULL otherwise
- * The returned pointer points to memory inside the passed
- * string (if not NULL), so do not modify or free
- * / <---
-static char* get_local_image_name(char *global_name)
-{
-	if (_local_namespace == NULL)
-		return NULL; // No local namespace defined, so it cannot be local
-	char *first_slash = strchr(global_name, '/');
-	if (first_slash == NULL)
-		return global_name; // Already local
-	const size_t buflen = strlen(_local_namespace) + 1;
-	if (first_slash - global_name + 1 != buflen)
-		return NULL; // Namespaces have different length, cannot be same
-	char namespace[buflen];
-	char passedname[buflen];
-	strcpy(namespace, _local_namespace);
-	strncpy(passedname, global_name, buflen);
-	passedname[buflen] = '\0';
-	strtolower(namespace);
-	strtolower(passedname);
-	if (strcmp(namespace, passedname) == 0)
-		return global_name + buflen; // points somewhere into passed buffer
-	return NULL;
-} //*/
