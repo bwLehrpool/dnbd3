@@ -513,6 +513,7 @@ static void query_servers()
 				memset(&newimage, 0, sizeof(newimage));
 				newimage.config_group = xmlbuffer;
 				newimage.rid = rid;
+				newimage.filesize = size;
 				if (_cache_dir)
 				{
 					newimage.cache_file = create_cache_filename(xmlbuffer, rid, cachefile, 90);
@@ -529,7 +530,7 @@ static void query_servers()
 			{
 				// Image is already KNOWN, add alt server if appropriate
 				if (size != local_image->filesize)
-					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version!\n", local_image->config_group);
+					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version! (remote: %llu, local: %llu)\n", local_image->config_group, size, (unsigned long long)local_image->filesize);
 				else
 					add_alt_server(local_image, &host);
 				pthread_spin_unlock(&_spinlock);

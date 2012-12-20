@@ -167,9 +167,10 @@ int dnbd3_add_image(dnbd3_image_t *image)
 	}
 
 	dnbd3_image_t *newimage = prepare_image(image->config_group, image->rid, image->file, image->cache_file);
-	image = NULL;
 	if (newimage)
 	{
+		if (image->file == NULL && newimage->filesize == 0)
+			newimage->filesize = image->filesize;
 		_dnbd3_images = g_slist_prepend(_dnbd3_images, newimage);
 	}
 	else
@@ -177,6 +178,7 @@ int dnbd3_add_image(dnbd3_image_t *image)
 		pthread_spin_unlock(&_spinlock);
 		return ERROR_SEE_LOG;
 	}
+	image = NULL;
 
 	// Adding image was successful, write config file
 	g_key_file_set_integer(_config_handle, newimage->config_group, "rid", newimage->rid);
