@@ -250,61 +250,61 @@ static void connect_proxy_images()
 					memlogf("[WARNING] Could not close device after use - lost %s", devname);
 				else
 					return_free_device(devname);
+				pthread_spin_unlock(&_spinlock);
+				break;
 			}
+			// Image still exists
+			image->file = strdup(devname);
+			long long oct = 0;
+			int t, ret;
+			for (t = 0; t < 10 && dh >= 0; ++t)
+			{	// For some reason the ioctl might return 0 right after connecting
+				ret = ioctl(dh, BLKGETSIZE64, &oct);
+				if (ret == 0 && oct > 0)
+					break;
+				close(dh);
+				usleep(100 * 1000);
+				dh = open(devname, O_RDONLY);
+			}
+			if (dh < 0 || ret != 0)
+				memlogf("[ERROR] SIZE fail on %s (ret=%d, oct=%lld)", devname, ret, oct);
+			else if (oct == 0)
+				memlogf("[ERROR] Reported disk size is 0.");
+			else if (image->filesize != 0 && image->filesize != oct)
+				memlogf("[ERROR] Remote and local size of image do not match: %llu != %llu for %s", (unsigned long long)oct, (unsigned long long)image->filesize, image->low_name);
 			else
+				isworking = TRUE;
+			image->filesize = (uint64_t)oct;
+			if (image->cache_file != NULL && isworking && image->cache_map == NULL)
 			{
-				image->file = strdup(devname);
-				long long oct = 0;
-				int t, ret;
-				for (t = 0; t < 10 && dh >= 0; ++t)
-				{	// For some reason the ioctl might return 0 right after connecting
-					ret = ioctl(dh, BLKGETSIZE64, &oct);
-					if (ret == 0 && oct > 0)
-						break;
-					close(dh);
-					usleep(100 * 1000);
-					dh = open(devname, O_RDONLY);
-				}
-				if (dh < 0 || ret != 0)
-					memlogf("[ERROR] SIZE fail on %s (ret=%d, oct=%lld)", devname, ret, oct);
-				else if (oct == 0)
-					memlogf("[ERROR] Reported disk size is 0.");
-				else if (image->filesize != 0 && image->filesize != oct)
-					memlogf("[ERROR] Remote and local size of image do not match: %llu != %llu for %s", (unsigned long long)oct, (unsigned long long)image->filesize, image->low_name);
-				else
-					isworking = TRUE;
-				image->filesize = (uint64_t)oct;
-				if (image->cache_file != NULL && isworking && image->cache_map == NULL)
+				printf("[DEBUG] Image has cache file %s\n", image->cache_file);
+				const int mapsize = IMGSIZE_TO_MAPBYTES(image->filesize);
+				image->cache_map = calloc(mapsize, 1);
+				off_t cachelen = -1;
+				int ch = open(image->cache_file, O_RDONLY);
+				if (ch >= 0)
 				{
-					printf("[DEBUG] Image has cache file %s\n", image->cache_file);
-					const int mapsize = IMGSIZE_TO_MAPBYTES(image->filesize);
-					image->cache_map = calloc(mapsize, 1);
-					off_t cachelen = -1;
-					int ch = open(image->cache_file, O_RDONLY);
-					if (ch >= 0)
+					cachelen = lseek(ch, 0, SEEK_END);
+					close(ch);
+				}
+				if (ch < 0 || cachelen != image->filesize)
+					alloc_cache = TRUE;
+				if (cachelen == image->filesize)
+				{
+					char mapfile[strlen(image->cache_file) + 5];
+					sprintf(mapfile, "%s.map", image->cache_file);
+					int cmh = open(mapfile, O_RDONLY);
+					if (cmh >= 0)
 					{
-						cachelen = lseek(ch, 0, SEEK_END);
-						close(ch);
-					}
-					if (ch < 0 || cachelen != image->filesize)
-						alloc_cache = TRUE;
-					if (cachelen == image->filesize)
-					{
-						char mapfile[strlen(image->cache_file) + 5];
-						sprintf(mapfile, "%s.map", image->cache_file);
-						int cmh = open(mapfile, O_RDONLY);
-						if (cmh >= 0)
+						if (lseek(cmh, 0, SEEK_END) != mapsize)
+							memlogf("[WARNING] Existing cache map has wrong size.");
+						else
 						{
-							if (lseek(cmh, 0, SEEK_END) != mapsize)
-								memlogf("[WARNING] Existing cache map has wrong size.");
-							else
-							{
-								lseek(cmh, 0, SEEK_SET);
-								read(cmh, image->cache_map, mapsize);
-								printf("[DEBUG] Found existing cache file and map for %s\n", image->low_name);
-							}
-							close(cmh);
+							lseek(cmh, 0, SEEK_SET);
+							read(cmh, image->cache_map, mapsize);
+							printf("[DEBUG] Found existing cache file and map for %s\n", image->low_name);
 						}
+						close(cmh);
 					}
 				}
 			}
@@ -327,20 +327,32 @@ static void connect_proxy_images()
 					close(ch);
 					printf("[DEBUG] Allocation complete.\n");
 					pthread_spin_lock(&_spinlock);
-					if (g_slist_find(_dnbd3_images, image) == NULL)
-						memlogf("[WARNING] Image has gone away");
-					else
+					if (g_slist_find(_dnbd3_images, image) != NULL)
 					{
 						image->working = TRUE;
 						memlogf("[INFO] Enabled relayed image %s (%lld)", image->low_name, (long long)fs);
+						pthread_spin_unlock(&_spinlock);
+						close(dh);
+						return;
 					}
+					unlink(cfname);
+					memlogf("[WARNING] Image has gone away");
 					pthread_spin_unlock(&_spinlock);
 				}
 				else
 					memlogf("[WARNING] Could not pre-allocate %s", cfname);
 			}
 			break;
+		} // <-- end loop over servers
+		// If this point is reached, the replication initiation was not successful
+		pthread_spin_lock(&_spinlock);
+		if (g_slist_find(_dnbd3_images, image) != NULL)
+		{
+			free(image->file);
+			image->file = NULL;
 		}
+		return_free_device(devname);
+		pthread_spin_unlock(&_spinlock);
 		close(dh);
 	}
 }
@@ -529,6 +541,8 @@ static void query_servers()
 			else if (local_image != NULL)
 			{
 				// Image is already KNOWN, add alt server if appropriate
+				if (local_image->filesize == 0) // Size is unknown, just assume the trusted server got it right
+					local_image->filesize = size;
 				if (size != local_image->filesize)
 					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version! (remote: %llu, local: %llu)\n", local_image->config_group, size, (unsigned long long)local_image->filesize);
 				else
