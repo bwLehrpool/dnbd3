@@ -310,10 +310,13 @@ static void connect_proxy_images()
 			}
 			char cfname[1000] = {0};
 			off_t fs = image->filesize;
-			if (isworking && alloc_cache && image->cache_file)
-				snprintf(cfname, 1000, "%s", image->cache_file);
-			else if (isworking)
+			if (isworking && !(alloc_cache && image->cache_file))
+			{
 				image->working = TRUE;
+				memlogf("[WARNING] Proxy-Mode enabled without cache directory. This will most likely hurt performance.");
+				goto continue_with_next_image;
+			}
+			snprintf(cfname, 1000, "%s", image->cache_file);
 			pthread_spin_unlock(&_spinlock);
 			if (isworking && *cfname)
 			{
@@ -331,9 +334,7 @@ static void connect_proxy_images()
 					{
 						image->working = TRUE;
 						memlogf("[INFO] Enabled relayed image %s (%lld)", image->low_name, (long long)fs);
-						pthread_spin_unlock(&_spinlock);
-						close(dh);
-						return;
+						goto continue_with_next_image;
 					}
 					unlink(cfname);
 					memlogf("[WARNING] Image has gone away");
@@ -344,7 +345,7 @@ static void connect_proxy_images()
 			}
 			break;
 		} // <-- end loop over servers
-		// If this point is reached, the replication initiation was not successful
+		// If this point is reached, replication was not successful
 		pthread_spin_lock(&_spinlock);
 		if (g_slist_find(_dnbd3_images, image) != NULL)
 		{
@@ -352,6 +353,7 @@ static void connect_proxy_images()
 			image->file = NULL;
 		}
 		return_free_device(devname);
+continue_with_next_image:
 		pthread_spin_unlock(&_spinlock);
 		close(dh);
 	}
