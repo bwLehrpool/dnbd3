@@ -453,22 +453,6 @@ static void query_servers()
 			goto communication_error;
 		}
 		// Data seems ok
-		char *ns = getTextFromPath(doc, "/data/defaultns");
-		if (ns && *ns == '\0')
-		{
-			xmlFree(ns);
-			ns = NULL;
-		}
-		else
-		{
-			printf("[DEBUG] Other server's default namespace is '%s'\n", ns);
-			if  (!is_valid_namespace(ns))
-			{
-				printf("[DEBUG] Ignoring invalid namespace from other server.\n");
-				xmlFree(ns);
-				ns = NULL;
-			}
-		}
 
 		xmlNodePtr cur;
 		FOR_EACH_NODE(doc, "/data/images/image", cur)
@@ -491,14 +475,8 @@ static void query_servers()
 			char *slash = strrchr(image, '/');
 			if (slash == NULL)
 			{
-				if (!ns)
-					goto free_current_image;
-				if (!is_valid_imagename(image))
-				{
-					printf("[DEBUG] Invalid image name: '%s'\n", image);
-					goto free_current_image;
-				}
-				snprintf(xmlbuffer, MAX_RPC_PAYLOAD, "%s/%s", ns, image);
+				printf("[DEBUG] Ignoring remote image with no '/' in name...\n");
+				goto free_current_image;
 			}
 			else
 			{
@@ -518,10 +496,7 @@ static void query_servers()
 			// Image seems legit, check if there's a local copy
 			dnbd3_namespace_t *trust;
 			pthread_spin_lock(&_spinlock);
-			if (slash == NULL)
-				trust = dnbd3_get_trust_level(&host, ns);
-			else
-				trust = dnbd3_get_trust_level(&host, image);
+			trust = dnbd3_get_trust_level(&host, image);
 			if (trust == NULL)
 			{	// Namespace of image is not trusted
 				pthread_spin_unlock(&_spinlock);

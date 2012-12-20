@@ -339,12 +339,14 @@ static int rpc_receive(int client_sock)
 						complete += 100;
 				xmlAddDecimalProp(complete / size, tmp_node, "cachefill");
 			}
+			// Build space separated list of alt servers
 			int i;
 			char serverstr[1000] = {0}, target[100];
 			for (i = 0; i < NUMBER_SERVERS; ++i)
 			{
 				if (image->servers[i].host.type == 0) continue;
 				if (!host_to_string(&(image->servers[i].host), target, 100)) continue;
+				if (*serverstr) strcat(serverstr, " ");
 				strcat(serverstr, target);
 			}
 			xmlNewProp(tmp_node, BAD_CAST "servers", BAD_CAST serverstr); // TODO

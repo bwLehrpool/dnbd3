@@ -116,7 +116,7 @@ char host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen)
 
 char is_valid_namespace(char *namespace)
 {
-	if (*namespace == '\0' || *namespace == '/')
+	if (namespace == NULL || *namespace == '\0' || *namespace == '/')
 		return 0; // Invalid: Length = 0 or starting with a slash
 	while (*namespace)
 	{
