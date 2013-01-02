@@ -476,7 +476,7 @@ static int rpc_receive(int client_sock)
 			xmlNodePtr cur = NULL;
 			int count = 0;
 
-			FOR_EACH_NODE(docRequest, "/data/images/image", cur)
+			FOR_EACH_NODE(docRequest, "/data/image", cur)
 			{
 				if (cur->type != XML_ELEMENT_NODE)
 					continue;
@@ -490,6 +490,7 @@ static int rpc_receive(int client_sock)
 				image.cache_file = (char *)XML_GETPROP(cur, "cache");
 				if (image.file && !file_exists(image.file))
 				{
+					printf("Image File: %s\n", image.file);
 					rpc_error = ERROR_FILE_NOT_FOUND;
 				}
 				else if (image.cache_file && !file_writable(image.cache_file))
@@ -813,7 +814,7 @@ static int rpc_send_reply(int sock, dnbd3_rpc_t* header, int result_code, xmlDoc
 	// Error code, build xml struct (lazy shortcut)
 	int len = snprintf(returnbuffer, RETBUFLEN, "<?xml version=\"1.0\"?>\n"
 		"<data>\n"
-		"<result retcode=\"%d\" retstr=\"%s\">\n"
+		"<result retcode=\"%d\" retstr=\"%s\" />\n"
 		"</data>", result_code, "TODO");
 	if (len >= RETBUFLEN)
 		len = 10;
