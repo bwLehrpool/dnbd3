@@ -56,14 +56,6 @@ void dnbd3_load_config()
 		exit(EXIT_FAILURE);
 	}
 
-	_local_namespace = g_key_file_get_string(_config_handle, "settings", "default_namespace", NULL);
-	if (_local_namespace && !is_valid_namespace(_local_namespace))
-	{
-		memlogf("[ERROR] Ignoring default namespace: '%s' is not a valid namespace", _local_namespace);
-		g_free(_local_namespace);
-		_local_namespace = NULL;
-	}
-
 	srand(time(NULL));
 
 	_rpc_password = g_key_file_get_string(_config_handle, "settings", "password", NULL);
@@ -209,8 +201,8 @@ int dnbd3_del_image(dnbd3_image_t *image)
 		return ERROR_IMAGE_NOT_FOUND;
 	}
 
-	existing_image->delete_soft = 1; // TODO: Configurable.
-	existing_image->delete_hard = time(NULL) + 86400; // TODO: Configurable
+	existing_image->delete_soft = image->delete_soft;
+	existing_image->delete_hard = image->delete_hard;
 	g_key_file_set_int64(_config_handle, image->config_group, "delete_soft", existing_image->delete_soft);
 	g_key_file_set_int64(_config_handle, image->config_group, "delete_hard", existing_image->delete_hard);
 
@@ -257,17 +249,8 @@ dnbd3_image_t *dnbd3_get_image(char *name_orig, int rid, const char do_lock)
 	dnbd3_image_t *result = NULL, *image;
 	GSList *iterator;
 	// For comparison, make sure the name is global and lowercased
-	int slen;
-	int islocal = (strchr(name_orig, '/') == NULL);
-	if (islocal)
-		slen = strlen(name_orig) + strlen(_local_namespace) + 2;
-	else
-		slen = strlen(name_orig) + 1;
-	char name[slen];
-	if (islocal)
-		sprintf(name, "%s/%s", _local_namespace, name_orig);
-	else
-		strcpy(name, name_orig);
+	char name[strlen(name_orig) + 1];
+	strcpy(name, name_orig);
 	strtolower(name);
 	// Now find the image
 	if (do_lock)
@@ -326,16 +309,8 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 
 	if (slash == NULL)
 	{
-		if (!is_valid_imagename(image_name))
-		{
-			memlogf("[ERROR] Invalid image name: '%s'", image_name);
-			return NULL;
-		}
-		if (_local_namespace == NULL)
-		{
-			memlogf("[ERROR] Image '%s' has local name and no default namespace is defined; entry ignored.", image_name);
-			return NULL;
-		}
+		memlogf("[ERROR] Invalid image name: '%s'", image_name);
+		return NULL;
 	}
 	else
 	{
@@ -362,16 +337,7 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 		return NULL;
 	}
 
-	if (slash == NULL)
-	{
-		// Local image, build global name
-		image->low_name = calloc(strlen(_local_namespace) + strlen(image_name) + 2, sizeof(char));
-		sprintf(image->low_name, "%s/%s", _local_namespace, image_name);
-	}
-	else
-	{
-		image->low_name = strdup(image_name);
-	}
+	image->low_name = strdup(image_name);
 
 	strtolower(image->low_name);
 	memlogf("[INFO] Loading image '%s'", image->low_name);
@@ -568,7 +534,9 @@ void dnbd3_exec_delete(int save_if_changed)
 			}
 		}
 		else	// Neither hard nor soft delete, keep it
+		{
 			delete_now = FALSE;
+		}
 		if (delete_now)
 		{
 			// Image was not in use and should be deleted, free it!
@@ -587,7 +555,7 @@ void dnbd3_exec_delete(int save_if_changed)
 			image_iterator = _dnbd3_images;
 		}
 	} // END image iteration
-	pthread_spin_lock(&_spinlock);
+	pthread_spin_unlock(&_spinlock);
 
 	if (changed && save_if_changed)
 		dnbd3_save_config();

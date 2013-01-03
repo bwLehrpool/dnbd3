@@ -484,10 +484,10 @@ static int rpc_receive(int client_sock)
 				++count;
 				dnbd3_image_t image;
 				memset(&image, 0, sizeof(dnbd3_image_t));
-				image.config_group = (char *)XML_GETPROP(cur, "name");
-				char *rid_str = (char *)XML_GETPROP(cur, "rid");
-				image.file = (char *)XML_GETPROP(cur, "file");
-				image.cache_file = (char *)XML_GETPROP(cur, "cache");
+				image.config_group = XML_GETPROP(cur, "name");
+				char *rid_str = XML_GETPROP(cur, "rid");
+				image.file = XML_GETPROP(cur, "file");
+				image.cache_file = XML_GETPROP(cur, "cache");
 				if (image.file && !file_exists(image.file))
 				{
 					printf("Image File: %s\n", image.file);
@@ -503,9 +503,19 @@ static int rpc_receive(int client_sock)
 					{
 						image.rid = atoi(rid_str);
 						if (cmd == RPC_ADD_IMG)
+						{
 							rpc_error = dnbd3_add_image(&image);
+						}
 						else
+						{
+							char *soft = XML_GETPROP(cur, "softdelete");
+							char *hard = XML_GETPROP(cur, "harddelete");
+							image.delete_soft = time(NULL);
+							image.delete_hard = time(NULL);
+							if (soft) image.delete_soft += atoi(soft);
+							if (hard) image.delete_hard += atoi(hard);
 							rpc_error = dnbd3_del_image(&image);
+						}
 					}
 					else
 						rpc_error = ERROR_MISSING_ARGUMENT;
