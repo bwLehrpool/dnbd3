@@ -557,20 +557,24 @@ static int rpc_receive(int client_sock)
 					if (cmd == RPC_ADD_NS)
 					{
 						dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(host, TRUE, comment);
-						if (server)
-							dnbd3_add_trusted_namespace(server, ns, flags);
+						if (server && dnbd3_add_trusted_namespace(server, ns, flags))
+							rpc_error = ERROR_OK;
+						else
+							rpc_error = ERROR_UNSPECIFIED_ERROR;
 					}
 					else
 					{
 						dnbd3_trusted_server_t *server = dnbd3_get_trusted_server(host, FALSE, comment);
-						if (server)
-							dnbd3_del_trusted_namespace(server, ns);
+						if (server && dnbd3_del_trusted_namespace(server, ns))
+							rpc_error = ERROR_OK;
+						else
+							rpc_error = ERROR_FILE_NOT_FOUND;
 					}
 				}
 				pthread_spin_unlock(&_spinlock);
 				FREE_POINTERLIST;
 			} END_FOR_EACH;
-
+			if (rpc_error == ERROR_OK) dnbd3_save_config();
 		}
 		else
 			rpc_error = ERROR_INVALID_XML;
@@ -579,7 +583,7 @@ static int rpc_receive(int client_sock)
 
 	default:
 		memlogf("[ERROR] Unknown RPC command: %u", (unsigned int)header.cmd);
-		rpc_error = htonl(ERROR_UNKNOWN_COMMAND);
+		rpc_error = ERROR_UNKNOWN_COMMAND;
 		break;
 
 	}

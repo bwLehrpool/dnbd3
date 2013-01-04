@@ -676,8 +676,15 @@ int dnbd3_del_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace)
 		dnbd3_namespace_t *cmp = iterator->data;
 		if (strcmp(nslow, cmp->name) == 0)
 		{
+			// TODO: Remove from config file
 			free(cmp->name);
+			free(cmp);
 			server->namespaces = g_slist_remove(server->namespaces, cmp);
+			if (server->namespaces == NULL)
+			{
+				g_free(server->comment);
+				free(server);
+			}
 			return TRUE;
 		}
 	}
