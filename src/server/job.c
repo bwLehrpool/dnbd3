@@ -517,6 +517,10 @@ static void query_servers()
 				printf("[DEBUG] No NS match: '%s'\n", xmlbuffer);
 				goto free_current_image;
 			}
+			char *sdel = XML_GETPROP(cur, "softdelete");
+			char *hdel = XML_GETPROP(cur, "harddelete");
+			const time_t softdelete = sdel ? atol(sdel) : 0;
+			const time_t harddelete = hdel ? atol(hdel) : 0;
 			dnbd3_image_t *local_image = dnbd3_get_image(xmlbuffer, rid, FALSE);
 			if (local_image == NULL && trust->auto_replicate)
 			{
@@ -528,6 +532,8 @@ static void query_servers()
 				newimage.config_group = xmlbuffer;
 				newimage.rid = rid;
 				newimage.filesize = size;
+				newimage.delete_hard = harddelete;
+				newimage.delete_soft = softdelete;
 				if (_cache_dir)
 				{
 					newimage.cache_file = create_cache_filename(xmlbuffer, rid, cachefile, 90);
@@ -549,6 +555,10 @@ static void query_servers()
 					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version! (remote: %llu, local: %llu)\n", local_image->config_group, size, (unsigned long long)local_image->filesize);
 				else
 					add_alt_server(local_image, &host);
+				if (local_image->cache_file && trust->auto_replicate) {
+					local_image->delete_hard = harddelete;
+					local_image->delete_soft = softdelete;
+				}
 				pthread_spin_unlock(&_spinlock);
 			}
 			else

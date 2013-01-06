@@ -494,6 +494,7 @@ void dnbd3_exec_delete(int save_if_changed)
 	const time_t now = time(NULL);
 	GSList *image_iterator, *client_iterator;
 	char ipstr[100];
+	printf("[DEBUG] Scanning for deletable images\n");
 
 	pthread_spin_lock(&_spinlock);
 	for (image_iterator = _dnbd3_images; image_iterator; image_iterator = image_iterator->next)
@@ -502,6 +503,7 @@ void dnbd3_exec_delete(int save_if_changed)
 		int delete_now = TRUE;
 		if (image->delete_hard != 0 && image->delete_hard < now)
 		{
+			printf("[DEBUG] HARD %s\n", image->low_name);
 			// Drop all clients still using it
 			for (client_iterator = _dnbd3_clients; client_iterator; client_iterator = client_iterator->next)
 			{
@@ -520,6 +522,7 @@ void dnbd3_exec_delete(int save_if_changed)
 		} // END delete_hard image
 		else if (image->delete_soft != 0 && image->delete_soft < now && image->atime + 3600 < now)
 		{
+			printf("[DEBUG] SOFT %s\n", image->low_name);
 			// Image should be soft-deleted
 			// Check if it is still in use
 			for (client_iterator = _dnbd3_clients; client_iterator; client_iterator = client_iterator->next)
