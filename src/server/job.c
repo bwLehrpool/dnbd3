@@ -99,7 +99,7 @@ void *dnbd3_job_thread(void *data)
 		// Update image atime
 		dnbd3_update_atimes(starttime);
 		// Call image deletion function if last call is more than 5 minutes ago
-		if (starttime < next_delete_invocation)
+		if (starttime > next_delete_invocation)
 		{
 			next_delete_invocation = starttime + 300;
 			dnbd3_exec_delete(TRUE);
