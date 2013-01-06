@@ -526,6 +526,13 @@ static void query_servers()
 			if (local_image == NULL && trust->auto_replicate)
 			{
 				pthread_spin_unlock(&_spinlock);
+				const time_t deadline = time(NULL) + 60;
+				if ((softdelete != 0 && softdelete < deadline)
+					|| (harddelete != 0 && harddelete < deadline))
+				{	// Image is already about to be deleted, ignore it
+					printf("[DEBUG] Not replicating old image: '%s'\n", xmlbuffer);
+					goto free_current_image;
+				}
 				// Image is NEW, add it!
 				dnbd3_image_t newimage;
 				char cachefile[90];
@@ -550,12 +557,16 @@ static void query_servers()
 			else if (local_image != NULL)
 			{
 				// Image is already KNOWN, add alt server if appropriate
-				if (local_image->filesize == 0) // Size is unknown, just assume the trusted server got it right
-					local_image->filesize = size;
-				if (size != local_image->filesize)
-					printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version! (remote: %llu, local: %llu)\n", local_image->config_group, size, (unsigned long long)local_image->filesize);
-				else
-					add_alt_server(local_image, &host);
+				const time_t deadline = time(NULL) + 60;
+				if (softdelete == 0 || softdelete > deadline)
+				{
+					if (local_image->filesize == 0) // Size is unknown, just assume the trusted server got it right
+						local_image->filesize = size;
+					if (size != local_image->filesize)
+						printf("[DEBUG] Ignoring remote image '%s' because it has a different size from the local version! (remote: %llu, local: %llu)\n", local_image->config_group, size, (unsigned long long)local_image->filesize);
+					else
+						add_alt_server(local_image, &host);
+				}
 				if (local_image->cache_file && trust->auto_replicate) {
 					local_image->delete_hard = harddelete;
 					local_image->delete_soft = softdelete;
