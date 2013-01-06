@@ -313,7 +313,8 @@ static void connect_proxy_images()
 			if (isworking && !(alloc_cache && image->cache_file))
 			{
 				image->working = TRUE;
-				memlogf("[WARNING] Proxy-Mode enabled without cache directory. This will most likely hurt performance.");
+				if (!image->cache_file)
+					memlogf("[WARNING] Proxy-Mode enabled without cache directory. This will most likely hurt performance.");
 				goto continue_with_next_image;
 			}
 			snprintf(cfname, 1000, "%s", image->cache_file);

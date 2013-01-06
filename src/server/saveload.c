@@ -556,6 +556,8 @@ void dnbd3_exec_delete(int save_if_changed)
 			g_free(image);
 			// Restart iteration as it would be messed up now
 			image_iterator = _dnbd3_images;
+			if (image_iterator == NULL)
+				break;
 		}
 	} // END image iteration
 	pthread_spin_unlock(&_spinlock);
