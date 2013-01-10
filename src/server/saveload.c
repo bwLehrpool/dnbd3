@@ -667,6 +667,10 @@ int dnbd3_add_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace,
 /**
  * Remove trusted namespace from given trusted server.
  * !! Lock before calling this function !!
+ * @return TRUE if element could be removed
+ * !! Assume that the _trusted_servers list changed after calling this,
+ * since the trusted server gets removed from it if this was the last namespace
+ * it contained
  */
 int dnbd3_del_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace)
 {
@@ -688,6 +692,7 @@ int dnbd3_del_trusted_namespace(dnbd3_trusted_server_t *server, char *namespace)
 			if (server->namespaces == NULL)
 			{
 				g_free(server->comment);
+				_trusted_servers = g_slist_remove(_trusted_servers, server);
 				free(server);
 			}
 			return TRUE;
