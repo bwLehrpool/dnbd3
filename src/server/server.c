@@ -20,17 +20,18 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <arpa/inet.h>
 #include <signal.h>
 #include <getopt.h>
 #include <pthread.h>
 #include <string.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <stdint.h>
 
 #include "../types.h"
 #include "../version.h"
 
+#include "sockhelper.h"
 #include "server.h"
 #include "saveload.h"
 #include "job.h"
@@ -38,7 +39,8 @@
 #include "rpc.h"
 #include "memlog.h"
 
-static int sock;
+#define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
+static int sockets[MAX_SERVER_SOCKETS], socket_count = 0;
 #ifdef _DEBUG
 int _fake_delay = 0;
 #endif
@@ -79,8 +81,14 @@ void dnbd3_cleanup()
 	int fd;
 	memlogf("INFO: Cleanup...\n");
 
-	close(sock);
-	sock = -1;
+	for (int i = 0; i < socket_count; ++i)
+	{
+		if (sockets[i] == -1)
+			continue;
+		close(sockets[i]);
+		sockets[i] = -1;
+	}
+	socket_count = 0;
 
 	dnbd3_rpc_shutdown();
 	dnbd3_job_shutdown();
@@ -217,20 +225,25 @@ int main(int argc, char *argv[])
 	signal(SIGINT, dnbd3_handle_sigterm);
 
 	// setup network
-	sock = dnbd3_setup_socket();
-	if (sock < 0)
+	sockets[socket_count] = sock_listen_any(PF_INET, PORT);
+	if (sockets[socket_count] != -1)
+		++socket_count;
+#ifdef WITH_IPV6
+	sockets[socket_count] = sock_listen_any(PF_INET6, PORT);
+	if (sockets[socket_count] != -1)
+		++socket_count;
+#endif
+	if (socket_count == 0)
 		exit(EXIT_FAILURE);
-	struct sockaddr_in client;
-	unsigned int len = sizeof(client);
+	struct sockaddr_storage client;
+	socklen_t len;
 	int fd;
-	struct timeval timeout;
-	timeout.tv_sec = SOCKET_TIMEOUT_SERVER;
-	timeout.tv_usec = 0;
 
 	// setup rpc
 	pthread_t thread_rpc;
 	pthread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
 
+	// setup the job thread (query other servers, delete old images etc.)
 	pthread_t thread_job;
 	pthread_create(&(thread_job), NULL, &dnbd3_job_thread, NULL);
 
@@ -239,16 +252,16 @@ int main(int argc, char *argv[])
 	// main loop
 	while (1)
 	{
-		fd = accept(sock, (struct sockaddr *) &client, &len);
+		len = sizeof(client);
+		fd = accept_any(sockets, socket_count, &client, &len);
 		if (fd < 0)
 		{
-			memlogf("[ERROR] Accept failure");
+			memlogf("[ERROR] Client accept failure");
 			continue;
 		}
 		//memlogf("INFO: Client %s connected\n", inet_ntoa(client.sin_addr));
 
-		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
-		setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
+		sock_set_timeout(fd, SOCKET_TIMEOUT_SERVER_MS);
 
 		dnbd3_client_t *dnbd3_client = g_new0(dnbd3_client_t, 1);
 		if (dnbd3_client == NULL)
@@ -257,12 +270,26 @@ int main(int argc, char *argv[])
 			close(fd);
 			continue;
 		}
-		// TODO: Extend this if you ever want to add IPv6 (something like:)
-		// dnbd3_client->host.type = AF_INET6;
-		// memcpy(dnbd3_client->host.addr, &(client.sin6_addr), 16);
-		dnbd3_client->host.type = AF_INET;
-		memcpy(dnbd3_client->host.addr, &(client.sin_addr), 4);
-		dnbd3_client->host.port = client.sin_port;
+		if (client.ss_family == AF_INET) {
+			struct sockaddr_in *v4 = (struct sockaddr_in *)&client;
+			dnbd3_client->host.type = AF_INET;
+			memcpy(dnbd3_client->host.addr, &(v4->sin_addr), 4);
+			dnbd3_client->host.port = v4->sin_port;
+		}
+		else if (client.ss_family == AF_INET6)
+		{
+			struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&client;
+			dnbd3_client->host.type = AF_INET6;
+			memcpy(dnbd3_client->host.addr, &(v6->sin6_addr), 16);
+			dnbd3_client->host.port = v6->sin6_port;
+		}
+		else
+		{
+			memlogf("[ERROR] New client has unknown address family %d, disconnecting...", (int)client.ss_family);
+			close(fd);
+			g_free(dnbd3_client);
+			continue;
+		}
 		dnbd3_client->sock = fd;
 		dnbd3_client->image = NULL;
 

@@ -37,7 +37,8 @@
 // No payload allowed exceeding this many bytes (actual data from client->server is not affected by this limit!)
 #define MAX_PAYLOAD 1000
 
-#define SOCKET_TIMEOUT_SERVER 30
+// in seconds if not stated otherwise (MS = milliseconds)
+#define SOCKET_TIMEOUT_SERVER_MS 30000
 #define SOCKET_TIMEOUT_CLIENT_DATA 2
 #define SOCKET_TIMEOUT_CLIENT_DISCOVERY 1
 

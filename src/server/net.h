@@ -23,6 +23,4 @@
 
 void *dnbd3_handle_query(void *client_socket);
 
-int dnbd3_setup_socket();
-
 #endif /* NET_H_ */

@@ -25,13 +25,10 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <fcntl.h>
-#include <sys/socket.h>
 #include <sys/sendfile.h>
 #include <sys/types.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netinet/tcp.h>
 
+#include "sockhelper.h"
 #include "helper.h"
 #include "server.h"
 #include "saveload.h"
@@ -434,41 +431,4 @@ void *dnbd3_handle_query(void *dnbd3_client)
 	if (image_cache != -1) close(image_cache);
 	dnbd3_free_client(client);
 	pthread_exit((void *) 0);
-}
-
-int dnbd3_setup_socket()
-{
-	int sock;
-	struct sockaddr_in server;
-
-	// Create socket
-	sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (sock < 0)
-	{
-		memlogf("ERROR: Socket setup failure\n");
-		return -1;
-	}
-	const int opt = 1;
-	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-	memset(&server, 0, sizeof(server));
-	server.sin_family = AF_INET; // IPv4
-	server.sin_addr.s_addr = htonl(INADDR_ANY); // Take all IPs
-	server.sin_port = htons(PORT); // set port number
-
-	// Bind to socket
-	if (bind(sock, (struct sockaddr *) &server, sizeof(server)) < 0)
-	{
-		memlogf("ERROR: Bind failure\n");
-		return -1;
-	}
-
-	// Listen on socket
-	if (listen(sock, 100) == -1)
-	{
-		memlogf("ERROR: Listen failure\n");
-		return -1;
-	}
-
-	return sock;
 }

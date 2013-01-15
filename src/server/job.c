@@ -399,13 +399,18 @@ static void query_servers()
 			pthread_spin_unlock(&_spinlock);
 			break; // Done
 		}
-		host = server->host; // Copy host, in case server gets deleted by another thread
+		host = server->host; // Copy host, in case server gets deleted by another thread while processing continues here
 		pthread_spin_unlock(&_spinlock);
 		// Connect
 		host.port = htons(ntohs(host.port) + 1); // RPC port is client port + 1
 		client_sock = sock_connect(&host, 800, 600);
 		if (client_sock == -1)
-			continue;
+		{
+			char buf[100];
+			if (host_to_string(&host, buf, 100))
+				printf("[DEBUG] Could not connect to trusted server %s\n", buf);
+			goto communication_error;
+		}
 		//
 		// Send and receive info from server
 		// Send message
@@ -415,7 +420,7 @@ static void query_servers()
 		send(client_sock, (char *)&header, sizeof(header), 0);
 		if (!recv_data(client_sock, &header, sizeof(header)))
 		{
-			printf("[DEBUG] Could not get status from other server...\n");
+			printf("[DEBUG] Could not receive IMG_LIST header from a trusted server...\n");
 			goto communication_error;
 		}
 		header.cmd = ntohl(header.cmd);
@@ -567,7 +572,8 @@ free_current_image:
 		//
 		continue;
 communication_error:
-		close(client_sock);
+		if (client_sock != -1)
+			close(client_sock);
 		pthread_spin_lock(&_spinlock);
 		if (g_slist_find(_trusted_servers, server))
 		{

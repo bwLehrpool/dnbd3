@@ -34,7 +34,6 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <errno.h>
-#include <fcntl.h>
 #include "sockhelper.h"
 
 #include <libxml/parser.h>
@@ -43,7 +42,8 @@
 
 #define RPC_PORT (PORT+1)
 
-static int server_sock = -1;
+#define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
+static int server_socks[MAX_SERVER_SOCKETS], server_count = 0;
 static volatile int keep_running = 1;
 static char *payload = NULL;
 
@@ -61,10 +61,15 @@ static int rpc_send_reply(int sock, dnbd3_rpc_t* header, int result_code, xmlDoc
 
 static int get_highest_fd(GSList *sockets)
 {
-	GSList *iterator;
-	int max = server_sock;
+	int max = 0;
 
-	for (iterator = sockets; iterator; iterator = iterator->next)
+	for (int i = 0; i < server_count; ++i)
+	{
+		if (server_socks[i] > max)
+			max = server_socks[i];
+	}
+
+	for (GSList *iterator = sockets; iterator; iterator = iterator->next)
 	{
 		const int fd = (int)(size_t)iterator->data;
 		if (fd > max)
@@ -88,35 +93,17 @@ void *dnbd3_rpc_mainloop()
 		return NULL;
 	}
 
-	struct sockaddr_in server, client;
-	socklen_t len = sizeof(client);
+	struct sockaddr_storage client;
 
-	// Create socket
-	if ((server_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-	{
-		perror("ERROR: RPC socket");
-		exit(EXIT_FAILURE);
-	}
-
-	memset(&server, 0, sizeof(server));
-	server.sin_family = AF_INET; // IPv4
-	server.sin_addr.s_addr = INADDR_ANY;
-	server.sin_port = htons(RPC_PORT); // set port number
-
-	const int optval = 1;
-	setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+	sock_add_array(sock_listen_any(PF_INET, RPC_PORT), server_socks, &server_count, MAX_SERVER_SOCKETS);
+#ifdef WITH_IPV6
+	sock_add_array(sock_listen_any(PF_INET6, RPC_PORT), server_socks, &server_count, MAX_SERVER_SOCKETS);
+#endif
 
 	// Bind to socket
-	if (bind(server_sock, (struct sockaddr *)&server, sizeof(server)) < 0)
+	if (server_count == 0)
 	{
-		perror("ERROR: RPC bind");
-		exit(EXIT_FAILURE);
-	}
-
-	// Listen on socket
-	if (listen(server_sock, 5) < 0)
-	{
-		perror("ERROR: RPC listen");
+		perror("ERROR: RPC bind/listen unsuccessful");
 		exit(EXIT_FAILURE);
 	}
 
@@ -126,22 +113,18 @@ void *dnbd3_rpc_mainloop()
 
 	GSList *sockets = NULL, *iterator;
 
-	int client_sock, ret, flags;
-	int maxfd = server_sock + 1;
+	int client_sock, ret;
+	int maxfd = get_highest_fd(sockets);
 	int error_count = 0;
 
-	struct timeval client_timeout, select_timeout;
-	client_timeout.tv_sec = 0;
-	client_timeout.tv_usec = 500 * 1000;
+	struct timeval select_timeout;
 
 	FD_ZERO(&all_sockets);
-	FD_SET(server_sock, &all_sockets);
-
-	// Make listening socket non-blocking
-	flags = fcntl(server_sock, F_GETFL, 0);
-	if (flags == -1)
-		flags = 0;
-	fcntl(server_sock, F_SETFL, flags | O_NONBLOCK);
+	for (int i = 0; i < server_count; ++i)
+	{
+		FD_SET(server_socks[i], &all_sockets);
+		sock_set_nonblock(server_socks[i]);
+	}
 
 	while (keep_running)
 	{
@@ -151,42 +134,43 @@ void *dnbd3_rpc_mainloop()
 		ret = select(maxfd, &readset, NULL, &exceptset, &select_timeout);
 		while (ret > 0)
 		{
-			--ret;
-			if (FD_ISSET(server_sock, &readset))
+			for (int i = 0; i < server_count; ++i)
 			{
-				// Accept connection
-				if ((client_sock = accept(server_sock, &client, &len)) < 0)
+				if (FD_ISSET(server_socks[i], &readset))
 				{
-					if (errno != EAGAIN)
+					--ret;
+					// Accept connection
+					socklen_t len = sizeof(client);
+					if ((client_sock = accept(server_socks[i], (struct sockaddr *)&client, &len)) < 0)
 					{
-						memlogf("[ERROR] Error accepting an RPC connection");
-						if (++error_count > 10)
-							goto end_loop;
+						if (errno != EAGAIN)
+						{
+							memlogf("[ERROR] Error accepting an RPC connection");
+							if (++error_count > 10)
+								goto end_loop;
+						}
+						continue;
 					}
-					continue;
+					error_count = 0;
+					// Apply read/write timeout
+					sock_set_timeout(client_sock, 500);
+					// Make new connection blocking
+					sock_set_block(client_sock);
+					sockets = g_slist_prepend(sockets, (void *)(size_t)client_sock);
+					if (client_sock >= maxfd)
+						maxfd = client_sock + 1;
+					//printf("Max fd: %d\n", (maxfd-1));
+					FD_SET(client_sock, &all_sockets);
 				}
-				error_count = 0;
-				// Apply read/write timeout
-				setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &client_timeout, sizeof(client_timeout));
-				setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &client_timeout, sizeof(client_timeout));
-				// Make new connection blocking
-				flags = fcntl(client_sock, F_GETFL, 0);
-				if (flags == -1)
-					flags = 0;
-				fcntl(client_sock, F_SETFL, flags & ~(int)O_NONBLOCK);
-				sockets = g_slist_prepend(sockets, (void *)(size_t)client_sock);
-				if (client_sock >= maxfd)
-					maxfd = client_sock + 1;
-				//printf("Max fd: %d\n", (maxfd-1));
-				FD_SET(client_sock, &all_sockets);
+				if (FD_ISSET(server_socks[i], &exceptset))
+				{
+					--ret;
+					memlogf("[ERROR] An exception occurred on the RPC listening socket.");
+					if (++error_count > 10)
+						goto end_loop;
+				}
 			}
-			else if (FD_ISSET(server_sock, &exceptset))
-			{
-				memlogf("[ERROR] An exception occurred on the RPC listening socket.");
-				if (++error_count > 10)
-					goto end_loop;
-			}
-			else
+			if (ret > 0)
 			{
 				// Must be an active RPC connection
 				int del = -1;
@@ -202,6 +186,7 @@ void *dnbd3_rpc_mainloop()
 					client_sock = (int)(size_t)iterator->data;
 					if (FD_ISSET(client_sock, &readset))
 					{
+						--ret;
 						// Client sending data
 						if (!rpc_receive(client_sock))
 						{
@@ -211,8 +196,9 @@ void *dnbd3_rpc_mainloop()
 							FD_CLR(client_sock, &all_sockets);
 						}
 					}
-					else if (FD_ISSET(client_sock, &exceptset))
+					if (FD_ISSET(client_sock, &exceptset))
 					{
+						--ret;
 						// Something unexpected happened, just close connection
 						close(client_sock);
 						del = client_sock;
@@ -231,11 +217,7 @@ void *dnbd3_rpc_mainloop()
 
 end_loop:
 	memlogf("[INFO] Shutting down RPC interface.");
-	if (server_sock != -1)
-	{
-		close(server_sock);
-		server_sock = -1;
-	}
+	dnbd3_rpc_shutdown();
 
 	free(payload);
 	xmlCleanupParser();
@@ -246,10 +228,14 @@ end_loop:
 void dnbd3_rpc_shutdown()
 {
 	keep_running = 0;
-	if (server_sock == -1)
-		return;
-	close(server_sock);
-	server_sock = -1;
+	for (int i = 0; i < server_count; ++i)
+	{
+		if (server_socks[i] == -1)
+			continue;
+		close(server_socks[i]);
+		server_socks[i] = -1;
+	}
+	server_count = 0;
 }
 
 /**

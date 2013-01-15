@@ -582,11 +582,13 @@ dnbd3_trusted_server_t *dnbd3_get_trusted_server(char *address, char create_if_n
 		memlogf("[WARNING] Could not parse address '%s' of trusted server", address);
 		return NULL;
 	}
+#ifndef WITH_IPV6
 	if (server.host.type == AF_INET6)
 	{
 		printf("[DEBUG] Ignoring IPv6 trusted server.\n");
 		return NULL;
 	}
+#endif
 	GSList *iterator;
 	for (iterator = _trusted_servers; iterator; iterator = iterator->next)
 	{
