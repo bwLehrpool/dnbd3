@@ -25,8 +25,6 @@
 #include "memlog.h"
 #include "helper.h"
 
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <sys/un.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -35,10 +33,9 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include "sockhelper.h"
 
 #include <libxml/parser.h>
 #include <libxml/xpath.h>
@@ -608,19 +605,6 @@ void dnbd3_rpc_send(int cmd)
 	LIBXML_TEST_VERSION
 
 	struct sockaddr_in server;
-	struct timeval client_timeout;
-
-	// Create socket
-	if ((client_sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-	{
-		perror("ERROR: RPC socket");
-		exit(EXIT_FAILURE);
-	}
-
-	client_timeout.tv_sec = 4;
-	client_timeout.tv_usec = 0;
-	setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &client_timeout, sizeof(client_timeout));
-	setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &client_timeout, sizeof(client_timeout));
 
 	memset(&server, 0, sizeof(server));
 	server.sin_family = AF_INET; // IPv4
@@ -628,7 +612,7 @@ void dnbd3_rpc_send(int cmd)
 	server.sin_port = htons(RPC_PORT); // set port number
 
 	// Connect to server
-	if (connect(client_sock, (struct sockaddr *)&server, sizeof(server)) < 0)
+	if ((client_sock = sock_connect4(&server, 2000, 1000)) == -1)
 	{
 		perror("ERROR: RPC connect");
 		exit(EXIT_FAILURE);
