@@ -36,7 +36,6 @@
 static GKeyFile *_config_handle = NULL;
 
 static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file, char *cache_file);
-//static char* get_local_image_name(char *global_name);
 
 
 void dnbd3_load_config()

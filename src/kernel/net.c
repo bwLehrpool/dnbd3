@@ -67,13 +67,13 @@
 
 #else // Silent
 
-#define debug_dev(x) while(0)
+#define debug_dev(x) do { } while(0)
 #define error_dev(x) goto error
-#define debug_dev_va(x, ...) while(0)
+#define debug_dev_va(x, ...) do { } while(0)
 #define error_dev_va(x, ...) goto error
-#define debug_alt(x) while(0)
+#define debug_alt(x) do { } while(0)
 #define error_alt(x) goto error
-#define debug_alt_va(x, ...) while(0)
+#define debug_alt_va(x, ...) do { } while(0)
 #define error_alt_va(x, ...) goto error
 #endif
 
@@ -119,9 +119,7 @@ static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t *const dev)
 
 int dnbd3_net_connect(dnbd3_device_t *dev)
 {
-	struct sockaddr_in sin;
 	struct request *req1 = NULL;
-
 	struct timeval timeout;
 
 	char get_servers = 0, set_client = 0;
@@ -155,10 +153,10 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	if (dev->sock)
 		error_dev("ERROR: Already connected.");
 
-	if (dev->cur_server.host.type != AF_INET)
-		error_dev("ERROR: IPv6 not implemented.");
-	else
-		debug_dev("INFO: Connecting...");
+	if (dev->cur_server.host.type != AF_INET && dev->cur_server.host.type != AF_INET6)
+		error_dev_va("ERROR: Unknown address type %d", (int)dev->cur_server.host.type);
+
+	debug_dev("INFO: Connecting...");
 
 	if (dev->better_sock == NULL)
 	{
@@ -171,16 +169,33 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		char *name;
 		int mlen;
 		init_msghdr(msg);
-		if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
-			error_dev("ERROR: Couldn't create socket.");
+
+		if (sock_create_kern(dev->cur_server.host.type, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
+			error_dev("ERROR: Couldn't create socket (v6).");
+
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
 		dev->sock->sk->sk_allocation = GFP_NOIO;
-		sin.sin_family = AF_INET;
-		memcpy(&(sin.sin_addr.s_addr), dev->cur_server.host.addr, 4);
-		sin.sin_port = dev->cur_server.host.port;
-		if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) != 0)
-			error_dev("FATAL: Connection to host failed.");
+		if (dev->cur_server.host.type == AF_INET)
+		{
+			struct sockaddr_in sin;
+			memset(&sin, 0, sizeof(sin));
+			sin.sin_family = AF_INET;
+			memcpy(&(sin.sin_addr), dev->cur_server.host.addr, 4);
+			sin.sin_port = dev->cur_server.host.port;
+			if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) != 0)
+				error_dev("FATAL: Connection to host failed. (v4)");
+		}
+		else
+		{
+			struct sockaddr_in6 sin;
+			memset(&sin, 0, sizeof(sin));
+			sin.sin6_family = AF_INET6;
+			memcpy(&(sin.sin6_addr), dev->cur_server.host.addr, 16);
+			sin.sin6_port = dev->cur_server.host.port;
+			if (kernel_connect(dev->sock, (struct sockaddr *) &sin, sizeof(sin), 0) != 0)
+				error_dev("FATAL: Connection to host failed. (v6)");
+		}
 		// Request filesize
 		dnbd3_request.magic = dnbd3_packet_magic;
 		dnbd3_request.cmd = CMD_SELECT_IMAGE;
@@ -395,7 +410,8 @@ void dnbd3_net_heartbeat(unsigned long arg)
 int dnbd3_net_discover(void *data)
 {
 	dnbd3_device_t *dev = data;
-	struct sockaddr_in sin;
+	struct sockaddr_in sin4;
+	struct sockaddr_in6 sin6;
 	struct socket *sock, *best_sock = NULL;
 
 	dnbd3_request_t dnbd3_request;
@@ -420,6 +436,9 @@ int dnbd3_net_discover(void *data)
 	struct timeval timeout;
 	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DISCOVERY;
 	timeout.tv_usec = 0;
+
+	memset(&sin4, 0, sizeof(sin4));
+	memset(&sin6, 0, sizeof(sin6));
 
 	init_msghdr(msg);
 
@@ -454,7 +473,7 @@ int dnbd3_net_discover(void *data)
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			for (i = 0; i < dev->new_servers_num; ++i)
 			{
-				if (dev->new_servers[i].host.type != AF_INET) // Invalid entry.. (Add IPv6 someday)
+				if (dev->new_servers[i].host.type != AF_INET && dev->new_servers[i].host.type != AF_INET6) // Invalid entry?
 					continue;
 				alt_server = get_existing_server(&dev->new_servers[i], dev);
 				if (alt_server != NULL) // Server already known
@@ -462,8 +481,11 @@ int dnbd3_net_discover(void *data)
 					if (dev->new_servers[i].failures == 1)
 					{
 						// REMOVE request
+						if (alt_server->host.type == AF_INET)
+							debug_dev_va("Removing alt server %pI4", alt_server->host.addr);
+						else
+							debug_dev_va("Removing alt server %pI6", alt_server->host.addr);
 						alt_server->host.type = 0;
-						debug_dev_va("Removing alt server %pI4", alt_server->host.addr);
 						continue;
 					}
 					// ADD, so just reset fail counter
@@ -477,7 +499,10 @@ int dnbd3_net_discover(void *data)
 					continue;
 				// Add new server entry
 				alt_server->host = dev->new_servers[i].host;
-				debug_dev_va("Adding alt server %pI4", alt_server->host.addr);
+				if (alt_server->host.type == AF_INET)
+					debug_dev_va("Adding alt server %pI4", alt_server->host.addr);
+				else
+					debug_dev_va("Adding alt server %pI6", alt_server->host.addr);
 				alt_server->rtts[0] = alt_server->rtts[1]
 				                      = alt_server->rtts[2] = alt_server->rtts[3]
 				                              = RTT_UNREACHABLE;
@@ -499,7 +524,7 @@ int dnbd3_net_discover(void *data)
 				continue;
 
 			// Initialize socket and connect
-			if (sock_create_kern(AF_INET, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
+			if (sock_create_kern(dev->alt_servers[i].host.type, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
 			{
 				debug_alt("ERROR: Couldn't create socket (discover).");
 				sock = NULL;
@@ -508,11 +533,22 @@ int dnbd3_net_discover(void *data)
 			kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *) &timeout, sizeof(timeout));
 			kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &timeout, sizeof(timeout));
 			sock->sk->sk_allocation = GFP_NOIO;
-			sin.sin_family = AF_INET; // add IPv6.....
-			memcpy(&sin.sin_addr.s_addr, dev->alt_servers[i].host.addr, 4);
-			sin.sin_port = dev->alt_servers[i].host.port;
-			if (kernel_connect(sock, (struct sockaddr *) &sin, sizeof(sin), 0) < 0)
-				goto error;
+			if (dev->alt_servers[i].host.type == AF_INET)
+			{
+				sin4.sin_family = AF_INET;
+				memcpy(&sin4.sin_addr, dev->alt_servers[i].host.addr, 4);
+				sin4.sin_port = dev->alt_servers[i].host.port;
+				if (kernel_connect(sock, (struct sockaddr *) &sin4, sizeof(sin4), 0) < 0)
+					goto error;
+			}
+			else
+			{
+				sin6.sin6_family = AF_INET6;
+				memcpy(&sin6.sin6_addr, dev->alt_servers[i].host.addr, 16);
+				sin6.sin6_port = dev->alt_servers[i].host.port;
+				if (kernel_connect(sock, (struct sockaddr *) &sin6, sizeof(sin6), 0) < 0)
+					goto error;
+			}
 
 			// Request filesize
 			dnbd3_request.cmd = CMD_SELECT_IMAGE;

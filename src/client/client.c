@@ -59,26 +59,101 @@ void dnbd3_print_version()
 	exit(EXIT_SUCCESS);
 }
 
-static void dnbd3_get_ip(char *hostname, uint8_t *target, uint8_t *addrtype)
+/**
+ * Parse IPv4 or IPv6 address in string representation to a suitable format usable by the BSD socket library
+ * @string eg. "1.2.3.4" or "2a01::10:5", optially with port appended, eg "1.2.3.4:6666" or "[2a01::10:5]:6666"
+ * @af will contain either AF_INET or AF_INET6
+ * @addr will contain the address in network representation
+ * @port will contain the port in network representation, defaulting to #define PORT if none was given
+ * returns 1 on success, 0 in failure. contents of af, addr and port are undefined in the latter case
+ * !! Contents of @string might be modified by this function !!
+ */
+static char parse_address(char *string, dnbd3_host_t *host)
 {
-	struct hostent *host;
+	struct in_addr v4;
+	struct in6_addr v6;
 
-	if ((host = gethostbyname(hostname)) == NULL)
+	// Try IPv4 without port
+	if (1 == inet_pton(AF_INET, string, &v4))
+	{
+		host->type = AF_INET;
+		memcpy(host->addr, &v4, 4);
+		host->port = htons(PORT);
+		return 1;
+	}
+	// Try IPv6 without port
+	if (1 == inet_pton(AF_INET6, string, &v6))
+	{
+		host->type = AF_INET6;
+		memcpy(host->addr, &v6, 16);
+		host->port = htons(PORT);
+		return 1;
+	}
+
+	// Scan for port
+	char *portpos = NULL, *ptr = string;
+	while (*ptr)
+	{
+		if (*ptr == ':')
+			portpos = ptr;
+		++ptr;
+	}
+	if (portpos == NULL)
+		return 0; // No port in string
+	// Consider IP being surrounded by [ ]
+	if (*string == '[' && *(portpos - 1) == ']')
+	{
+		++string;
+		*(portpos - 1) = '\0';
+	}
+	*portpos++ = '\0';
+	int p = atoi(portpos);
+	if (p < 1 || p > 65535)
+		return 0; // Invalid port
+	host->port = htons((uint16_t)p);
+
+	// Try IPv4 with port
+	if (1 == inet_pton(AF_INET, string, &v4))
+	{
+		host->type = AF_INET;
+		memcpy(host->addr, &v4, 4);
+		return 1;
+	}
+	// Try IPv6 with port
+	if (1 == inet_pton(AF_INET6, string, &v6))
+	{
+		host->type = AF_INET6;
+		memcpy(host->addr, &v6, 16);
+		return 1;
+	}
+
+	// FAIL
+	return 0;
+}
+
+static void dnbd3_get_ip(char *hostname, dnbd3_host_t *host)
+{
+	if (parse_address(hostname, host))
+		return;
+	// TODO: Parse port too for host names
+	struct hostent *hent;
+	if ((hent = gethostbyname(hostname)) == NULL)
 	{
 		printf("FATAL: Unknown host '%s'\n", hostname);
 		exit(EXIT_FAILURE);
 	}
 
-	*addrtype = (uint8_t)host->h_addrtype;
-	if (host->h_addrtype == AF_INET)
-		memcpy(target, host->h_addr, 4);
-	else if (host->h_addrtype == AF_INET6)
-		memcpy(target, host->h_addr, 16);
+	host->type = (uint8_t)hent->h_addrtype;
+	if (hent->h_addrtype == AF_INET)
+		memcpy(host->addr, hent->h_addr, 4);
+	else if (hent->h_addrtype == AF_INET6)
+		memcpy(host->addr, hent->h_addr, 16);
 	else
 	{
-		printf("FATAL: Unknown address type: %d\n", host->h_addrtype);
+		printf("FATAL: Unknown address type: %d\n", hent->h_addrtype);
 		exit(EXIT_FAILURE);
 	}
+	host->port = htons(PORT);
 }
 
 int main(int argc, char *argv[])
@@ -125,8 +200,7 @@ int main(int argc, char *argv[])
 			_config_file_name = strdup(optarg);
 			break;
 		case 'h':
-			dnbd3_get_ip(optarg, msg.host.addr, &msg.host.type);
-			printf("Host set to %s (type %d)\n", inet_ntoa(*(struct in_addr *)msg.host.addr), (int)msg.host.type);
+			dnbd3_get_ip(optarg, &msg.host);
 			break;
 		case 'i':
 			msg.imgname = strdup(optarg);
@@ -147,7 +221,7 @@ int main(int argc, char *argv[])
 			close_dev = 1;
 			break;
 		case 's':
-			dnbd3_get_ip(optarg, msg.host.addr, &msg.host.type);
+			dnbd3_get_ip(optarg, &msg.host);
 			switch_host = 1;
 			break;
 		case 'H':
@@ -215,7 +289,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_SUCCESS);
 	}
 
-	// use configuration file if exist
+	// use configuration file if existent
 	GKeyFile *gkf;
 	int i = 0;
 	size_t j = 0;
@@ -229,7 +303,7 @@ int main(int argc, char *argv[])
 
 		for (i = 0; i < j; i++)
 		{
-			dnbd3_get_ip(g_key_file_get_string(gkf, groups[i], "server", NULL), msg.host.addr, &msg.host.type);
+			dnbd3_get_ip(g_key_file_get_string(gkf, groups[i], "server", NULL), &msg.host);
 			msg.imgname = g_key_file_get_string(gkf, groups[i], "name", NULL);
 			msg.rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
 			dev = g_key_file_get_string(gkf, groups[i], "device", NULL);
