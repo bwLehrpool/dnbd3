@@ -458,19 +458,6 @@ static dnbd3_image_t *prepare_image(char *image_name, int rid, char *image_file,
 				}
 				close(fd);
 			}
-
-			/*
-			 // TODO: Do this as soon as a connection to a upstream server is established
-			 // open cache file
-			 fd = open(_images[i].cache_file, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-			 if (fd < 1)
-			 memlogf("ERROR: Could't create cache file '%s'", _images[i].cache_file);
-
-			 if (_images[i].filesize != lseek(fd, 0, SEEK_END))
-			 fallocate(fd, 0, 0, _images[i].filesize);
-
-			 close(fd);
-			 */
 		}
 	} // end cache_file handling
 	return image;
