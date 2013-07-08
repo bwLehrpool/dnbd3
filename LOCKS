@@ -1,0 +1,60 @@
+Some notes about locking in dnbd3
+
+The order of aquiring multiple locks is
+VERY IMPORTANT, as you'll produce a possible deadlock
+if you do it in the wrong order.
+Take very good care of locking order if you have lots
+of functions that call each other. You might lose
+track of what's going on. ;)
+
+===== SERVER =====
+This is a list of used locks, in the order they
+have to be aquired if you must hold multiple locks:
+_clients_lock
+_clients[].lock
+
+If you need to lock multiple clients at once,
+lock the client with the lowest array index first.
+
+If the program logic would require to aquire the
+locks in a different order, you HAVE TO rework the
+code.
+For example, if you hold the lock for client 10 and
+you need to look up some other client. You MUST NOT
+simply fetch the _clients_lock now and then iterate
+over the clients until you find the one you need,
+as it violates the above order to first lock on a
+client and then the clients lock.
+Instead, you need to release client 10's lock,
+then lock on _clients_lock and iterate over the
+clients. Now you check if you either encounter
+the client you originally held the lock on, or
+the client you are looking for. You immediately
+lock on those two. You can then release the
+_clients_lock and work with both clients.
+pseudo code:
+
+// client10 is assumed to be a pointer to
+// a client, which happens to be at index 10
+lock (client10->lock);
+....
+// oh, i need another client
+unlock(client10->lock);
+lock(_clients_lock);
+client clientA = NULL, clientB = NULL;
+for (i = 0; i < _num_clients; ++i) {
+	if (client[i] == client10) {
+		clientA = client[i];
+		lock(clientA.lock);
+	} else if (client[i].something == <whatever>) {
+		clientB = client[i];
+		lock(clientB.lock);
+	}
+}
+unlock(_clients_lock);
+if (clientA && clientB) { // Make sure we actually found both!
+	// DO something important with both clients
+}
+if (clientA) unlock(clientA.lock);
+if (clientB) unlock(clientB.lock);
+
