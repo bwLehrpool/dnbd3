@@ -12,6 +12,10 @@ This is a list of used locks, in the order they
 have to be aquired if you must hold multiple locks:
 _clients_lock
 _clients[].lock
+_images_lock
+_images[].lock
+_alts_lock
+
 
 If you need to lock multiple clients at once,
 lock the client with the lowest array index first.

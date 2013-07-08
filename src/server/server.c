@@ -33,10 +33,7 @@
 
 #include "sockhelper.h"
 #include "server.h"
-#include "saveload.h"
-#include "job.h"
 #include "net.h"
-#include "rpc.h"
 #include "memlog.h"
 
 #define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
@@ -44,14 +41,23 @@ static int sockets[MAX_SERVER_SOCKETS], socket_count = 0;
 #ifdef _DEBUG
 int _fake_delay = 0;
 #endif
-pthread_spinlock_t _spinlock;
 
-GSList *_dnbd3_clients = NULL;
+dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
+int _num_clients = 0;
+pthread_spinlock_t _clients_lock;
+
+dnbd3_image_t *_images[SERVER_MAX_IMAGES];
+int _num_images = 0;
+pthread_spinlock_t _images_lock;
+
+dnbd3_alt_server_t *_alt_servers[SERVER_MAX_ALTS];
+int _num_alts = 0;
+pthread_spinlock_t _alts_lock;
+
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_rpc_password = NULL;
 char *_cache_dir = NULL;
-GSList *_dnbd3_images = NULL; // of dnbd3_image_t
-GSList *_trusted_servers = NULL;
+
 
 void dnbd3_print_help(char *argv_0)
 {
@@ -78,7 +84,9 @@ void dnbd3_print_version()
 
 void dnbd3_cleanup()
 {
-	int fd;
+	int fd, i;
+	GSList *iterator = NULL;
+
 	memlogf("INFO: Cleanup...\n");
 
 	for (int i = 0; i < socket_count; ++i)
@@ -90,25 +98,25 @@ void dnbd3_cleanup()
 	}
 	socket_count = 0;
 
-	dnbd3_rpc_shutdown();
-	dnbd3_job_shutdown();
-
-	pthread_spin_lock(&_spinlock);
-	GSList *iterator = NULL;
-	for (iterator = _dnbd3_clients; iterator; iterator = iterator->next)
+	pthread_spin_lock(&_clients_lock);
+	for (i = 0; i < _num_clients; ++i)
 	{
-		dnbd3_client_t *client = iterator->data;
-		shutdown(client->sock, SHUT_RDWR);
-		pthread_join(client->thread, NULL);
-		g_free(client);
+		dnbd3_client_t * const client = _clients[i];
+		pthread_spin_lock(&client->lock);
+		if (client->sock != -1) shutdown(client->sock, SHUT_RDWR);
+		if (client->thread != 0) pthread_join(client->thread, NULL);
+		_clients[i] = NULL;
+		pthread_spin_unlock(&client->lock);
+		free(client);
 	}
-	g_slist_free(_dnbd3_clients);
+	_num_clients = 0;
+	pthread_spin_unlock(&_clients_lock);
 
-
-	for (iterator = _dnbd3_images; iterator; iterator = iterator->next)
+	pthread_spin_lock(&_images_lock);
+	for (i = 0; i < _num_images; ++i)
 	{
 		// save cache maps to files
-		dnbd3_image_t *image = iterator->data;
+		dnbd3_image_t *image = _images[i];
 		if (image->cache_file)
 		{
 			char tmp[strlen(image->cache_file)+4];
@@ -139,9 +147,8 @@ void dnbd3_cleanup()
 		free(image->cache_file);
 		g_free(image);
 	}
-	g_slist_free(_dnbd3_images);
+	pthread_spin_unlock(&_images_lock);
 
-	pthread_spin_unlock(&_spinlock);
 	exit(EXIT_SUCCESS);
 }
 
@@ -185,15 +192,15 @@ int main(int argc, char *argv[])
 			break;
 		case 'r':
 			printf("INFO: Reloading configuration file...\n\n");
-			dnbd3_rpc_send(RPC_RELOAD);
+			//dnbd3_rpc_send(RPC_RELOAD);
 			return EXIT_SUCCESS;
 		case 's':
 			printf("INFO: Stopping running server...\n\n");
-			dnbd3_rpc_send(RPC_EXIT);
+			//dnbd3_rpc_send(RPC_EXIT);
 			return EXIT_SUCCESS;
 		case 'i':
 			printf("INFO: Requesting information...\n\n");
-			dnbd3_rpc_send(RPC_IMG_LIST);
+			//dnbd3_rpc_send(RPC_IMG_LIST);
 			return EXIT_SUCCESS;
 		case 'H':
 			dnbd3_print_help(argv[0]);
@@ -298,7 +305,7 @@ int main(int argc, char *argv[])
 		_dnbd3_clients = g_slist_prepend(_dnbd3_clients, dnbd3_client);
 		pthread_spin_unlock(&_spinlock);
 
-		if (0 != pthread_create(&(dnbd3_client->thread), NULL, dnbd3_handle_query, (void *) (uintptr_t) dnbd3_client))
+		if (0 != pthread_create(&(dnbd3_client->thread), NULL, net_client_handler, (void *) (uintptr_t) dnbd3_client))
 		{
 			memlogf("[ERROR] Could not start thread for new client.");
 			pthread_spin_lock(&_spinlock);

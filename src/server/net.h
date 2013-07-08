@@ -21,6 +21,6 @@
 #ifndef NET_H_
 #define NET_H_
 
-void *dnbd3_handle_query(void *client_socket);
+void *net_client_handler(void *client_socket);
 
 #endif /* NET_H_ */

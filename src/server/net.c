@@ -116,7 +116,7 @@ static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 	return 1;
 }
 
-void *dnbd3_handle_query(void *dnbd3_client)
+void *net_client_handler(void *dnbd3_client)
 {
 	dnbd3_client_t *client = (dnbd3_client_t *) (uintptr_t) dnbd3_client;
 	dnbd3_request_t request;

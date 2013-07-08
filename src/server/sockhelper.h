@@ -53,6 +53,18 @@ void sock_set_nonblock(int sock);
 void sock_set_block(int sock);
 
 /**
+ * Take IPv4 as string and a port and fill sockaddr_in struct.
+ * This should be refactored to work for IPv4 and IPv6 and use sockaddr_storage.
+ */
+inline void sock_set_addr4(char *ip, uint16_t port, struct sockaddr_in *addr)
+{
+	memset(addr, 0, sizeof(*addr));
+	addr->sin_family = AF_INET; // IPv4
+	addr->sin_addr.s_addr = inet_addr(ip);
+	addr->sin_port = htons(port); // set port number
+}
+
+/**
  * Add given socket to array. Take an existing empty slot ( == -1) if available,
  * append to end otherwise. Updates socket count variable passed by reference.
  * The passed socket fd is only added if it is != -1 for convenience, so you can
