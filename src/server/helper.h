@@ -81,6 +81,16 @@ static inline int recv_data(int client_sock, void *buffer_out, int len)
 	return 0;
 }
 
+static inline int strend(char *string, char *suffix)
+{
+	if (string == NULL) return FALSE;
+	if (suffix == NULL || *suffix == '\0') return TRUE;
+	const size_t len1 = strlen(string);
+	const size_t len2 = strlen(suffix);
+	if (len2 > len1) return FALSE;
+	return strcmp(string + len1 - len2, suffix) == 0;
+}
+
 // one byte in the map covers 8 4kib blocks, so 32kib per byte
 // "+ (1 << 15) - 1" is required to account for the last bit of
 // the image that is smaller than 32kib

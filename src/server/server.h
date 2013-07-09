@@ -43,13 +43,14 @@ typedef struct
 {
 	char *path;            // absolute path of the image
 	char *lower_name;      // relative path, all lowercase, minus revision ID
-	int rid;               // revision of image
-	uint64_t filesize;     // size of image
-	time_t atime;          // last access time
 	uint8_t *cache_map;    // cache map telling which parts are locally cached
 	dnbd3_connection_t *uplink; // NULL = local image / completely cached, pointer to a server connection otherwise
+	uint64_t filesize;     // size of image
+	int rid;               // revision of image
+	int users;             // clients currently using this image
+	time_t atime;          // last access time
 	char working;          // TRUE if image exists and completeness is == 100% or a working upstream proxy is connected
-	time_t delete_soft;    // unixtime telling when this image should be deleted. if there are still clients using this image it weill be kept, but new clients requesting the image will be rejected. 0 = never
+	time_t delete_soft; // unixtime telling when this image should be deleted. if there are still clients using this image it weill be kept, but new clients requesting the image will be rejected. 0 = never
 	time_t delete_hard;    // unixtime telling when this image should be deleted, no matter if there are still clients connected. 0 = never
 	pthread_spinlock_t lock;
 } dnbd3_image_t;
@@ -78,16 +79,16 @@ typedef struct
 
 typedef struct
 {
-	time_t         last_told;
-	dnbd3_host_t   host;
-	char           comment[COMMENT_LENGTH];
+	time_t last_told;
+	dnbd3_host_t host;
+	char comment[COMMENT_LENGTH];
 } dnbd3_alt_server_t;
 
 typedef struct
 {
-	char          comment[COMMENT_LENGTH];
-	dnbd3_host_t  host;
-	dnbd3_host_t  mask;
+	char comment[COMMENT_LENGTH];
+	dnbd3_host_t host;
+	dnbd3_host_t mask;
 } dnbd3_acess_rules_t;
 
 extern dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
@@ -109,6 +110,9 @@ extern int _fake_delay;
 #endif
 
 void dnbd3_cleanup();
+void dnbd3_add_client(dnbd3_client_t *client);
+void dnbd3_remove_client(dnbd3_client_t *client);
+dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd);
 void dnbd3_free_client(dnbd3_client_t *client);
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64

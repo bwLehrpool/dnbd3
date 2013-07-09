@@ -58,6 +58,8 @@ char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_rpc_password = NULL;
 char *_cache_dir = NULL;
 
+static void dnbd3_handle_sigpipe(int signum);
+static void dnbd3_handle_sigterm(int signum);
 
 void dnbd3_print_help(char *argv_0)
 {
@@ -85,7 +87,6 @@ void dnbd3_print_version()
 void dnbd3_cleanup()
 {
 	int fd, i;
-	GSList *iterator = NULL;
 
 	memlogf("INFO: Cleanup...\n");
 
@@ -98,12 +99,13 @@ void dnbd3_cleanup()
 	}
 	socket_count = 0;
 
+	// Clean up clients
 	pthread_spin_lock(&_clients_lock);
 	for (i = 0; i < _num_clients; ++i)
 	{
 		dnbd3_client_t * const client = _clients[i];
 		pthread_spin_lock(&client->lock);
-		if (client->sock != -1) shutdown(client->sock, SHUT_RDWR);
+		if (client->sock >= 0) shutdown(client->sock, SHUT_RDWR);
 		if (client->thread != 0) pthread_join(client->thread, NULL);
 		_clients[i] = NULL;
 		pthread_spin_unlock(&client->lock);
@@ -112,41 +114,25 @@ void dnbd3_cleanup()
 	_num_clients = 0;
 	pthread_spin_unlock(&_clients_lock);
 
+	// Clean up images
 	pthread_spin_lock(&_images_lock);
 	for (i = 0; i < _num_images; ++i)
 	{
-		// save cache maps to files
 		dnbd3_image_t *image = _images[i];
-		if (image->cache_file)
-		{
-			char tmp[strlen(image->cache_file)+4];
-			strcpy(tmp, image->cache_file);
-			strcat(tmp, ".map");
-			fd = open(tmp, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-
-			if (fd > 0)
-				write(fd, image->cache_map,  ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char));
-
-			close(fd);
-		}
-		// Close bock devices of proxied images
-		if (image->file && strncmp(image->file, "/dev/dnbd", 9) == 0)
-		{
-			int fd = open(image->file, O_RDONLY);
-			dnbd3_ioctl_t msg;
-			memset(&msg, 0, sizeof(msg));
-			msg.len = sizeof(msg);
-			ioctl(fd, IOCTL_CLOSE, &msg);
-			close(fd);
-		}
-
+		pthread_spin_lock(&image->lock);
+		// save cache maps to files
+		image_save_cache_map(image);
+		// free uplink connection
+		uplink_free(image->uplink);
+		// free other stuff
 		free(image->cache_map);
-		free(image->config_group);
-		free(image->low_name);
-		free(image->file);
-		free(image->cache_file);
-		g_free(image);
+		free(image->path);
+		free(image->lower_name);
+		_images[i] = NULL;
+		pthread_spin_unlock(&image->lock);
+		free(image);
 	}
+	_num_images = 0;
 	pthread_spin_unlock(&_images_lock);
 
 	exit(EXIT_SUCCESS);
@@ -157,6 +143,7 @@ int main(int argc, char *argv[])
 	int demonize = 1;
 	int opt = 0;
 	int longIndex = 0;
+	int i;
 	static const char *optString = "f:d:nrsiHV?";
 	static const struct option longOpts[] =
 	{
@@ -218,7 +205,9 @@ int main(int argc, char *argv[])
 	if (demonize)
 		daemon(1, 0);
 
-	pthread_spin_init(&_spinlock, PTHREAD_PROCESS_PRIVATE);
+	pthread_spin_init(&_clients_lock, PTHREAD_PROCESS_PRIVATE);
+	pthread_spin_init(&_images_lock, PTHREAD_PROCESS_PRIVATE);
+	pthread_spin_init(&_alts_lock, PTHREAD_PROCESS_PRIVATE);
 
 	initmemlog();
 	memlogf("DNBD3 server starting.... Machine type: " ENDIAN_MODE);
@@ -247,12 +236,12 @@ int main(int argc, char *argv[])
 	int fd;
 
 	// setup rpc
-	pthread_t thread_rpc;
-	pthread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
+	//pthread_t thread_rpc;
+	//pthread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
 
 	// setup the job thread (query other servers, delete old images etc.)
-	pthread_t thread_job;
-	pthread_create(&(thread_job), NULL, &dnbd3_job_thread, NULL);
+	//pthread_t thread_job;
+	//pthread_create(&(thread_job), NULL, &dnbd3_job_thread, NULL);
 
 	memlogf("[INFO] Server is ready...");
 
@@ -264,61 +253,65 @@ int main(int argc, char *argv[])
 		if (fd < 0)
 		{
 			memlogf("[ERROR] Client accept failure");
+			usleep(10000); // 10ms
 			continue;
 		}
 		//memlogf("INFO: Client %s connected\n", inet_ntoa(client.sin_addr));
 
 		sock_set_timeout(fd, SOCKET_TIMEOUT_SERVER_MS);
 
-		dnbd3_client_t *dnbd3_client = g_new0(dnbd3_client_t, 1);
+		dnbd3_client_t *dnbd3_client = dnbd3_init_client(&client, fd);
 		if (dnbd3_client == NULL)
 		{
-			memlogf("[ERROR] Could not alloc dnbd3_client_t for new client.");
 			close(fd);
 			continue;
 		}
-		if (client.ss_family == AF_INET) {
-			struct sockaddr_in *v4 = (struct sockaddr_in *)&client;
-			dnbd3_client->host.type = AF_INET;
-			memcpy(dnbd3_client->host.addr, &(v4->sin_addr), 4);
-			dnbd3_client->host.port = v4->sin_port;
-		}
-		else if (client.ss_family == AF_INET6)
-		{
-			struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&client;
-			dnbd3_client->host.type = AF_INET6;
-			memcpy(dnbd3_client->host.addr, &(v6->sin6_addr), 16);
-			dnbd3_client->host.port = v6->sin6_port;
-		}
-		else
-		{
-			memlogf("[ERROR] New client has unknown address family %d, disconnecting...", (int)client.ss_family);
-			close(fd);
-			g_free(dnbd3_client);
-			continue;
-		}
-		dnbd3_client->sock = fd;
-		dnbd3_client->image = NULL;
 
 		// This has to be done before creating the thread, otherwise a race condition might occur when the new thread dies faster than this thread adds the client to the list after creating the thread
-		pthread_spin_lock(&_spinlock);
-		_dnbd3_clients = g_slist_prepend(_dnbd3_clients, dnbd3_client);
-		pthread_spin_unlock(&_spinlock);
+		if (!dnbd3_add_client(dnbd3_client)) {
+			dnbd3_free_client(dnbd3_client);
+			continue;
+		}
 
 		if (0 != pthread_create(&(dnbd3_client->thread), NULL, net_client_handler, (void *) (uintptr_t) dnbd3_client))
 		{
 			memlogf("[ERROR] Could not start thread for new client.");
-			pthread_spin_lock(&_spinlock);
-			_dnbd3_clients = g_slist_remove(_dnbd3_clients, dnbd3_client);
-			pthread_spin_unlock(&_spinlock);
+			dnbd3_remove_client(dnbd3_client);
 			dnbd3_free_client(dnbd3_client);
-			close(fd);
 			continue;
 		}
 		pthread_detach(dnbd3_client->thread);
 	}
 
 	dnbd3_cleanup();
+}
+
+dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
+{
+	dnbd3_client_t *dnbd3_client = calloc(1, sizeof(dnbd3_client_t));
+	if (dnbd3_client == NULL) {
+		memlogf("[ERROR] Could not alloc dnbd3_client_t for new client.");
+		return NULL;
+	}
+
+	if (client.ss_family == AF_INET) {
+		struct sockaddr_in *v4 = (struct sockaddr_in *)&client;
+		dnbd3_client->host.type = AF_INET;
+		memcpy(dnbd3_client->host.addr, &(v4->sin_addr), 4);
+		dnbd3_client->host.port = v4->sin_port;
+	} else if (client.ss_family == AF_INET6) {
+		struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&client;
+		dnbd3_client->host.type = AF_INET6;
+		memcpy(dnbd3_client->host.addr, &(v6->sin6_addr), 16);
+		dnbd3_client->host.port = v6->sin6_port;
+	} else {
+		memlogf("[ERROR] New client has unknown address family %d, disconnecting...", (int)client.ss_family);
+		free(dnbd3_client);
+		return NULL;
+	}
+	dnbd3_client->sock = fd;
+	pthread_spin_init(&dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE);
+	return dnbd3_client;
 }
 
 /**
@@ -332,5 +325,49 @@ void dnbd3_free_client(dnbd3_client_t *client)
 		free(it->data);
 	}
 	g_slist_free(client->sendqueue);
+	if (client->sock >= 0) close(client->sock);
 	g_free(client);
+}
+
+int dnbd3_add_client(dnbd3_client_t *client)
+{
+	int i;
+	pthread_spin_lock(&_clients_lock);
+	for (i = 0; i < _num_clients; ++i) {
+		if (_clients[i] != NULL) continue;
+		_clients[i] = client;
+		pthread_spin_unlock(&_clients_lock);
+		return TRUE;
+	}
+	if (_num_clients >= SERVER_MAX_CLIENTS) {
+		pthread_spin_unlock(&_clients_lock);
+		memlogf("[ERROR] Maximum number of clients reached!");
+		return FALSE;
+	}
+	_clients[_num_clients++] = client;
+	pthread_spin_unlock(&_clients_lock);
+	return TRUE;
+}
+
+void dnbd3_remove_client(dnbd3_client_t *client)
+{
+	int i;
+	pthread_spin_lock(&_clients_lock);
+	for (i = _num_clients - 1; i >= 0; --i) {
+		if (_clients[i] != client) continue;
+		_clients[i] = NULL;
+		if (i + 1 == _num_clients) --_num_clients;
+	}
+	pthread_spin_unlock(&_clients_lock);
+}
+
+static void dnbd3_handle_sigpipe(int signum)
+{
+	memlogf("INFO: SIGPIPE received (%s)", strsignal(signum));
+}
+
+static void dnbd3_handle_sigterm(int signum)
+{
+	memlogf("INFO: SIGTERM or SIGINT received (%s)", strsignal(signum));
+	dnbd3_cleanup();
 }
