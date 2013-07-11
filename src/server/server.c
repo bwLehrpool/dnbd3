@@ -33,6 +33,7 @@
 
 #include "sockhelper.h"
 #include "server.h"
+#include "image.h"
 #include "net.h"
 #include "memlog.h"
 
@@ -63,79 +64,75 @@ static void dnbd3_handle_sigterm(int signum);
 
 void dnbd3_print_help(char *argv_0)
 {
-	printf("Usage: %s [OPTIONS]...\n", argv_0);
-	printf("Start the DNBD3 server\n");
-	printf("-f or --file        Configuration file (default /etc/dnbd3-server.conf)\n");
+	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
+	printf( "Start the DNBD3 server\n" );
+	printf( "-f or --file        Configuration file (default /etc/dnbd3-server.conf)\n" );
 #ifdef _DEBUG
 	printf("-d or --delay       Add a fake network delay of X µs\n");
 #endif
-	printf("-n or --nodaemon    Start server in foreground\n");
-	printf("-r or --reload      Reload configuration file\n");
-	printf("-s or --stop        Stop running dnbd3-server\n");
-	printf("-i or --info        Print connected clients and used images\n");
-	printf("-H or --help        Show this help text and quit\n");
-	printf("-V or --version     Show version and quit\n");
-	exit(0);
+	printf( "-n or --nodaemon    Start server in foreground\n" );
+	printf( "-r or --reload      Reload configuration file\n" );
+	printf( "-s or --stop        Stop running dnbd3-server\n" );
+	printf( "-i or --info        Print connected clients and used images\n" );
+	printf( "-H or --help        Show this help text and quit\n" );
+	printf( "-V or --version     Show version and quit\n" );
+	exit( 0 );
 }
 
 void dnbd3_print_version()
 {
-	printf("Version: %s\n", VERSION_STRING);
-	exit(0);
+	printf( "Version: %s\n", VERSION_STRING );
+	exit( 0 );
 }
 
 void dnbd3_cleanup()
 {
 	int fd, i;
 
-	memlogf("INFO: Cleanup...\n");
+	memlogf( "INFO: Cleanup...\n" );
 
-	for (int i = 0; i < socket_count; ++i)
-	{
-		if (sockets[i] == -1)
-			continue;
-		close(sockets[i]);
+	for (int i = 0; i < socket_count; ++i) {
+		if ( sockets[i] == -1 ) continue;
+		close( sockets[i] );
 		sockets[i] = -1;
 	}
 	socket_count = 0;
 
 	// Clean up clients
-	pthread_spin_lock(&_clients_lock);
-	for (i = 0; i < _num_clients; ++i)
-	{
+	pthread_spin_lock( &_clients_lock );
+	for (i = 0; i < _num_clients; ++i) {
 		dnbd3_client_t * const client = _clients[i];
-		pthread_spin_lock(&client->lock);
-		if (client->sock >= 0) shutdown(client->sock, SHUT_RDWR);
-		if (client->thread != 0) pthread_join(client->thread, NULL);
+		pthread_spin_lock( &client->lock );
+		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
+		if ( client->thread != 0 ) pthread_join( client->thread, NULL );
 		_clients[i] = NULL;
-		pthread_spin_unlock(&client->lock);
-		free(client);
+		pthread_spin_unlock( &client->lock );
+		free( client );
 	}
 	_num_clients = 0;
-	pthread_spin_unlock(&_clients_lock);
+	pthread_spin_unlock( &_clients_lock );
 
 	// Clean up images
-	pthread_spin_lock(&_images_lock);
-	for (i = 0; i < _num_images; ++i)
-	{
+	pthread_spin_lock( &_images_lock );
+	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t *image = _images[i];
-		pthread_spin_lock(&image->lock);
+		pthread_spin_lock( &image->lock );
 		// save cache maps to files
-		image_save_cache_map(image);
+		image_save_cache_map( image );
 		// free uplink connection
-		uplink_free(image->uplink);
+		uplink_free( image->uplink );
 		// free other stuff
-		free(image->cache_map);
-		free(image->path);
-		free(image->lower_name);
+		free( image->cache_map );
+		free( image->path );
+		free( image->lower_name );
 		_images[i] = NULL;
-		pthread_spin_unlock(&image->lock);
-		free(image);
+		pthread_spin_unlock( &image->lock );
+		free( image );
 	}
 	_num_images = 0;
-	pthread_spin_unlock(&_images_lock);
+	pthread_spin_unlock( &_images_lock );
 
-	exit(EXIT_SUCCESS);
+	exit( EXIT_SUCCESS );
 }
 
 int main(int argc, char *argv[])
@@ -145,92 +142,82 @@ int main(int argc, char *argv[])
 	int longIndex = 0;
 	int i;
 	static const char *optString = "f:d:nrsiHV?";
-	static const struct option longOpts[] =
-	{
-		{ "file", required_argument, NULL, 'f' },
-		{ "delay", required_argument, NULL, 'd' },
-		{ "nodaemon", no_argument, NULL, 'n' },
-		{ "reload", no_argument, NULL, 'r' },
-		{ "stop", no_argument, NULL, 's' },
-		{ "info", no_argument, NULL, 'i' },
-		{ "help", no_argument, NULL, 'H' },
-		{ "version", no_argument, NULL, 'V' }
-	};
+	static const struct option longOpts[] = { { "file", required_argument, NULL, 'f' }, { "delay", required_argument, NULL, 'd' }, {
+	        "nodaemon", no_argument, NULL, 'n' }, { "reload", no_argument, NULL, 'r' }, { "stop", no_argument, NULL, 's' }, { "info",
+	        no_argument, NULL, 'i' }, { "help", no_argument, NULL, 'H' }, { "version", no_argument, NULL, 'V' } };
 
-	opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
+	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
-	while (opt != -1)
-	{
-		switch (opt)
-		{
+	while ( opt != -1 ) {
+		switch ( opt ) {
 		case 'f':
-			_config_file_name = strdup(optarg);
+			_config_file_name = strdup( optarg );
 			break;
 		case 'd':
 #ifdef _DEBUG
 			_fake_delay = atoi(optarg);
 			break;
 #else
-			printf("This option is only available in debug builds.\n\n");
+			printf( "This option is only available in debug builds.\n\n" );
 			return EXIT_FAILURE;
 #endif
 		case 'n':
 			demonize = 0;
 			break;
 		case 'r':
-			printf("INFO: Reloading configuration file...\n\n");
+			printf( "INFO: Reloading configuration file...\n\n" );
 			//dnbd3_rpc_send(RPC_RELOAD);
 			return EXIT_SUCCESS;
 		case 's':
-			printf("INFO: Stopping running server...\n\n");
+			printf( "INFO: Stopping running server...\n\n" );
 			//dnbd3_rpc_send(RPC_EXIT);
 			return EXIT_SUCCESS;
 		case 'i':
-			printf("INFO: Requesting information...\n\n");
+			printf( "INFO: Requesting information...\n\n" );
 			//dnbd3_rpc_send(RPC_IMG_LIST);
 			return EXIT_SUCCESS;
 		case 'H':
-			dnbd3_print_help(argv[0]);
+			dnbd3_print_help( argv[0] );
 			break;
 		case 'V':
 			dnbd3_print_version();
 			break;
 		case '?':
-			dnbd3_print_help(argv[0]);
+			dnbd3_print_help( argv[0] );
 			break;
 		}
-		opt = getopt_long(argc, argv, optString, longOpts, &longIndex);
+		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
 
-	if (demonize)
-		daemon(1, 0);
+	if ( demonize ) daemon( 1, 0 );
 
-	pthread_spin_init(&_clients_lock, PTHREAD_PROCESS_PRIVATE);
-	pthread_spin_init(&_images_lock, PTHREAD_PROCESS_PRIVATE);
-	pthread_spin_init(&_alts_lock, PTHREAD_PROCESS_PRIVATE);
+	pthread_spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
+	pthread_spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
+	pthread_spin_init( &_alts_lock, PTHREAD_PROCESS_PRIVATE );
 
 	initmemlog();
-	memlogf("DNBD3 server starting.... Machine type: " ENDIAN_MODE);
+	memlogf( "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
 
 	// load config file
 	dnbd3_load_config();
 
 	// setup signal handler
-	signal(SIGPIPE, dnbd3_handle_sigpipe);
-	signal(SIGTERM, dnbd3_handle_sigterm);
-	signal(SIGINT, dnbd3_handle_sigterm);
+	signal( SIGPIPE, dnbd3_handle_sigpipe );
+	signal( SIGTERM, dnbd3_handle_sigterm );
+	signal( SIGINT, dnbd3_handle_sigterm );
+
+	// Load all images in base path
+	images_load_all();
 
 	// setup network
-	sockets[socket_count] = sock_listen_any(PF_INET, PORT);
-	if (sockets[socket_count] != -1)
-		++socket_count;
+	sockets[socket_count] = sock_listen_any( PF_INET, PORT );
+	if ( sockets[socket_count] != -1 ) ++socket_count;
 #ifdef WITH_IPV6
 	sockets[socket_count] = sock_listen_any(PF_INET6, PORT);
 	if (sockets[socket_count] != -1)
-		++socket_count;
+	++socket_count;
 #endif
-	if (socket_count == 0)
-		exit(EXIT_FAILURE);
+	if ( socket_count == 0 ) exit( EXIT_FAILURE );
 	struct sockaddr_storage client;
 	socklen_t len;
 	int fd;
@@ -243,44 +230,40 @@ int main(int argc, char *argv[])
 	//pthread_t thread_job;
 	//pthread_create(&(thread_job), NULL, &dnbd3_job_thread, NULL);
 
-	memlogf("[INFO] Server is ready...");
+	memlogf( "[INFO] Server is ready..." );
 
 	// main loop
-	while (1)
-	{
+	while ( 1 ) {
 		len = sizeof(client);
-		fd = accept_any(sockets, socket_count, &client, &len);
-		if (fd < 0)
-		{
-			memlogf("[ERROR] Client accept failure");
-			usleep(10000); // 10ms
+		fd = accept_any( sockets, socket_count, &client, &len );
+		if ( fd < 0 ) {
+			memlogf( "[ERROR] Client accept failure" );
+			usleep( 10000 ); // 10ms
 			continue;
 		}
 		//memlogf("INFO: Client %s connected\n", inet_ntoa(client.sin_addr));
 
-		sock_set_timeout(fd, SOCKET_TIMEOUT_SERVER_MS);
+		sock_set_timeout( fd, SOCKET_TIMEOUT_SERVER_MS );
 
-		dnbd3_client_t *dnbd3_client = dnbd3_init_client(&client, fd);
-		if (dnbd3_client == NULL)
-		{
-			close(fd);
+		dnbd3_client_t *dnbd3_client = dnbd3_init_client( &client, fd );
+		if ( dnbd3_client == NULL ) {
+			close( fd );
 			continue;
 		}
 
 		// This has to be done before creating the thread, otherwise a race condition might occur when the new thread dies faster than this thread adds the client to the list after creating the thread
-		if (!dnbd3_add_client(dnbd3_client)) {
-			dnbd3_free_client(dnbd3_client);
+		if ( !dnbd3_add_client( dnbd3_client ) ) {
+			dnbd3_free_client( dnbd3_client );
 			continue;
 		}
 
-		if (0 != pthread_create(&(dnbd3_client->thread), NULL, net_client_handler, (void *) (uintptr_t) dnbd3_client))
-		{
-			memlogf("[ERROR] Could not start thread for new client.");
-			dnbd3_remove_client(dnbd3_client);
-			dnbd3_free_client(dnbd3_client);
+		if ( 0 != pthread_create( &(dnbd3_client->thread), NULL, net_client_handler, (void *)(uintptr_t)dnbd3_client ) ) {
+			memlogf( "[ERROR] Could not start thread for new client." );
+			dnbd3_remove_client( dnbd3_client );
+			dnbd3_free_client( dnbd3_client );
 			continue;
 		}
-		pthread_detach(dnbd3_client->thread);
+		pthread_detach( dnbd3_client->thread );
 	}
 
 	dnbd3_cleanup();
@@ -288,29 +271,29 @@ int main(int argc, char *argv[])
 
 dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 {
-	dnbd3_client_t *dnbd3_client = calloc(1, sizeof(dnbd3_client_t));
-	if (dnbd3_client == NULL) {
-		memlogf("[ERROR] Could not alloc dnbd3_client_t for new client.");
-		return NULL;
+	dnbd3_client_t *dnbd3_client = calloc( 1, sizeof(dnbd3_client_t) );
+	if ( dnbd3_client == NULL ) {
+		memlogf( "[ERROR] Could not alloc dnbd3_client_t for new client." );
+		return NULL ;
 	}
 
-	if (client.ss_family == AF_INET) {
+	if ( client.ss_family == AF_INET ) {
 		struct sockaddr_in *v4 = (struct sockaddr_in *)&client;
 		dnbd3_client->host.type = AF_INET;
-		memcpy(dnbd3_client->host.addr, &(v4->sin_addr), 4);
+		memcpy( dnbd3_client->host.addr, &(v4->sin_addr), 4 );
 		dnbd3_client->host.port = v4->sin_port;
-	} else if (client.ss_family == AF_INET6) {
+	} else if ( client.ss_family == AF_INET6 ) {
 		struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&client;
 		dnbd3_client->host.type = AF_INET6;
-		memcpy(dnbd3_client->host.addr, &(v6->sin6_addr), 16);
+		memcpy( dnbd3_client->host.addr, &(v6->sin6_addr), 16 );
 		dnbd3_client->host.port = v6->sin6_port;
 	} else {
-		memlogf("[ERROR] New client has unknown address family %d, disconnecting...", (int)client.ss_family);
-		free(dnbd3_client);
-		return NULL;
+		memlogf( "[ERROR] New client has unknown address family %d, disconnecting...", (int)client.ss_family );
+		free( dnbd3_client );
+		return NULL ;
 	}
 	dnbd3_client->sock = fd;
-	pthread_spin_init(&dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE);
+	pthread_spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
 	return dnbd3_client;
 }
 
@@ -320,54 +303,53 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 void dnbd3_free_client(dnbd3_client_t *client)
 {
 	GSList *it; // Doesn't lock, so call this function after removing the client from _dnbd3_clients
-	for (it = client->sendqueue; it; it = it->next)
-	{
-		free(it->data);
+	for (it = client->sendqueue; it; it = it->next) {
+		free( it->data );
 	}
-	g_slist_free(client->sendqueue);
-	if (client->sock >= 0) close(client->sock);
-	g_free(client);
+	g_slist_free( client->sendqueue );
+	if ( client->sock >= 0 ) close( client->sock );
+	g_free( client );
 }
 
 int dnbd3_add_client(dnbd3_client_t *client)
 {
 	int i;
-	pthread_spin_lock(&_clients_lock);
+	pthread_spin_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
-		if (_clients[i] != NULL) continue;
+		if ( _clients[i] != NULL ) continue;
 		_clients[i] = client;
-		pthread_spin_unlock(&_clients_lock);
+		pthread_spin_unlock( &_clients_lock );
 		return TRUE;
 	}
-	if (_num_clients >= SERVER_MAX_CLIENTS) {
-		pthread_spin_unlock(&_clients_lock);
-		memlogf("[ERROR] Maximum number of clients reached!");
+	if ( _num_clients >= SERVER_MAX_CLIENTS ) {
+		pthread_spin_unlock( &_clients_lock );
+		memlogf( "[ERROR] Maximum number of clients reached!" );
 		return FALSE;
 	}
 	_clients[_num_clients++] = client;
-	pthread_spin_unlock(&_clients_lock);
+	pthread_spin_unlock( &_clients_lock );
 	return TRUE;
 }
 
 void dnbd3_remove_client(dnbd3_client_t *client)
 {
 	int i;
-	pthread_spin_lock(&_clients_lock);
+	pthread_spin_lock( &_clients_lock );
 	for (i = _num_clients - 1; i >= 0; --i) {
-		if (_clients[i] != client) continue;
+		if ( _clients[i] != client ) continue;
 		_clients[i] = NULL;
-		if (i + 1 == _num_clients) --_num_clients;
+		if ( i + 1 == _num_clients ) --_num_clients;
 	}
-	pthread_spin_unlock(&_clients_lock);
+	pthread_spin_unlock( &_clients_lock );
 }
 
 static void dnbd3_handle_sigpipe(int signum)
 {
-	memlogf("INFO: SIGPIPE received (%s)", strsignal(signum));
+	memlogf( "INFO: SIGPIPE received (%s)", strsignal( signum ) );
 }
 
 static void dnbd3_handle_sigterm(int signum)
 {
-	memlogf("INFO: SIGTERM or SIGINT received (%s)", strsignal(signum));
+	memlogf( "INFO: SIGTERM or SIGINT received (%s)", strsignal( signum ) );
 	dnbd3_cleanup();
 }

@@ -28,32 +28,7 @@
 #include "../config.h"
 #include "../types.h"
 
-typedef struct
-{
-	int fd;
-} dnbd3_connection_t;
-
-/**
- * Image struct. An image path could be something like
- * /mnt/images/rz/zfs/Windows7 ZfS.vmdk.1
- * and the lower_name would then be
- * rz/zfs/windows7 zfs.vmdk
- */
-typedef struct
-{
-	char *path;            // absolute path of the image
-	char *lower_name;      // relative path, all lowercase, minus revision ID
-	uint8_t *cache_map;    // cache map telling which parts are locally cached
-	dnbd3_connection_t *uplink; // NULL = local image / completely cached, pointer to a server connection otherwise
-	uint64_t filesize;     // size of image
-	int rid;               // revision of image
-	int users;             // clients currently using this image
-	time_t atime;          // last access time
-	char working;          // TRUE if image exists and completeness is == 100% or a working upstream proxy is connected
-	time_t delete_soft; // unixtime telling when this image should be deleted. if there are still clients using this image it weill be kept, but new clients requesting the image will be rejected. 0 = never
-	time_t delete_hard;    // unixtime telling when this image should be deleted, no matter if there are still clients connected. 0 = never
-	pthread_spinlock_t lock;
-} dnbd3_image_t;
+struct dnbd3_image_t;
 
 typedef struct
 {
