@@ -298,11 +298,12 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 }
 
 /**
- * Free the client struct recursively
+ * Free the client struct recursively.
+ * Doesn't lock, so call this function after removing the client from _dnbd3_clients
  */
 void dnbd3_free_client(dnbd3_client_t *client)
 {
-	GSList *it; // Doesn't lock, so call this function after removing the client from _dnbd3_clients
+	GSList *it;
 	for (it = client->sendqueue; it; it = it->next) {
 		free( it->data );
 	}

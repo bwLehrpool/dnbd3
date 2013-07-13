@@ -27,8 +27,8 @@ For example, if you hold the lock for client 10 and
 you need to look up some other client. You MUST NOT
 simply fetch the _clients_lock now and then iterate
 over the clients until you find the one you need,
-as it violates the above order to first lock on a
-client and then the clients lock.
+as it violates the above order to first lock on the
+clients array and then the clients lock.
 Instead, you need to release client 10's lock,
 then lock on _clients_lock and iterate over the
 clients. Now you check if you either encounter

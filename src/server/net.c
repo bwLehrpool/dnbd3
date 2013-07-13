@@ -122,9 +122,10 @@ void *net_client_handler(void *dnbd3_client)
 	dnbd3_reply_t reply;
 
 	dnbd3_image_t *image = NULL;
-	int image_file = -1, image_cache = -1;
+	int image_file = -1;
 
 	int i, num;
+	int bOk = FALSE;
 
 	uint64_t map_y;
 	char map_x, bit_mask;
@@ -171,10 +172,9 @@ void *net_client_handler(void *dnbd3_client)
 				}
 				else
 				{
-					pthread_spin_lock(&_spinlock);
-					image = dnbd3_get_image(image_name, rid, 0);
+					image = image_get(image_name, rid);
 					const time_t now = time(NULL);
-					if (!image)
+					if (image==NULL)
 					{
 						printf("[DEBUG] Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid);
 					}
@@ -182,57 +182,36 @@ void *net_client_handler(void *dnbd3_client)
 					{
 						printf("[DEBUG] Client requested non-working image '%s' (rid:%d), rejected\n", image_name, (int)rid);
 					}
-					else if ((image->delete_soft != 0 && image->delete_soft < now)
-					         || (image->delete_hard != 0 && image->delete_hard < now))
-					{
-						printf("[DEBUG] Client requested end-of-life image '%s' (rid:%d), rejected\n", image_name, (int)rid);
-					}
 					else
 					{
-						serializer_reset_write(&payload);
-						serializer_put_uint16(&payload, PROTOCOL_VERSION);
-						serializer_put_string(&payload, image->low_name);
-						serializer_put_uint16(&payload, image->rid);
-						serializer_put_uint64(&payload, image->filesize);
-						reply.cmd = CMD_SELECT_IMAGE;
-						reply.size = serializer_get_written_length(&payload);
-						if (!send_reply(client->sock, &reply, &payload))
+						image_file = open(image->path, O_RDONLY);
+						if (image_file >= 0)
 						{
-							image = NULL;
-						}
-						else
-						{
-							if (image->file)
-							{
-								image_file = open(image->file, O_RDONLY);
-								if (image_file == -1)
-								{
-									image = NULL;
-								}
-							}
-							if (image)
+							serializer_reset_write(&payload);
+							serializer_put_uint16(&payload, PROTOCOL_VERSION);
+							serializer_put_string(&payload, image->lower_name);
+							serializer_put_uint16(&payload, image->rid);
+							serializer_put_uint64(&payload, image->filesize);
+							reply.cmd = CMD_SELECT_IMAGE;
+							reply.size = serializer_get_written_length(&payload);
+							if (send_reply(client->sock, &reply, &payload))
 							{
 								client->image = image;
 								if (!client->is_server)
 									image->atime = time(NULL); // TODO: check if mutex is needed
 
-								if (image->cache_map && image->cache_file)
-									image_cache = open(image->cache_file, O_RDWR);
-								else if (image->cache_map)
-									printf("[BUG] Image has cache_map but no cache file!\n");
-								else if (image->cache_file)
-									printf("[BUG] Image has cache_file but not cache map!\n");
+								bOk = TRUE;
 							}
 						}
 					}
-					pthread_spin_unlock(&_spinlock);
 				}
 			}
 		}
 	}
 
 	// client handling mainloop
-	if (image) while (recv_request_header(client->sock, &request))
+	if (bOk)
+		{while (recv_request_header(client->sock, &request))
 		{
 			switch (request.cmd)
 			{
@@ -421,13 +400,12 @@ void *net_client_handler(void *dnbd3_client)
 			}
 
 		}
-	pthread_spin_lock(&_spinlock);
-	_dnbd3_clients = g_slist_remove(_dnbd3_clients, client);
-	pthread_spin_unlock(&_spinlock);
+}
 	if (client->sock != -1)
 		close(client->sock);
 	if (image_file != -1) close(image_file);
-	if (image_cache != -1) close(image_cache);
+	image_release(image);
+	client->image = image = NULL;
 	dnbd3_free_client(client);
 	pthread_exit((void *) 0);
 }
