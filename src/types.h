@@ -22,6 +22,7 @@
 #define TYPES_H_
 
 #include "config.h"
+#include <stdint.h>
 
 // ioctl
 #define DNBD3_MAGIC     'd'

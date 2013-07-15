@@ -1,6 +1,7 @@
 #include "uplink.h"
 #include <pthread.h>
-#include <bits/socket.h>
+#include <sys/socket.h>
+#include <string.h>
 
 dnbd3_alt_server_t *_alt_servers[SERVER_MAX_ALTS];
 int _num_alts = 0;
@@ -21,9 +22,9 @@ int uplink_get_matching_alt_servers(dnbd3_host_t *host, dnbd3_server_entry_t *ou
 		if ( host->type != _alt_servers[i]->host.type ) continue; // Wrong address family
 		if ( count == 0 ) {
 			// Trivial - this is the first entry
-			memcpy( &output[0]->host, &_alt_servers[i]->host, sizeof(dnbd3_host_t) );
-			output[0]->failures = 0;
-			distance[0] = uplink_net_closeness( host, &output[0]->host );
+			memcpy( &output[0].host, &_alt_servers[i]->host, sizeof(dnbd3_host_t) );
+			output[0].failures = 0;
+			distance[0] = uplink_net_closeness( host, &output[0].host );
 			count++;
 		} else {
 			// Other entries already exist, insert in proper position
@@ -40,8 +41,8 @@ int uplink_get_matching_alt_servers(dnbd3_host_t *host, dnbd3_server_entry_t *ou
 				} else {
 					count++;
 				}
-				memcpy( &output[j]->host, &_alt_servers[i]->host, sizeof(dnbd3_host_t) );
-				output[j]->failures = 0;
+				memcpy( &output[j].host, &_alt_servers[i]->host, sizeof(dnbd3_host_t) );
+				output[j].failures = 0;
 				distance[j] = dist;
 				break;
 			}
@@ -68,4 +69,9 @@ int uplink_net_closeness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 		++retval;
 	}
 	return retval;
+}
+
+void uplink_shutdown( dnbd3_connection_t *uplink)
+{
+	return;
 }

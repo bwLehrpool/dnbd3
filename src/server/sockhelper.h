@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <string.h>
 
 int sock_connect4(struct sockaddr_in *addr, const int connect_ms, const int rw_ms);
 

@@ -115,23 +115,23 @@ void *net_client_handler(void *dnbd3_client)
 	dnbd3_image_t *image = NULL;
 	int image_file = -1;
 
-	int i, num;
+	int num;
 	int bOk = FALSE;
 
-	uint64_t map_y;
-	char map_x, bit_mask;
 	serialized_buffer_t payload;
 	char *image_name;
 	uint16_t rid, client_version;
 
+	/*
+	char map_x, bit_mask;
+	uint64_t map_y;
 	uint64_t todo_size = 0;
 	uint64_t todo_offset = 0;
 	uint64_t cur_offset = 0;
 	uint64_t last_offset = 0;
+	*/
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
-
-	int dirty = 0;
 
 	reply.magic = dnbd3_packet_magic;
 
@@ -153,7 +153,6 @@ void *net_client_handler(void *dnbd3_client)
 					}
 				} else {
 					image = image_get( image_name, rid );
-					const time_t now = time( NULL );
 					if ( image == NULL ) {
 						printf( "[DEBUG] Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else if ( !image->working ) {
@@ -357,8 +356,6 @@ void *net_client_handler(void *dnbd3_client)
 	}
 	exit_client_cleanup: if ( client->sock != -1 ) close( client->sock );
 	if ( image_file != -1 ) close( image_file );
-	image_release( image );
-	client->image = image = NULL;
-	dnbd3_free_client( client );
+	dnbd3_remove_client( client );
 	pthread_exit( (void *)0 );
 }

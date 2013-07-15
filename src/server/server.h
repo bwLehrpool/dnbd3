@@ -27,44 +27,9 @@
 
 #include "../config.h"
 #include "../types.h"
+#include "globals.h"
 
-struct dnbd3_image_t;
-
-typedef struct
-{
-	uint16_t len;
-	uint8_t data[65535];
-} dnbd3_binstring_t;
-// Do not always allocate as much memory as required to hold the entire binstring struct,
-// but only as much as is required to hold the actual data
-#define NEW_BINSTRING(_name, _len) \
-	dnbd3_binstring_t *_name = malloc(sizeof(uint16_t) + _len); \
-	_name->len = _len
-
-typedef struct
-{
-	int sock;
-	dnbd3_host_t host;
-	uint8_t is_server;         // TRUE if a server in proxy mode, FALSE if real client
-	pthread_t thread;
-	dnbd3_image_t *image;
-	pthread_spinlock_t lock;
-	GSList *sendqueue;         // list of dnbd3_binstring_t*
-} dnbd3_client_t;
-
-typedef struct
-{
-	time_t last_told;
-	dnbd3_host_t host;
-	char comment[COMMENT_LENGTH];
-} dnbd3_alt_server_t;
-
-typedef struct
-{
-	char comment[COMMENT_LENGTH];
-	dnbd3_host_t host;
-	dnbd3_host_t mask;
-} dnbd3_acess_rules_t;
+struct sockaddr_storage;
 
 extern dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 extern int _num_clients;
@@ -77,10 +42,8 @@ extern int _fake_delay;
 #endif
 
 void dnbd3_cleanup();
-void dnbd3_add_client(dnbd3_client_t *client);
 void dnbd3_remove_client(dnbd3_client_t *client);
 dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd);
-void dnbd3_free_client(dnbd3_client_t *client);
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
 #error Please set _FILE_OFFSET_BITS to 64 in your makefile/configuration

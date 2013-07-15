@@ -1,11 +1,14 @@
 #include "image.h"
 #include "helper.h"
+#include "memlog.h"
+#include "uplink.h"
 
 #include <glib/gmacros.h>
 #include <assert.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
@@ -19,10 +22,10 @@ pthread_spinlock_t _images_lock;
 
 // ##########################################
 
-static void image_load_all(char *base, char *path);
+static int image_load_all_internal(char *base, char *path);
 static int image_try_load(char *base, char *path);
 static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks);
-static void image_free(dnbd3_image_t *image);
+static dnbd3_image_t* image_free(dnbd3_image_t *image);
 
 // ##########################################
 
@@ -180,20 +183,28 @@ void image_remove(dnbd3_image_t *image)
 		_images[i] = NULL;
 		if ( i + 1 == _num_images ) _num_images--;
 	}
-	if ( image->users == 0 ) image_free( image );
 	pthread_spin_unlock( &image->lock );
+	if ( image->users <= 0 ) image = image_free( image );
 	pthread_spin_unlock( &_images_lock );
 }
 
-void image_load_all()
+/**
+ * Load all images in given path recursively.
+ * Pass NULL to use path from config.
+ */
+int image_load_all(char *path)
 {
-	image_load_all( _basePath, _basePath );
+	if ( path == NULL ) {
+		return image_load_all_internal( _basePath, _basePath );
+	}
+	return image_load_all_internal( path, path );
 }
 
 /**
- * Load all images in the given path
+ * Load all images in the given path recursively,
+ * consider bash the base path that is to be cut off
  */
-static int image_load_all(char *base, char *path)
+static int image_load_all_internal(char *base, char *path)
 {
 #define SUBDIR_LEN 120
 	assert( path != NULL );
@@ -223,7 +234,7 @@ static int image_load_all(char *base, char *path)
 			continue;
 		}
 		if ( S_ISDIR( st.st_mode )) {
-			image_load_all( base, subpath ); // Recurse
+			image_load_all_internal( base, subpath ); // Recurse
 		} else {
 			image_try_load( base, subpath ); // Load image if possible
 		}
@@ -278,6 +289,8 @@ static int image_try_load(char *base, char *path)
 		}
 		*dst = '\0';
 	}
+	char mapFile[strlen( path ) + 10 + 1];
+	char hashFile[strlen( path ) + 10 + 1];
 	if ( revision <= 0 ) {
 		memlogf( "[WARNING] Image '%s' has invalid revision ID %d", path, revision );
 		goto load_error;
@@ -300,8 +313,6 @@ static int image_try_load(char *base, char *path)
 		memlogf( "[WARNING] Empty image file '%s'", path );
 		goto load_error;
 	}
-	char mapFile[strlen( path ) + 10 + 1];
-	char hashFile[strlen( path ) + 10 + 1];
 	// 1. Allocate memory for the cache map if the image is incomplete
 	sprintf( mapFile, "%s.map", path );
 	int fdMap = open( path, O_RDONLY );
@@ -314,7 +325,7 @@ static int image_try_load(char *base, char *path)
 		}
 		close( fdMap );
 	}
-	// TODO: Maybe try sha-256 or 512 first if you're paranoid
+	// TODO: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( fileSize );
 	// Currently this should only prevent accidental corruption (esp. regarding transparent proxy mode)
 	// but maybe later on you want better security
@@ -330,7 +341,7 @@ static int image_try_load(char *base, char *path)
 				memlogf( "[WARNING] Could not seek back to beginning of '%s'", hashFile );
 			} else {
 				uint32_t crcCrc;
-				if ( read( fdHash, &crc32, sizeof(crc32) ) != 4 ) {
+				if ( read( fdHash, &crcCrc, sizeof(crcCrc) ) != 4 ) {
 					memlogf( "[WARNING] Error reading first crc32 of '%s'", path );
 				} else {
 					crc32list = calloc( hashBlocks, sizeof(uint32_t) );
@@ -340,7 +351,7 @@ static int image_try_load(char *base, char *path)
 						memlogf( "[WARNING] Could not read crc32 list of '%s'", path );
 					} else {
 						uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
-						lists_crc = crc32( lists_crc, crc32list, hashBlocks * sizeof(uint32_t) );
+						lists_crc = crc32( lists_crc, (Bytef*)crc32list, hashBlocks * sizeof(uint32_t) );
 						if ( lists_crc != crcCrc ) {
 							free( crc32list );
 							crc32list = NULL;
@@ -386,13 +397,13 @@ static int image_try_load(char *base, char *path)
 	image->filesize = fileSize;
 	image->rid = revision;
 	image->users = 0;
-	if ( stat( image, &st ) == 0 ) {
+	if ( stat( path, &st ) == 0 ) {
 		image->atime = st.st_mtime;
 	} else {
 		image->atime = time( NULL );
 	}
 	image->working = (image->cache_map == NULL );
-	pthread_spin_init( &image->lock );
+	pthread_spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
 	// Get rid of cache map if image is complete
 	if ( image->cache_map != NULL && image_is_complete( image ) ) {
 		remove( mapFile );
@@ -414,7 +425,7 @@ static int image_try_load(char *base, char *path)
 		if ( _num_images >= SERVER_MAX_IMAGES ) {
 			memlogf( "[ERROR] Cannot load image '%s': maximum number of images reached.", path );
 			pthread_spin_unlock( &_images_lock );
-			image_free( image );
+			image = image_free( image );
 			goto load_error;
 		}
 		_images[_num_images++] = image;
@@ -451,7 +462,7 @@ static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
 				memlogf( "Read error" );
 				return FALSE;
 			}
-			crc = crc32( crc, buffer, r );
+			crc = crc32( crc, (Bytef*)buffer, r );
 			bytes += r;
 		}
 		if ( crc != crc32list[*blocks] ) return FALSE;
@@ -460,16 +471,20 @@ static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
 	return TRUE;
 }
 
-static void image_free(dnbd3_image_t *image)
+static dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
 	assert( image != NULL );
+	//
 	free( image->cache_map );
 	free( image->crc32 );
 	free( image->path );
 	free( image->lower_name );
 	uplink_shutdown( image->uplink );
+	pthread_spin_destroy( &image->lock );
+	//
 	memset( image, 0, sizeof(dnbd3_image_t) );
 	free( image );
+	return NULL ;
 }
 
 /*

@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "../types.h"
 #include "../version.h"
@@ -52,9 +53,15 @@ char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_rpc_password = NULL;
 char *_cache_dir = NULL;
 
+static int dnbd3_add_client(dnbd3_client_t *client);
+static dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client);
+static void dnbd3_load_config();
 static void dnbd3_handle_sigpipe(int signum);
 static void dnbd3_handle_sigterm(int signum);
 
+/**
+ * Print help text for usage instructions
+ */
 void dnbd3_print_help(char *argv_0)
 {
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
@@ -72,15 +79,21 @@ void dnbd3_print_help(char *argv_0)
 	exit( 0 );
 }
 
+/**
+ * Print version information
+ */
 void dnbd3_print_version()
 {
 	printf( "Version: %s\n", VERSION_STRING );
 	exit( 0 );
 }
 
+/**
+ * Clean up structs, connections, write out data, then exit
+ */
 void dnbd3_cleanup()
 {
-	int fd, i;
+	int i;
 
 	memlogf( "INFO: Cleanup...\n" );
 
@@ -113,7 +126,7 @@ void dnbd3_cleanup()
 		// save cache maps to files
 		image_save_cache_map( image );
 		// free uplink connection
-		uplink_free( image->uplink );
+		uplink_shutdown( image->uplink );
 		// free other stuff
 		free( image->cache_map );
 		free( image->path );
@@ -128,12 +141,14 @@ void dnbd3_cleanup()
 	exit( EXIT_SUCCESS );
 }
 
+/**
+ * Program entry point
+ */
 int main(int argc, char *argv[])
 {
 	int demonize = 1;
 	int opt = 0;
 	int longIndex = 0;
-	int i;
 	static const char *optString = "f:d:nrsiHV?";
 	static const struct option longOpts[] = { { "file", required_argument, NULL, 'f' }, { "delay", required_argument, NULL, 'd' }, {
 	        "nodaemon", no_argument, NULL, 'n' }, { "reload", no_argument, NULL, 'r' }, { "stop", no_argument, NULL, 's' }, { "info",
@@ -200,7 +215,10 @@ int main(int argc, char *argv[])
 	signal( SIGINT, dnbd3_handle_sigterm );
 
 	// Load all images in base path
-	images_load_all();
+	if (!image_load_all(NULL)) {
+		printf("[ERROR] Could not load images.\n");
+		return EXIT_FAILURE;
+	}
 
 	// setup network
 	sockets[socket_count] = sock_listen_any( PF_INET, PORT );
@@ -262,6 +280,10 @@ int main(int argc, char *argv[])
 	dnbd3_cleanup();
 }
 
+/**
+ * Initialize and populate the client struct - called when an incoming
+ * connection is accepted
+ */
 dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 {
 	dnbd3_client_t *dnbd3_client = calloc( 1, sizeof(dnbd3_client_t) );
@@ -270,18 +292,18 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 		return NULL ;
 	}
 
-	if ( client.ss_family == AF_INET ) {
-		struct sockaddr_in *v4 = (struct sockaddr_in *)&client;
+	if ( client->ss_family == AF_INET ) {
+		struct sockaddr_in *v4 = (struct sockaddr_in *)client;
 		dnbd3_client->host.type = AF_INET;
 		memcpy( dnbd3_client->host.addr, &(v4->sin_addr), 4 );
 		dnbd3_client->host.port = v4->sin_port;
-	} else if ( client.ss_family == AF_INET6 ) {
-		struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&client;
+	} else if ( client->ss_family == AF_INET6 ) {
+		struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)client;
 		dnbd3_client->host.type = AF_INET6;
 		memcpy( dnbd3_client->host.addr, &(v6->sin6_addr), 16 );
 		dnbd3_client->host.port = v6->sin6_port;
 	} else {
-		memlogf( "[ERROR] New client has unknown address family %d, disconnecting...", (int)client.ss_family );
+		memlogf( "[ERROR] New client has unknown address family %d, disconnecting...", (int)client->ss_family );
 		free( dnbd3_client );
 		return NULL ;
 	}
@@ -291,21 +313,28 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 }
 
 /**
- * Free the client struct recursively.
- * Doesn't lock, so call this function after removing the client from _dnbd3_clients
+ * Remove a client from the clients array
+ * Locks on: _clients_lock
  */
-void dnbd3_free_client(dnbd3_client_t *client)
+void dnbd3_remove_client(dnbd3_client_t *client)
 {
-	GSList *it;
-	for (it = client->sendqueue; it; it = it->next) {
-		free( it->data );
+	int i;
+	pthread_spin_lock( &_clients_lock );
+	for (i = _num_clients - 1; i >= 0; --i) {
+		if ( _clients[i] != client ) continue;
+		_clients[i] = NULL;
+		if ( i + 1 == _num_clients ) --_num_clients;
 	}
-	g_slist_free( client->sendqueue );
-	if ( client->sock >= 0 ) close( client->sock );
-	g_free( client );
+	pthread_spin_unlock( &_clients_lock );
 }
 
-int dnbd3_add_client(dnbd3_client_t *client)
+//###//
+
+/**
+ * Add client to the clients array.
+ * Locks on: _clients_lock
+ */
+static int dnbd3_add_client(dnbd3_client_t *client)
 {
 	int i;
 	pthread_spin_lock( &_clients_lock );
@@ -325,16 +354,32 @@ int dnbd3_add_client(dnbd3_client_t *client)
 	return TRUE;
 }
 
-void dnbd3_remove_client(dnbd3_client_t *client)
+/**
+ * Free the client struct recursively.
+ * !! Make sure to call this function after removing the client from _dnbd3_clients !!
+ * Locks on: _clients[].lock
+ */
+static dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {
-	int i;
-	pthread_spin_lock( &_clients_lock );
-	for (i = _num_clients - 1; i >= 0; --i) {
-		if ( _clients[i] != client ) continue;
-		_clients[i] = NULL;
-		if ( i + 1 == _num_clients ) --_num_clients;
+	GSList *it;
+	pthread_spin_lock(&client->lock);
+	for (it = client->sendqueue; it; it = it->next) {
+		free( it->data );
 	}
-	pthread_spin_unlock( &_clients_lock );
+	g_slist_free( client->sendqueue );
+	if ( client->sock >= 0 ) close( client->sock );
+	client->sock = -1;
+	if ( client->image != NULL ) image_release( client->image );
+	client->image = NULL;
+	pthread_spin_unlock(&client->lock);
+	pthread_spin_destroy(&client->lock);
+	free( client );
+	return NULL;
+}
+
+static void dnbd3_load_config()
+{
+	// Load configuration
 }
 
 static void dnbd3_handle_sigpipe(int signum)
