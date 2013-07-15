@@ -1,6 +1,7 @@
 #ifndef _IMAGE_H_
 #define _IMAGE_H_
 
+#include "../config.h"
 
 typedef struct
 {
@@ -27,6 +28,10 @@ typedef struct
 	char working;          // TRUE if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;
 } dnbd3_image_t;
+
+extern dnbd3_image_t *_images[SERVER_MAX_IMAGES];
+extern int _num_images;
+extern pthread_spinlock_t _images_lock;
 
 int image_is_complete(dnbd3_image_t *image);
 

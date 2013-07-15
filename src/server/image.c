@@ -13,6 +13,12 @@
 
 // ##########################################
 
+dnbd3_image_t *_images[SERVER_MAX_IMAGES];
+int _num_images = 0;
+pthread_spinlock_t _images_lock;
+
+// ##########################################
+
 static void image_load_all(char *base, char *path);
 static int image_try_load(char *base, char *path);
 static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks);

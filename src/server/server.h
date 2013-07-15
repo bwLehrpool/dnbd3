@@ -70,14 +70,6 @@ extern dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 extern int _num_clients;
 extern pthread_spinlock_t _clients_lock;
 
-extern dnbd3_image_t *_images[SERVER_MAX_IMAGES];
-extern int _num_images;
-extern pthread_spinlock_t _images_lock;
-
-extern dnbd3_alt_server_t *_alt_servers[SERVER_MAX_ALTS];
-extern int _num_alts;
-extern pthread_spinlock_t _alts_lock;
-
 extern char *_config_file_name, *_rpc_password, *_cache_dir;
 
 #ifdef _DEBUG

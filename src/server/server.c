@@ -34,6 +34,7 @@
 #include "sockhelper.h"
 #include "server.h"
 #include "image.h"
+#include "uplink.h"
 #include "net.h"
 #include "memlog.h"
 
@@ -46,14 +47,6 @@ int _fake_delay = 0;
 dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 int _num_clients = 0;
 pthread_spinlock_t _clients_lock;
-
-dnbd3_image_t *_images[SERVER_MAX_IMAGES];
-int _num_images = 0;
-pthread_spinlock_t _images_lock;
-
-dnbd3_alt_server_t *_alt_servers[SERVER_MAX_ALTS];
-int _num_alts = 0;
-pthread_spinlock_t _alts_lock;
 
 char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_rpc_password = NULL;
