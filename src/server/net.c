@@ -224,8 +224,10 @@ void *net_client_handler(void *dnbd3_client)
 					goto exit_client_cleanup;
 				}
 
-				if ( request.size == 0 ) // Request for 0 bytes, done after sending header
-				break;
+				if ( request.size == 0 ) { // Request for 0 bytes, done after sending header
+					send( client->sock, &reply, 0, 0 ); // Since we used MSG_MORE above...
+					break;
+				}
 
 				// no cache map means image is complete
 				if ( image->cache_map == NULL ) {
@@ -357,7 +359,7 @@ void *net_client_handler(void *dnbd3_client)
 
 		}
 	}
-	exit_client_cleanup: if ( client->sock != -1 ) close( client->sock );
+	exit_client_cleanup: ;
 	if ( image_file != -1 ) close( image_file );
 	dnbd3_remove_client( client );
 	client = dnbd3_free_client( client );

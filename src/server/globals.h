@@ -83,4 +83,6 @@ extern char *_basePath;
  */
 extern int _vmdkLegacyMode;
 
+extern int _shutdown;
+
 #endif /* GLOBALS_H_ */
