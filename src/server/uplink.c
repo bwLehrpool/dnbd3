@@ -13,7 +13,7 @@ pthread_spinlock_t _alts_lock;
  */
 int uplink_get_matching_alt_servers(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
 {
-	if ( host == NULL || host->type == 0 ) return 0;
+	if ( host == NULL || host->type == 0 || _num_alts == 0 ) return 0;
 	int i, j;
 	int count = 0;
 	int distance[size];

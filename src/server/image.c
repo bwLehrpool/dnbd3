@@ -104,8 +104,10 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 	pthread_spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t * const image = _images[i];
-		if ( image == NULL ) continue;
-		if ( strcmp( image->lower_name, name ) == 0 && revision == image->rid ) {
+		printf( "Comparing '%s' and '%s'..\n", name, image->lower_name );
+		if ( image == NULL || strcmp( image->lower_name, name ) != 0 ) continue;
+		printf( "RID %d and %d\n", (int)revision, (int)image->rid );
+		if ( revision == image->rid ) {
 			candidate = image;
 			break;
 		} else if ( revision == 0 && (candidate == NULL || candidate->rid < image->rid) ) {
@@ -121,13 +123,11 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 	pthread_spin_lock( &candidate->lock );
 	pthread_spin_unlock( &_images_lock );
 
-	if ( candidate == NULL ) return NULL ; // Not found
 	// Found, see if it works
 	struct stat st;
-	if ( !candidate->working || stat( candidate->path, &st ) < 0 ) {
-		candidate->working = FALSE;
-		pthread_spin_unlock( &candidate->lock );
-		return NULL ; // Not working (anymore)
+	if ( stat( candidate->path, &st ) < 0 ) {
+		printf( "File '%s' has gone away...\n", candidate->path );
+		candidate->working = FALSE; // No file? OUT!
 	}
 	candidate->users++;
 	pthread_spin_unlock( &candidate->lock );
@@ -220,6 +220,7 @@ static int image_load_all_internal(char *base, char *path)
 	char subpath[len];
 	struct stat st;
 	while ( (entry = readdir( dir )) != NULL ) {
+		if ( strcmp( entry->d_name, "." ) == 0 || strcmp( entry->d_name, ".." ) == 0 ) continue;
 		if ( strlen( entry->d_name ) > SUBDIR_LEN ) {
 			memlogf( "[WARNING] Skipping entry %s: Too long (max %d bytes)", entry->d_name, (int)SUBDIR_LEN );
 			continue;
@@ -266,7 +267,7 @@ static int image_try_load(char *base, char *path)
 	// Copy virtual path
 	assert( *virtBase != '/' );
 	char *src = virtBase, *dst = imgName;
-	while ( src < lastSlash ) {
+	while ( src <= lastSlash ) {
 		*dst++ = *src++;
 	}
 	*dst = '\0';
@@ -315,8 +316,9 @@ static int image_try_load(char *base, char *path)
 	}
 	// 1. Allocate memory for the cache map if the image is incomplete
 	sprintf( mapFile, "%s.map", path );
-	int fdMap = open( path, O_RDONLY );
+	int fdMap = open( mapFile, O_RDONLY );
 	if ( fdMap >= 0 ) {
+		printf( "Opened %s, cache_map is %p\n", mapFile, cache_map );
 		size_t map_size = IMGSIZE_TO_MAPBYTES( fileSize );
 		cache_map = calloc( 1, map_size );
 		int rd = read( fdMap, cache_map, map_size );
@@ -403,6 +405,7 @@ static int image_try_load(char *base, char *path)
 		image->atime = time( NULL );
 	}
 	image->working = (image->cache_map == NULL );
+	printf( "Map: %p, work: %d\n", image->cache_map, (int)image->working );
 	pthread_spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
 	// Get rid of cache map if image is complete
 	if ( image->cache_map != NULL && image_is_complete( image ) ) {
@@ -429,6 +432,7 @@ static int image_try_load(char *base, char *path)
 			goto load_error;
 		}
 		_images[_num_images++] = image;
+		printf( "[DEBUG] Loaded image '%s'\n", image->lower_name );
 	}
 	pthread_spin_unlock( &_images_lock );
 	function_return = TRUE;

@@ -199,6 +199,9 @@ int main(int argc, char *argv[])
 
 	if ( demonize ) daemon( 1, 0 );
 
+	_basePath = strdup("/home/sr/vmware/");
+	_vmdkLegacyMode = TRUE;
+
 	pthread_spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
 	pthread_spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
 	pthread_spin_init( &_alts_lock, PTHREAD_PROCESS_PRIVATE );
