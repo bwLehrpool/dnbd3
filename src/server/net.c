@@ -133,6 +133,9 @@ void *net_client_handler(void *dnbd3_client)
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
 
+	// Set to zero to make valgrind happy
+	memset(&reply, 0, sizeof(reply));
+	memset(&payload, 0, sizeof(payload));
 	reply.magic = dnbd3_packet_magic;
 
 	// Receive first packet. This must be CMD_SELECT_IMAGE by protocol specification
@@ -357,5 +360,6 @@ void *net_client_handler(void *dnbd3_client)
 	exit_client_cleanup: if ( client->sock != -1 ) close( client->sock );
 	if ( image_file != -1 ) close( image_file );
 	dnbd3_remove_client( client );
+	client = dnbd3_free_client( client );
 	pthread_exit( (void *)0 );
 }

@@ -54,7 +54,6 @@ char *_rpc_password = NULL;
 char *_cache_dir = NULL;
 
 static int dnbd3_add_client(dnbd3_client_t *client);
-static dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client);
 static void dnbd3_load_config();
 static void dnbd3_handle_sigpipe(int signum);
 static void dnbd3_handle_sigterm(int signum);
@@ -267,14 +266,14 @@ int main(int argc, char *argv[])
 
 		// This has to be done before creating the thread, otherwise a race condition might occur when the new thread dies faster than this thread adds the client to the list after creating the thread
 		if ( !dnbd3_add_client( dnbd3_client ) ) {
-			dnbd3_free_client( dnbd3_client );
+			dnbd3_client = dnbd3_free_client( dnbd3_client );
 			continue;
 		}
 
 		if ( 0 != pthread_create( &(dnbd3_client->thread), NULL, net_client_handler, (void *)(uintptr_t)dnbd3_client ) ) {
 			memlogf( "[ERROR] Could not start thread for new client." );
 			dnbd3_remove_client( dnbd3_client );
-			dnbd3_free_client( dnbd3_client );
+			dnbd3_client = dnbd3_free_client( dnbd3_client );
 			continue;
 		}
 		pthread_detach( dnbd3_client->thread );
@@ -331,6 +330,29 @@ void dnbd3_remove_client(dnbd3_client_t *client)
 	pthread_spin_unlock( &_clients_lock );
 }
 
+/**
+ * Free the client struct recursively.
+ * !! Make sure to call this function after removing the client from _dnbd3_clients !!
+ * Locks on: _clients[].lock
+ */
+dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
+{
+	GSList *it;
+	pthread_spin_lock(&client->lock);
+	for (it = client->sendqueue; it; it = it->next) {
+		free( it->data );
+	}
+	g_slist_free( client->sendqueue );
+	if ( client->sock >= 0 ) close( client->sock );
+	client->sock = -1;
+	if ( client->image != NULL ) image_release( client->image );
+	client->image = NULL;
+	pthread_spin_unlock(&client->lock);
+	pthread_spin_destroy(&client->lock);
+	free( client );
+	return NULL;
+}
+
 //###//
 
 /**
@@ -355,29 +377,6 @@ static int dnbd3_add_client(dnbd3_client_t *client)
 	_clients[_num_clients++] = client;
 	pthread_spin_unlock( &_clients_lock );
 	return TRUE;
-}
-
-/**
- * Free the client struct recursively.
- * !! Make sure to call this function after removing the client from _dnbd3_clients !!
- * Locks on: _clients[].lock
- */
-static dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
-{
-	GSList *it;
-	pthread_spin_lock(&client->lock);
-	for (it = client->sendqueue; it; it = it->next) {
-		free( it->data );
-	}
-	g_slist_free( client->sendqueue );
-	if ( client->sock >= 0 ) close( client->sock );
-	client->sock = -1;
-	if ( client->image != NULL ) image_release( client->image );
-	client->image = NULL;
-	pthread_spin_unlock(&client->lock);
-	pthread_spin_destroy(&client->lock);
-	free( client );
-	return NULL;
 }
 
 static void dnbd3_load_config()

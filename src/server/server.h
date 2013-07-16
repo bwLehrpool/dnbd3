@@ -43,6 +43,7 @@ extern int _fake_delay;
 
 void dnbd3_cleanup();
 void dnbd3_remove_client(dnbd3_client_t *client);
+dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client);
 dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd);
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
