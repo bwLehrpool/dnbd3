@@ -2,6 +2,7 @@
 #include "helper.h"
 #include "memlog.h"
 #include "uplink.h"
+#include "locks.h"
 
 #include <glib/gmacros.h>
 #include <assert.h>
@@ -101,7 +102,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 	// Always use lowercase name
 	strtolower( name );
 	// Go through array
-	pthread_spin_lock( &_images_lock );
+	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t * const image = _images[i];
 		if ( image == NULL || strcmp( image->lower_name, name ) != 0 ) continue;
@@ -114,12 +115,12 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 	}
 
 	if ( candidate == NULL ) {
-		pthread_spin_unlock( &_images_lock );
+		spin_unlock( &_images_lock );
 		return NULL ;
 	}
 
-	pthread_spin_lock( &candidate->lock );
-	pthread_spin_unlock( &_images_lock );
+	spin_lock( &candidate->lock );
+	spin_unlock( &_images_lock );
 
 	// Found, see if it works
 	struct stat st;
@@ -128,7 +129,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 		candidate->working = FALSE; // No file? OUT!
 	}
 	candidate->users++;
-	pthread_spin_unlock( &candidate->lock );
+	spin_unlock( &candidate->lock );
 	return candidate; // Success :-)
 }
 
@@ -141,30 +142,30 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 void image_release(dnbd3_image_t *image)
 {
 	assert( image != NULL );
-	pthread_spin_lock( &image->lock );
+	spin_lock( &image->lock );
 	assert( image->users > 0 );
 	image->users--;
 	if ( image->users > 0 ) { // Still in use, do nothing
-		pthread_spin_unlock( &image->lock );
+		spin_unlock( &image->lock );
 		return;
 	}
-	pthread_spin_unlock( &image->lock );
-	pthread_spin_lock( &_images_lock );
-	pthread_spin_lock( &image->lock );
+	spin_unlock( &image->lock );
+	spin_lock( &_images_lock );
+	spin_lock( &image->lock );
 	// Check active users again as we unlocked
 	if ( image->users == 0 ) {
 		// Not in use anymore, see if it's in the images array
 		for (int i = 0; i < _num_images; ++i) {
 			if ( _images[i] == image ) { // Found, do nothing
-				pthread_spin_unlock( &image->lock );
-				pthread_spin_unlock( &_images_lock );
+				spin_unlock( &image->lock );
+				spin_unlock( &_images_lock );
 				return;
 			}
 		}
 	}
 	// Not found, free
-	pthread_spin_unlock( &image->lock );
-	pthread_spin_unlock( &_images_lock );
+	spin_unlock( &image->lock );
+	spin_unlock( &_images_lock );
 	image_free( image );
 }
 
@@ -174,16 +175,16 @@ void image_release(dnbd3_image_t *image)
  */
 void image_remove(dnbd3_image_t *image)
 {
-	pthread_spin_lock( &_images_lock );
-	pthread_spin_lock( &image->lock );
+	spin_lock( &_images_lock );
+	spin_lock( &image->lock );
 	for (int i = _num_images - 1; i >= 0; --i) {
 		if ( _images[i] != image ) continue;
 		_images[i] = NULL;
 		if ( i + 1 == _num_images ) _num_images--;
 	}
-	pthread_spin_unlock( &image->lock );
+	spin_unlock( &image->lock );
 	if ( image->users <= 0 ) image = image_free( image );
-	pthread_spin_unlock( &_images_lock );
+	spin_unlock( &_images_lock );
 }
 
 /**
@@ -402,7 +403,7 @@ static int image_try_load(char *base, char *path)
 		image->atime = time( NULL );
 	}
 	image->working = (image->cache_map == NULL );
-	pthread_spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
+	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
 	// Get rid of cache map if image is complete
 	if ( image->cache_map != NULL && image_is_complete( image ) ) {
 		remove( mapFile );
@@ -414,7 +415,7 @@ static int image_try_load(char *base, char *path)
 	cache_map = NULL;
 	crc32list = NULL;
 	// Add to images array
-	pthread_spin_lock( &_images_lock );
+	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] != NULL ) continue;
 		_images[i] = image;
@@ -423,14 +424,14 @@ static int image_try_load(char *base, char *path)
 	if ( i >= _num_images ) {
 		if ( _num_images >= SERVER_MAX_IMAGES ) {
 			memlogf( "[ERROR] Cannot load image '%s': maximum number of images reached.", path );
-			pthread_spin_unlock( &_images_lock );
+			spin_unlock( &_images_lock );
 			image = image_free( image );
 			goto load_error;
 		}
 		_images[_num_images++] = image;
 		printf( "[DEBUG] Loaded image '%s'\n", image->lower_name );
 	}
-	pthread_spin_unlock( &_images_lock );
+	spin_unlock( &_images_lock );
 	function_return = TRUE;
 	// Clean exit:
 	load_error: ;
@@ -480,7 +481,7 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	free( image->path );
 	free( image->lower_name );
 	uplink_shutdown( image->uplink );
-	pthread_spin_destroy( &image->lock );
+	spin_destroy( &image->lock );
 	//
 	memset( image, 0, sizeof(dnbd3_image_t) );
 	free( image );

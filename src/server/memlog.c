@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "locks.h"
 
 #define MAX(a,b) (a > b ? a : b)
 
@@ -48,7 +49,7 @@ void initmemlog()
 {
 	// Use main spinlock to make sure we really init only once
 	if (logBuffer) return;
-	pthread_spin_init(&logLock, PTHREAD_PROCESS_PRIVATE);
+	spin_init(&logLock, PTHREAD_PROCESS_PRIVATE);
 	logBuffer = (LogLine *)calloc(LINE_COUNT, sizeof(LogLine));
 }
 
@@ -61,7 +62,7 @@ void memlogf(const char *fmt, ...)
 	struct tm *timeinfo;
 	time(&rawtime);
 	timeinfo = localtime(&rawtime);
-	pthread_spin_lock(&logLock);
+	spin_lock(&logLock);
 	LogLine *const line = (LogLine *)&(logBuffer[bufferPos % LINE_COUNT]);
 	const size_t offset = strftime(line->text, LINE_LEN, "[%d.%m. %H:%M:%S] ", timeinfo);
 	if (offset == 0) *line->text = '\0';
@@ -75,7 +76,7 @@ void memlogf(const char *fmt, ...)
 	// so to be safe either way, let strlen do the job
 	line->len = strlen(line->text);
 	if (ret > 0 || line->len > 0) ++bufferPos;
-	pthread_spin_unlock(&logLock);
+	spin_unlock(&logLock);
 	puts(line->text);
 }
 
@@ -86,7 +87,7 @@ char *fetchlog(int maxlines)
 	const int start = MAX(0, bufferPos - maxlines);
 	int len = 1, i;
 	//printf("Outputting log from %d to %d\n", start, bufferPos);
-	pthread_spin_lock(&logLock);
+	spin_lock(&logLock);
 	// Determine required buffer space for all log lines
 	for (i = start; i < bufferPos; ++i)
 	{
@@ -113,6 +114,6 @@ char *fetchlog(int maxlines)
 	}
 	*pos = '\0';
 endFunction:
-	pthread_spin_unlock(&logLock);
+	spin_unlock(&logLock);
 	return retval;
 }

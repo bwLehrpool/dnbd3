@@ -13,10 +13,10 @@
 int debug_spin_init(const char *name, const char *file, int line, pthread_spinlock_t *lock, int shared);
 int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlock_t *lock);
 int debug_spin_unlock(const char *name, const char *file, int line, pthread_spinlock_t *lock);
-int debug_spin_destory(const char *name, const char *file, int line, pthread_spinlock_t *lock);
+int debug_spin_destroy(const char *name, const char *file, int line, pthread_spinlock_t *lock);
 
+void debug_locks_start_watchdog();
 void debug_dump_lock_stats();
-void *debug_thread_watchdog(void *something);
 
 #else
 

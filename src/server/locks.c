@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "globals.h"
+#include "memlog.h"
 
 #define MAXLOCKS 500
 #define MAXTHREADS 500
@@ -44,6 +45,9 @@ static debug_thread_t threads[MAXTHREADS];
 static int init_done = 0;
 static pthread_spinlock_t initdestory;
 static volatile int lockId = 0;
+static pthread_t watchdog = 0;
+
+static void *debug_thread_watchdog(void *something);
 
 int debug_spin_init(const char *name, const char *file, int line, pthread_spinlock_t *lock, int shared)
 {
@@ -60,7 +64,7 @@ int debug_spin_init(const char *name, const char *file, int line, pthread_spinlo
 			printf( "[ERROR] Lock %p (%s) already initialized (%s:%d)\n", lock, name, file, line );
 			exit( 4 );
 		}
-		if ( first == -1 ) first = i;
+		if ( first == -1 && locks[i].lock == NULL ) first = i;
 	}
 	if ( first == -1 ) {
 		printf( "[ERROR] No more free debug locks (%s:%d)\n", file, line );
@@ -87,6 +91,7 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 	pthread_spin_unlock( &initdestory );
 	if ( l == NULL ) {
 		printf( "[ERROR] Tried to lock uninitialized lock %p (%s) at %s:%d\n", lock, name, file, line );
+		debug_dump_lock_stats();
 		exit( 4 );
 	}
 	debug_thread_t *t = NULL;
@@ -98,11 +103,13 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 		snprintf( threads[i].name, LOCKLEN, "%s", name );
 		snprintf( threads[i].where, LOCKLEN, "%s:%d", file, line );
 		t = &threads[i];
+		break;
 	}
 	pthread_spin_unlock( &initdestory );
 	int retval = pthread_spin_lock( lock );
 	pthread_spin_lock( &initdestory );
 	t->tid = 0;
+	t->time = 0;
 	pthread_spin_unlock( &initdestory );
 	if ( l->locked ) {
 		printf( "[ERROR] Lock sanity check: lock %p (%s) already locked at %s:%d\n", lock, name, file, line );
@@ -145,7 +152,7 @@ int debug_spin_unlock(const char *name, const char *file, int line, pthread_spin
 	return retval;
 }
 
-int debug_spin_destory(const char *name, const char *file, int line, pthread_spinlock_t *lock)
+int debug_spin_destroy(const char *name, const char *file, int line, pthread_spinlock_t *lock)
 {
 	pthread_spin_lock( &initdestory );
 	for (int i = 0; i < MAXLOCKS; ++i) {
@@ -196,7 +203,7 @@ void debug_dump_lock_stats()
 	pthread_spin_unlock( &initdestory );
 }
 
-void *debug_thread_watchdog(void *something)
+static void *debug_thread_watchdog(void *something)
 {
 	while (!_shutdown) {
 		time_t now = time(NULL);
@@ -215,6 +222,15 @@ void *debug_thread_watchdog(void *something)
 		sleep(10);
 	}
 	return NULL;
+}
+
+void debug_locks_start_watchdog()
+{
+	if ( 0 != pthread_create( &watchdog, NULL, &debug_thread_watchdog, (void *)NULL ) ) {
+		memlogf( "[ERROR] Could not start debug-lock watchdog." );
+		return;
+	}
+	pthread_detach( watchdog );
 }
 
 #endif

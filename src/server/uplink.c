@@ -1,4 +1,5 @@
 #include "uplink.h"
+#include "locks.h"
 #include <pthread.h>
 #include <sys/socket.h>
 #include <string.h>
@@ -17,7 +18,7 @@ int uplink_get_matching_alt_servers(dnbd3_host_t *host, dnbd3_server_entry_t *ou
 	int i, j;
 	int count = 0;
 	int distance[size];
-	pthread_spin_lock( &_alts_lock );
+	spin_lock( &_alts_lock );
 	for (i = 0; i < _num_alts; ++i) {
 		if ( host->type != _alt_servers[i]->host.type ) continue; // Wrong address family
 		if ( count == 0 ) {
@@ -48,7 +49,7 @@ int uplink_get_matching_alt_servers(dnbd3_host_t *host, dnbd3_server_entry_t *ou
 			}
 		}
 	}
-	pthread_spin_unlock( &_alts_lock );
+	spin_unlock( &_alts_lock );
 	return count;
 }
 

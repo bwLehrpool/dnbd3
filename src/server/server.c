@@ -32,6 +32,7 @@
 #include "../types.h"
 #include "../version.h"
 
+#include "locks.h"
 #include "sockhelper.h"
 #include "server.h"
 #include "image.h"
@@ -57,6 +58,7 @@ static int dnbd3_add_client(dnbd3_client_t *client);
 static void dnbd3_load_config();
 static void dnbd3_handle_sigpipe(int signum);
 static void dnbd3_handle_sigterm(int signum);
+static void dnbd3_handle_sigusr1(int signum);
 
 /**
  * Print help text for usage instructions
@@ -67,7 +69,7 @@ void dnbd3_print_help(char *argv_0)
 	printf( "Start the DNBD3 server\n" );
 	printf( "-f or --file        Configuration file (default /etc/dnbd3-server.conf)\n" );
 #ifdef _DEBUG
-	printf("-d or --delay       Add a fake network delay of X µs\n");
+	printf( "-d or --delay       Add a fake network delay of X µs\n" );
 #endif
 	printf( "-n or --nodaemon    Start server in foreground\n" );
 	printf( "-r or --reload      Reload configuration file\n" );
@@ -104,24 +106,24 @@ void dnbd3_cleanup()
 	socket_count = 0;
 
 	// Clean up clients
-	pthread_spin_lock( &_clients_lock );
+	spin_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
 		dnbd3_client_t * const client = _clients[i];
-		pthread_spin_lock( &client->lock );
+		spin_lock( &client->lock );
 		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
 		if ( client->thread != 0 ) pthread_join( client->thread, NULL );
 		_clients[i] = NULL;
-		pthread_spin_unlock( &client->lock );
+		spin_unlock( &client->lock );
 		free( client );
 	}
 	_num_clients = 0;
-	pthread_spin_unlock( &_clients_lock );
+	spin_unlock( &_clients_lock );
 
 	// Clean up images
-	pthread_spin_lock( &_images_lock );
+	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t *image = _images[i];
-		pthread_spin_lock( &image->lock );
+		spin_lock( &image->lock );
 		// save cache maps to files
 		image_save_cache_map( image );
 		// free uplink connection
@@ -131,11 +133,11 @@ void dnbd3_cleanup()
 		free( image->path );
 		free( image->lower_name );
 		_images[i] = NULL;
-		pthread_spin_unlock( &image->lock );
+		spin_unlock( &image->lock );
 		free( image );
 	}
 	_num_images = 0;
-	pthread_spin_unlock( &_images_lock );
+	spin_unlock( &_images_lock );
 
 	exit( EXIT_SUCCESS );
 }
@@ -162,7 +164,7 @@ int main(int argc, char *argv[])
 			break;
 		case 'd':
 #ifdef _DEBUG
-			_fake_delay = atoi(optarg);
+			_fake_delay = atoi( optarg );
 			break;
 #else
 			printf( "This option is only available in debug builds.\n\n" );
@@ -198,12 +200,16 @@ int main(int argc, char *argv[])
 
 	if ( demonize ) daemon( 1, 0 );
 
-	_basePath = strdup("/home/sr/vmware/");
+	_basePath = strdup( "/home/sr/vmware/" );
 	_vmdkLegacyMode = TRUE;
 
-	pthread_spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
-	pthread_spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
-	pthread_spin_init( &_alts_lock, PTHREAD_PROCESS_PRIVATE );
+	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
+	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
+	spin_init( &_alts_lock, PTHREAD_PROCESS_PRIVATE );
+
+#ifdef _DEBUG
+	debug_locks_start_watchdog();
+#endif
 
 	initmemlog();
 	memlogf( "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
@@ -215,10 +221,12 @@ int main(int argc, char *argv[])
 	signal( SIGPIPE, dnbd3_handle_sigpipe );
 	signal( SIGTERM, dnbd3_handle_sigterm );
 	signal( SIGINT, dnbd3_handle_sigterm );
+	signal( SIGUSR1, dnbd3_handle_sigusr1 );
 
+	printf( "Loading images....\n" );
 	// Load all images in base path
-	if (!image_load_all(NULL)) {
-		printf("[ERROR] Could not load images.\n");
+	if ( !image_load_all( NULL ) ) {
+		printf( "[ERROR] Could not load images.\n" );
 		return EXIT_FAILURE;
 	}
 
@@ -310,7 +318,7 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 		return NULL ;
 	}
 	dnbd3_client->sock = fd;
-	pthread_spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
+	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
 	return dnbd3_client;
 }
 
@@ -321,13 +329,13 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 void dnbd3_remove_client(dnbd3_client_t *client)
 {
 	int i;
-	pthread_spin_lock( &_clients_lock );
+	spin_lock( &_clients_lock );
 	for (i = _num_clients - 1; i >= 0; --i) {
 		if ( _clients[i] != client ) continue;
 		_clients[i] = NULL;
 		if ( i + 1 == _num_clients ) --_num_clients;
 	}
-	pthread_spin_unlock( &_clients_lock );
+	spin_unlock( &_clients_lock );
 }
 
 /**
@@ -338,7 +346,7 @@ void dnbd3_remove_client(dnbd3_client_t *client)
 dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {
 	GSList *it;
-	pthread_spin_lock(&client->lock);
+	spin_lock( &client->lock );
 	for (it = client->sendqueue; it; it = it->next) {
 		free( it->data );
 	}
@@ -347,10 +355,10 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 	client->sock = -1;
 	if ( client->image != NULL ) image_release( client->image );
 	client->image = NULL;
-	pthread_spin_unlock(&client->lock);
-	pthread_spin_destroy(&client->lock);
+	spin_unlock( &client->lock );
+	spin_destroy( &client->lock );
 	free( client );
-	return NULL;
+	return NULL ;
 }
 
 //###//
@@ -362,20 +370,20 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 static int dnbd3_add_client(dnbd3_client_t *client)
 {
 	int i;
-	pthread_spin_lock( &_clients_lock );
+	spin_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
 		if ( _clients[i] != NULL ) continue;
 		_clients[i] = client;
-		pthread_spin_unlock( &_clients_lock );
+		spin_unlock( &_clients_lock );
 		return TRUE;
 	}
 	if ( _num_clients >= SERVER_MAX_CLIENTS ) {
-		pthread_spin_unlock( &_clients_lock );
+		spin_unlock( &_clients_lock );
 		memlogf( "[ERROR] Maximum number of clients reached!" );
 		return FALSE;
 	}
 	_clients[_num_clients++] = client;
-	pthread_spin_unlock( &_clients_lock );
+	spin_unlock( &_clients_lock );
 	return TRUE;
 }
 
@@ -393,4 +401,10 @@ static void dnbd3_handle_sigterm(int signum)
 {
 	memlogf( "INFO: SIGTERM or SIGINT received (%s)", strsignal( signum ) );
 	dnbd3_cleanup();
+}
+
+void dnbd3_handle_sigusr1(int signum)
+{
+	memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
+	image_load_all(NULL);
 }

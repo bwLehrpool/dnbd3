@@ -22,7 +22,9 @@
 #define TYPES_H_
 
 #include "config.h"
+#ifndef KERNEL_MODULE
 #include <stdint.h>
+#endif
 
 // ioctl
 #define DNBD3_MAGIC     'd'

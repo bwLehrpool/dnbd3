@@ -27,6 +27,7 @@
 #include <linux/blkdev.h>
 #include <net/sock.h>
 
+#define KERNEL_MODULE
 #include "config.h"
 #include "types.h"
 #include "serialize.h"
