@@ -1,9 +1,7 @@
 #include "serialize.h"
 #include "types.h"
 
-#ifndef MIN
-#define MIN(a,b) ((a) < (b) ? (a) : (b))
-#endif
+
 
 void serializer_reset_read(serialized_buffer_t *buffer, size_t data_len)
 {

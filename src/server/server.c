@@ -122,19 +122,7 @@ void dnbd3_cleanup()
 	// Clean up images
 	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
-		dnbd3_image_t *image = _images[i];
-		spin_lock( &image->lock );
-		// save cache maps to files
-		image_save_cache_map( image );
-		// free uplink connection
-		uplink_shutdown( image->uplink );
-		// free other stuff
-		free( image->cache_map );
-		free( image->path );
-		free( image->lower_name );
-		_images[i] = NULL;
-		spin_unlock( &image->lock );
-		free( image );
+		_images[i] = image_free( _images[i] );
 	}
 	_num_images = 0;
 	spin_unlock( &_images_lock );
@@ -345,12 +333,13 @@ void dnbd3_remove_client(dnbd3_client_t *client)
  */
 dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {
-	GSList *it;
 	spin_lock( &client->lock );
+	/*
 	for (it = client->sendqueue; it; it = it->next) {
 		free( it->data );
 	}
 	g_slist_free( client->sendqueue );
+	*/
 	if ( client->sock >= 0 ) close( client->sock );
 	client->sock = -1;
 	if ( client->image != NULL ) image_release( client->image );
@@ -406,5 +395,5 @@ static void dnbd3_handle_sigterm(int signum)
 void dnbd3_handle_sigusr1(int signum)
 {
 	memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
-	image_load_all(NULL);
+	image_load_all( NULL );
 }

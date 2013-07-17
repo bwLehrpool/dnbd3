@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <time.h>
 #include <pthread.h>
-#include <glib/gslist.h>
 
 // ######### All structs/types used by the server ########
 
@@ -68,7 +67,7 @@ typedef struct
 	pthread_t thread;
 	dnbd3_image_t *image;
 	pthread_spinlock_t lock;
-	GSList *sendqueue;         // list of dnbd3_binstring_t*
+	//GSList *sendqueue;         // list of dnbd3_binstring_t*
 } dnbd3_client_t;
 
 // #######################################################

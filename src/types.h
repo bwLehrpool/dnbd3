@@ -26,6 +26,20 @@
 #include <stdint.h>
 #endif
 
+#ifndef TRUE
+#define TRUE (1)
+#endif
+#ifndef FALSE
+#define FALSE (0)
+#endif
+
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef MAX
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#endif
+
 // ioctl
 #define DNBD3_MAGIC     'd'
 #define IOCTL_OPEN      _IO(0xab, 1)

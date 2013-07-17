@@ -16,6 +16,8 @@ dnbd3_image_t* image_get(char *name, uint16_t revision);
 
 void image_release(dnbd3_image_t *image);
 
+dnbd3_image_t* image_free(dnbd3_image_t *image);
+
 int image_load_all(char *path);
 
 

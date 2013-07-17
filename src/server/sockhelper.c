@@ -2,7 +2,6 @@
 #include "memlog.h"
 #include <string.h>
 #include <stdio.h>
-#include <glib/gmacros.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>

@@ -2,8 +2,8 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <stdlib.h>
-#include <glib/gmacros.h>
 #include <fcntl.h>
+#include "../types.h"
 #include "../config.h"
 
 /**

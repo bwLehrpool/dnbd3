@@ -36,6 +36,7 @@
 #include "memlog.h"
 #include "../serialize.h"
 #include "../config.h"
+#include "../types.h"
 #include "locks.h"
 
 static inline char recv_request_header(int sock, dnbd3_request_t *request)
@@ -345,6 +346,7 @@ void *net_client_handler(void *dnbd3_client)
 
 			}
 
+			/*
 			// Check for messages that have been queued from another thread
 			while ( client->sendqueue != NULL ) {
 				dnbd3_binstring_t *message = NULL;
@@ -357,6 +359,7 @@ void *net_client_handler(void *dnbd3_client)
 				send_data( client->sock, message->data, message->len );
 				free( message );
 			}
+			*/
 
 		}
 	}

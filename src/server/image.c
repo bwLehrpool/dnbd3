@@ -4,7 +4,6 @@
 #include "uplink.h"
 #include "locks.h"
 
-#include <glib/gmacros.h>
 #include <assert.h>
 #include <stdio.h>
 #include <fcntl.h>
@@ -26,7 +25,6 @@ pthread_spinlock_t _images_lock;
 static int image_load_all_internal(char *base, char *path);
 static int image_try_load(char *base, char *path);
 static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks);
-static dnbd3_image_t* image_free(dnbd3_image_t *image);
 
 // ##########################################
 
@@ -72,6 +70,7 @@ int image_is_complete(dnbd3_image_t *image)
 int image_save_cache_map(dnbd3_image_t *image)
 {
 	if ( image == NULL || image->cache_map == NULL ) return TRUE;
+	assert( image->path != NULL );
 	char mapfile[strlen( image->path ) + 4 + 1];
 	int fd;
 	strcpy( mapfile, image->path );
@@ -172,6 +171,7 @@ void image_release(dnbd3_image_t *image)
 /**
  * Remove image from images array. Only free it if it has
  * no active users
+ * Locks on: _images_lock, image[].lock
  */
 void image_remove(dnbd3_image_t *image)
 {
@@ -185,6 +185,28 @@ void image_remove(dnbd3_image_t *image)
 	spin_unlock( &image->lock );
 	if ( image->users <= 0 ) image = image_free( image );
 	spin_unlock( &_images_lock );
+}
+
+/**
+ * Free image. DOES NOT check if it's in use.
+ * DOES NOT lock on anything.
+ * DO NOT lock on the image when calling.
+ */
+dnbd3_image_t* image_free(dnbd3_image_t *image)
+{
+	assert( image != NULL );
+	//
+	image_save_cache_map( image );
+	free( image->cache_map );
+	free( image->crc32 );
+	free( image->path );
+	free( image->lower_name );
+	uplink_shutdown( image->uplink );
+	spin_destroy( &image->lock );
+	//
+	memset( image, 0, sizeof(dnbd3_image_t) );
+	free( image );
+	return NULL ;
 }
 
 /**
@@ -470,22 +492,6 @@ static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
 		blocks++;
 	}
 	return TRUE;
-}
-
-static dnbd3_image_t* image_free(dnbd3_image_t *image)
-{
-	assert( image != NULL );
-	//
-	free( image->cache_map );
-	free( image->crc32 );
-	free( image->path );
-	free( image->lower_name );
-	uplink_shutdown( image->uplink );
-	spin_destroy( &image->lock );
-	//
-	memset( image, 0, sizeof(dnbd3_image_t) );
-	free( image );
-	return NULL ;
 }
 
 /*
