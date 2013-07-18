@@ -848,8 +848,10 @@ int dnbd3_net_send(void *data)
 
 error:
 	debug_dev("ERROR: Connection to server lost (send)");
-	if (dev->sock)
+	if (dev->sock) {
 		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+		dev->sock = NULL;
+	}
 	dev->thread_send = NULL;
 	if (!dev->disconnecting)
 	{

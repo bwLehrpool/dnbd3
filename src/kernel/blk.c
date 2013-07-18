@@ -47,6 +47,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->thread_receive = NULL;
 	dev->thread_discover = NULL;
 	dev->discover = 0;
+	dev->disconnecting = 0;
 	dev->panic = 0;
 	dev->panic_count = 0;
 	dev->reported_size = 0;
@@ -106,22 +107,27 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 	dnbd3_ioctl_t *msg = NULL;
 	//unsigned long irqflags;
 
+	printk("ioctl: A\n");
 	while (dev->disconnecting)
 	{
 		// do nothing
 	}
+	printk("ioctl: B\n");
 
 	if (arg != 0)
 	{
 		msg = kmalloc(sizeof(*msg), GFP_KERNEL);
 		if (msg == NULL) return -ENOMEM;
-		copy_from_user((char *)msg, (char *)arg, 2);
-		if (msg->len != sizeof(*msg))
+		if (copy_from_user((char *)msg, (char *)arg, 2) != 0 || msg->len != sizeof(*msg))
 		{
 			result = -ENOEXEC;
 			goto cleanup_return;
 		}
-		copy_from_user((char *)msg, (char *)arg, sizeof(*msg));
+		if (copy_from_user((char *)msg, (char *)arg, sizeof(*msg)) != 0)
+		{
+			result = -ENOENT;
+			goto cleanup_return;
+		}
 		if (msg->imgname != NULL && msg->imgnamelen > 0)
 		{
 			imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
@@ -130,7 +136,11 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 				result = -ENOMEM;
 				goto cleanup_return;
 			}
-			copy_from_user(imgname, msg->imgname, msg->imgnamelen);
+			if (copy_from_user(imgname, msg->imgname, msg->imgnamelen) != 0)
+			{
+				result = -ENOENT;
+				goto cleanup_return;
+			}
 			imgname[msg->imgnamelen] = '\0';
 			//printk("IOCTL Image name of len %d is %s\n", (int)msg->imgnamelen, imgname);
 		}
@@ -233,11 +243,14 @@ cleanup_return:
 	return result;
 }
 
+/**
+ * dev->blk_lock and q->queue_lock are being held
+ * when this is called!
+ */
 void dnbd3_blk_request(struct request_queue *q)
 {
 	struct request *req;
 	dnbd3_device_t *dev;
-	unsigned long flags;
 
 	while ((req = blk_fetch_request(q)) != NULL)
 	{
@@ -267,9 +280,7 @@ void dnbd3_blk_request(struct request_queue *q)
 			continue;
 		}
 
-		spin_lock_irqsave(&dev->blk_lock, flags);
 		list_add_tail(&req->queuelist, &dev->request_queue_send);
-		spin_unlock_irqrestore(&dev->blk_lock, flags);
 		spin_unlock_irq(q->queue_lock);
 		wake_up(&dev->process_queue_send);
 		spin_lock_irq(q->queue_lock);
