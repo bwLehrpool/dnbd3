@@ -15,7 +15,6 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 int debug_spin_unlock(const char *name, const char *file, int line, pthread_spinlock_t *lock);
 int debug_spin_destroy(const char *name, const char *file, int line, pthread_spinlock_t *lock);
 
-void debug_locks_start_watchdog();
 void debug_dump_lock_stats();
 
 #else
@@ -26,5 +25,8 @@ void debug_dump_lock_stats();
 #define spin_destroy( lock ) pthread_spin_destroy(lock)
 
 #endif
+
+void debug_locks_start_watchdog();
+void debug_locks_stop_watchdog();
 
 #endif /* LOCKS_H_ */

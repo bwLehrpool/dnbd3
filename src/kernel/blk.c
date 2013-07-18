@@ -106,6 +106,11 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 	dnbd3_ioctl_t *msg = NULL;
 	//unsigned long irqflags;
 
+	while (dev->disconnecting)
+	{
+		// do nothing
+	}
+
 	if (arg != 0)
 	{
 		msg = kmalloc(sizeof(*msg), GFP_KERNEL);
@@ -232,6 +237,7 @@ void dnbd3_blk_request(struct request_queue *q)
 {
 	struct request *req;
 	dnbd3_device_t *dev;
+	unsigned long flags;
 
 	while ((req = blk_fetch_request(q)) != NULL)
 	{
@@ -261,7 +267,9 @@ void dnbd3_blk_request(struct request_queue *q)
 			continue;
 		}
 
+		spin_lock_irqsave(&dev->blk_lock, flags);
 		list_add_tail(&req->queuelist, &dev->request_queue_send);
+		spin_unlock_irqrestore(&dev->blk_lock, flags);
 		spin_unlock_irq(q->queue_lock);
 		wake_up(&dev->process_queue_send);
 		spin_lock_irq(q->queue_lock);
@@ -276,7 +284,7 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 	struct list_head local_copy;
 	int dup;
 	INIT_LIST_HEAD(&local_copy);
-	spin_lock_irq(&dev->blk_lock);
+	spin_lock_irqsave(&dev->blk_lock, flags);
 	while (!list_empty(&dev->request_queue_receive))
 	{
 		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
@@ -313,7 +321,7 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 			if (!dup) list_add(&blk_request->queuelist, &local_copy);
 		}
 	}
-	spin_unlock_irq(&dev->blk_lock);
+	spin_unlock_irqrestore(&dev->blk_lock, flags);
 	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist)
 	{
 		list_del_init(&blk_request->queuelist);

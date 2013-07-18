@@ -205,32 +205,45 @@ void debug_dump_lock_stats()
 
 static void *debug_thread_watchdog(void *something)
 {
-	while (!_shutdown) {
-		time_t now = time(NULL);
-		pthread_spin_lock( &initdestory );
-		for (int i = 0; i < MAXTHREADS; ++i) {
-			if ( threads[i].tid == 0 ) continue;
-			const int diff = now - threads[i].time;
-			if ( diff > 6 && diff < 100000 ) {
-				printf("\n\n +++++++++ DEADLOCK ++++++++++++\n\n");
-				pthread_spin_unlock( &initdestory );
-				debug_dump_lock_stats();
-				exit(99);
+	while ( !_shutdown ) {
+		if (init_done) {
+			time_t now = time( NULL );
+			pthread_spin_lock( &initdestory );
+			for (int i = 0; i < MAXTHREADS; ++i) {
+				if ( threads[i].tid == 0 ) continue;
+				const int diff = now - threads[i].time;
+				if ( diff > 6 && diff < 100000 ) {
+					printf( "\n\n +++++++++ DEADLOCK ++++++++++++\n\n" );
+					pthread_spin_unlock( &initdestory );
+					debug_dump_lock_stats();
+					exit( 99 );
+				}
 			}
+			pthread_spin_unlock( &initdestory );
 		}
-		pthread_spin_unlock( &initdestory );
-		sleep(10);
+		sleep( 10 );
 	}
-	return NULL;
+	return NULL ;
 }
+
+#endif
 
 void debug_locks_start_watchdog()
 {
+#ifdef _DEBUG
 	if ( 0 != pthread_create( &watchdog, NULL, &debug_thread_watchdog, (void *)NULL ) ) {
 		memlogf( "[ERROR] Could not start debug-lock watchdog." );
 		return;
 	}
-	pthread_detach( watchdog );
+#endif
 }
 
+void debug_locks_stop_watchdog()
+{
+#ifdef _DEBUG
+	_shutdown = TRUE;
+	pthread_spin_lock( &initdestory );
+	pthread_spin_unlock( &initdestory );
+	pthread_join( watchdog, NULL );
 #endif
+}

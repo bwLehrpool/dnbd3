@@ -96,6 +96,7 @@ void dnbd3_cleanup()
 {
 	int i;
 
+	_shutdown = TRUE;
 	memlogf( "INFO: Cleanup...\n" );
 
 	for (int i = 0; i < socket_count; ++i) {
@@ -108,6 +109,7 @@ void dnbd3_cleanup()
 	// Clean up clients
 	spin_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
+		if ( _clients[i] == NULL ) continue;
 		dnbd3_client_t * const client = _clients[i];
 		spin_lock( &client->lock );
 		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
@@ -122,10 +124,13 @@ void dnbd3_cleanup()
 	// Clean up images
 	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
+		if ( _images[i] == NULL ) continue;
 		_images[i] = image_free( _images[i] );
 	}
 	_num_images = 0;
 	spin_unlock( &_images_lock );
+
+	debug_locks_stop_watchdog();
 
 	exit( EXIT_SUCCESS );
 }
@@ -335,11 +340,11 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {
 	spin_lock( &client->lock );
 	/*
-	for (it = client->sendqueue; it; it = it->next) {
-		free( it->data );
-	}
-	g_slist_free( client->sendqueue );
-	*/
+	 for (it = client->sendqueue; it; it = it->next) {
+	 free( it->data );
+	 }
+	 g_slist_free( client->sendqueue );
+	 */
 	if ( client->sock >= 0 ) close( client->sock );
 	client->sock = -1;
 	if ( client->image != NULL ) image_release( client->image );

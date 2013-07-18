@@ -124,6 +124,11 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
 	char get_servers = 0, set_client = 0;
 
+	while (dev->disconnecting)
+	{
+		if (dev->better_sock) schedule();
+	}
+
 	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
 	timeout.tv_usec = 0;
 
@@ -313,14 +318,16 @@ error:
 
 int dnbd3_net_disconnect(dnbd3_device_t *dev)
 {
+	if (dev->disconnecting)
+		return 0;
+
 	if (dev->cur_server.host.port)
 		debug_dev("INFO: Disconnecting device.");
 
 	dev->disconnecting = 1;
 
 	// clear heartbeat timer
-	if (&dev->hb_timer)
-		del_timer(&dev->hb_timer);
+	del_timer(&dev->hb_timer);
 
 	dev->discover = 0;
 
@@ -455,9 +462,9 @@ int dnbd3_net_discover(void *data)
 	for (;;)
 	{
 		wait_event_interruptible(dev->process_queue_discover,
-		                         kthread_should_stop() || dev->discover);
+		                         kthread_should_stop() || dev->discover || dev->thread_discover == NULL);
 
-		if (kthread_should_stop() || dev->imgname == NULL)
+		if (kthread_should_stop() || dev->imgname == NULL || dev->thread_discover == NULL)
 			break;
 
 		if (!dev->discover)
@@ -467,7 +474,7 @@ int dnbd3_net_discover(void *data)
 		if (dev->reported_size < 4096)
 			continue;
 
-		// Check if the list of alt servers needs to be updated and do so if neccessary
+		// Check if the list of alt servers needs to be updated and do so if necessary
 		if (dev->new_servers_num)
 		{
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
@@ -555,10 +562,10 @@ int dnbd3_net_discover(void *data)
 			iov[0].iov_base = &dnbd3_request;
 			iov[0].iov_len = sizeof(dnbd3_request);
 			serializer_reset_write(payload);
-			serializer_put_uint16(payload, PROTOCOL_VERSION);
-			serializer_put_string(payload, dev->imgname);
-			serializer_put_uint16(payload, dev->rid);
-			serializer_put_uint8(payload, 1); // Pretend we're a proxy here to prevent the server from updating the atime TODO: Update status on server switch
+			serializer_put_uint16(payload, PROTOCOL_VERSION); // DNBD3 protocol version
+			serializer_put_string(payload, dev->imgname); // image name
+			serializer_put_uint16(payload, dev->rid); // revision id
+			serializer_put_uint8(payload, 0); // are we a server? (no!)
 			iov[1].iov_base = payload;
 			dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(payload);
 			fixup_request(dnbd3_request);
@@ -604,6 +611,7 @@ int dnbd3_net_discover(void *data)
 			// panic mode, take first responding server
 			if (dev->panic)
 			{
+				dev->panic = 0;
 				debug_alt("WARN: Panic mode, changing server:");
 				if (best_sock != NULL) sock_release(best_sock);
 				dev->better_sock = sock; // Pass over socket to take a shortcut in *_connect();
@@ -717,7 +725,7 @@ error:
 				dnbd3_blk_fail_all_requests(dev);
 		}
 
-		if (best_server == -1 || kthread_should_stop()) // No alt server could be reached at all or thread should stop
+		if (best_server == -1 || kthread_should_stop() || dev->thread_discover == NULL) // No alt server could be reached at all or thread should stop
 		{
 			if (best_sock != NULL) // Should never happen actually
 			{
