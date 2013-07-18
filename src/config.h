@@ -74,8 +74,4 @@
 #define NUMBER_DEVICES 8
 #define DEFAULT_READ_AHEAD_KB 512
 
-// +++++ Misc +++++
-#define DEFAULT_SERVER_CONFIG_FILE "/etc/dnbd3/server.conf"
-#define DEFAULT_CLIENT_CONFIG_FILE "/etc/dnbd3/client.conf"
-
 #endif /* CONFIG_H_ */

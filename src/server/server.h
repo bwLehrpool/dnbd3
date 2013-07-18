@@ -34,7 +34,7 @@ extern dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 extern int _num_clients;
 extern pthread_spinlock_t _clients_lock;
 
-extern char *_config_file_name, *_rpc_password, *_cache_dir;
+extern char *_rpc_password, *_cache_dir;
 
 #ifdef _DEBUG
 extern int _fake_delay;

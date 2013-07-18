@@ -50,7 +50,6 @@ dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 int _num_clients = 0;
 pthread_spinlock_t _clients_lock;
 
-char *_config_file_name = DEFAULT_SERVER_CONFIG_FILE;
 char *_rpc_password = NULL;
 char *_cache_dir = NULL;
 
@@ -67,7 +66,7 @@ void dnbd3_print_help(char *argv_0)
 {
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
-	printf( "-f or --file        Configuration file (default /etc/dnbd3-server.conf)\n" );
+	//printf( "-f or --file        Configuration file (default /etc/dnbd3-server.conf)\n" );
 #ifdef _DEBUG
 	printf( "-d or --delay       Add a fake network delay of X µs\n" );
 #endif
@@ -153,7 +152,6 @@ int main(int argc, char *argv[])
 	while ( opt != -1 ) {
 		switch ( opt ) {
 		case 'f':
-			_config_file_name = strdup( optarg );
 			break;
 		case 'd':
 #ifdef _DEBUG

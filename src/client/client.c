@@ -25,7 +25,6 @@
 #include <getopt.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
-#include <glib.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <string.h>
@@ -33,14 +32,12 @@
 #include "../types.h"
 #include "../version.h"
 
-char *_config_file_name = DEFAULT_CLIENT_CONFIG_FILE;
-
 void dnbd3_print_help(char *argv_0)
 {
 	printf("\nUsage: %s\n"
 	       "\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -f <file> || -c <device>\n\n", argv_0);
 	printf("Start the DNBD3 client.\n");
-	printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
+	//printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
 	printf("-h or --host \t\t Host running dnbd3-server.\n");
 	printf("-i or --image \t\t Image name of exported image.\n");
 	printf("-r or --rid \t\t Release-ID of exported image (default 0, latest).\n");
@@ -197,7 +194,6 @@ int main(int argc, char *argv[])
 		switch (opt)
 		{
 		case 'f':
-			_config_file_name = strdup(optarg);
 			break;
 		case 'h':
 			dnbd3_get_ip(optarg, &msg.host);
@@ -288,53 +284,6 @@ int main(int argc, char *argv[])
 		close(fd);
 		exit(EXIT_SUCCESS);
 	}
-
-	// use configuration file if existent
-	GKeyFile *gkf;
-	int i = 0;
-	size_t j = 0;
-
-	gkf = g_key_file_new();
-
-	if (g_key_file_load_from_file(gkf, _config_file_name, G_KEY_FILE_NONE, NULL))
-	{
-		gchar **groups = NULL;
-		groups = g_key_file_get_groups(gkf, &j);
-
-		for (i = 0; i < j; i++)
-		{
-			dnbd3_get_ip(g_key_file_get_string(gkf, groups[i], "server", NULL), &msg.host);
-			msg.imgname = g_key_file_get_string(gkf, groups[i], "name", NULL);
-			msg.rid = g_key_file_get_integer(gkf, groups[i], "rid", NULL);
-			dev = g_key_file_get_string(gkf, groups[i], "device", NULL);
-
-			msg.read_ahead_kb = g_key_file_get_integer(gkf, groups[i], "ahead", NULL);
-			if (!msg.read_ahead_kb)
-				msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
-
-			fd = open(dev, O_WRONLY);
-			printf("INFO: Connecting %s to %s (%s rid:%i)\n", dev, "<fixme>", msg.imgname, msg.rid);
-
-			const int ret = ioctl(fd, IOCTL_OPEN, &msg);
-			if (ret < 0)
-			{
-				printf("ERROR: ioctl not successful (config file, %s (%d))\n", strerror(-ret), ret);
-				exit(EXIT_FAILURE);
-			}
-
-			close(fd);
-		}
-
-		g_strfreev(groups);
-		g_key_file_free(gkf);
-		exit(EXIT_SUCCESS);
-	}
-	else
-	{
-		printf("ERROR: Config file not found: %s\n", _config_file_name);
-	}
-
-	g_key_file_free(gkf);
 
 	dnbd3_print_help(argv[0]);
 	exit(EXIT_FAILURE);
