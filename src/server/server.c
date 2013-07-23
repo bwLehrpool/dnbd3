@@ -75,7 +75,9 @@ void dnbd3_print_help(char *argv_0)
 	printf( "-s or --stop        Stop running dnbd3-server\n" );
 	printf( "-i or --info        Print connected clients and used images\n" );
 	printf( "-H or --help        Show this help text and quit\n" );
-	printf( "-V or --version     Show version and quit\n" );
+	printf( "-v or --version     Show version and quit\n" );
+	printf( "Management functions:\n" );
+	printf( "--crc [image]       Generate crc block list for given image\n" );
 	exit( 0 );
 }
 
@@ -96,6 +98,7 @@ void dnbd3_cleanup()
 	int i;
 
 	_shutdown = TRUE;
+	debug_locks_stop_watchdog();
 	memlogf( "INFO: Cleanup...\n" );
 
 	for (int i = 0; i < socket_count; ++i) {
@@ -129,8 +132,6 @@ void dnbd3_cleanup()
 	_num_images = 0;
 	spin_unlock( &_images_lock );
 
-	debug_locks_stop_watchdog();
-
 	exit( EXIT_SUCCESS );
 }
 
@@ -145,7 +146,8 @@ int main(int argc, char *argv[])
 	static const char *optString = "f:d:nrsiHV?";
 	static const struct option longOpts[] = { { "file", required_argument, NULL, 'f' }, { "delay", required_argument, NULL, 'd' }, {
 	        "nodaemon", no_argument, NULL, 'n' }, { "reload", no_argument, NULL, 'r' }, { "stop", no_argument, NULL, 's' }, { "info",
-	        no_argument, NULL, 'i' }, { "help", no_argument, NULL, 'H' }, { "version", no_argument, NULL, 'V' } };
+	        no_argument, NULL, 'i' }, { "help", no_argument, NULL, 'H' }, { "version", no_argument, NULL, 'v' }, { "crc", required_argument,
+	        NULL, 'crc4' }, { 0, 0, 0, 0 } };
 
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
@@ -177,14 +179,14 @@ int main(int argc, char *argv[])
 			//dnbd3_rpc_send(RPC_IMG_LIST);
 			return EXIT_SUCCESS;
 		case 'H':
-			dnbd3_print_help( argv[0] );
-			break;
-		case 'V':
-			dnbd3_print_version();
-			break;
 		case '?':
 			dnbd3_print_help( argv[0] );
 			break;
+		case 'v':
+			dnbd3_print_version();
+			break;
+		case 'crc4':
+			return image_generate_crc_file( optarg ) ? 0 : EXIT_FAILURE;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
@@ -244,7 +246,7 @@ int main(int argc, char *argv[])
 
 	memlogf( "[INFO] Server is ready..." );
 
-	// main loop
+	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
 	while ( 1 ) {
 		len = sizeof(client);
 		fd = accept_any( sockets, socket_count, &client, &len );

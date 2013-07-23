@@ -21,5 +21,6 @@ dnbd3_image_t* image_free(dnbd3_image_t *image);
 int image_load_all(char *path);
 
 
+int image_generate_crc_file(char *image);
 
 #endif

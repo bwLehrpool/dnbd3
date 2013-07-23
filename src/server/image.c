@@ -76,7 +76,7 @@ int image_save_cache_map(dnbd3_image_t *image)
 	strcpy( mapfile, image->path );
 	strcat( mapfile, ".map" );
 
-	fd = open( mapfile, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR );
+	fd = open( mapfile, O_WRONLY | O_CREAT, 0640 );
 	if ( fd < 0 ) return FALSE;
 
 	write( fd, image->cache_map, ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char) );
@@ -387,7 +387,14 @@ static int image_try_load(char *base, char *path)
 	}
 	// Check CRC32
 	if ( crc32list != NULL ) {
-		int blocks[] = { 0, rand() % hashBlocks, rand() % hashBlocks, -1 };
+		// This checks the first block and two random blocks (which might accidentally be the same)
+		// for corruption via the known crc32 list. This is very sloppy and is merely supposed
+		// to detect accidental corruption due to broken dnbd3-proxy functionality or file system
+		// corruption. If the image size is not a multiple of the hash block size, do not take the
+		// last block into consideration. It would always fail.
+		int blcks = hashBlocks;
+		if ( fileSize % HASH_BLOCK_SIZE != 0 ) blcks--;
+		int blocks[] = { 0, rand() % blcks, rand() % blcks, -1 };
 		if ( !image_check_blocks_crc32( fdImage, crc32list, blocks ) ) {
 			memlogf( "[ERROR] Quick integrity check for '%s' failed.", path );
 			goto load_error;
@@ -465,12 +472,120 @@ static int image_try_load(char *base, char *path)
 }
 
 /**
+ * Generate the crc32 block list file for the given file.
+ * This function wants a plain file name instead of a dnbd3_image_t,
+ * as it can be used directly from the command line.
+ */
+int image_generate_crc_file(char *image)
+{
+	int fdImage = open( image, O_RDONLY );
+	if ( fdImage < 0 ) {
+		printf( "Could not open %s.\n", image );
+		return FALSE;
+	}
+	char crcFile[strlen( image ) + 4 + 1];
+	sprintf( crcFile, "%s.crc", image );
+	struct stat sst;
+	if ( stat( crcFile, &sst ) == 0 ) {
+		printf( "CRC File for %s already exists! Delete it first if you want to regen.\n", image );
+		return FALSE;
+	}
+	int fdCrc = open( crcFile, O_RDWR | O_CREAT, 0640 );
+	if ( fdCrc < 0 ) {
+		printf( "Could not open CRC File %s for writing..\n", crcFile );
+		close( fdImage );
+		return FALSE;
+	}
+	// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
+	if ( write( fdCrc, crcFile, 4 ) != 4 ) {
+		printf( "Write error\n" );
+		close( fdImage );
+		close( fdCrc );
+		return FALSE;
+	}
+	char buffer[80000]; // Read buffer from image
+	int finished = FALSE; // end of file reached
+	int hasSum; // unwritten (unfinished?) crc32 exists
+	int blocksToGo = 0; // Count number of checksums written
+	printf( "Generating CRC32" );
+	fflush( stdout );
+	do {
+		// Start of a block - init
+		uint32_t crc = crc32( 0L, Z_NULL, 0 );
+		int remaining = HASH_BLOCK_SIZE;
+		hasSum = FALSE;
+		while ( remaining > 0 ) {
+			const int blockSize = MIN(remaining, sizeof(buffer));
+			const int ret = read( fdImage, buffer, blockSize );
+			if ( ret < 0 ) { // Error
+				printf( "Read error\n" );
+				close( fdImage );
+				close( fdCrc );
+				return FALSE;
+			} else if ( ret == 0 ) { // EOF
+				finished = TRUE;
+				break;
+			} else { // Read something
+				hasSum = TRUE;
+				crc = crc32( crc, (Bytef*)buffer, ret );
+				remaining -= ret;
+			}
+		}
+		// Write to file
+		if ( hasSum ) {
+			if ( write( fdCrc, &crc, 4 ) != 4 ) {
+				printf( "Write error\n" );
+				close( fdImage );
+				close( fdCrc );
+				return FALSE;
+			}
+			printf( "." );
+			fflush( stdout );
+			blocksToGo++;
+		}
+	} while ( !finished );
+	close( fdImage );
+	printf( "done!\nGenerating master-crc..." );
+	fflush( stdout );
+	// File is written - read again to calc master crc
+	if ( lseek( fdCrc, 4, SEEK_SET ) != 4 ) {
+		printf( "Could not seek to beginning of crc list in file\n" );
+		close( fdCrc );
+		return FALSE;
+	}
+	uint32_t crc = crc32( 0L, Z_NULL, 0 );
+	while ( blocksToGo > 0 ) {
+		const int numBlocks = MIN(1000, blocksToGo);
+		if ( read( fdCrc, buffer, numBlocks * 4 ) != numBlocks * 4 ) {
+			printf( "Could not re-read from crc32 file\n" );
+			close( fdCrc );
+			return FALSE;
+		}
+		crc = crc32( crc, (Bytef*)buffer, numBlocks * 4 );
+		blocksToGo -= numBlocks;
+	}
+	if ( lseek( fdCrc, 0, SEEK_SET ) != 0 ) {
+		printf( "Could not seek back to beginning of crc32 file\n" );
+		close( fdCrc );
+		return FALSE;
+	}
+	if ( write( fdCrc, &crc, 4 ) != 4 ) {
+		printf( "Could not write master crc to file\n" );
+		close( fdCrc );
+		return FALSE;
+	}
+	printf( "..done!\nCRC-32 file successfully generated.\n" );
+	fflush( stdout );
+	return TRUE;
+}
+
+/**
  * Check the CRC-32 of the given blocks. The array blocks is of variable length.
  * !! pass -1 as the last block so the function knows when to stop !!
  */
 static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
 {
-	char buffer[32768];
+	char buffer[40000];
 	while ( *blocks != -1 ) {
 		if ( lseek( fd, *blocks * HASH_BLOCK_SIZE, SEEK_SET ) != *blocks * HASH_BLOCK_SIZE) {
 			memlogf( "Seek error" );
@@ -488,7 +603,10 @@ static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
 			crc = crc32( crc, (Bytef*)buffer, r );
 			bytes += r;
 		}
-		if ( crc != crc32list[*blocks] ) return FALSE;
+		if ( crc != crc32list[*blocks] ) {
+			printf( "Block %d is %x, should be %x\n", *blocks, crc, crc32list[*blocks] );
+			return FALSE;
+		}
 		blocks++;
 	}
 	return TRUE;

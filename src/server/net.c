@@ -46,43 +46,43 @@ static inline char recv_request_header(int sock, dnbd3_request_t *request)
 	if ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
 		if ( ret == 0 ) return 0;
 		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d)\n", ret, (int)sizeof(*request) );
-		return 0;
+		return FALSE;
 	}
 	// Make sure all bytes are in the right order (endianness)
 	fixup_request( *request );
 	if ( request->magic != dnbd3_packet_magic ) {
 		printf( "[DEBUG] Magic in client request incorrect (cmd: %d, len: %d)\n", (int)request->cmd, (int)request->size );
-		return 0;
+		return FALSE;
 	}
 	// Payload sanity check
 	if ( request->cmd != CMD_GET_BLOCK && request->size > MAX_PAYLOAD ) {
 		memlogf( "[WARNING] Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd,
 		        (int)request->size );
-		return 0;
+		return FALSE;
 	}
 #ifdef _DEBUG
 	if (_fake_delay) usleep(_fake_delay);
 #endif
-	return 1;
+	return TRUE;
 }
 
 static inline char recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
 {
 	if ( size == 0 ) {
 		memlogf( "[BUG] Called recv_request_payload() to receive 0 bytes" );
-		return 0;
+		return FALSE;
 	}
 	if ( size > MAX_PAYLOAD ) {
 		memlogf( "[BUG] Called recv_request_payload() for more bytes than the passed buffer could hold!" );
-		return 0;
+		return FALSE;
 	}
 	if ( recv( sock, payload->buffer, size, MSG_WAITALL ) != size ) {
 		printf( "[ERROR] Could not receive request payload of length %d\n", (int)size );
-		return 0;
+		return FALSE;
 	}
 	// Prepare payload buffer for reading
 	serializer_reset_read( payload, size );
-	return 1;
+	return TRUE;
 }
 
 static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
@@ -92,7 +92,7 @@ static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 	if ( !payload || size == 0 ) {
 		if ( send( sock, reply, sizeof(dnbd3_reply_t), MSG_WAITALL ) != sizeof(dnbd3_reply_t) ) {
 			printf( "[DEBUG] Send failed (header-only)\n" );
-			return 0;
+			return FALSE;
 		}
 	} else {
 		struct iovec iov[2];
@@ -102,10 +102,10 @@ static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 		iov[1].iov_len = size;
 		if ( writev( sock, iov, 2 ) != sizeof(dnbd3_reply_t) + size ) {
 			printf( "[DEBUG] Send failed (reply with payload of %u bytes)\n", size );
-			return 0;
+			return FALSE;
 		}
 	}
-	return 1;
+	return TRUE;
 }
 
 void *net_client_handler(void *dnbd3_client)

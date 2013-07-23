@@ -6,6 +6,7 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include "../types.h"
 
 char parse_address(char *string, dnbd3_host_t *host);
 char host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen);
@@ -101,7 +102,7 @@ static inline int strend(char *string, char *suffix)
 #define IMGSIZE_TO_MAPBYTES(bytes) ((int)(((bytes) + (1 << 15) - 1) >> 15))
 
 // calculate number of hash blocks in file. One hash block is 16MiB
-#define HASH_BLOCK_SIZE (1 << 24)
+#define HASH_BLOCK_SIZE ((int64_t)(1 << 24))
 #define IMGSIZE_TO_HASHBLOCKS(bytes) ((int)(((bytes) + HASH_BLOCK_SIZE - 1) / HASH_BLOCK_SIZE))
 
 #endif

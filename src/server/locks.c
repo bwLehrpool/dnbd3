@@ -242,6 +242,7 @@ void debug_locks_stop_watchdog()
 {
 #ifdef _DEBUG
 	_shutdown = TRUE;
+	printf("Killing debug watchdog...\n");
 	pthread_spin_lock( &initdestory );
 	pthread_spin_unlock( &initdestory );
 	pthread_join( watchdog, NULL );
