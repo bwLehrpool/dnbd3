@@ -62,10 +62,59 @@ int image_is_complete(dnbd3_image_t *image)
 	}
 	return complete;
 }
+/**
+ * Update cache-map of given image for the given byte range
+ * Locks on: images[].lock
+ */
+void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set)
+{
+	assert( image != NULL );
+	// This should always be block borders due to how the protocol works, but better be safe
+	// than accidentally mark blocks as cached when they really aren't entirely cached.
+	end &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+	start = (start + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+	int dirty = FALSE;
+	int pos = start;
+	spin_lock( &image->lock );
+	if ( image->cache_map == NULL ) {
+		// Image seems already complete
+		printf( "[DEBUG] image_update_cachemap with no cache_map: %s", image->path );
+		spin_unlock( &image->lock );
+		return;
+	}
+	while ( pos < end ) {
+		const int map_y = pos >> 15;
+		const int map_x = (pos >> 12) & 7; // mod 8
+		const uint8_t bit_mask = 0b00000001 << map_x;
+		if ( set ) {
+			if ( (image->cache_map[map_y] & bit_mask) == 0 ) dirty = TRUE;
+			image->cache_map[map_y] |= bit_mask;
+		} else {
+			image->cache_map[map_y] &= ~bit_mask;
+		}
+		pos += DNBD3_BLOCK_SIZE;
+	}
+	spin_unlock( &image->lock );
+	if ( dirty ) {
+		// If dirty is set, at least one of the blocks was not cached before, so queue all hash blocks
+		// for checking, even though this might lead to checking some hash block again, if it was
+		// already complete and the block range spanned at least two hash blocks.
+		// First set start and end to borders of hash blocks
+		start &= ~(uint64_t)(HASH_BLOCK_SIZE - 1);
+		end = (end + HASH_BLOCK_SIZE - 1) & ~(uint64_t)(HASH_BLOCK_SIZE - 1);
+		pos = start;
+		while ( pos < end ) {
+			const int block = pos / HASH_BLOCK_SIZE;
+			// TODO: Actually queue the hash block for checking as soon as there's a worker for that
+			pos += HASH_BLOCK_SIZE;
+		}
+	}
+}
 
 /**
  * Saves the cache map of the given image.
  * Return TRUE on success.
+ * DOES NOT lock
  */
 int image_save_cache_map(dnbd3_image_t *image)
 {
@@ -201,7 +250,8 @@ dnbd3_image_t* image_free(dnbd3_image_t *image)
 	free( image->crc32 );
 	free( image->path );
 	free( image->lower_name );
-	uplink_shutdown( image->uplink );
+	image->uplink = uplink_shutdown( image->uplink );
+	if ( image->cacheFd != -1 ) close( image->cacheFd );
 	spin_destroy( &image->lock );
 	//
 	memset( image, 0, sizeof(dnbd3_image_t) );
@@ -451,6 +501,7 @@ static int image_try_load(char *base, char *path)
 	image->filesize = fileSize;
 	image->rid = revision;
 	image->users = 0;
+	image->cacheFd = -1;
 	if ( stat( path, &st ) == 0 ) {
 		image->atime = st.st_mtime;
 	} else {
@@ -468,6 +519,7 @@ static int image_try_load(char *base, char *path)
 		image->working = FALSE;
 		image->cacheFd = open( path, O_WRONLY );
 		if ( image->cacheFd < 0 ) {
+			image->cacheFd = -1;
 			memlogf( "[ERROR] Could not open incomplete image %s for writing!", path );
 			image = image_free( image );
 			goto load_error;
@@ -530,7 +582,7 @@ int image_generate_crc_file(char *image)
 		close( fdImage );
 		return FALSE;
 	}
-// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
+	// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
 	if ( write( fdCrc, crcFile, 4 ) != 4 ) {
 		printf( "Write error\n" );
 		close( fdImage );
@@ -581,7 +633,7 @@ int image_generate_crc_file(char *image)
 	close( fdImage );
 	printf( "done!\nGenerating master-crc..." );
 	fflush( stdout );
-// File is written - read again to calc master crc
+	// File is written - read again to calc master crc
 	if ( lseek( fdCrc, 4, SEEK_SET ) != 4 ) {
 		printf( "Could not seek to beginning of crc list in file\n" );
 		close( fdCrc );

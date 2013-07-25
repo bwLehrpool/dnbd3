@@ -48,6 +48,7 @@ struct _dnbd3_connection
 	int betterFd;               // Active connection to better server, ready to use
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	int recvBufferLen;          // Len of ^^
+	volatile int shutdown;      // bool to signal thread to stop
 };
 
 typedef struct
