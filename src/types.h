@@ -105,6 +105,7 @@ typedef struct
 #define CMD_KEEPALIVE           5
 #define CMD_LATEST_RID          6
 #define CMD_SET_CLIENT_MODE     7
+#define CMD_GET_CRC32           8
 
 #pragma pack(1)
 typedef struct

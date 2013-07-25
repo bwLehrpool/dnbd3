@@ -21,10 +21,19 @@
 #ifndef CONFIG_H_
 #define CONFIG_H_
 
+// ##############################
+// ########### SERVER ###########
+
 // +++++ Performance related
 #define SERVER_MAX_CLIENTS 5000
 #define SERVER_MAX_IMAGES  5000
 #define SERVER_MAX_ALTS    1000
+#define SERVER_MAX_UPLINK_QUEUE 1000
+
+// +++++ Other magic constants
+#define SERVER_RTT_PROBES 4
+#define SERVER_RTT_DELAY_INIT 8
+#define SERVER_RTT_DELAY_MAX 15
 
 // +++++ Network +++++
 // Default port

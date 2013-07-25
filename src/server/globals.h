@@ -8,10 +8,47 @@
 
 // ######### All structs/types used by the server ########
 
+typedef struct _dnbd3_connection dnbd3_connection_t;
+typedef struct _dnbd3_image dnbd3_image_t;
+
+// Slot is free, can be used.
+// Must only be set in uplink_handle_receive() or uplink_remove_client()
+#define ULR_FREE 0
+// Slot is occupied, reply has not yet been received, matching request can safely rely on reuse.
+// Must only be set in uplink_request()
+#define ULR_PENDING 1
+// Slot is being processed, do not consider for hop on.
+// Must only be set in uplink_handle_receive()
+#define ULR_PROCESSING 2
 typedef struct
 {
-	int fd;
-} dnbd3_connection_t;
+	uint64_t handle;          // Client defined handle to pass back in reply
+	uint64_t from;            // First byte offset of requested block (ie. 4096)
+	volatile uint32_t to;     // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
+	volatile int socket;      // Socket to send reply to
+	volatile int status;      // status of this entry: ULR_*
+} dnbd3_queued_request_t;
+
+#define RTT_IDLE 0 // Not in progress
+#define RTT_INPROGRESS 1 // In progess, not finished
+#define RTT_DONTCHANGE 2 // Finished, but no better alternative found
+#define RTT_DOCHANGE 3 // Finished, better alternative written to .betterServer + .betterFd
+struct _dnbd3_connection
+{
+	int fd;                     // socket fd to remote server
+	int signal;                 // write end of pipe used to wake up the process
+	pthread_t thread;           // thread holding the connection
+	pthread_spinlock_t lock;    // lock for synchronization on request queue etc.
+	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
+	volatile int queuelen;      // length of queue
+	dnbd3_image_t *image;       // image that this uplink is used for do not call get/release for this pointer
+	dnbd3_host_t currentServer; // Current server we're connected to
+	volatile int rttTestResult; // RTT_*
+	dnbd3_host_t betterServer;  // The better server
+	int betterFd;               // Active connection to better server, ready to use
+	uint8_t *recvBuffer;        // Buffer for receiving payload
+	int recvBufferLen;          // Len of ^^
+};
 
 typedef struct
 {
@@ -29,6 +66,7 @@ typedef struct
 	char comment[COMMENT_LENGTH];
 	time_t last_told;
 	dnbd3_host_t host;
+	int rtt[];
 } dnbd3_alt_server_t;
 
 typedef struct
@@ -44,7 +82,7 @@ typedef struct
  * and the lower_name would then be
  * rz/zfs/windows7 zfs.vmdk
  */
-typedef struct
+struct _dnbd3_image
 {
 	char *path;            // absolute path of the image
 	char *lower_name;      // relative path, all lowercase, minus revision ID
@@ -52,12 +90,13 @@ typedef struct
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	dnbd3_connection_t *uplink; // pointer to a server connection
 	uint64_t filesize;     // size of image
+	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int rid;               // revision of image
 	int users;             // clients currently using this image
 	time_t atime;          // last access time
 	char working;          // TRUE if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;
-} dnbd3_image_t;
+};
 
 typedef struct
 {

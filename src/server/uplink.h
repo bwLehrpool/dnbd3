@@ -12,6 +12,8 @@ int uplink_get_matching_alt_servers(dnbd3_host_t *host, dnbd3_server_entry_t *ou
 
 int uplink_net_closeness(dnbd3_host_t *host1, dnbd3_host_t *host2);
 
+int uplink_init(dnbd3_image_t *image);
+
 void uplink_shutdown( dnbd3_connection_t *uplink);
 
 #endif /* UPLINK_H_ */

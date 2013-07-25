@@ -335,6 +335,30 @@ static int image_try_load(char *base, char *path)
 		memlogf( "[WARNING] Empty image file '%s'", path );
 		goto load_error;
 	}
+	if ( fileSize % DNBD3_BLOCK_SIZE != 0 ) {
+		memlogf( "[INFO] Image size of '%s' is not a multiple of %d, fixing...", path, (int)DNBD3_BLOCK_SIZE );
+		const int missing = DNBD3_BLOCK_SIZE - (fileSize % DNBD3_BLOCK_SIZE);
+		char buffer[missing];
+		memset( buffer, 0, missing );
+		int tmpFd = open( path, O_WRONLY | O_APPEND );
+		int success = FALSE;
+		if ( tmpFd < 0 ) {
+			memlogf( "[WARNING] Can't open image for writing, can't fix." );
+		} else if ( lseek( tmpFd, fileSize, SEEK_SET ) != fileSize ) {
+			memlogf( "[WARNING] lseek failed, can't fix." );
+		} else if ( write( tmpFd, buffer, missing ) != missing ) {
+			memlogf( "[WARNING] write failed, can't fix." );
+		} else {
+			success = TRUE;
+		}
+		if ( tmpFd >= 0 ) close( tmpFd );
+		if ( success ) {
+			fileSize += missing;
+		} else {
+			fileSize -= (DNBD3_BLOCK_SIZE - missing);
+		}
+
+	}
 	// 1. Allocate memory for the cache map if the image is incomplete
 	sprintf( mapFile, "%s.map", path );
 	int fdMap = open( mapFile, O_RDONLY );
@@ -346,6 +370,7 @@ static int image_try_load(char *base, char *path)
 			memlogf( "[WARNING] Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, path );
 		}
 		close( fdMap );
+		// Later on we check if the hash map says the image is complete
 	}
 	// TODO: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( fileSize );
@@ -439,6 +464,15 @@ static int image_try_load(char *base, char *path)
 		free( image->cache_map );
 		image->cache_map = NULL;
 		image->working = TRUE;
+	} else {
+		image->working = FALSE;
+		image->cacheFd = open( path, O_WRONLY );
+		if ( image->cacheFd < 0 ) {
+			memlogf( "[ERROR] Could not open incomplete image %s for writing!", path );
+			image = image_free( image );
+			goto load_error;
+		}
+		uplink_init( image );
 	}
 	// Prevent freeing in cleanup
 	cache_map = NULL;
@@ -496,7 +530,7 @@ int image_generate_crc_file(char *image)
 		close( fdImage );
 		return FALSE;
 	}
-	// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
+// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
 	if ( write( fdCrc, crcFile, 4 ) != 4 ) {
 		printf( "Write error\n" );
 		close( fdImage );
@@ -547,7 +581,7 @@ int image_generate_crc_file(char *image)
 	close( fdImage );
 	printf( "done!\nGenerating master-crc..." );
 	fflush( stdout );
-	// File is written - read again to calc master crc
+// File is written - read again to calc master crc
 	if ( lseek( fdCrc, 4, SEEK_SET ) != 4 ) {
 		printf( "Could not seek to beginning of crc list in file\n" );
 		close( fdCrc );
@@ -587,13 +621,13 @@ static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
 {
 	char buffer[40000];
 	while ( *blocks != -1 ) {
-		if ( lseek( fd, *blocks * HASH_BLOCK_SIZE, SEEK_SET ) != *blocks * HASH_BLOCK_SIZE) {
+		if ( lseek( fd, *blocks * HASH_BLOCK_SIZE, SEEK_SET ) != *blocks * HASH_BLOCK_SIZE ) {
 			memlogf( "Seek error" );
 			return FALSE;
 		}
 		uint32_t crc = crc32( 0L, Z_NULL, 0 );
 		int bytes = 0;
-		while ( bytes < HASH_BLOCK_SIZE) {
+		while ( bytes < HASH_BLOCK_SIZE ) {
 			const int n = MIN(sizeof(buffer), HASH_BLOCK_SIZE - bytes);
 			const int r = read( fd, buffer, n );
 			if ( r <= 0 ) {

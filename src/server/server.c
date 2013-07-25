@@ -323,10 +323,11 @@ void dnbd3_remove_client(dnbd3_client_t *client)
 {
 	int i;
 	spin_lock( &_clients_lock );
+	const int cutoff = MAX(10, _num_clients / 2);
 	for (i = _num_clients - 1; i >= 0; --i) {
 		if ( _clients[i] != client ) continue;
 		_clients[i] = NULL;
-		if ( i + 1 == _num_clients ) --_num_clients;
+		if ( i > cutoff && i + 1 == _num_clients ) --_num_clients;
 	}
 	spin_unlock( &_clients_lock );
 }
@@ -334,7 +335,7 @@ void dnbd3_remove_client(dnbd3_client_t *client)
 /**
  * Free the client struct recursively.
  * !! Make sure to call this function after removing the client from _dnbd3_clients !!
- * Locks on: _clients[].lock
+ * Locks on: _clients[].lock, might call function that locks on _images and _image[]
  */
 dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {

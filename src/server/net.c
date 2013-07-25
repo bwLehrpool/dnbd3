@@ -61,7 +61,7 @@ static inline char recv_request_header(int sock, dnbd3_request_t *request)
 		return FALSE;
 	}
 #ifdef _DEBUG
-	if (_fake_delay) usleep(_fake_delay);
+	if ( _fake_delay ) usleep( _fake_delay );
 #endif
 	return TRUE;
 }
@@ -125,19 +125,19 @@ void *net_client_handler(void *dnbd3_client)
 	uint16_t rid, client_version;
 
 	/*
-	char map_x, bit_mask;
-	uint64_t map_y;
-	uint64_t todo_size = 0;
-	uint64_t todo_offset = 0;
-	uint64_t cur_offset = 0;
-	uint64_t last_offset = 0;
-	*/
+	 char map_x, bit_mask;
+	 uint64_t map_y;
+	 uint64_t todo_size = 0;
+	 uint64_t todo_offset = 0;
+	 uint64_t cur_offset = 0;
+	 uint64_t last_offset = 0;
+	 */
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
 
 	// Set to zero to make valgrind happy
-	memset(&reply, 0, sizeof(reply));
-	memset(&payload, 0, sizeof(payload));
+	memset( &reply, 0, sizeof(reply) );
+	memset( &payload, 0, sizeof(payload) );
 	reply.magic = dnbd3_packet_magic;
 
 	// Receive first packet. This must be CMD_SELECT_IMAGE by protocol specification
@@ -337,7 +337,17 @@ void *net_client_handler(void *dnbd3_client)
 				break;
 
 			case CMD_SET_CLIENT_MODE:
-				client->is_server = FALSE;
+				image->atime = time( NULL );
+				break;
+
+			case CMD_GET_CRC32:
+				reply.cmd = CMD_GET_CRC32;
+				if ( image->crc32 == NULL ) {
+					reply.size = 0;
+				} else {
+					reply.size = IMGSIZE_TO_HASHBLOCKS(image->filesize) * 4;
+				}
+				send_reply( client->sock, &reply, image->crc32 );
 				break;
 
 			default:
@@ -347,19 +357,19 @@ void *net_client_handler(void *dnbd3_client)
 			}
 
 			/*
-			// Check for messages that have been queued from another thread
-			while ( client->sendqueue != NULL ) {
-				dnbd3_binstring_t *message = NULL;
-				spin_lock( &client->lock );
-				if ( client->sendqueue != NULL ) {
-					message = client->sendqueue->data;
-					client->sendqueue = g_slist_remove( client->sendqueue, message );
-				}
-				spin_unlock( &client->lock );
-				send_data( client->sock, message->data, message->len );
-				free( message );
-			}
-			*/
+			 // Check for messages that have been queued from another thread
+			 while ( client->sendqueue != NULL ) {
+			 dnbd3_binstring_t *message = NULL;
+			 spin_lock( &client->lock );
+			 if ( client->sendqueue != NULL ) {
+			 message = client->sendqueue->data;
+			 client->sendqueue = g_slist_remove( client->sendqueue, message );
+			 }
+			 spin_unlock( &client->lock );
+			 send_data( client->sock, message->data, message->len );
+			 free( message );
+			 }
+			 */
 
 		}
 	}
