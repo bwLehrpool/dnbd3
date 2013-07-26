@@ -14,6 +14,8 @@ int uplink_net_closeness(dnbd3_host_t *host1, dnbd3_host_t *host2);
 
 int uplink_init(dnbd3_image_t *image);
 
-dnbd3_connection_t* uplink_shutdown( dnbd3_connection_t *uplink);
+int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint32_t length);
+
+void uplink_shutdown(dnbd3_image_t *image);
 
 #endif /* UPLINK_H_ */

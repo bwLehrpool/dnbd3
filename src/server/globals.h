@@ -10,22 +10,26 @@
 
 typedef struct _dnbd3_connection dnbd3_connection_t;
 typedef struct _dnbd3_image dnbd3_image_t;
+typedef struct _dnbd3_client dnbd3_client_t;
 
 // Slot is free, can be used.
 // Must only be set in uplink_handle_receive() or uplink_remove_client()
 #define ULR_FREE 0
-// Slot is occupied, reply has not yet been received, matching request can safely rely on reuse.
+// Slot has been filled with a request that hasn't been sent to the upstream server yet, matching request can safely rely on reuse.
 // Must only be set in uplink_request()
-#define ULR_PENDING 1
+#define ULR_NEW 1
+// Slot is occupied, reply has not yet been received, matching request can safely rely on reuse.
+// Must only be set in uplink_mainloop()
+#define ULR_PENDING 2
 // Slot is being processed, do not consider for hop on.
 // Must only be set in uplink_handle_receive()
-#define ULR_PROCESSING 2
+#define ULR_PROCESSING 3
 typedef struct
 {
 	uint64_t handle;          // Client defined handle to pass back in reply
 	uint64_t from;            // First byte offset of requested block (ie. 4096)
 	volatile uint32_t to;     // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
-	volatile int socket;      // Socket to send reply to
+	dnbd3_client_t * volatile client; // Client to send reply to
 	volatile int status;      // status of this entry: ULR_*
 } dnbd3_queued_request_t;
 
@@ -38,9 +42,9 @@ struct _dnbd3_connection
 	int fd;                     // socket fd to remote server
 	int signal;                 // write end of pipe used to wake up the process
 	pthread_t thread;           // thread holding the connection
-	pthread_spinlock_t lock;    // lock for synchronization on request queue etc.
+	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
-	volatile int queuelen;      // length of queue
+	volatile int queueLen;      // length of queue
 	dnbd3_image_t *image;       // image that this uplink is used for do not call get/release for this pointer
 	dnbd3_host_t currentServer; // Current server we're connected to
 	volatile int rttTestResult; // RTT_*
@@ -48,7 +52,7 @@ struct _dnbd3_connection
 	int betterFd;               // Active connection to better server, ready to use
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	int recvBufferLen;          // Len of ^^
-	volatile int shutdown;      // bool to signal thread to stop
+	volatile int shutdown;      // bool to signal thread to stop, must only be set from uplink_shutdown()
 };
 
 typedef struct
@@ -99,7 +103,7 @@ struct _dnbd3_image
 	pthread_spinlock_t lock;
 };
 
-typedef struct
+struct _dnbd3_client
 {
 	int sock;
 	dnbd3_host_t host;
@@ -107,8 +111,8 @@ typedef struct
 	pthread_t thread;
 	dnbd3_image_t *image;
 	pthread_spinlock_t lock;
-	//GSList *sendqueue;         // list of dnbd3_binstring_t*
-} dnbd3_client_t;
+	pthread_mutex_t sendMutex;
+};
 
 // #######################################################
 

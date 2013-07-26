@@ -28,6 +28,7 @@
 #include <sys/ioctl.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "../types.h"
 #include "../version.h"
@@ -147,7 +148,7 @@ int main(int argc, char *argv[])
 	static const struct option longOpts[] = { { "file", required_argument, NULL, 'f' }, { "delay", required_argument, NULL, 'd' }, {
 	        "nodaemon", no_argument, NULL, 'n' }, { "reload", no_argument, NULL, 'r' }, { "stop", no_argument, NULL, 's' }, { "info",
 	        no_argument, NULL, 'i' }, { "help", no_argument, NULL, 'H' }, { "version", no_argument, NULL, 'v' }, { "crc", required_argument,
-	        NULL, 'crc4' }, { 0, 0, 0, 0 } };
+	        NULL, 'crc4' }, { "assert", no_argument, NULL, 'asrt' }, { 0, 0, 0, 0 } };
 
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
@@ -187,6 +188,11 @@ int main(int argc, char *argv[])
 			break;
 		case 'crc4':
 			return image_generate_crc_file( optarg ) ? 0 : EXIT_FAILURE;
+		case 'asrt':
+			printf("Testing a failing assertion:\n");
+			assert( 4 == 5 );
+			printf("Assertion 4 == 5 seems to hold. ;-)\n");
+			return EXIT_SUCCESS;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
@@ -312,6 +318,7 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 	}
 	dnbd3_client->sock = fd;
 	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
+	pthread_mutex_init( &dnbd3_client->sendMutex, NULL );
 	return dnbd3_client;
 }
 
@@ -352,6 +359,9 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 	client->image = NULL;
 	spin_unlock( &client->lock );
 	spin_destroy( &client->lock );
+	pthread_mutex_lock( &client->sendMutex );
+	pthread_mutex_unlock( &client->sendMutex );
+	pthread_mutex_destroy( &client->sendMutex );
 	free( client );
 	return NULL ;
 }

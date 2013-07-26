@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <sys/sendfile.h>
 #include <sys/types.h>
+#include <assert.h>
 
 #include "sockhelper.h"
 #include "helper.h"
@@ -123,15 +124,7 @@ void *net_client_handler(void *dnbd3_client)
 	serialized_buffer_t payload;
 	char *image_name;
 	uint16_t rid, client_version;
-
-	/*
-	 char map_x, bit_mask;
-	 uint64_t map_y;
-	 uint64_t todo_size = 0;
-	 uint64_t todo_offset = 0;
-	 uint64_t cur_offset = 0;
-	 uint64_t last_offset = 0;
-	 */
+	uint64_t start, end;
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
 
@@ -175,7 +168,6 @@ void *net_client_handler(void *dnbd3_client)
 							if ( send_reply( client->sock, &reply, &payload ) ) {
 								client->image = image;
 								if ( !client->is_server ) image->atime = time( NULL );
-
 								bOk = TRUE;
 							}
 						}
@@ -216,109 +208,85 @@ void *net_client_handler(void *dnbd3_client)
 					break;
 				}
 
+				if ( request.size != 0 && image->cache_map != NULL ) {
+					// This is a proxyed image, check if we need to relay the request...
+					start = request.offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+					end = (request.offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+					int isCached = TRUE;
+					spin_lock( &image->lock );
+					// Check again as we only aquired the lock just now
+					if ( image->cache_map != NULL ) {
+						// First byte
+						uint64_t pos = start;
+						const uint64_t firstByte = start >> 15;
+						const uint64_t lastByte = (end - 1) >> 15;
+						do {
+							const int map_x = (pos >> 12) & 7; // mod 8
+							const uint8_t bit_mask = 0b00000001 << map_x;
+							if ( (image->cache_map[firstByte] & bit_mask) == 0 ) {
+								isCached = FALSE;
+								break;
+							}
+							pos += DNBD3_BLOCK_SIZE;
+						} while ( firstByte == (pos >> 15) );
+						// Middle - quick checking
+						if ( isCached ) {
+							pos = firstByte + 1;
+							while ( pos < lastByte ) {
+								if ( image->cache_map[pos] != 0xff ) {
+									isCached = FALSE;
+									break;
+								}
+							}
+						}
+						// Last byte
+						if ( isCached ) {
+							pos = lastByte << 15;
+							while ( pos < end ) {
+								assert( lastByte == (pos >> 15) );
+								const int map_x = (pos >> 12) & 7; // mod 8
+								const uint8_t bit_mask = 0b00000001 << map_x;
+								if ( (image->cache_map[lastByte] & bit_mask) == 0 ) {
+									isCached = FALSE;
+									break;
+								}
+								pos += DNBD3_BLOCK_SIZE;
+							}
+						}
+					}
+					spin_unlock( &image->lock );
+					if ( !isCached ) {
+						if ( !uplink_request( client, request.handle, request.offset, request.size ) ) {
+							printf( "[DEBUG] Could not relay uncached request to upstream proxy\n" );
+							goto exit_client_cleanup;
+						}
+						break; // DONE
+					}
+				}
+
 				reply.cmd = CMD_GET_BLOCK;
 				reply.size = request.size;
 				reply.handle = request.handle;
 
 				fixup_reply( reply );
-				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), MSG_MORE ) != sizeof(dnbd3_reply_t) ) {
+				pthread_mutex_lock( &client->sendMutex );
+				// Send reply header
+				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
+					pthread_mutex_unlock( &client->sendMutex );
 					printf( "[DEBUG] Sending CMD_GET_BLOCK header failed\n" );
 					goto exit_client_cleanup;
 				}
 
-				if ( request.size == 0 ) { // Request for 0 bytes, done after sending header
-					send( client->sock, &reply, 0, 0 ); // Since we used MSG_MORE above...
-					break;
-				}
-
-				// no cache map means image is complete
-				if ( image->cache_map == NULL ) {
+				if ( request.size != 0 ) {
+					// Send payload if request length > 0
 					const ssize_t ret = sendfile( client->sock, image_file, (off_t *)&request.offset, request.size );
 					if ( ret != request.size ) {
+						pthread_mutex_unlock( &client->sendMutex );
 						printf( "[ERROR] sendfile failed (image to net %d/%d)\n", (int)ret, (int)request.size );
 						goto exit_client_cleanup;
 					}
-					break;
 				}
-
-				printf( "[DEBUG] Caching/Proxying not implemented yet!\n" );
-				goto exit_client_cleanup;
-
-				/*
-
-				 // caching is on
-				 dirty = 0;
-				 todo_size = 0;
-				 todo_offset = request.offset;
-				 cur_offset = request.offset;
-				 last_offset = request.offset + request.size;
-
-				 // first make sure the whole requested part is in the local cache file
-				 while(cur_offset < last_offset)
-				 {
-				 map_y = cur_offset >> 15; // div 32768
-				 map_x = (cur_offset >> 12) & 7; // (X div 4096) mod 8
-				 bit_mask = 0b00000001 << (map_x);
-
-				 cur_offset += 4096;
-
-				 if ((image->cache_map[map_y] & bit_mask) != 0) // cache hit
-				 {
-				 if (todo_size != 0) // fetch missing chunks
-				 {
-				 lseek(image_cache, todo_offset, SEEK_SET);
-				 if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) != todo_size)
-				 {
-				 if (image->file == NULL)
-				 printf("[ERROR] Device was closed when local copy was incomplete.");
-				 printf("[ERROR] sendfile failed (copy to cache 1)\n");
-				 goto exit_client_cleanup;
-				 }
-				 todo_size = 0;
-				 dirty = 1;
-				 }
-				 todo_offset = cur_offset;
-				 }
-				 else
-				 {
-				 todo_size += 4096;
-				 }
-				 }
-
-				 // whole request was missing
-				 if (todo_size != 0)
-				 {
-				 lseek(image_cache, todo_offset, SEEK_SET);
-				 if (sendfile(image_cache, image_file, (off_t *) &todo_offset, todo_size) != todo_size)
-				 {
-				 printf("[ERROR] sendfile failed (copy to cache 2)\n");
-				 goto exit_client_cleanup;
-				 }
-				 dirty = 1;
-				 }
-
-				 if (dirty) // cache map needs to be updated as something was missing locally
-				 {
-				 // set 1 in cache map for whole request
-				 cur_offset = request.offset;
-				 while(cur_offset < last_offset)
-				 {
-				 map_y = cur_offset >> 15;
-				 map_x = (cur_offset >> 12) & 7; // mod 8
-				 bit_mask = 0b00000001 << (map_x);
-				 image->cache_map[map_y] |= bit_mask;
-				 cur_offset += 4096;
-				 }
-				 }
-
-				 // send data to client
-				 if (sendfile(client->sock, image_cache, (off_t *) &request.offset, request.size) != request.size)
-				 {
-				 memlogf("[ERROR] sendfile failed (cache to net)\n");
-				 close(client->sock);
-				 client->sock = -1;
-				 }
-				 */
+				pthread_mutex_unlock( &client->sendMutex );
 				break;
 
 			case CMD_GET_SERVERS:
@@ -377,5 +345,5 @@ void *net_client_handler(void *dnbd3_client)
 	if ( image_file != -1 ) close( image_file );
 	dnbd3_remove_client( client );
 	client = dnbd3_free_client( client );
-	pthread_exit( (void *)0 );
+	return NULL ;
 }

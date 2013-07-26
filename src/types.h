@@ -27,10 +27,10 @@
 #endif
 
 #ifndef TRUE
-#define TRUE (1)
+#define TRUE 1
 #endif
 #ifndef FALSE
-#define FALSE (0)
+#define FALSE 0
 #endif
 
 #ifndef MIN

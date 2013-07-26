@@ -106,6 +106,7 @@ void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, c
 		while ( pos < end ) {
 			const int block = pos / HASH_BLOCK_SIZE;
 			// TODO: Actually queue the hash block for checking as soon as there's a worker for that
+			(void)block;
 			pos += HASH_BLOCK_SIZE;
 		}
 	}
@@ -250,7 +251,7 @@ dnbd3_image_t* image_free(dnbd3_image_t *image)
 	free( image->crc32 );
 	free( image->path );
 	free( image->lower_name );
-	image->uplink = uplink_shutdown( image->uplink );
+	uplink_shutdown( image );
 	if ( image->cacheFd != -1 ) close( image->cacheFd );
 	spin_destroy( &image->lock );
 	//
@@ -482,6 +483,10 @@ static int image_try_load(char *base, char *path)
 		} else if ( existing->crc32 != NULL && crc32list != NULL
 		        && memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlocks ) != 0 ) {
 			memlogf( "[WARNING] CRC32 list of image '%s' has changed.", path );
+		} else if ( existing->crc32 == NULL && crc32list != NULL ) {
+			memlogf( "[INFO] Found CRC-32 list for already loaded image, adding...", path );
+			existing->crc32 = crc32list;
+			crc32list = NULL;
 		} else {
 			function_return = TRUE;
 			goto load_error;
@@ -515,7 +520,8 @@ static int image_try_load(char *base, char *path)
 		free( image->cache_map );
 		image->cache_map = NULL;
 		image->working = TRUE;
-	} else {
+	}
+	if ( image->cache_map != NULL ) {
 		image->working = FALSE;
 		image->cacheFd = open( path, O_WRONLY );
 		if ( image->cacheFd < 0 ) {
