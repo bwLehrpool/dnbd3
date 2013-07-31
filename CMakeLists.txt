@@ -47,6 +47,9 @@ TARGET_LINK_LIBRARIES(dnbd3-client)
 FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
 ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
 TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES})
+if(UNIX AND NOT APPLE)
+	target_link_libraries(dnbd3-server rt)
+endif()
 
 
 

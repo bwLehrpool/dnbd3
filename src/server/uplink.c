@@ -3,6 +3,7 @@
 #include "memlog.h"
 #include "sockhelper.h"
 #include "image.h"
+#include "altservers.h"
 #include <pthread.h>
 #include <sys/socket.h>
 #include <string.h>
@@ -13,77 +14,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-dnbd3_alt_server_t *_alt_servers[SERVER_MAX_ALTS];
-int _num_alts = 0;
-pthread_spinlock_t _alts_lock;
-
 static void* uplink_mainloop(void *data);
 static void uplink_send_requests(dnbd3_connection_t *link, int newOnly);
 static void uplink_handle_receive(dnbd3_connection_t *link);
-
-/**
- * Get <size> known (working) alt servers, ordered by network closeness
- * (by finding the smallest possible subnet)
- */
-int uplink_get_matching_alt_servers(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
-{
-	if ( host == NULL || host->type == 0 || _num_alts == 0 ) return 0;
-	int i, j;
-	int count = 0;
-	int distance[size];
-	spin_lock( &_alts_lock );
-	for (i = 0; i < _num_alts; ++i) {
-		if ( host->type != _alt_servers[i]->host.type ) continue; // Wrong address family
-		if ( count == 0 ) {
-			// Trivial - this is the first entry
-			memcpy( &output[0].host, &_alt_servers[i]->host, sizeof(dnbd3_host_t) );
-			output[0].failures = 0;
-			distance[0] = uplink_net_closeness( host, &output[0].host );
-			count++;
-		} else {
-			// Other entries already exist, insert in proper position
-			const int dist = uplink_net_closeness( host, &_alt_servers[i]->host );
-			for (j = 0; j < size; ++j) {
-				if ( j < count && dist <= distance[j] ) continue;
-				if ( j > count ) break; // Should never happen but just in case...
-				if ( j < count ) {
-					// Check if we're in the middle and need to move other entries...
-					if ( j + 1 < size ) {
-						memmove( &output[j + 1], &output[j], sizeof(dnbd3_server_entry_t) * (size - j - 1) );
-						memmove( &distance[j + 1], &distance[j], sizeof(int) * (size - j - 1) );
-					}
-				} else {
-					count++;
-				}
-				memcpy( &output[j].host, &_alt_servers[i]->host, sizeof(dnbd3_host_t) );
-				output[j].failures = 0;
-				distance[j] = dist;
-				break;
-			}
-		}
-	}
-	spin_unlock( &_alts_lock );
-	return count;
-}
-
-/**
- * Determine how close two addresses are to each other by comparing the number of
- * matching bits from the left of the address. Does not count individual bits but
- * groups of 4 for speed.
- */
-int uplink_net_closeness(dnbd3_host_t *host1, dnbd3_host_t *host2)
-{
-	if ( host1 == NULL || host2 == NULL || host1->type != host2->type ) return -1;
-	int retval = 0;
-	const int max = host1->type == AF_INET ? 4 : 16;
-	for (int i = 0; i < max; ++i) {
-		if ( (host1->addr[i] & 0xf0) != (host2->addr[i] & 0xf0) ) return retval;
-		++retval;
-		if ( (host1->addr[i] & 0x0f) != (host2->addr[i] & 0x0f) ) return retval;
-		++retval;
-	}
-	return retval;
-}
 
 // ############ uplink connection handling
 
@@ -232,7 +165,7 @@ static void* uplink_mainloop(void *data)
 			if ( waitTime < 1500 ) waitTime = 1500;
 		}
 		numSocks = epoll_wait( fdEpoll, events, MAXEVENTS, waitTime );
-		if ( _shutdown || link->shutdown ) break;
+		if ( _shutdown || link->shutdown ) goto cleanup;
 		if ( numSocks < 0 ) { // Error?
 			memlogf( "[DEBUG] epoll_wait() error %d", (int)errno);
 			usleep( 10000 );
@@ -257,14 +190,24 @@ static void* uplink_mainloop(void *data)
 			}
 			// No error, handle normally
 			if ( events[i].data.fd == fdPipe ) {
-				while ( read( fdPipe, buffer, sizeof buffer ) > 0 ) {
-				} // Throw data away, this is just used for waking this thread up
+				int ret;
+				do {
+					ret = read( fdPipe, buffer, sizeof buffer );
+				} while ( ret > 0 ); // Throw data away, this is just used for waking this thread up
+				if ( ret == 0 ) {
+					memlogf( "[WARNING] Signal pipe of uplink for %s closed! Things will break!", link->image->lower_name );
+				}
+				ret = errno;
+				if ( ret != EAGAIN && ret != EWOULDBLOCK && ret != EBUSY && ret != EINTR ) {
+					memlogf( "[WARNING] Errno %d on pipe-read on uplink for %s! Things will break!", ret, link->image->lower_name );
+				}
 				if ( link->fd != -1 ) {
 					uplink_send_requests( link, TRUE );
 				}
 			} else if ( events[i].data.fd == link->fd ) {
 				uplink_handle_receive( link );
 				if ( link->fd == -1 ) nextAltCheck = 0;
+				if ( _shutdown || link->shutdown ) goto cleanup;
 			} else {
 				printf( "[DEBUG] Sanity check: unknown FD ready on epoll! Closing...\n" );
 				close( events[i].data.fd );
@@ -294,6 +237,17 @@ static void* uplink_mainloop(void *data)
 			// The rtt worker already did the handshake for our image, so there's nothing
 			// more to do here
 		}
+		// See if we should trigger a RTT measurement
+		if ( link->rttTestResult == RTT_IDLE ) {
+			const time_t now = time( NULL );
+			if ( nextAltCheck - now > SERVER_RTT_DELAY_MAX ) {
+				nextAltCheck = now + SERVER_RTT_DELAY_MAX;
+			} else if ( now >= nextAltCheck ) {
+				altCheckInterval = MIN(altCheckInterval + 1, SERVER_RTT_DELAY_MAX);
+				nextAltCheck = now + altCheckInterval;
+				altserver_find_uplink( link ); // This will set RTT_INPROGRESS (synchronous)
+			}
+		}
 	}
 	cleanup: ;
 	const int fd = link->fd;
@@ -304,6 +258,10 @@ static void* uplink_mainloop(void *data)
 	if ( signal != -1 ) close( signal );
 	if ( fdPipe != -1 ) close( fdPipe );
 	if ( fdEpoll != -1 ) close( fdEpoll );
+	// Wait for the RTT check to finish/fail if it's in progress
+	while ( link->rttTestResult == RTT_INPROGRESS )
+		usleep( 10000 );
+	if ( link->betterFd != -1 ) close( link->betterFd );
 	return NULL ;
 }
 

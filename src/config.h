@@ -29,16 +29,20 @@
 #define SERVER_MAX_IMAGES  5000
 #define SERVER_MAX_ALTS    1000
 #define SERVER_MAX_UPLINK_QUEUE 1000
+#define SERVER_MAX_PENDING_ALT_CHECKS 100
 
 // +++++ Other magic constants
-#define SERVER_RTT_PROBES 4
-#define SERVER_RTT_DELAY_INIT 8
+#define SERVER_RTT_PROBES 5
+#define SERVER_RTT_DELAY_INIT 5
 #define SERVER_RTT_DELAY_MAX 15
 
 // +++++ Network +++++
 // Default port
 #define PORT 5003
 #define RPC_PORT (PORT+1)
+
+// No serialized payload allowed exceeding this many bytes (so actual data from client->server is not affected by this limit!)
+#define MAX_PAYLOAD 1000
 
 // Protocol version should be increased whenever new features/messages are added,
 // so either the client or server can run in compatibility mode, or they can
@@ -50,9 +54,6 @@
 #define MIN_SUPPORTED_SERVER 2
 // Length of comment fields (for alt server etc.)
 #define COMMENT_LENGTH 120
-
-// No payload allowed exceeding this many bytes (actual data from client->server is not affected by this limit!)
-#define MAX_PAYLOAD 1000
 
 // in seconds if not stated otherwise (MS = milliseconds)
 #define SOCKET_TIMEOUT_SERVER_MS 30000
@@ -79,7 +80,7 @@
 
 // +++++ Block Device +++++
 #define KERNEL_SECTOR_SIZE 512
-#define DNBD3_BLOCK_SIZE 4096 // NEVER CHANGE THIS OR THE WORLD WILL END!
+#define DNBD3_BLOCK_SIZE ((uint64_t)4096) // NEVER CHANGE THIS OR THE WORLD WILL END!
 #define NUMBER_DEVICES 8
 #define DEFAULT_READ_AHEAD_KB 512
 

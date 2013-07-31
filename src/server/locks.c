@@ -221,7 +221,7 @@ static void *debug_thread_watchdog(void *something)
 			}
 			pthread_spin_unlock( &initdestory );
 		}
-		sleep( 10 );
+		sleep( 5 );
 	}
 	return NULL ;
 }

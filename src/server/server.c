@@ -39,6 +39,7 @@
 #include "image.h"
 #include "uplink.h"
 #include "net.h"
+#include "altservers.h"
 #include "memlog.h"
 
 #define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
@@ -189,9 +190,9 @@ int main(int argc, char *argv[])
 		case 'crc4':
 			return image_generate_crc_file( optarg ) ? 0 : EXIT_FAILURE;
 		case 'asrt':
-			printf("Testing a failing assertion:\n");
+			printf( "Testing a failing assertion:\n" );
 			assert( 4 == 5 );
-			printf("Assertion 4 == 5 seems to hold. ;-)\n");
+			printf( "Assertion 4 == 5 seems to hold. ;-)\n" );
 			return EXIT_SUCCESS;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
@@ -204,7 +205,7 @@ int main(int argc, char *argv[])
 
 	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
-	spin_init( &_alts_lock, PTHREAD_PROCESS_PRIVATE );
+	altserver_init();
 
 #ifdef _DEBUG
 	debug_locks_start_watchdog();

@@ -71,7 +71,8 @@ typedef struct
 	char comment[COMMENT_LENGTH];
 	time_t last_told;
 	dnbd3_host_t host;
-	int rtt[];
+	int rtt[SERVER_RTT_PROBES];
+	int rttIndex;
 } dnbd3_alt_server_t;
 
 typedef struct

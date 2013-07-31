@@ -34,6 +34,7 @@
 #include "server.h"
 #include "image.h"
 #include "uplink.h"
+#include "altservers.h"
 #include "memlog.h"
 #include "../serialize.h"
 #include "../config.h"
@@ -292,7 +293,7 @@ void *net_client_handler(void *dnbd3_client)
 			case CMD_GET_SERVERS:
 				client->is_server = FALSE; // Only clients request list of servers
 				// Build list of known working alt servers
-				num = uplink_get_matching_alt_servers( &client->host, server_list, NUMBER_SERVERS );
+				num = altservers_get_matching( &client->host, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
 				reply.size = num * sizeof(dnbd3_server_entry_t);
 				send_reply( client->sock, &reply, server_list );
