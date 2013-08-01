@@ -10,7 +10,7 @@ extern pthread_spinlock_t _images_lock;
 
 int image_is_complete(dnbd3_image_t *image);
 
-void image_update_cachemap( dnbd3_image_t *image, uint64_t start, uint64_t end, const int set );
+void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set);
 
 int image_save_cache_map(dnbd3_image_t *image);
 
@@ -22,6 +22,7 @@ dnbd3_image_t* image_free(dnbd3_image_t *image);
 
 int image_load_all(char *path);
 
+int image_create(char *image, int revision, uint64_t size);
 
 int image_generate_crc_file(char *image);
 

@@ -41,6 +41,7 @@
 #include "net.h"
 #include "altservers.h"
 #include "memlog.h"
+#include "globals.h"
 
 #define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
 static int sockets[MAX_SERVER_SOCKETS], socket_count = 0;
@@ -68,18 +69,20 @@ void dnbd3_print_help(char *argv_0)
 {
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
-	//printf( "-f or --file        Configuration file (default /etc/dnbd3-server.conf)\n" );
+	printf( "-c or --config      Configuration file (default /etc/dnbd3-server.conf)\n" );
 #ifdef _DEBUG
 	printf( "-d or --delay       Add a fake network delay of X µs\n" );
 #endif
 	printf( "-n or --nodaemon    Start server in foreground\n" );
-	printf( "-r or --reload      Reload configuration file\n" );
-	printf( "-s or --stop        Stop running dnbd3-server\n" );
-	printf( "-i or --info        Print connected clients and used images\n" );
-	printf( "-H or --help        Show this help text and quit\n" );
+	//printf( "-r or --reload      Reload configuration file\n" );
+	//printf( "-s or --stop        Stop running dnbd3-server\n" );
+	//printf( "-i or --info        Print connected clients and used images\n" );
+	printf( "-h or --help        Show this help text and quit\n" );
 	printf( "-v or --version     Show version and quit\n" );
 	printf( "Management functions:\n" );
-	printf( "--crc [image]       Generate crc block list for given image\n" );
+	printf( "--crc [image-file]  Generate crc block list for given image\n" );
+	printf( "--create [image-name] --revision [rid] --size [filesize]\n"
+			"\tCreate a local empty image file with a zeroed cache-map for the specified image" );
 	exit( 0 );
 }
 
@@ -145,17 +148,22 @@ int main(int argc, char *argv[])
 	int demonize = 1;
 	int opt = 0;
 	int longIndex = 0;
-	static const char *optString = "f:d:nrsiHV?";
-	static const struct option longOpts[] = { { "file", required_argument, NULL, 'f' }, { "delay", required_argument, NULL, 'd' }, {
+	char *paramCreate = NULL;
+	int64_t paramSize = -1;
+	int paramRevision = -1;
+	static const char *optString = "c:d:nrsihv?";
+	static const struct option longOpts[] = { { "config", required_argument, NULL, 'c' }, { "delay", required_argument, NULL, 'd' }, {
 	        "nodaemon", no_argument, NULL, 'n' }, { "reload", no_argument, NULL, 'r' }, { "stop", no_argument, NULL, 's' }, { "info",
-	        no_argument, NULL, 'i' }, { "help", no_argument, NULL, 'H' }, { "version", no_argument, NULL, 'v' }, { "crc", required_argument,
-	        NULL, 'crc4' }, { "assert", no_argument, NULL, 'asrt' }, { 0, 0, 0, 0 } };
+	        no_argument, NULL, 'i' }, { "help", no_argument, NULL, 'h' }, { "version", no_argument, NULL, 'v' }, { "crc", required_argument,
+	        NULL, 'crc4' }, { "assert", no_argument, NULL, 'asrt' }, { "create", required_argument, NULL, 'crat' }, { "revision",
+	        required_argument, NULL, 'rvid' }, { "size", required_argument, NULL, 'size' }, { 0, 0, 0, 0 } };
 
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
 	while ( opt != -1 ) {
 		switch ( opt ) {
-		case 'f':
+		case 'c':
+			_configDir = strdup( optarg );
 			break;
 		case 'd':
 #ifdef _DEBUG
@@ -180,7 +188,7 @@ int main(int argc, char *argv[])
 			printf( "INFO: Requesting information...\n\n" );
 			//dnbd3_rpc_send(RPC_IMG_LIST);
 			return EXIT_SUCCESS;
-		case 'H':
+		case 'h':
 		case '?':
 			dnbd3_print_help( argv[0] );
 			break;
@@ -194,25 +202,48 @@ int main(int argc, char *argv[])
 			assert( 4 == 5 );
 			printf( "Assertion 4 == 5 seems to hold. ;-)\n" );
 			return EXIT_SUCCESS;
+		case 'crat':
+			paramCreate = strdup( optarg );
+			break;
+		case 'rvid':
+			paramRevision = atoi( optarg );
+			break;
+		case 'size':
+			paramSize = strtoll( optarg, NULL, 10 );
+			break;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
 
+	// One-shots first:
+
+	if ( paramCreate != NULL ) {
+		return image_create( paramCreate, paramRevision, paramSize ) ? 0 : EXIT_FAILURE;
+	}
+
+	// No one-shot detected, normal server operation
+
+	if ( _configDir == NULL ) _configDir = strdup( "/etc/dnbd3-server" );
+	globals_loadConfig();
+	if ( _basePath == NULL ) {
+		printf( "ERROR: basePath not set in %s/%s\n", _configDir, CONFIG_FILENAME );
+		exit( EXIT_FAILURE );
+	}
+
 	if ( demonize ) daemon( 1, 0 );
-
-	_basePath = strdup( "/home/sr/vmware/" );
-	_vmdkLegacyMode = TRUE;
-
+	initmemlog();
 	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
 	altserver_init();
+	memlogf( "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
+
+	if ( altservers_load() < 0 ) {
+		memlogf( "[WARNING] Could not load alt-servers. Does the file exist in %s?", _configDir );
+	}
 
 #ifdef _DEBUG
 	debug_locks_start_watchdog();
 #endif
-
-	initmemlog();
-	memlogf( "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
 
 	// load config file
 	dnbd3_load_config();
@@ -235,8 +266,7 @@ int main(int argc, char *argv[])
 	if ( sockets[socket_count] != -1 ) ++socket_count;
 #ifdef WITH_IPV6
 	sockets[socket_count] = sock_listen_any(PF_INET6, PORT);
-	if (sockets[socket_count] != -1)
-	++socket_count;
+	if (sockets[socket_count] != -1) ++socket_count;
 #endif
 	if ( socket_count == 0 ) exit( EXIT_FAILURE );
 	struct sockaddr_storage client;

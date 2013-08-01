@@ -4,6 +4,7 @@
 #include "sockhelper.h"
 #include "memlog.h"
 #include "helper.h"
+#include "globals.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -12,6 +13,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <time.h>
+#include <stdio.h>
 #include "../serialize.h"
 
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
@@ -34,6 +36,52 @@ void altserver_init()
 		memlogf( "[ERROR] Could not start altservers connector thread" );
 		exit( EXIT_FAILURE );
 	}
+}
+
+int altservers_load()
+{
+	int count = 0;
+	char *name = NULL, *space;
+	char line[1000];
+	dnbd3_host_t host;
+	asprintf( &name, "%s/%s", _configDir, "alt-servers" );
+	if ( name == NULL ) return -1;
+	FILE *fp = fopen( name, "r" );
+	free( name );
+	if ( fp == NULL ) return -1;
+	while ( !feof( fp ) ) {
+		if ( fgets( line, 1000, fp ) == NULL ) break;
+		trim_right( line );
+		space = strchr( line, ' ' );
+		if ( space != NULL ) *space++ = '\0';
+		if ( !parse_address( line, &host ) ) {
+			if ( space != NULL ) *--space = ' ';
+			memlogf( "[WARNING] Invalid entry in alt-servers file ignored: '%s'", line );
+			continue;
+		}
+		if ( altservers_add( &host, space ) ) ++count;
+	}
+	fclose( fp );
+	return count;
+}
+
+int altservers_add(dnbd3_host_t *host, const char *comment)
+{
+	int i, freeSlot = -1;
+	spin_lock( &_alts_lock );
+	for (i = 0; i < _num_alts; ++i) {
+		if ( is_same_server( &_alt_servers[i].host, host ) ) {
+			spin_unlock( &_alts_lock );
+			return FALSE;
+		} else if ( freeSlot == -1 && _alt_servers[i].host.type == 0 ) {
+			freeSlot = i;
+		}
+	}
+	if ( freeSlot == -1 ) freeSlot = _num_alts++;
+	_alt_servers[freeSlot].host = *host;
+	if ( comment != NULL ) snprintf( _alt_servers[freeSlot].comment, COMMENT_LENGTH, "%s", comment );
+	spin_unlock( &_alts_lock );
+	return TRUE;
 }
 
 /**

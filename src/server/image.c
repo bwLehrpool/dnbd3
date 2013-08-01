@@ -13,6 +13,8 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <zlib.h>
+#include <inttypes.h>
+#include <fcntl.h>
 
 // ##########################################
 
@@ -25,6 +27,7 @@ pthread_spinlock_t _images_lock;
 static int image_load_all_internal(char *base, char *path);
 static int image_try_load(char *base, char *path);
 static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks);
+static int64_t image_pad(const char *path, const int64_t currentSize);
 
 // ##########################################
 
@@ -388,27 +391,7 @@ static int image_try_load(char *base, char *path)
 	}
 	if ( fileSize % DNBD3_BLOCK_SIZE != 0 ) {
 		memlogf( "[INFO] Image size of '%s' is not a multiple of %d, fixing...", path, (int)DNBD3_BLOCK_SIZE );
-		const int missing = DNBD3_BLOCK_SIZE - (fileSize % DNBD3_BLOCK_SIZE);
-		char buffer[missing];
-		memset( buffer, 0, missing );
-		int tmpFd = open( path, O_WRONLY | O_APPEND );
-		int success = FALSE;
-		if ( tmpFd < 0 ) {
-			memlogf( "[WARNING] Can't open image for writing, can't fix." );
-		} else if ( lseek( tmpFd, fileSize, SEEK_SET ) != fileSize ) {
-			memlogf( "[WARNING] lseek failed, can't fix." );
-		} else if ( write( tmpFd, buffer, missing ) != missing ) {
-			memlogf( "[WARNING] write failed, can't fix." );
-		} else {
-			success = TRUE;
-		}
-		if ( tmpFd >= 0 ) close( tmpFd );
-		if ( success ) {
-			fileSize += missing;
-		} else {
-			fileSize -= (DNBD3_BLOCK_SIZE - missing);
-		}
-
+		fileSize = image_pad( path, fileSize );
 	}
 	// 1. Allocate memory for the cache map if the image is incomplete
 	sprintf( mapFile, "%s.map", path );
@@ -564,6 +547,73 @@ static int image_try_load(char *base, char *path)
 }
 
 /**
+ * Create a new image with the given image name and revision id in _basePath
+ * Returns TRUE on success, FALSE otherwise
+ */
+int image_create(char *image, int revision, uint64_t size)
+{
+	assert( image != NULL );
+	assert( size >= DNBD3_BLOCK_SIZE );
+	if ( revision <= 0 ) {
+		printf( "[ERROR] revision id invalid: %d\n", revision );
+		return FALSE;
+	}
+	const int PATHLEN = 2000;
+	char path[PATHLEN], cache[PATHLEN];
+	char *lastSlash = strrchr( image, '/' );
+	if ( lastSlash == NULL ) {
+		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
+	} else {
+		*lastSlash = '\0';
+		snprintf( path, PATHLEN, "%s/%s", _basePath, image );
+		mkdir_p( path );
+		*lastSlash = '/';
+		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
+	}
+	if ( file_exists( path ) ) {
+		printf( "[ERROR] Image %s with rid %d already exists!\n", image, revision );
+		return FALSE;
+	}
+	snprintf( cache, PATHLEN, "%s.map", path );
+	size = (size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+	const int mapsize = IMGSIZE_TO_MAPBYTES(size);
+	// Write files
+	int fdImage = -1, fdCache = -1;
+	fdImage = open( path, O_WRONLY | O_TRUNC, 0640 );
+	fdCache = open( cache, O_WRONLY | O_TRUNC, 0640 );
+	if ( fdImage < 0 ) {
+		printf( "[ERROR] Could not open %s for writing.\n", path );
+		goto failure_cleanup;
+	}
+	if ( fdCache < 0 ) {
+		printf( "[ERROR] Could not open %s for writing.\n", cache );
+		goto failure_cleanup;
+	}
+	// Try cache map first
+	if ( fallocate( fdCache, 0, 0, mapsize ) != 0 ) {
+		const int err = errno;
+		printf( "[ERROR] Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
+		goto failure_cleanup;
+	}
+	// Now write image
+	if ( fallocate( fdImage, 0, 0, size ) != 0 ) {
+		const int err = errno;
+		printf( "[ERROR] Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, err );
+		goto failure_cleanup;
+	}
+	close( fdImage );
+	close( fdCache );
+	return TRUE;
+	//
+	failure_cleanup: ;
+	if ( fdImage >= 0 ) close( fdImage );
+	if ( fdCache >= 0 ) close( fdCache );
+	remove( path );
+	remove( cache );
+	return FALSE;
+}
+
+/**
  * Generate the crc32 block list file for the given file.
  * This function wants a plain file name instead of a dnbd3_image_t,
  * as it can be used directly from the command line.
@@ -575,11 +625,35 @@ int image_generate_crc_file(char *image)
 		printf( "Could not open %s.\n", image );
 		return FALSE;
 	}
+	// force size to be multiple of DNBD3_BLOCK_SIZE
+	int64_t fileLen = lseek( fdImage, 0, SEEK_END );
+	if ( fileLen <= 0 ) {
+		printf( "Error seeking to end, or file is empty.\n" );
+		close( fdImage );
+		return FALSE;
+	}
+	if ( fileLen % DNBD3_BLOCK_SIZE != 0 ) {
+		printf( "File length is not a multiple of DNBD3_BLOCK_SIZE\n" );
+		const int64_t ret = image_pad( image, fileLen );
+		if ( ret < fileLen ) {
+			printf( "Error appending to file in order to make it block aligned.\n" );
+			close( fdImage );
+			return FALSE;
+		}
+		printf( "...fixed!\n" );
+		fileLen = ret;
+	}
+	if ( lseek( fdImage, 0, SEEK_SET ) != 0 ) {
+		printf( "Seeking back to start failed.\n" );
+		close( fdImage );
+		return FALSE;
+	}
 	char crcFile[strlen( image ) + 4 + 1];
 	sprintf( crcFile, "%s.crc", image );
 	struct stat sst;
 	if ( stat( crcFile, &sst ) == 0 ) {
 		printf( "CRC File for %s already exists! Delete it first if you want to regen.\n", image );
+		close( fdImage );
 		return FALSE;
 	}
 	int fdCrc = open( crcFile, O_RDWR | O_CREAT, 0640 );
@@ -702,6 +776,33 @@ static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
 		blocks++;
 	}
 	return TRUE;
+}
+
+static int64_t image_pad(const char *path, const int64_t currentSize)
+{
+	const int missing = DNBD3_BLOCK_SIZE - (currentSize % DNBD3_BLOCK_SIZE );
+	char buffer[missing];
+	memset( buffer, 0, missing );
+	int tmpFd = open( path, O_WRONLY | O_APPEND );
+	int success = FALSE;
+	if ( tmpFd < 0 ) {
+		memlogf( "[WARNING] Can't open image for writing, can't fix %s", path );
+	} else if ( lseek( tmpFd, 0, SEEK_CUR ) != currentSize ) {
+		const int64_t cur = lseek( tmpFd, 0, SEEK_CUR );
+		memlogf( "[WARNING] File size of %s changed when told to extend. (is: %" PRIi64 ", should: %" PRIi64 ")", path, cur, currentSize );
+	} else if ( lseek( tmpFd, currentSize, SEEK_SET ) != currentSize ) {
+		memlogf( "[WARNING] lseek() failed, can't fix %s", path );
+	} else if ( write( tmpFd, buffer, missing ) != missing ) {
+		memlogf( "[WARNING] write() failed, can't fix %s", path );
+	} else {
+		success = TRUE;
+	}
+	if ( tmpFd >= 0 ) close( tmpFd );
+	if ( success ) {
+		return currentSize + missing;
+	} else {
+		return currentSize - (DNBD3_BLOCK_SIZE - missing);
+	}
 }
 
 /*

@@ -116,9 +116,14 @@ struct _dnbd3_client
 };
 
 // #######################################################
+#define CONFIG_FILENAME "server.conf"
+/**
+ * Base directory where the configuration files reside. Will never have a trailing slash.
+ */
+extern char *_configDir;
 
 /**
- * Base directory where all images are stored in. Will always have a trailing slash
+ * Base directory where all images are stored in. Will never have a trailing slash.
  */
 extern char *_basePath;
 
@@ -128,5 +133,7 @@ extern char *_basePath;
 extern int _vmdkLegacyMode;
 
 extern int _shutdown;
+
+void globals_loadConfig();
 
 #endif /* GLOBALS_H_ */

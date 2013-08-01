@@ -5,6 +5,10 @@
 
 void altserver_init();
 
+int altservers_load();
+
+int altservers_add(dnbd3_host_t *host, const char *comment);
+
 void altserver_find_uplink(dnbd3_connection_t *uplink);
 
 int altservers_get_matching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size);
