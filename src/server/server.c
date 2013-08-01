@@ -82,7 +82,8 @@ void dnbd3_print_help(char *argv_0)
 	printf( "Management functions:\n" );
 	printf( "--crc [image-file]  Generate crc block list for given image\n" );
 	printf( "--create [image-name] --revision [rid] --size [filesize]\n"
-			"\tCreate a local empty image file with a zeroed cache-map for the specified image" );
+			"\tCreate a local empty image file with a zeroed cache-map for the specified image\n" );
+	printf( "\n" );
 	exit( 0 );
 }
 
@@ -215,13 +216,7 @@ int main(int argc, char *argv[])
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
 
-	// One-shots first:
-
-	if ( paramCreate != NULL ) {
-		return image_create( paramCreate, paramRevision, paramSize ) ? 0 : EXIT_FAILURE;
-	}
-
-	// No one-shot detected, normal server operation
+	// Load general config
 
 	if ( _configDir == NULL ) _configDir = strdup( "/etc/dnbd3-server" );
 	globals_loadConfig();
@@ -229,6 +224,14 @@ int main(int argc, char *argv[])
 		printf( "ERROR: basePath not set in %s/%s\n", _configDir, CONFIG_FILENAME );
 		exit( EXIT_FAILURE );
 	}
+
+	// One-shots first:
+
+	if ( paramCreate != NULL ) {
+		return image_create( paramCreate, paramRevision, paramSize ) ? 0 : EXIT_FAILURE;
+	}
+
+	// No one-shot detected, normal server operation
 
 	if ( demonize ) daemon( 1, 0 );
 	initmemlog();

@@ -117,6 +117,7 @@ struct _dnbd3_client
 
 // #######################################################
 #define CONFIG_FILENAME "server.conf"
+
 /**
  * Base directory where the configuration files reside. Will never have a trailing slash.
  */

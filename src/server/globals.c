@@ -29,8 +29,15 @@ void globals_loadConfig()
 	if ( name == NULL ) return;
 	ini_parse( name, &ini_handler, NULL );
 	free( name );
-	if ( _basePath != NULL && _basePath[0] != '/' ) {
+	if ( _basePath == NULL || _basePath[0] == '\0' ) {
+		memlogf( "[ERROR] Need to specify basePath in " CONFIG_FILENAME );
+		exit( EXIT_FAILURE );
+	}
+	if ( _basePath[0] != '/' ) {
 		memlogf( "[ERROR] _basePath must be absolute!" );
 		exit( EXIT_FAILURE );
 	}
+	char *end = _basePath + strlen( _basePath ) - 1;
+	while ( end >= _basePath && *end == '/' )
+		*end-- = '\0';
 }

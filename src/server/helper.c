@@ -162,3 +162,12 @@ int mkdir_p(const char* path)
 	if ( mkdir( buffer, 0750 ) != 0 && errno != EEXIST ) return FALSE;
 	return TRUE;
 }
+
+int file_alloc(int fd, uint64_t offset, uint64_t size)
+{
+	if ( fallocate( fd, 0, offset, size ) == 0 ) return TRUE; // fast way
+	if ( posix_fallocate( fd, offset, size ) == 0 ) return TRUE; // slow way
+	if ( lseek( fd, offset + size - 1, SEEK_SET ) != offset ) return FALSE; // dumb way
+	if ( write( fd, "", 1 ) != 1 ) return FALSE;
+	return TRUE;
+}

@@ -14,7 +14,6 @@
 #include <dirent.h>
 #include <zlib.h>
 #include <inttypes.h>
-#include <fcntl.h>
 
 // ##########################################
 
@@ -555,7 +554,7 @@ int image_create(char *image, int revision, uint64_t size)
 	assert( image != NULL );
 	assert( size >= DNBD3_BLOCK_SIZE );
 	if ( revision <= 0 ) {
-		printf( "[ERROR] revision id invalid: %d\n", revision );
+		memlogf( "[ERROR] revision id invalid: %d", revision );
 		return FALSE;
 	}
 	const int PATHLEN = 2000;
@@ -571,7 +570,7 @@ int image_create(char *image, int revision, uint64_t size)
 		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
 	}
 	if ( file_exists( path ) ) {
-		printf( "[ERROR] Image %s with rid %d already exists!\n", image, revision );
+		memlogf( "[ERROR] Image %s with rid %d already exists!", image, revision );
 		return FALSE;
 	}
 	snprintf( cache, PATHLEN, "%s.map", path );
@@ -579,26 +578,26 @@ int image_create(char *image, int revision, uint64_t size)
 	const int mapsize = IMGSIZE_TO_MAPBYTES(size);
 	// Write files
 	int fdImage = -1, fdCache = -1;
-	fdImage = open( path, O_WRONLY | O_TRUNC, 0640 );
-	fdCache = open( cache, O_WRONLY | O_TRUNC, 0640 );
+	fdImage = open( path, O_RDWR | O_TRUNC | O_CREAT, 0640 );
+	fdCache = open( cache, O_RDWR | O_TRUNC | O_CREAT, 0640 );
 	if ( fdImage < 0 ) {
-		printf( "[ERROR] Could not open %s for writing.\n", path );
+		memlogf( "[ERROR] Could not open %s for writing.", path );
 		goto failure_cleanup;
 	}
 	if ( fdCache < 0 ) {
-		printf( "[ERROR] Could not open %s for writing.\n", cache );
+		memlogf( "[ERROR] Could not open %s for writing.", cache );
 		goto failure_cleanup;
 	}
 	// Try cache map first
-	if ( fallocate( fdCache, 0, 0, mapsize ) != 0 ) {
+	if ( !file_alloc( fdCache, 0, mapsize ) ) {
 		const int err = errno;
-		printf( "[ERROR] Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
+		memlogf( "[ERROR] Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
 		goto failure_cleanup;
 	}
 	// Now write image
-	if ( fallocate( fdImage, 0, 0, size ) != 0 ) {
+	if ( !file_alloc( fdImage, 0, size ) ) {
 		const int err = errno;
-		printf( "[ERROR] Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, err );
+		memlogf( "[ERROR] Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, err );
 		goto failure_cleanup;
 	}
 	close( fdImage );

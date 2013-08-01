@@ -60,6 +60,7 @@ void memlogf(const char *fmt, ...)
 		va_start( ap, fmt );
 		vprintf( fmt, ap );
 		va_end( ap );
+		printf( "\n" );
 		return; // Not initialized yet
 	}
 	va_list ap;
