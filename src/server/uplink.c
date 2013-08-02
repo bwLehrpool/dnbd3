@@ -3,6 +3,7 @@
 #include "memlog.h"
 #include "sockhelper.h"
 #include "image.h"
+#include "helper.h"
 #include "altservers.h"
 #include <pthread.h>
 #include <sys/socket.h>
@@ -67,13 +68,13 @@ void uplink_shutdown(dnbd3_image_t *image)
 	spin_lock( &uplink->queueLock );
 	image->uplink = NULL;
 	uplink->shutdown = TRUE;
+	spin_unlock( &uplink->queueLock );
+	spin_destroy( &uplink->queueLock );
 	if ( uplink->signal != -1 ) write( uplink->signal, "", 1 );
 	if ( uplink->image != NULL ) {
 		pthread_join( uplink->thread, NULL );
 	}
 	free( uplink->recvBuffer );
-	spin_unlock( &uplink->queueLock );
-	spin_destroy( &uplink->queueLock );
 	free( uplink );
 }
 
@@ -238,6 +239,9 @@ static void* uplink_mainloop(void *data)
 			link->betterFd = -1;
 			link->currentServer = link->betterServer;
 			link->image->working = TRUE;
+			if ( host_to_string( &link->currentServer, buffer, sizeof buffer ) ) {
+				printf( "[DEBUG] Now connected to %s\n", buffer );
+			}
 			memset( &ev, 0, sizeof(ev) );
 			ev.events = EPOLLIN;
 			ev.data.fd = link->fd;
@@ -344,6 +348,10 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 		goto error_cleanup;
 	}
 	fixup_reply( reply );
+	if ( reply.magic != dnbd3_packet_magic ) {
+		memlogf( "[WARNING] Uplink server's packet did not start with dnbd3_packet_magic (%s)", link->image->path );
+		goto error_cleanup;
+	}
 	if ( reply.size > 9000000 ) {
 		memlogf( "[WARNING] Pure evil: Uplink server sent too much payload for %s", link->image->path );
 		goto error_cleanup;
@@ -363,6 +371,9 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 		done += ret;
 	}
 	// Payload read completely
+	// Bail out if we're not interested
+	if ( reply.cmd != CMD_GET_BLOCK ) return;
+	// Is a legit block reply
 	const uint64_t start = reply.handle;
 	const uint64_t end = reply.handle + reply.size;
 	// 1) Write to cache file

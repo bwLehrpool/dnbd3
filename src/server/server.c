@@ -114,6 +114,9 @@ void dnbd3_cleanup()
 	}
 	socket_count = 0;
 
+	// Terminate all uplinks
+	image_killUplinks();
+
 	// Clean up clients
 	spin_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
@@ -317,7 +320,6 @@ int main(int argc, char *argv[])
 			dnbd3_client = dnbd3_free_client( dnbd3_client );
 			continue;
 		}
-		pthread_detach( dnbd3_client->thread );
 	}
 
 	dnbd3_cleanup();

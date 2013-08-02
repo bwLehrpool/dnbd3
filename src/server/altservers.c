@@ -377,8 +377,9 @@ static void *altserver_main(void *data)
 				if ( writev( sock, iov, 2 ) != len + sizeof(request) ) goto server_failed;
 				// See if selecting the image succeeded ++++++++++++++++++++++++++++++
 				if ( recv( sock, &reply, sizeof(reply), MSG_WAITALL ) != sizeof(reply) ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header after CMD_SELECT_IMAGE (%s)",
-					        uplink->image->lower_name );
+					//ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header after CMD_SELECT_IMAGE (%s)",
+					//        uplink->image->lower_name );
+					goto server_failed;
 				}
 				// check reply header
 				fixup_reply( reply );
@@ -419,7 +420,7 @@ static void *altserver_main(void *data)
 				fixup_reply( reply );
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) ERROR_GOTO_VA( server_failed,
 				        "[ERROR] Reply to random block request is %d bytes for %s", reply.size, uplink->image->lower_name );
-				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, 0 ) != DNBD3_BLOCK_SIZE ) ERROR_GOTO_VA( server_failed,
+				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) ERROR_GOTO_VA( server_failed,
 				        "[ERROR] Could not read random block from socket for %s", uplink->image->lower_name );
 				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
 				// Measurement done - everything fine so far
@@ -450,7 +451,6 @@ static void *altserver_main(void *data)
 				uplink->rttTestResult = RTT_DOCHANGE;
 			} else {
 				// nope
-				printf( "DONT CHANGE: best: %uµs, current: %uµs\n", bestRtt, currentRtt );
 				if ( bestSock != -1 ) close( bestSock );
 				uplink->rttTestResult = RTT_DONTCHANGE;
 			}

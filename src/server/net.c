@@ -46,7 +46,7 @@ static inline char recv_request_header(int sock, dnbd3_request_t *request)
 	int ret;
 	// Read request header from socket
 	if ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
-		if ( ret == 0 ) return 0;
+		if ( ret == 0 ) return FALSE;
 		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d)\n", ret, (int)sizeof(*request) );
 		return FALSE;
 	}
@@ -353,5 +353,6 @@ void *net_client_handler(void *dnbd3_client)
 	if ( image_file != -1 ) close( image_file );
 	dnbd3_remove_client( client );
 	client = dnbd3_free_client( client );
+	pthread_detach( client->thread );
 	return NULL ;
 }

@@ -74,7 +74,7 @@ void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, c
 	// This should always be block borders due to how the protocol works, but better be safe
 	// than accidentally mark blocks as cached when they really aren't entirely cached.
 	end &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-	start = (start + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+	start = (uint64_t)(start + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 	int dirty = FALSE;
 	int pos = start;
 	spin_lock( &image->lock );
@@ -97,7 +97,7 @@ void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, c
 		pos += DNBD3_BLOCK_SIZE;
 	}
 	spin_unlock( &image->lock );
-	if ( dirty ) {
+	if ( set && dirty ) {
 		// If dirty is set, at least one of the blocks was not cached before, so queue all hash blocks
 		// for checking, even though this might lead to checking some hash block again, if it was
 		// already complete and the block range spanned at least two hash blocks.
@@ -132,6 +132,10 @@ int image_save_cache_map(dnbd3_image_t *image)
 	if ( fd < 0 ) return FALSE;
 
 	write( fd, image->cache_map, ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char) );
+	if ( image->cacheFd != -1 ) {
+		fsync( image->cacheFd );
+	}
+	fsync( fd );
 	close( fd );
 
 	return TRUE;
@@ -240,8 +244,29 @@ void image_remove(dnbd3_image_t *image)
 }
 
 /**
+ * Kill all uplinks
+ */
+void image_killUplinks()
+{
+	int i;
+	spin_lock( &_images_lock );
+	for (i = 0; i < _num_images; ++i) {
+		if ( _images[i] == NULL ) continue;
+		spin_lock( &_images[i]->lock );
+		if ( _images[i]->uplink != NULL ) {
+			_images[i]->uplink->shutdown = TRUE;
+			if ( _images[i]->uplink->signal != -1 ) {
+				write( _images[i]->uplink->signal, "", 1 );
+			}
+		}
+		spin_unlock( &_images[i]->lock );
+	}
+	spin_unlock( &_images_lock );
+}
+
+/**
  * Free image. DOES NOT check if it's in use.
- * DOES NOT lock on anything.
+ * Indirectly locks on uplink.queueLock
  * DO NOT lock on the image when calling.
  */
 dnbd3_image_t* image_free(dnbd3_image_t *image)
@@ -249,11 +274,11 @@ dnbd3_image_t* image_free(dnbd3_image_t *image)
 	assert( image != NULL );
 	//
 	image_save_cache_map( image );
+	uplink_shutdown( image );
 	free( image->cache_map );
 	free( image->crc32 );
 	free( image->path );
 	free( image->lower_name );
-	uplink_shutdown( image );
 	if ( image->cacheFd != -1 ) close( image->cacheFd );
 	spin_destroy( &image->lock );
 	//

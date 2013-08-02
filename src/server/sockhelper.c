@@ -79,7 +79,7 @@ void sock_set_timeout(const int sockfd, const int milliseconds)
 {
 	struct timeval tv;
 	tv.tv_sec = milliseconds / 1000;
-	tv.tv_usec = milliseconds * 1000;
+	tv.tv_usec = (milliseconds * 1000) % 1000000;
 	setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 }
