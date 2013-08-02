@@ -62,6 +62,7 @@ int altservers_load()
 		if ( altservers_add( &host, space ) ) ++count;
 	}
 	fclose( fp );
+	printf( "[DEBUG] Added %d alt servers\n", count );
 	return count;
 }
 
@@ -414,11 +415,13 @@ static void *altserver_main(void *data)
 			// Done testing all servers. See if we should switch
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
+				printf( "DO CHANGE: best: %uµs, current: %uµs\n", bestRtt, currentRtt );
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];
 				uplink->rttTestResult = RTT_DOCHANGE;
 			} else {
 				// nope
+				printf( "DONT CHANGE: best: %uµs, current: %uµs\n", bestRtt, currentRtt );
 				if ( bestSock != -1 ) close( bestSock );
 				uplink->rttTestResult = RTT_DONTCHANGE;
 			}

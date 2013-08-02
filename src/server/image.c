@@ -332,12 +332,13 @@ static int image_try_load(char *base, char *path)
 	assert( path != NULL );
 	assert( *path == '/' );
 	assert( strncmp( path, base, strlen(base)) == 0 );
-	assert( base[strlen(base) - 1] == '/' );
+	assert( base[strlen(base) - 1] != '/' );
+	assert( strlen(path) > strlen(base) );
 	char *lastSlash = strrchr( path, '/' );
 	char *fileName = lastSlash + 1;
 	char imgName[strlen( path )];
 	const int fileNameLen = strlen( fileName );
-	char * const virtBase = path + strlen( base );
+	char * const virtBase = path + strlen( base ) + 1;
 	// Copy virtual path
 	assert( *virtBase != '/' );
 	char *src = virtBase, *dst = imgName;

@@ -238,7 +238,7 @@ static void* uplink_mainloop(void *data)
 			// more to do here
 		}
 		// See if we should trigger a RTT measurement
-		if ( link->rttTestResult == RTT_IDLE ) {
+		if ( link->rttTestResult == RTT_IDLE || link->rttTestResult == RTT_DONTCHANGE ) {
 			const time_t now = time( NULL );
 			if ( nextAltCheck - now > SERVER_RTT_DELAY_MAX ) {
 				nextAltCheck = now + SERVER_RTT_DELAY_MAX;
