@@ -33,7 +33,7 @@ static int64_t image_pad(const char *path, const int64_t currentSize);
 /**
  * Returns TRUE if the given image is complete
  */
-int image_is_complete(dnbd3_image_t *image)
+int image_isComplete(dnbd3_image_t *image)
 {
 	assert( image != NULL );
 	if ( image->working && image->cache_map == NULL ) {
@@ -68,7 +68,7 @@ int image_is_complete(dnbd3_image_t *image)
  * Update cache-map of given image for the given byte range
  * Locks on: images[].lock
  */
-void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set)
+void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set)
 {
 	assert( image != NULL );
 	// This should always be block borders due to how the protocol works, but better be safe
@@ -115,13 +115,43 @@ void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, c
 }
 
 /**
+ * Mark image as complete by freeing the cache_map and deleting the map file on disk
+ * DOES NOT LOCK ON THE IMAGE
+ */
+void image_markComplete(dnbd3_image_t *image)
+{
+	assert( image != NULL );
+	if ( image->cache_map == NULL ) return;
+	free( image->cache_map );
+	image->cache_map = NULL;
+	char mapfile[strlen( image->path ) + 4 + 1];
+	sprintf( mapfile, "%s.map", image->path );
+	remove( mapfile );
+}
+
+/**
  * Saves the cache map of the given image.
  * Return TRUE on success.
- * DOES NOT lock
+ * Locks on: image.lock
  */
-int image_save_cache_map(dnbd3_image_t *image)
+int image_saveCacheMap(dnbd3_image_t *image)
 {
 	if ( image == NULL || image->cache_map == NULL ) return TRUE;
+	spin_lock( &image->lock );
+	// Lock and get a copy of the cache map, as it could be freed by another thread that is just about to
+	// figure out that this image's cache copy is complete
+	if ( image->cache_map == NULL || image->filesize < DNBD3_BLOCK_SIZE ) {
+		spin_unlock( &image->lock );
+		return TRUE;
+	}
+	const size_t size = IMGSIZE_TO_MAPBYTES(image->filesize);
+	uint8_t *map = malloc( size );
+	memcpy( map, image->cache_map, size );
+	// Unlock. Use path and cacheFd without locking. path should never change after initialization of the image,
+	// cacheFd is written to and we don't hold a spinlock during I/O
+	// By increasing the user count we make sure the image is not freed in the meantime
+	image->users++;
+	spin_unlock( &image->lock );
 	assert( image->path != NULL );
 	char mapfile[strlen( image->path ) + 4 + 1];
 	int fd;
@@ -129,15 +159,23 @@ int image_save_cache_map(dnbd3_image_t *image)
 	strcat( mapfile, ".map" );
 
 	fd = open( mapfile, O_WRONLY | O_CREAT, 0640 );
-	if ( fd < 0 ) return FALSE;
+	if ( fd < 0 ) {
+		spin_lock( &image->lock );
+		image->users--;
+		spin_unlock( &image->lock );
+		return FALSE;
+	}
 
-	write( fd, image->cache_map, ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char) );
+	write( fd, map, ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char) );
 	if ( image->cacheFd != -1 ) {
 		fsync( image->cacheFd );
 	}
 	fsync( fd );
 	close( fd );
 
+	spin_lock( &image->lock );
+	image->users--;
+	spin_unlock( &image->lock );
 	return TRUE;
 }
 
@@ -266,14 +304,14 @@ void image_killUplinks()
 
 /**
  * Free image. DOES NOT check if it's in use.
- * Indirectly locks on uplink.queueLock
+ * Indirectly locks on image.lock, uplink.queueLock
  * DO NOT lock on the image when calling.
  */
 dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
 	assert( image != NULL );
 	//
-	image_save_cache_map( image );
+	image_saveCacheMap( image );
 	uplink_shutdown( image );
 	free( image->cache_map );
 	free( image->crc32 );
@@ -291,7 +329,7 @@ dnbd3_image_t* image_free(dnbd3_image_t *image)
  * Load all images in given path recursively.
  * Pass NULL to use path from config.
  */
-int image_load_all(char *path)
+int image_loadAll(char *path)
 {
 	if ( path == NULL ) {
 		return image_load_all_internal( _basePath, _basePath );
@@ -523,10 +561,8 @@ static int image_try_load(char *base, char *path)
 	image->working = (image->cache_map == NULL );
 	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
 	// Get rid of cache map if image is complete
-	if ( image->cache_map != NULL && image_is_complete( image ) ) {
-		remove( mapFile );
-		free( image->cache_map );
-		image->cache_map = NULL;
+	if ( image->cache_map != NULL && image_isComplete( image ) ) {
+		image_markComplete( image );
 		image->working = TRUE;
 	}
 	if ( image->cache_map != NULL ) {
@@ -643,7 +679,7 @@ int image_create(char *image, int revision, uint64_t size)
  * This function wants a plain file name instead of a dnbd3_image_t,
  * as it can be used directly from the command line.
  */
-int image_generate_crc_file(char *image)
+int image_generateCrcFile(char *image)
 {
 	int fdImage = open( image, O_RDONLY );
 	if ( fdImage < 0 ) {

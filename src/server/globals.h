@@ -113,6 +113,7 @@ struct _dnbd3_client
 	dnbd3_image_t *image;
 	pthread_spinlock_t lock;
 	pthread_mutex_t sendMutex;
+	int running;
 };
 
 // #######################################################
@@ -142,7 +143,6 @@ extern int _serverPenalty;
  * How much artificial delay should we add when a client connects to us?
  */
 extern int _clientPenalty;
-
 
 extern int _shutdown;
 

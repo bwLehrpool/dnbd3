@@ -8,11 +8,13 @@ extern dnbd3_image_t *_images[SERVER_MAX_IMAGES];
 extern int _num_images;
 extern pthread_spinlock_t _images_lock;
 
-int image_is_complete(dnbd3_image_t *image);
+int image_isComplete(dnbd3_image_t *image);
 
-void image_update_cachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set);
+void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set);
 
-int image_save_cache_map(dnbd3_image_t *image);
+void image_markComplete(dnbd3_image_t *image);
+
+int image_saveCacheMap(dnbd3_image_t *image);
 
 dnbd3_image_t* image_get(char *name, uint16_t revision);
 
@@ -22,11 +24,11 @@ void image_killUplinks();
 
 dnbd3_image_t* image_free(dnbd3_image_t *image);
 
-int image_load_all(char *path);
+int image_loadAll(char *path);
 
 int image_create(char *image, int revision, uint64_t size);
 
-int image_generate_crc_file(char *image);
+int image_generateCrcFile(char *image);
 
 // one byte in the map covers 8 4kib blocks, so 32kib per byte
 // "+ (1 << 15) - 1" is required to account for the last bit of

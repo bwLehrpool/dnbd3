@@ -351,8 +351,8 @@ void *net_client_handler(void *dnbd3_client)
 	}
 	exit_client_cleanup: ;
 	if ( image_file != -1 ) close( image_file );
+	client->running = FALSE;
 	dnbd3_remove_client( client );
 	client = dnbd3_free_client( client );
-	pthread_detach( client->thread );
 	return NULL ;
 }

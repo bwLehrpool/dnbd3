@@ -261,13 +261,10 @@ static void* uplink_mainloop(void *data)
 				nextAltCheck = now + SERVER_RTT_DELAY_MAX;
 			} else if ( now >= nextAltCheck ) {
 				// It seems it's time for a check
-				if ( image_is_complete( link->image ) ) {
+				if ( image_isComplete( link->image ) ) {
 					// Quit work if image is complete
 					if ( spin_trylock( &link->image->lock ) == 0 ) {
-						if ( link->image->cache_map != NULL ) {
-							free( link->image->cache_map );
-							link->image->cache_map = NULL;
-						}
+						image_markComplete(link->image);
 						link->image->uplink = NULL;
 						link->shutdown = TRUE;
 						free( link->recvBuffer );
@@ -382,7 +379,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 		memlogf( "[ERROR] lseek() failed when writing to cache for %s", link->image->path );
 	} else {
 		ret = (int)write( link->image->cacheFd, link->recvBuffer, reply.size );
-		if ( ret > 0 ) image_update_cachemap( link->image, start, start + ret, TRUE );
+		if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, TRUE );
 	}
 	// 2) Figure out which clients are interested in it
 	struct iovec iov[2];

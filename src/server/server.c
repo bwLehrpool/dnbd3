@@ -101,7 +101,7 @@ void dnbd3_print_version()
  */
 void dnbd3_cleanup()
 {
-	int i;
+	int i, count;
 
 	_shutdown = TRUE;
 	debug_locks_stop_watchdog();
@@ -124,13 +124,30 @@ void dnbd3_cleanup()
 		dnbd3_client_t * const client = _clients[i];
 		spin_lock( &client->lock );
 		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
-		if ( client->thread != 0 ) pthread_join( client->thread, NULL );
-		_clients[i] = NULL;
+		client->sock = -1;
 		spin_unlock( &client->lock );
-		free( client );
+	}
+	spin_unlock( &_clients_lock );
+	count = -1;
+	while ( count != 0 ) {
+		count = 0;
+		spin_lock( &_clients_lock );
+		for (i = 0; i < _num_clients; ++i) {
+			if ( _clients[i] == NULL ) continue;
+			if ( _clients[i]->running ) {
+				count++;
+			} else {
+				_clients[i] = NULL;
+				dnbd3_free_client( _clients[i] );
+			}
+		}
+		spin_unlock( &_clients_lock );
+		if ( count != 0 ) {
+			printf( "%d clients still active...\n", count );
+			sleep( 1 );
+		}
 	}
 	_num_clients = 0;
-	spin_unlock( &_clients_lock );
 
 	// Clean up images
 	spin_lock( &_images_lock );
@@ -200,7 +217,7 @@ int main(int argc, char *argv[])
 			dnbd3_print_version();
 			break;
 		case 'crc4':
-			return image_generate_crc_file( optarg ) ? 0 : EXIT_FAILURE;
+			return image_generateCrcFile( optarg ) ? 0 : EXIT_FAILURE;
 		case 'asrt':
 			printf( "Testing a failing assertion:\n" );
 			assert( 4 == 5 );
@@ -262,7 +279,7 @@ int main(int argc, char *argv[])
 
 	printf( "Loading images....\n" );
 	// Load all images in base path
-	if ( !image_load_all( NULL ) ) {
+	if ( !image_loadAll( NULL ) ) {
 		printf( "[ERROR] Could not load images.\n" );
 		return EXIT_FAILURE;
 	}
@@ -320,6 +337,7 @@ int main(int argc, char *argv[])
 			dnbd3_client = dnbd3_free_client( dnbd3_client );
 			continue;
 		}
+		pthread_detach( dnbd3_client->thread );
 	}
 
 	dnbd3_cleanup();
@@ -332,7 +350,7 @@ int main(int argc, char *argv[])
 dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 {
 	dnbd3_client_t *dnbd3_client = calloc( 1, sizeof(dnbd3_client_t) );
-	if ( dnbd3_client == NULL ) {
+	if ( dnbd3_client == NULL ) { // This will never happen thanks to memory overcommit
 		memlogf( "[ERROR] Could not alloc dnbd3_client_t for new client." );
 		return NULL ;
 	}
@@ -352,6 +370,7 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 		free( dnbd3_client );
 		return NULL ;
 	}
+	dnbd3_client->running = TRUE;
 	dnbd3_client->sock = fd;
 	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
 	pthread_mutex_init( &dnbd3_client->sendMutex, NULL );
@@ -441,5 +460,5 @@ static void dnbd3_handle_sigterm(int signum)
 void dnbd3_handle_sigusr1(int signum)
 {
 	memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
-	image_load_all( NULL );
+	image_loadAll( NULL );
 }
