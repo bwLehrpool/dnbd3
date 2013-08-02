@@ -101,7 +101,7 @@ static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 		iov[0].iov_base = reply;
 		iov[0].iov_len = sizeof(dnbd3_reply_t);
 		iov[1].iov_base = payload;
-		iov[1].iov_len = size;
+		iov[1].iov_len = (size_t)size;
 		if ( writev( sock, iov, 2 ) != sizeof(dnbd3_reply_t) + size ) {
 			printf( "[DEBUG] Send failed (reply with payload of %u bytes)\n", size );
 			return FALSE;
@@ -178,8 +178,14 @@ void *net_client_handler(void *dnbd3_client)
 		}
 	}
 
-	// client handling mainloop
 	if ( bOk ) {
+		// add artificial delay if applicable
+		if ( client->is_server && _serverPenalty != 0 ) {
+			usleep( _serverPenalty );
+		} else if ( !client->is_server && _clientPenalty != 0 ) {
+			usleep( _clientPenalty );
+		}
+		// client handling mainloop
 		while ( recv_request_header( client->sock, &request ) ) {
 			switch ( request.cmd ) {
 
@@ -238,6 +244,7 @@ void *net_client_handler(void *dnbd3_client)
 									isCached = FALSE;
 									break;
 								}
+								++pos;
 							}
 						}
 						// Last byte

@@ -39,7 +39,7 @@ int image_is_complete(dnbd3_image_t *image)
 	if ( image->working && image->cache_map == NULL ) {
 		return TRUE;
 	}
-	if ( image->filesize == 0 || !image->working ) {
+	if ( image->filesize == 0 ) {
 		return FALSE;
 	}
 	int complete = TRUE, j;
@@ -175,7 +175,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 
 	// Found, see if it works
 	struct stat st;
-	if ( stat( candidate->path, &st ) < 0 ) {
+	if ( candidate->working && stat( candidate->path, &st ) < 0 ) {
 		printf( "[DEBUG] File '%s' has gone away...\n", candidate->path );
 		candidate->working = FALSE; // No file? OUT!
 	}

@@ -133,6 +133,17 @@ extern char *_basePath;
  */
 extern int _vmdkLegacyMode;
 
+/**
+ * How much artificial delay should we add when a server connects to us?
+ */
+extern int _serverPenalty;
+
+/**
+ * How much artificial delay should we add when a client connects to us?
+ */
+extern int _clientPenalty;
+
+
 extern int _shutdown;
 
 void globals_loadConfig();

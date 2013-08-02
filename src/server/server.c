@@ -381,12 +381,6 @@ void dnbd3_remove_client(dnbd3_client_t *client)
 dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {
 	spin_lock( &client->lock );
-	/*
-	 for (it = client->sendqueue; it; it = it->next) {
-	 free( it->data );
-	 }
-	 g_slist_free( client->sendqueue );
-	 */
 	if ( client->sock >= 0 ) close( client->sock );
 	client->sock = -1;
 	if ( client->image != NULL ) image_release( client->image );

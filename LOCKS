@@ -14,7 +14,7 @@ _clients_lock
 _clients[].lock
 _images_lock
 _images[].lock
-uplink.lock
+uplink.queueLock
 _alts_lock
 
 If you need to lock multiple clients at once,

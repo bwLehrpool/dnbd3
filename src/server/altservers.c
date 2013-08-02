@@ -23,6 +23,7 @@ static int signalPipe = -1;
 static dnbd3_alt_server_t _alt_servers[SERVER_MAX_ALTS];
 static int _num_alts = 0;
 static pthread_spinlock_t _alts_lock;
+static int initDone = FALSE;
 
 static pthread_t altThread;
 
@@ -32,10 +33,19 @@ static unsigned int altservers_update_rtt(const dnbd3_host_t * const host, const
 void altserver_init()
 {
 	spin_init( &_alts_lock, PTHREAD_PROCESS_PRIVATE );
+	memset( _alt_servers, 0, SERVER_MAX_ALTS * sizeof(dnbd3_alt_server_t) );
 	if ( 0 != pthread_create( &altThread, NULL, &altserver_main, (void *)NULL ) ) {
 		memlogf( "[ERROR] Could not start altservers connector thread" );
 		exit( EXIT_FAILURE );
 	}
+	initDone = TRUE;
+}
+
+void altservers_shutdown()
+{
+	if ( !initDone ) return;
+	spin_destroy( &_alts_lock );
+	pthread_join( altThread, NULL );
 }
 
 int altservers_load()
@@ -78,7 +88,14 @@ int altservers_add(dnbd3_host_t *host, const char *comment)
 			freeSlot = i;
 		}
 	}
-	if ( freeSlot == -1 ) freeSlot = _num_alts++;
+	if ( freeSlot == -1 ) {
+		if ( _num_alts >= SERVER_MAX_ALTS ) {
+			memlogf( "[WARNING] Cannot add another alt server, maximum of %d already reached.", (int)SERVER_MAX_ALTS );
+			spin_unlock( &_alts_lock );
+			return FALSE;
+		}
+		freeSlot = _num_alts++;
+	}
 	_alt_servers[freeSlot].host = *host;
 	if ( comment != NULL ) snprintf( _alt_servers[freeSlot].comment, COMMENT_LENGTH, "%s", comment );
 	spin_unlock( &_alts_lock );
@@ -103,6 +120,18 @@ void altserver_find_uplink(dnbd3_connection_t *uplink)
 	// End of loop - no free slot
 	spin_unlock( &pendingLock );
 	memlogf( "[WARNING] No more free RTT measurement slots, ignoring a request..." );
+}
+
+/**
+ * The given uplink is about to disappear, so remove it from any queues
+ */
+void altservers_remove_uplink(dnbd3_connection_t *uplink)
+{
+	spin_lock( &pendingLock );
+	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
+		if ( pending[i] == uplink ) pending[i] = NULL;
+	}
+	spin_unlock( &pendingLock );
 }
 
 /**
