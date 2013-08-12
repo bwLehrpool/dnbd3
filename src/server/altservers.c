@@ -107,9 +107,16 @@ int altservers_add(dnbd3_host_t *host, const char *comment)
  */
 void altserver_find_uplink(dnbd3_connection_t *uplink)
 {
-	if ( uplink->rttTestResult == RTT_INPROGRESS ) return;
+	int i;
 	spin_lock( &pendingLock );
-	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
+	if ( uplink->rttTestResult == RTT_INPROGRESS ) {
+		for (i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
+			if ( pending[i] != uplink ) continue;
+			spin_unlock( &pendingLock );
+			return;
+		}
+	}
+	for (i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
 		if ( pending[i] != NULL ) continue;
 		pending[i] = uplink;
 		uplink->rttTestResult = RTT_INPROGRESS;
@@ -190,8 +197,8 @@ int altservers_get(dnbd3_host_t *output, int size)
 {
 	int count = 0, i, j, num;
 	spin_lock( &_alts_lock );
-	if ( size <= _num_alts ) {
-		for (i = 0; i < size; ++i) {
+	if ( size >= _num_alts ) {
+		for (i = 0; i < _num_alts; ++i) {
 			if ( _alt_servers[i].host.type == 0 ) continue;
 			output[count++] = _alt_servers[i].host;
 		}
@@ -426,7 +433,7 @@ static void *altserver_main(void *data)
 				// Measurement done - everything fine so far
 				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000; // µs
 				const unsigned int avg = altservers_update_rtt( &servers[itAlt], rtt );
-				if ( is_same_server( &servers[itAlt], &uplink->currentServer ) ) {
+				if ( uplink->fd != -1 && is_same_server( &servers[itAlt], &uplink->currentServer ) ) {
 					currentRtt = avg;
 					close( sock );
 				} else if ( avg < bestRtt ) {

@@ -23,6 +23,7 @@ char parse_address(char *string, dnbd3_host_t *host)
 	struct in_addr v4;
 	struct in6_addr v6;
 
+	memset( host, 0, sizeof(*host) );
 	// Try IPv4 without port
 	if ( 1 == inet_pton( AF_INET, string, &v4 ) ) {
 		host->type = AF_INET;
@@ -83,11 +84,11 @@ char host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen)
 	if ( targetlen < 10 ) return FALSE;
 	if ( host->type == AF_INET6 ) {
 		*target++ = '[';
-		inet_ntop( AF_INET6, host->addr, target, targetlen - 9 );
+		inet_ntop( AF_INET6, host->addr, target, targetlen - 10 );
 		target += strlen( target );
 		*target++ = ']';
 	} else if ( host->type == AF_INET ) {
-		inet_ntop( AF_INET, host->addr, target, targetlen - 7 );
+		inet_ntop( AF_INET, host->addr, target, targetlen - 8 );
 		target += strlen( target );
 	} else {
 		snprintf( target, targetlen, "<?addrtype=%d>", (int)host->type );

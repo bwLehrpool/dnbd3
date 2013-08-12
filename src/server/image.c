@@ -3,6 +3,7 @@
 #include "memlog.h"
 #include "uplink.h"
 #include "locks.h"
+#include "integrity.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -23,9 +24,9 @@ pthread_spinlock_t _images_lock;
 
 // ##########################################
 
+static int image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static int image_load_all_internal(char *base, char *path);
 static int image_try_load(char *base, char *path);
-static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks);
 static int64_t image_pad(const char *path, const int64_t currentSize);
 
 // ##########################################
@@ -66,6 +67,7 @@ int image_isComplete(dnbd3_image_t *image)
 }
 /**
  * Update cache-map of given image for the given byte range
+ * start (inclusive) - end (exclusive)
  * Locks on: images[].lock
  */
 void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set)
@@ -76,12 +78,12 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	end &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 	start = (uint64_t)(start + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 	int dirty = FALSE;
-	int pos = start;
+	uint64_t pos = start;
 	spin_lock( &image->lock );
 	if ( image->cache_map == NULL ) {
 		// Image seems already complete
-		printf( "[DEBUG] image_update_cachemap with no cache_map: %s", image->path );
 		spin_unlock( &image->lock );
+		printf( "[DEBUG] image_updateCachemap with no cache_map: %s", image->path );
 		return;
 	}
 	while ( pos < end ) {
@@ -96,8 +98,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		}
 		pos += DNBD3_BLOCK_SIZE;
 	}
-	spin_unlock( &image->lock );
-	if ( set && dirty ) {
+	if ( dirty && image->crc32 != NULL ) {
 		// If dirty is set, at least one of the blocks was not cached before, so queue all hash blocks
 		// for checking, even though this might lead to checking some hash block again, if it was
 		// already complete and the block range spanned at least two hash blocks.
@@ -106,12 +107,17 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		end = (end + HASH_BLOCK_SIZE - 1) & ~(uint64_t)(HASH_BLOCK_SIZE - 1);
 		pos = start;
 		while ( pos < end ) {
+			if ( image->cache_map == NULL ) break;
 			const int block = pos / HASH_BLOCK_SIZE;
-			// TODO: Actually queue the hash block for checking as soon as there's a worker for that
-			(void)block;
+			if ( image_isHashBlockComplete( image->cache_map, block, image->filesize ) ) {
+				spin_unlock( &image->lock );
+				integrity_check( image, block );
+				spin_lock( &image->lock );
+			}
 			pos += HASH_BLOCK_SIZE;
 		}
 	}
+	spin_unlock( &image->lock );
 }
 
 /**
@@ -163,15 +169,17 @@ int image_saveCacheMap(dnbd3_image_t *image)
 		spin_lock( &image->lock );
 		image->users--;
 		spin_unlock( &image->lock );
+		free( map );
 		return FALSE;
 	}
 
-	write( fd, map, ((image->filesize + (1 << 15) - 1) >> 15) * sizeof(char) );
+	write( fd, map, size );
 	if ( image->cacheFd != -1 ) {
 		fsync( image->cacheFd );
 	}
 	fsync( fd );
 	close( fd );
+	free( map );
 
 	spin_lock( &image->lock );
 	image->users--;
@@ -224,6 +232,29 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 	candidate->users++;
 	spin_unlock( &candidate->lock );
 	return candidate; // Success :-)
+}
+
+/**
+ * Lock the image by increasing its users count
+ * Returns the image on success, NULL if it is not found in the image list
+ * Every call to image_lock() needs to be followed by a call to image_release() at some point.
+ * Locks on: _images_lock, _images[].lock
+ */
+dnbd3_image_t* image_lock(dnbd3_image_t *image)
+{
+	int i;
+	spin_lock( &_images_lock );
+	for (i = 0; i < _num_images; ++i) {
+		if ( _images[i] == image ) {
+			spin_lock( &image->lock );
+			spin_unlock( &_images_lock );
+			image->users++;
+			spin_unlock( &image->lock );
+			return image;
+		}
+	}
+	spin_unlock( &_images_lock );
+	return NULL ;
 }
 
 /**
@@ -335,6 +366,27 @@ int image_loadAll(char *path)
 		return image_load_all_internal( _basePath, _basePath );
 	}
 	return image_load_all_internal( path, path );
+}
+
+static int image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize)
+{
+	if ( cacheMap == NULL ) return TRUE;
+	const uint32_t end = (block + 1) * HASH_BLOCK_SIZE;
+	if ( end <= fileSize ) {
+		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < end; mapPos += (DNBD3_BLOCK_SIZE * 8)) {
+			if ( cacheMap[mapPos / (DNBD3_BLOCK_SIZE * 8)] != 0xff ) {
+				return FALSE;
+			}
+		}
+	} else {
+		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < fileSize; mapPos += DNBD3_BLOCK_SIZE ) {
+			const int map_y = mapPos >> 15;
+			const int map_x = (mapPos >> 12) & 7; // mod 8
+			const int mask = 1 << map_x;
+			if ( (cacheMap[map_y] & mask) == 0 ) return FALSE;
+		}
+	}
+	return TRUE;
 }
 
 /**
@@ -512,12 +564,15 @@ static int image_try_load(char *base, char *path)
 		// This checks the first block and two random blocks (which might accidentally be the same)
 		// for corruption via the known crc32 list. This is very sloppy and is merely supposed
 		// to detect accidental corruption due to broken dnbd3-proxy functionality or file system
-		// corruption. If the image size is not a multiple of the hash block size, do not take the
-		// last block into consideration. It would always fail.
-		int blcks = hashBlocks;
-		if ( fileSize % HASH_BLOCK_SIZE != 0 ) blcks--;
-		int blocks[] = { 0, rand() % blcks, rand() % blcks, -1 };
-		if ( !image_check_blocks_crc32( fdImage, crc32list, blocks ) ) {
+		// corruption.
+		int blocks[4], index = 0, block; // = { 0, rand() % blcks, rand() % blcks, -1 };
+		if ( image_isHashBlockComplete( cache_map, 0, fileSize ) ) blocks[index++] = 0;
+		block = rand() % hashBlocks;
+		if ( image_isHashBlockComplete( cache_map, block, fileSize ) ) blocks[index++] = block;
+		block = rand() % hashBlocks;
+		if ( image_isHashBlockComplete( cache_map, block, fileSize ) ) blocks[index++] = block;
+		blocks[index] = -1;
+		if ( !image_checkBlocksCrc32( fdImage, crc32list, blocks, fileSize ) ) {
 			memlogf( "[ERROR] Quick integrity check for '%s' failed.", path );
 			goto load_error;
 		}
@@ -809,19 +864,21 @@ int image_generateCrcFile(char *image)
 /**
  * Check the CRC-32 of the given blocks. The array blocks is of variable length.
  * !! pass -1 as the last block so the function knows when to stop !!
+ * Returns TRUE or FALSE
  */
-static int image_check_blocks_crc32(int fd, uint32_t *crc32list, int *blocks)
+int image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, const uint64_t fileSize)
 {
 	char buffer[40000];
 	while ( *blocks != -1 ) {
-		if ( lseek( fd, *blocks * HASH_BLOCK_SIZE, SEEK_SET ) != *blocks * HASH_BLOCK_SIZE ) {
+		if ( lseek( fd, (int64_t)*blocks * HASH_BLOCK_SIZE, SEEK_SET ) != (int64_t)*blocks * HASH_BLOCK_SIZE ) {
 			memlogf( "Seek error" );
 			return FALSE;
 		}
 		uint32_t crc = crc32( 0L, Z_NULL, 0 );
 		int bytes = 0;
-		while ( bytes < HASH_BLOCK_SIZE ) {
-			const int n = MIN(sizeof(buffer), HASH_BLOCK_SIZE - bytes);
+		const int bytesToGo = MIN(HASH_BLOCK_SIZE, fileSize - ((int64_t)*blocks * HASH_BLOCK_SIZE));
+		while ( bytes < bytesToGo ) {
+			const int n = MIN(sizeof(buffer), bytesToGo - bytes);
 			const int r = read( fd, buffer, n );
 			if ( r <= 0 ) {
 				memlogf( "Read error" );
@@ -848,9 +905,6 @@ static int64_t image_pad(const char *path, const int64_t currentSize)
 	int success = FALSE;
 	if ( tmpFd < 0 ) {
 		memlogf( "[WARNING] Can't open image for writing, can't fix %s", path );
-	} else if ( lseek( tmpFd, 0, SEEK_CUR ) != currentSize ) {
-		const int64_t cur = lseek( tmpFd, 0, SEEK_CUR );
-		memlogf( "[WARNING] File size of %s changed when told to extend. (is: %" PRIi64 ", should: %" PRIi64 ")", path, cur, currentSize );
 	} else if ( lseek( tmpFd, currentSize, SEEK_SET ) != currentSize ) {
 		memlogf( "[WARNING] lseek() failed, can't fix %s", path );
 	} else if ( write( tmpFd, buffer, missing ) != missing ) {

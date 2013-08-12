@@ -4,8 +4,9 @@
 #include "../types.h"
 #include "globals.h"
 
-
 int uplink_init(dnbd3_image_t *image);
+
+void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client);
 
 int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint32_t length);
 

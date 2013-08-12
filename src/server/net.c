@@ -28,6 +28,8 @@
 #include <sys/sendfile.h>
 #include <sys/types.h>
 #include <assert.h>
+#include <errno.h>
+#include <inttypes.h>
 
 #include "sockhelper.h"
 #include "helper.h"
@@ -47,7 +49,8 @@ static inline char recv_request_header(int sock, dnbd3_request_t *request)
 	// Read request header from socket
 	if ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
 		if ( ret == 0 ) return FALSE;
-		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d)\n", ret, (int)sizeof(*request) );
+		const int err = errno;
+		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), err );
 		return FALSE;
 	}
 	// Make sure all bytes are in the right order (endianness)
@@ -126,6 +129,7 @@ void *net_client_handler(void *dnbd3_client)
 	char *image_name;
 	uint16_t rid, client_version;
 	uint64_t start, end;
+	char buffer[100];
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
 
@@ -153,7 +157,7 @@ void *net_client_handler(void *dnbd3_client)
 				} else {
 					image = image_get( image_name, rid );
 					if ( image == NULL ) {
-						printf( "[DEBUG] Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
+						//printf( "[DEBUG] Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else if ( !image->working ) {
 						printf( "[DEBUG] Client requested non-working image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else {
@@ -185,6 +189,9 @@ void *net_client_handler(void *dnbd3_client)
 		} else if ( !client->is_server && _clientPenalty != 0 ) {
 			usleep( _clientPenalty );
 		}
+		if ( host_to_string( &client->host, buffer, sizeof buffer ) ) {
+			printf( "[DEBUG] Client %s gets %s\n", buffer, image_name );
+		}
 		// client handling mainloop
 		while ( recv_request_header( client->sock, &request ) ) {
 			switch ( request.cmd ) {
@@ -214,6 +221,7 @@ void *net_client_handler(void *dnbd3_client)
 					send_reply( client->sock, &reply, NULL );
 					break;
 				}
+				//printf( "Request - size: %" PRIu32 ", offset: %" PRIu64 "\n", request.size, request.offset );
 
 				if ( request.size != 0 && image->cache_map != NULL ) {
 					// This is a proxyed image, check if we need to relay the request...

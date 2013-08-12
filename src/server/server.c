@@ -26,6 +26,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <errno.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <assert.h>
@@ -42,6 +43,7 @@
 #include "altservers.h"
 #include "memlog.h"
 #include "globals.h"
+#include "integrity.h"
 
 #define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
 static int sockets[MAX_SERVER_SOCKETS], socket_count = 0;
@@ -116,6 +118,9 @@ void dnbd3_cleanup()
 
 	// Terminate all uplinks
 	image_killUplinks();
+
+	// Terminate integrity checker
+	integrity_shutdown();
 
 	// Clean up clients
 	spin_lock( &_clients_lock );
@@ -258,6 +263,7 @@ int main(int argc, char *argv[])
 	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
 	altserver_init();
+	integrity_init();
 	memlogf( "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
 
 	if ( altservers_load() < 0 ) {
@@ -311,7 +317,8 @@ int main(int argc, char *argv[])
 		len = sizeof(client);
 		fd = accept_any( sockets, socket_count, &client, &len );
 		if ( fd < 0 ) {
-			memlogf( "[ERROR] Client accept failure" );
+			const int err = errno;
+			memlogf( "[ERROR] Client accept failure (err=%d)", err );
 			usleep( 10000 ); // 10ms
 			continue;
 		}
@@ -404,7 +411,10 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 	spin_lock( &client->lock );
 	if ( client->sock >= 0 ) close( client->sock );
 	client->sock = -1;
-	if ( client->image != NULL ) image_release( client->image );
+	if ( client->image != NULL ) {
+		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
+		image_release( client->image );
+	}
 	client->image = NULL;
 	spin_unlock( &client->lock );
 	spin_destroy( &client->lock );

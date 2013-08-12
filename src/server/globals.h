@@ -31,6 +31,7 @@ typedef struct
 	volatile uint64_t to;     // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
 	dnbd3_client_t * volatile client; // Client to send reply to
 	volatile int status;      // status of this entry: ULR_*
+	time_t entered;           // When this request entered the queue (for debugging)
 } dnbd3_queued_request_t;
 
 #define RTT_IDLE 0 // Not in progress
