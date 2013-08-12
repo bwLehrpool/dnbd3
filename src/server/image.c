@@ -371,7 +371,7 @@ int image_loadAll(char *path)
 static int image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize)
 {
 	if ( cacheMap == NULL ) return TRUE;
-	const uint32_t end = (block + 1) * HASH_BLOCK_SIZE;
+	const uint64_t end = (block + 1) * HASH_BLOCK_SIZE;
 	if ( end <= fileSize ) {
 		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < end; mapPos += (DNBD3_BLOCK_SIZE * 8)) {
 			if ( cacheMap[mapPos / (DNBD3_BLOCK_SIZE * 8)] != 0xff ) {
