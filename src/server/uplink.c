@@ -138,13 +138,13 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 	uplink->queue[freeSlot].to = end;
 	uplink->queue[freeSlot].handle = handle;
 	uplink->queue[freeSlot].client = client;
-	uplink->queue[freeSlot].status = (foundExisting ? ULR_PENDING : ULR_NEW);
+	uplink->queue[freeSlot].status = (foundExisting == -1 ? ULR_NEW : ULR_PENDING);
 #ifdef _DEBUG
 	uplink->queue[freeSlot].entered = time( NULL );
 #endif
 	spin_unlock( &uplink->queueLock );
 
-	if ( !foundExisting ) {
+	if ( foundExisting == -1 ) {
 		static uint64_t counter = 1;
 		write( uplink->signal, &counter, sizeof(uint64_t) );
 	}

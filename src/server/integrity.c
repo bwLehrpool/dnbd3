@@ -4,6 +4,7 @@
 #include "image.h"
 #include "globals.h"
 #include "memlog.h"
+#include "helper.h"
 
 #include <pthread.h>
 #include <stdlib.h>

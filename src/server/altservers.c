@@ -420,9 +420,12 @@ static void *altserver_main(void *data)
 				if ( send( sock, &request, sizeof(request), 0 ) != sizeof(request) ) ERROR_GOTO_VA( server_failed,
 				        "[ERROR] Could not request random block for %s", uplink->image->lower_name );
 				// See if requesting the block succeeded ++++++++++++++++++++++
-				if ( recv( sock, &reply, sizeof(reply), MSG_WAITALL ) != sizeof(reply) ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header after CMD_GET_BLOCK (%s)",
-					        uplink->image->lower_name );
+				const int retlen = recv( sock, &reply, sizeof(reply), MSG_WAITALL );
+				if ( retlen != sizeof(reply) ) {
+					char buf[100] = { 0 };
+					host_to_string( &servers[itAlt], buf, 100 );
+					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%d, %s) after CMD_GET_BLOCK (%s)",
+					        retlen, buf, uplink->image->lower_name );
 				}
 				// check reply header
 				fixup_reply( reply );
