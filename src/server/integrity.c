@@ -38,7 +38,9 @@ void integrity_init()
 	assert( queueLen == -1 );
 	pthread_mutex_init( &integrityQueueLock, NULL );
 	pthread_cond_init( &queueSignal, NULL );
+	bRunning = TRUE;
 	if ( 0 != pthread_create( &thread, NULL, &integrity_main, (void *)NULL ) ) {
+		bRunning = FALSE;
 		memlogf( "[WARNING] Could not start integrity check thread. Corrupted images will not be detected." );
 		return;
 	}
@@ -96,10 +98,10 @@ void integrity_check(dnbd3_image_t *image, int block)
 
 static void* integrity_main(void *data)
 {
-	bRunning = TRUE;
 	int i;
 	uint8_t *buffer = NULL;
 	size_t bufferSize = 0;
+	setThreadName( "image-check" );
 	pthread_mutex_lock( &integrityQueueLock );
 	while ( !_shutdown ) {
 		for (i = queueLen - 1; i >= 0; --i) {

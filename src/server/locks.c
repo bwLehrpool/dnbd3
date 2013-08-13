@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include "globals.h"
 #include "memlog.h"
+#include "helper.h"
 
 #define MAXLOCKS 500
 #define MAXTHREADS 500
@@ -254,6 +255,7 @@ void debug_dump_lock_stats()
 
 static void *debug_thread_watchdog(void *something)
 {
+	setThreadName("debug-watchdog");
 	while ( !_shutdown ) {
 		if ( init_done ) {
 			time_t now = time( NULL );

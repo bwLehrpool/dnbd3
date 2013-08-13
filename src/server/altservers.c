@@ -285,6 +285,7 @@ static void *altserver_main(void *data)
 	struct iovec iov[2];
 	struct timespec start, end;
 
+	setThreadName( "altserver-check" );
 	// Make valgrind happy
 	memset( &reply, 0, sizeof(reply) );
 	memset( &request, 0, sizeof(request) );

@@ -38,6 +38,7 @@
 #include "uplink.h"
 #include "altservers.h"
 #include "memlog.h"
+#include "helper.h"
 #include "../serialize.h"
 #include "../config.h"
 #include "../types.h"
@@ -190,7 +191,8 @@ void *net_client_handler(void *dnbd3_client)
 			usleep( _clientPenalty );
 		}
 		if ( host_to_string( &client->host, buffer, sizeof buffer ) ) {
-			printf( "[DEBUG] Client %s gets %s\n", buffer, image_name );
+			//printf( "[DEBUG] Client %s gets %s\n", buffer, image_name );
+			setThreadName( buffer );
 		}
 		// client handling mainloop
 		while ( recv_request_header( client->sock, &request ) ) {

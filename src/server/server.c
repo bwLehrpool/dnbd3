@@ -312,6 +312,8 @@ int main(int argc, char *argv[])
 
 	memlogf( "[INFO] Server is ready..." );
 
+	setThreadName( "client-listener" );
+
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
 	while ( 1 ) {
 		len = sizeof(client);

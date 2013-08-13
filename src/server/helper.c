@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <assert.h>
 #include <sys/stat.h>
+#include <sys/prctl.h> // For thread names
 #include "../types.h"
 #include "../config.h"
 
@@ -171,4 +172,10 @@ int file_alloc(int fd, uint64_t offset, uint64_t size)
 	if ( lseek( fd, offset + size - 1, SEEK_SET ) != offset ) return FALSE; // dumb way
 	if ( write( fd, "", 1 ) != 1 ) return FALSE;
 	return TRUE;
+}
+
+void setThreadName(char *name)
+{
+	if ( strlen( name ) > 16 ) name[16] = '\0';
+	prctl( PR_SET_NAME, (unsigned long)name, 0, 0, 0 );
 }

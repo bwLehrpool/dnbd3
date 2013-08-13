@@ -5,6 +5,7 @@
 #include "image.h"
 #include "helper.h"
 #include "altservers.h"
+#include "helper.h"
 #include <pthread.h>
 #include <sys/socket.h>
 #include <string.h>
@@ -110,7 +111,7 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 		return FALSE;
 	}
 	dnbd3_connection_t * const uplink = client->image->uplink;
-	int foundExisting = FALSE; // Is there a pending request that is a superset of our range?
+	int foundExisting = -1; // Index of a pending request that is a superset of our range, -1 otherwise
 	int i;
 	int freeSlot = -1;
 	const uint64_t end = start + length;
@@ -120,12 +121,12 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 	for (i = 0; i < uplink->queueLen; ++i) {
 		if ( freeSlot == -1 && uplink->queue[i].status == ULR_FREE ) freeSlot = i;
 		if ( uplink->queue[i].status != ULR_PENDING && uplink->queue[i].status != ULR_NEW ) continue;
-		if ( uplink->queue[i].from <= start && uplink->queue[i].to >= end ) {
-			foundExisting = TRUE;
+		if ( foundExisting == -1 && uplink->queue[i].from <= start && uplink->queue[i].to >= end ) {
+			foundExisting = i;
 			break;
 		}
 	}
-	if ( freeSlot == -1 ) {
+	if ( freeSlot == -1 || freeSlot < foundExisting ) { // Second check: If we "attach" to a thread the request has to be added after the existing one, otherwise a race condition might occur where the now request will starve
 		if ( uplink->queueLen >= SERVER_MAX_UPLINK_QUEUE ) {
 			spin_unlock( &uplink->queueLock );
 			memlogf( "[WARNING] Uplink queue is full, consider increasing SERVER_MAX_UPLINK_QUEUE. Dropping client..." );
@@ -168,6 +169,7 @@ static void* uplink_mainloop(void *data)
 	//
 	assert( link != NULL );
 	assert( link->queueLen == 0 );
+	setThreadName( "uplink" );
 	//
 	fdEpoll = epoll_create( 2 );
 	if ( fdEpoll == -1 ) {
@@ -323,8 +325,8 @@ static void* uplink_mainloop(void *data)
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
 					printf( "[DEBUG WARNING] Starving request detected:\n"
-							"%s\n(from %" PRIu64 " to %" PRIu64 "\n", link->queue[i].client->image->lower_name, link->queue[i].from,
-					        link->queue[i].to );
+							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", link->queue[i].client->image->lower_name,
+					        link->queue[i].from, link->queue[i].to, link->queue[i].status );
 				}
 			}
 			spin_unlock( &link->queueLock );
@@ -455,6 +457,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 			dnbd3_queued_request_t * const req = &link->queue[i];
 			if ( req->status != ULR_PROCESSING ) continue;
 			assert( req->from >= start && req->to <= end );
+			dnbd3_client_t * const client = req->client;
 			outReply.cmd = CMD_GET_BLOCK;
 			outReply.handle = req->handle;
 			outReply.size = req->to - req->from;
@@ -463,12 +466,12 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 			iov[1].iov_base = link->recvBuffer + (req->from - start);
 			iov[1].iov_len = outReply.size;
 			fixup_reply( outReply );
-			pthread_mutex_lock( &req->client->sendMutex );
+			req->status = ULR_FREE;
+			pthread_mutex_lock( &client->sendMutex );
 			spin_unlock( &link->queueLock );
-			writev( req->client->sock, iov, 2 );
-			pthread_mutex_unlock( &req->client->sendMutex );
+			writev( client->sock, iov, 2 );
+			pthread_mutex_unlock( &client->sendMutex );
 			spin_lock( &link->queueLock );
-			if ( req->status == ULR_PROCESSING ) req->status = ULR_FREE; // Might have changed in the meantime
 			if ( i > 20 && i == link->queueLen - 1 ) link->queueLen--;
 		}
 		spin_unlock( &link->queueLock );
