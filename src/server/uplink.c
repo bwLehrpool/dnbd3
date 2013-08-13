@@ -169,7 +169,7 @@ static void* uplink_mainloop(void *data)
 	//
 	assert( link != NULL );
 	assert( link->queueLen == 0 );
-	setThreadName( "uplink" );
+	setThreadName( "idle-uplink" );
 	//
 	fdEpoll = epoll_create( 2 );
 	if ( fdEpoll == -1 ) {
@@ -262,8 +262,10 @@ static void* uplink_mainloop(void *data)
 			link->betterFd = -1;
 			link->currentServer = link->betterServer;
 			link->image->working = TRUE;
-			if ( host_to_string( &link->currentServer, buffer, sizeof buffer ) ) {
-				printf( "[DEBUG] Now connected to %s\n", buffer );
+			buffer[0] = '@';
+			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
+				printf( "[DEBUG] Now connected to %s\n", buffer + 1 );
+				setThreadName( buffer );
 			}
 			memset( &ev, 0, sizeof(ev) );
 			ev.events = EPOLLIN;

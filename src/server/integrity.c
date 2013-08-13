@@ -71,7 +71,6 @@ void integrity_shutdown()
  */
 void integrity_check(dnbd3_image_t *image, int block)
 {
-	printf( "Queueing %d of %s\n", block, image->lower_name );
 	int i, freeSlot = -1;
 	pthread_mutex_lock( &integrityQueueLock );
 	for (i = 0; i < queueLen; ++i) {
@@ -90,7 +89,6 @@ void integrity_check(dnbd3_image_t *image, int block)
 		}
 		freeSlot = queueLen++;
 	}
-	printf( "In slot %d\n", freeSlot );
 	checkQueue[freeSlot].image = image;
 	checkQueue[freeSlot].block = block;
 	pthread_cond_signal( &queueSignal );
@@ -144,7 +142,6 @@ static void* integrity_main(void *data)
 		}
 		if ( queueLen == 0 ) {
 			pthread_cond_wait( &queueSignal, &integrityQueueLock );
-			printf( "Queue woke up. %d jobs pending...\n", queueLen );
 		}
 	}
 	pthread_mutex_unlock( &integrityQueueLock );
