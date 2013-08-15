@@ -346,8 +346,6 @@ int main(int argc, char *argv[])
 		}
 		pthread_detach( dnbd3_client->thread );
 	}
-
-	dnbd3_cleanup();
 }
 
 /**
