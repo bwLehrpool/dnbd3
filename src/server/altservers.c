@@ -108,6 +108,7 @@ int altservers_add(dnbd3_host_t *host, const char *comment)
 void altserver_find_uplink(dnbd3_connection_t *uplink)
 {
 	int i;
+	assert( uplink->betterFd == -1 );
 	spin_lock( &pendingLock );
 	if ( uplink->rttTestResult == RTT_INPROGRESS ) {
 		for (i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
@@ -382,16 +383,18 @@ static void *altserver_main(void *data)
 				iov[0].iov_len = sizeof(request);
 				iov[1].iov_base = &serialized;
 				iov[1].iov_len = len;
-				if ( writev( sock, iov, 2 ) != len + sizeof(request) ) goto server_failed;
+				if ( writev( sock, iov, 2 ) != len + sizeof(request) ) {
+					goto server_failed;
+				}
 				// See if selecting the image succeeded ++++++++++++++++++++++++++++++
 				if ( recv( sock, &reply, sizeof(reply), MSG_WAITALL ) != sizeof(reply) ) {
-					//ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header after CMD_SELECT_IMAGE (%s)",
-					//        uplink->image->lower_name );
 					goto server_failed;
 				}
 				// check reply header
 				fixup_reply( reply );
-				if ( reply.cmd != CMD_SELECT_IMAGE || reply.size < 3 || reply.size > MAX_PAYLOAD || reply.magic != dnbd3_packet_magic ) goto server_failed;
+				if ( reply.cmd != CMD_SELECT_IMAGE || reply.size < 3 || reply.size > MAX_PAYLOAD || reply.magic != dnbd3_packet_magic ) {
+					goto server_failed;
+				}
 				// Not found
 				// receive reply payload
 				if ( recv( sock, &serialized, reply.size, MSG_WAITALL ) != reply.size ) {
@@ -402,19 +405,22 @@ static void *altserver_main(void *data)
 				const uint16_t protocol_version = serializer_get_uint16( &serialized );
 				if ( protocol_version < MIN_SUPPORTED_SERVER ) goto server_failed;
 				const char *name = serializer_get_string( &serialized );
-				if ( strcmp( name, uplink->image->lower_name ) != 0 ) {
+				if ( name == NULL || strcmp( name, uplink->image->lower_name ) != 0 ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Server offers image '%s', requested '%s'", name, uplink->image->lower_name );
 				}
 				const uint16_t rid = serializer_get_uint16( &serialized );
-				if ( rid != uplink->image->rid ) ERROR_GOTO_VA( server_failed, "[ERROR] Server provides rid %d, requested was %d (%s)",
-				        (int)rid, (int)uplink->image->rid, uplink->image->lower_name );
+				if ( rid != uplink->image->rid ) {
+					ERROR_GOTO_VA( server_failed, "[ERROR] Server provides rid %d, requested was %d (%s)",
+					        (int)rid, (int)uplink->image->rid, uplink->image->lower_name );
+				}
 				const uint64_t image_size = serializer_get_uint64( &serialized );
-				if ( image_size != uplink->image->filesize ) ERROR_GOTO_VA( server_failed,
-				        "[ERROR] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
-				        image_size, uplink->image->filesize, uplink->image->lower_name );
+				if ( image_size != uplink->image->filesize ) {
+					ERROR_GOTO_VA( server_failed, "[ERROR] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
+					        image_size, uplink->image->filesize, uplink->image->lower_name );
+				}
 				// Request random block ++++++++++++++++++++++++++++++
 				request.cmd = CMD_GET_BLOCK;
-				request.offset = (uplink->image->filesize - 1) & ~(DNBD3_BLOCK_SIZE - 1);
+				request.offset = (((uint64_t)start.tv_nsec | (uint64_t)rand()) * DNBD3_BLOCK_SIZE ) % uplink->image->filesize;
 				request.size = DNBD3_BLOCK_SIZE;
 				fixup_request( request );
 				if ( send( sock, &request, sizeof(request), 0 ) != sizeof(request) ) ERROR_GOTO_VA( server_failed,
@@ -429,10 +435,13 @@ static void *altserver_main(void *data)
 				}
 				// check reply header
 				fixup_reply( reply );
-				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) ERROR_GOTO_VA( server_failed,
-				        "[ERROR] Reply to random block request is %d bytes for %s", reply.size, uplink->image->lower_name );
-				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) ERROR_GOTO_VA( server_failed,
-				        "[ERROR] Could not read random block from socket for %s", uplink->image->lower_name );
+				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
+					ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
+					        reply.size, uplink->image->lower_name );
+				}
+				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
+					ERROR_GOTO_VA( server_failed, "[ERROR] Could not read random block from socket for %s", uplink->image->lower_name );
+				}
 				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
 				// Measurement done - everything fine so far
 				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000; // µs
