@@ -11,8 +11,10 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 #include <string.h>
 #include <assert.h>
+#include <sys/resource.h>
 
 #define CHECK_QUEUE_SIZE 100
 
@@ -101,6 +103,11 @@ static void* integrity_main(void *data)
 	uint8_t *buffer = NULL;
 	size_t bufferSize = 0;
 	setThreadName( "image-check" );
+#if defined(linux) || defined(__linux)
+	// Setting nice of this thread - this is not POSIX conforming, so check if other platforms support this
+	pid_t tid = syscall( SYS_gettid );
+	setpriority( PRIO_PROCESS, tid, 10 );
+#endif
 	pthread_mutex_lock( &integrityQueueLock );
 	while ( !_shutdown ) {
 		for (i = queueLen - 1; i >= 0; --i) {
