@@ -107,12 +107,10 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 	dnbd3_ioctl_t *msg = NULL;
 	//unsigned long irqflags;
 
-	printk("ioctl: A\n");
 	while (dev->disconnecting)
 	{
 		// do nothing
 	}
-	printk("ioctl: B\n");
 
 	if (arg != 0)
 	{
@@ -158,6 +156,10 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 		{
 			result = -EINVAL;
 		}
+		else if (msg == NULL)
+		{
+			result = -EINVAL;
+		}
 		else
 		{
 			if (sizeof(msg->host) != sizeof(dev->cur_server.host))
@@ -198,7 +200,11 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 		break;
 
 	case IOCTL_SWITCH:
-		if (memcmp(&dev->cur_server.host, &msg->host, sizeof(msg->host)))
+		if (msg == NULL)
+		{
+			result = -EINVAL;
+		}
+		else if (memcmp(&dev->cur_server.host, &msg->host, sizeof(msg->host)))
 		{
 			dnbd3_net_disconnect(dev);
 			dev->cur_server.host = msg->host;
@@ -214,17 +220,20 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 		{
 			result = -ENOENT;
 		}
+		else if (dev->new_servers_num >= NUMBER_SERVERS)
+		{
+			result = -EAGAIN;
+		}
+		else if (msg == NULL)
+		{
+			result = -EINVAL;
+		}
 		else
 		{
-			if (dev->new_servers_num >= NUMBER_SERVERS)
-				result = -EAGAIN;
-			else
-			{
-				memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->host, sizeof(msg->host));
-				dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
-				++dev->new_servers_num;
-				result = 0;
-			}
+			memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->host, sizeof(msg->host));
+			dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
+			++dev->new_servers_num;
+			result = 0;
 		}
 		break;
 
