@@ -178,11 +178,22 @@ int main(int argc, char *argv[])
 	int64_t paramSize = -1;
 	int paramRevision = -1;
 	static const char *optString = "c:d:nrsihv?";
-	static const struct option longOpts[] = { { "config", required_argument, NULL, 'c' }, { "delay", required_argument, NULL, 'd' }, {
-	        "nodaemon", no_argument, NULL, 'n' }, { "reload", no_argument, NULL, 'r' }, { "stop", no_argument, NULL, 's' }, { "info",
-	        no_argument, NULL, 'i' }, { "help", no_argument, NULL, 'h' }, { "version", no_argument, NULL, 'v' }, { "crc", required_argument,
-	        NULL, 'crc4' }, { "assert", no_argument, NULL, 'asrt' }, { "create", required_argument, NULL, 'crat' }, { "revision",
-	        required_argument, NULL, 'rvid' }, { "size", required_argument, NULL, 'size' }, { 0, 0, 0, 0 } };
+	static const struct option longOpts[] = {
+	        { "config", required_argument, NULL, 'c' },
+	        { "delay", required_argument, NULL, 'd' },
+	        { "nodaemon", no_argument, NULL, 'n' },
+	        { "reload", no_argument, NULL, 'r' },
+	        { "stop", no_argument, NULL, 's' },
+	        { "info", no_argument, NULL, 'i' },
+	        { "help", no_argument, NULL, 'h' },
+	        { "version", no_argument, NULL, 'v' },
+	        { "crc", required_argument, NULL, 'crc4' },
+	        { "assert", no_argument, NULL, 'asrt' },
+	        { "create", required_argument, NULL, 'crat' },
+	        { "revision", required_argument, NULL, 'rvid' },
+	        { "size", required_argument, NULL, 'size' },
+	        { 0, 0, 0, 0 }
+	};
 
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
