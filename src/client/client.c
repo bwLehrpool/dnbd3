@@ -189,7 +189,6 @@ int main(int argc, char *argv[])
 			break;
 		case 'i':
 			msg.imgname = strdup( optarg );
-			printf( "Image: %s\n", msg.imgname );
 			break;
 		case 'r':
 			msg.rid = atoi( optarg );
@@ -277,8 +276,7 @@ static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const
 		printf( "open() for %s failed.\n", dev );
 		return FALSE;
 	}
-	if ( msg->imgname != NULL )
-	msg->imgnamelen = (uint16_t)strlen( msg->imgname );
+	if ( msg != NULL && msg->imgname != NULL ) msg->imgnamelen = (uint16_t)strlen( msg->imgname );
 	const int ret = ioctl( fd, command, msg );
 	if ( ret < 0 ) {
 		printf( "ioctl() failed.\n" );
