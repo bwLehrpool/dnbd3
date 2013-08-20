@@ -66,7 +66,7 @@ static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const
 static void dnbd3_client_daemon();
 static void dnbd3_daemon_action(int client, int argc, char **argv);
 static int dnbd3_daemon_close(int uid, char *device);
-static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid);
+static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead);
 static int dnbd3_daemon_send(int argc, char **argv);
 static void dnbd3_print_help(char *argv_0);
 static void dnbd3_print_version();
@@ -366,7 +366,7 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 	int opt = 0;
 	int longIndex = 0;
 	char *host = NULL, *image = NULL, *device = NULL;
-	int rid = -1, uid = 0, killMe = FALSE;
+	int rid = 0, uid = 0, killMe = FALSE, ahead = 512;
 	int len;
 
 	optind = 1;
@@ -389,6 +389,9 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		case 'c':
 			device = optarg;
 			break;
+		case 'a':
+			ahead = atoi( optarg );
+			break;
 		case 'k':
 			killMe = TRUE;
 			break;
@@ -396,7 +399,12 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
 
-	if ( killMe && uid == 0 ) {
+	if ( killMe ) {
+		if ( uid != 0 ) {
+			printf( "Ignoring kill request by user %d\n", uid );
+			close( client );
+			return;
+		}
 		printf( "Received kill request; exiting.\n" );
 		close( client );
 		unlink( SOCK_PATH );
@@ -405,15 +413,15 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 
 	if ( device != NULL ) {
 		if ( dnbd3_daemon_close( uid, device ) ) {
-			len = TRUE;
+			len = 0;
 		} else {
-			len = FALSE;
+			len = -1;
 		}
 		send( client, &len, sizeof(len), 0 );
 		return;
 	}
 	if ( host != NULL && image != NULL && rid >= 0 ) {
-		device = dnbd3_daemon_open( uid, host, image, rid );
+		device = dnbd3_daemon_open( uid, host, image, rid, ahead );
 		if ( device != NULL ) {
 			len = strlen( device );
 			send( client, &len, sizeof(len), 0 );
@@ -458,7 +466,7 @@ static int dnbd3_daemon_close(int uid, char *device)
 	return FALSE;
 }
 
-static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid)
+static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead)
 {
 	int i, sameUser = 0;
 	struct stat st;
@@ -490,7 +498,7 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid)
 		msg.imgnamelen = strlen( image );
 		msg.rid = rid;
 		msg.is_server = FALSE;
-		msg.read_ahead_kb = 512;
+		msg.read_ahead_kb = readAhead;
 		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) {
 			openDevices[i] = uid;
 			printf( "Device %s now occupied by %d\n", dev, uid );
@@ -541,10 +549,10 @@ static int dnbd3_daemon_send(int argc, char **argv)
 		close( s );
 		return FALSE;
 	}
-	if ( len < 0 ) {
-		printf( "Daemon returned error code %d\n", len );
+	if ( len <= 0 ) {
+		printf( "Daemon returned exit code %d\n", -len );
 		close( s );
-		return FALSE;
+		exit( -len );
 	}
 	if ( len + 4 > SOCK_BUFFER ) {
 		printf( "Reply too long (is %d bytes)\n", len );
@@ -564,7 +572,7 @@ static int dnbd3_daemon_send(int argc, char **argv)
 static void dnbd3_print_help(char *argv_0)
 {
 	printf( "\nUsage: %s\n"
-			"\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -f <file> || -c <device>\n\n", argv_0 );
+			"\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c <device>\n\n", argv_0 );
 	printf( "Start the DNBD3 client.\n" );
 	//printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
 	printf( "-h or --host \t\t Host running dnbd3-server.\n" );
@@ -576,6 +584,10 @@ static void dnbd3_print_help(char *argv_0)
 	printf( "-s or --switch \t\t Switch dnbd3-server on device (DEBUG).\n" );
 	printf( "-H or --help \t\t Show this help text and quit.\n" );
 	printf( "-V or --version \t Show version and quit.\n\n" );
+	printf( "\t--daemon \t Run as helper daemon\n" );
+	printf( "\t--kill \t Kill running helper daemon\n" );
+	printf( "The helper daemon makes it possible for normal users to connect dnbd3 devices.\n" );
+	printf( "The client binary needs to be a setuid program for this to work!\n\n" );
 	exit( EXIT_SUCCESS );
 }
 
