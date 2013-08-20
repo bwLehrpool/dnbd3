@@ -57,6 +57,7 @@ static const struct option longOpts[] = {
         { "version", no_argument, NULL, 'V' },
         { "daemon", no_argument, NULL, 'D' },
         { "nofork", no_argument, NULL, 'N' },
+        { "kill", no_argument, NULL, 'k' },
         { "user", required_argument, NULL, 'U' }, // Only used in daemon mode
         { 0, 0, 0, 0 }
 };
@@ -66,6 +67,7 @@ static void dnbd3_client_daemon();
 static void dnbd3_daemon_action(int client, int argc, char **argv);
 static int dnbd3_daemon_close(int uid, char *device);
 static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid);
+static int dnbd3_daemon_send(int argc, char **argv);
 static void dnbd3_print_help(char *argv_0);
 static void dnbd3_print_version();
 
@@ -223,6 +225,14 @@ int main(int argc, char *argv[])
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
 
+	// See if socket exists, if so, try to send to daemon
+	struct stat st;
+	if ( stat( SOCK_PATH, &st ) == 0 ) {
+		if ( dnbd3_daemon_send( argc, argv ) ) exit( 0 );
+		printf( "Failed.\n" );
+		exit( 1 );
+	}
+
 	// Direct requests
 
 	// In case the client was invoked as a suid binary, change uid back to original user
@@ -282,6 +292,14 @@ static void dnbd3_client_daemon()
 	int listener, client;
 	struct sockaddr_un addrLocal, addrRemote;
 	char buffer[SOCK_BUFFER];
+	struct timeval tv;
+	int done, ret, len;
+	socklen_t socklen;
+
+	if ( geteuid() != 0 ) {
+		printf( "Only root can run the dnbd3-client in daemon mode!\n" );
+		exit( 1 );
+	}
 
 	if ( (listener = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1 ) {
 		perror( "socket" );
@@ -289,12 +307,13 @@ static void dnbd3_client_daemon()
 	}
 
 	addrLocal.sun_family = AF_UNIX;
-	strcpy( addrLocal.sun_path, SOCK_PATH );
+	snprintf( addrLocal.sun_path, sizeof(addrLocal.sun_path), "%s", SOCK_PATH );
 	unlink( addrLocal.sun_path );
 	if ( bind( listener, (struct sockaddr *)&addrLocal, sizeof(addrLocal) ) < 0 ) {
 		perror( "bind" );
 		exit( 1 );
 	}
+	chmod( addrLocal.sun_path, 0600 );
 	if ( listen( listener, 5 ) == -1 ) {
 		perror( "listen" );
 		exit( 1 );
@@ -303,8 +322,6 @@ static void dnbd3_client_daemon()
 	memset( openDevices, -1, sizeof(openDevices) );
 
 	for (;;) {
-		int done, ret, len;
-		socklen_t socklen;
 		socklen = sizeof(addrRemote);
 		if ( (client = accept( listener, (struct sockaddr *)&addrRemote, &socklen )) == -1 ) {
 			printf( "accept error %d\n", (int)errno);
@@ -312,22 +329,22 @@ static void dnbd3_client_daemon()
 			continue;
 		}
 
-		ret = recv( client, &len, sizeof(len), 0 );
-		if ( ret != sizeof(len) || len + 4 > SOCK_BUFFER ) { // Leave a little room (at least one byte for the appended nullchar)
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+		setsockopt( client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv) );
+		setsockopt( client, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv) );
+
+		ret = recv( client, &len, sizeof(len), MSG_WAITALL );
+		if ( ret != sizeof(len) || len <= 0 || len + 4 > SOCK_BUFFER ) { // Leave a little room (at least one byte for the appended nullchar)
 			printf( "Error reading length field\n" );
 			close( client );
 			continue;
 		}
-		done = 0;
-		while ( done < len ) {
-			ret = recv( client, buffer + done, len - done, 0 );
-			if ( ret <= 0 ) {
-				printf( "receiving payload from client failed (%d/%d)\n", done, len );
-				break;
-			}
-		}
+		done = recv( client, buffer, len, MSG_WAITALL );
 
-		if ( done == len ) {
+		if ( done != len ) {
+			printf( "receiving payload from client failed (%d/%d)\n", done, len );
+		} else {
 			buffer[len] = '\0';
 			char *pos = buffer, *end = buffer + len;
 			int argc = 1;
@@ -351,9 +368,10 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 	int opt = 0;
 	int longIndex = 0;
 	char *host = NULL, *image = NULL, *device = NULL;
-	int rid = -1, uid = 0;
+	int rid = -1, uid = 0, killMe = FALSE;
 	int len;
 
+	optind = 1;
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
 	while ( opt != -1 ) {
@@ -373,8 +391,18 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		case 'c':
 			device = optarg;
 			break;
+		case 'k':
+			killMe = TRUE;
+			break;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
+	}
+
+	if ( killMe && uid == 0 ) {
+		printf( "Received kill request; exiting.\n" );
+		close( client );
+		unlink( SOCK_PATH );
+		exit( 0 );
 	}
 
 	if ( device != NULL ) {
@@ -392,6 +420,9 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 			len = strlen( device );
 			send( client, &len, sizeof(len), 0 );
 			send( client, device, len, 0 );
+		} else {
+			len = -1;
+			send( client, &len, sizeof(len), 0 );
 		}
 		return;
 	}
@@ -434,6 +465,7 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid)
 	int i, sameUser = 0;
 	struct stat st;
 	static char dev[DEV_LEN];
+	printf( "Opening a device for %s on %s\n", image, host );
 	// Check number of open devices
 	for (i = 0; i < MAX_DEVS; ++i) {
 		if ( openDevices[i] == uid ) sameUser++;
@@ -471,6 +503,64 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid)
 	// All devices in use
 	printf( "No more free devices. All %d are in use :-(\n", i );
 	return NULL ;
+}
+
+static int dnbd3_daemon_send(int argc, char **argv)
+{
+	const int uid = getuid();
+	int s, i, len;
+	struct sockaddr_un remote;
+	char buffer[SOCK_BUFFER];
+
+	if ( (s = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1 ) {
+		perror( "socket" );
+		return FALSE;
+	}
+
+	remote.sun_family = AF_UNIX;
+	snprintf( remote.sun_path, sizeof(remote.sun_path), "%s", SOCK_PATH );
+	if ( connect( s, (struct sockaddr *)&remote, sizeof(remote) ) == -1 ) {
+		perror( "connect" );
+		close( s );
+		return FALSE;
+	}
+	// (Re)build argument string into a single one, arguments separated by null chars
+	char *pos = buffer, *end = buffer + SOCK_BUFFER;
+	pos += snprintf( pos, end - pos, "--user%c%d", '\0', uid ) + 1;
+	for (i = 1; i < argc && pos < end; ++i) {
+		pos += snprintf( pos, end - pos, "%s", argv[i] ) + 1;
+	}
+	// Send
+	len = (int)(pos - buffer);
+	if ( send( s, &len, sizeof(len), 0 ) != sizeof(len) || send( s, buffer, len, 0 ) != len ) {
+		perror( "Sending request to daemon failed" );
+		close( s );
+		return FALSE;
+	}
+	// Read reply
+	if ( recv( s, &len, sizeof(len), MSG_WAITALL ) != sizeof(len) ) {
+		perror( "Reading length-field from daemon failed" );
+		close( s );
+		return FALSE;
+	}
+	if ( len < 0 ) {
+		printf( "Daemon returned error code %d\n", len );
+		close( s );
+		return FALSE;
+	}
+	if ( len + 4 > SOCK_BUFFER ) {
+		printf( "Reply too long (is %d bytes)\n", len );
+		close( s );
+		return FALSE;
+	}
+	if ( recv( s, buffer, len, MSG_WAITALL ) != len ) {
+		perror( "Reading reply payload from daemon failed" );
+		close( s );
+		return FALSE;
+	}
+	buffer[len] = '\0';
+	printf( "%s", buffer );
+	return TRUE;
 }
 
 static void dnbd3_print_help(char *argv_0)
