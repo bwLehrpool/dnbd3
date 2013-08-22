@@ -165,6 +165,7 @@ int main(int argc, char *argv[])
 
 	int close_dev = 0;
 	int switch_host = 0;
+	int killSwitch = FALSE;
 
 	dnbd3_ioctl_t msg;
 	memset( &msg, 0, sizeof(dnbd3_ioctl_t) );
@@ -219,6 +220,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'D':
 			dnbd3_client_daemon();
+			break;
+		case 'k':
+			killSwitch = TRUE;
 			break;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
@@ -588,7 +592,6 @@ static void dnbd3_print_help(char *argv_0)
 	printf( "\t--kill \t Kill running helper daemon\n" );
 	printf( "The helper daemon makes it possible for normal users to connect dnbd3 devices.\n" );
 	printf( "The client binary needs to be a setuid program for this to work!\n\n" );
-	exit( EXIT_SUCCESS );
 }
 
 void dnbd3_print_version()
