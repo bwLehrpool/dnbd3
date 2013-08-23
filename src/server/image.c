@@ -4,6 +4,8 @@
 #include "uplink.h"
 #include "locks.h"
 #include "integrity.h"
+#include "protocol.h"
+#include "sockhelper.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -15,6 +17,7 @@
 #include <dirent.h>
 #include <zlib.h>
 #include <inttypes.h>
+#include <pthread.h>
 
 // ##########################################
 
@@ -22,12 +25,25 @@ dnbd3_image_t *_images[SERVER_MAX_IMAGES];
 int _num_images = 0;
 pthread_spinlock_t _images_lock;
 
+static pthread_mutex_t remoteCloneLock = PTHREAD_MUTEX_INITIALIZER;
+#define NAMELEN  500
+#define CACHELEN 100
+typedef struct
+{
+	char name[NAMELEN];
+	uint16_t rid;
+	time_t deadline;
+} imagecache;
+static imagecache remoteCloneCache[CACHELEN];
+static int remoteCloneCacheIndex = -1;
+
 // ##########################################
 
 static int image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static int image_load_all_internal(char *base, char *path);
 static int image_try_load(char *base, char *path);
 static int64_t image_pad(const char *path, const int64_t currentSize);
+static int image_clone(int sock, dnbd3_host_t *server, char *name, uint16_t revision, uint64_t imageSize);
 
 // ##########################################
 
@@ -588,7 +604,9 @@ static int image_try_load(char *base, char *path)
 			memlogf( "[INFO] Found CRC-32 list for already loaded image, adding...", path );
 			existing->crc32 = crc32list;
 			crc32list = NULL;
-		} else {
+			function_return = TRUE;
+			goto load_error;
+		} else { // Nothing changed about the existing image, so do nothing
 			function_return = TRUE;
 			goto load_error;
 		}
@@ -730,6 +748,104 @@ int image_create(char *image, int revision, uint64_t size)
 }
 
 /**
+ * Does the same as image_get, but if the image is not found locally,
+ * it will try to clone it from an authoritative dnbd3 server and return the
+ * image. If the return value is not NULL, image_release needs to be called
+ * on the image at some point.
+ * Locks on: remoteCloneLock, _images_lock, _images[].lock
+ */
+dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
+{
+	// TODO: Simply return image_get if no authoritative servers are configured
+	int i;
+	const size_t len = strlen( name );
+	// Sanity check
+	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL ;
+	// Already existing locally?
+	dnbd3_image_t *image = image_get( name, revision );
+	if ( image != NULL ) return image;
+	// Doesn't exist, try remote if not already tried it recently
+	if ( remoteCloneCacheIndex == -1 ) {
+		remoteCloneCacheIndex = 0;
+		memset( remoteCloneCache, 0, sizeof(remoteCloneCache) );
+	}
+	const time_t now = time( NULL );
+
+	char *cmpname = name;
+	if ( len >= NAMELEN ) cmpname += 1 + len - NAMELEN;
+	pthread_mutex_lock( &remoteCloneLock );
+	for (i = 0; i < CACHELEN; ++i) {
+		if ( remoteCloneCache[i].rid != revision || strcmp( cmpname, remoteCloneCache[i].name ) != 0 ) continue;
+		if ( remoteCloneCache[i].deadline < now ) {
+			remoteCloneCache[i].name[0] = '\0';
+			continue;
+		}
+		pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
+		return NULL ;
+	}
+	// Re-check to prevent two clients at the same time triggering this
+	image = image_get( name, revision );
+	if ( image != NULL ) {
+		pthread_mutex_unlock( &remoteCloneLock );
+		return image;
+	}
+	// Reaching this point means we should contact an authority server
+	serialized_buffer_t serialized;
+	// Mark as recently checked
+	remoteCloneCacheIndex = (remoteCloneCacheIndex + 1) % CACHELEN;
+	remoteCloneCache[remoteCloneCacheIndex].deadline = now + SERVER_REMOTE_IMAGE_CHECK_CACHETIME;
+	snprintf( remoteCloneCache[remoteCloneCacheIndex].name, NAMELEN, "%s", cmpname );
+	remoteCloneCache[remoteCloneCacheIndex].rid = revision;
+	for (;;) {
+		dnbd3_host_t server; // TODO: Get server :-)
+		int sock = sock_connect( &server, 500, 1500 );
+		if ( sock < 0 ) continue;
+		if ( !dnbd3_select_image( sock, name, revision, FLAGS8_SERVER ) ) goto server_fail;
+		uint16_t remoteVersion, remoteRid;
+		uint64_t remoteImageSize;
+		char *remoteName;
+		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
+		if ( remoteVersion < MIN_SUPPORTED_SERVER ) goto server_fail;
+		if ( revision != 0 && remoteVersion != revision ) goto server_fail;
+		if ( remoteImageSize < DNBD3_BLOCK_SIZE || remoteName == NULL || strcmp( name, remoteName ) != 0 ) goto server_fail;
+		image_clone( sock, &server, name, remoteRid, remoteImageSize );
+		break;
+		server_fail: ;
+		close( sock );
+	}
+	pthread_mutex_unlock( &remoteCloneLock );
+	return image_get( name, revision );
+}
+
+static int image_clone(int sock, dnbd3_host_t *server, char *name, uint16_t revision, uint64_t imageSize)
+{
+	// Allocate disk space and create cache map
+	if ( !image_create( name, revision, imageSize ) ) return FALSE;
+	// CRC32
+	const size_t len = strlen( _basePath ) + strlen( name ) + 20;
+	char crcFile[len];
+	snprintf( crcFile, len, "%s/%s.r%d.crc", _basePath, name, (int)revision );
+	if ( !file_exists( crcFile ) ) {
+		// Get crc32list from remote server
+		size_t crc32len = IMGSIZE_TO_HASHBLOCKS(imageSize) * sizeof(uint32_t);
+		uint8_t *crc32 = malloc( crc32len );
+		if ( !dnbd3_get_crc32( sock, crc32, &crc32len ) ) {
+			free( crc32 );
+			return FALSE;
+		}
+		if ( crc32len > 0 ) {
+			int fd = open( crcFile, O_WRONLY | O_CREAT, 0640 );
+			write( fd, crc32, crc32len );
+			close( fd );
+		}
+		free( crc32 );
+	}
+	// HACK: Chop of ".crc" to get the image file name
+	crcFile[strlen( crcFile ) - 4] = '\0';
+	return image_try_load( _basePath, crcFile );
+}
+
+/**
  * Generate the crc32 block list file for the given file.
  * This function wants a plain file name instead of a dnbd3_image_t,
  * as it can be used directly from the command line.
@@ -741,7 +857,7 @@ int image_generateCrcFile(char *image)
 		printf( "Could not open %s.\n", image );
 		return FALSE;
 	}
-	// force size to be multiple of DNBD3_BLOCK_SIZE
+// force size to be multiple of DNBD3_BLOCK_SIZE
 	int64_t fileLen = lseek( fdImage, 0, SEEK_END );
 	if ( fileLen <= 0 ) {
 		printf( "Error seeking to end, or file is empty.\n" );
@@ -778,7 +894,7 @@ int image_generateCrcFile(char *image)
 		close( fdImage );
 		return FALSE;
 	}
-	// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
+// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
 	if ( write( fdCrc, crcFile, 4 ) != 4 ) {
 		printf( "Write error\n" );
 		close( fdImage );
@@ -829,7 +945,7 @@ int image_generateCrcFile(char *image)
 	close( fdImage );
 	printf( "done!\nGenerating master-crc..." );
 	fflush( stdout );
-	// File is written - read again to calc master crc
+// File is written - read again to calc master crc
 	if ( lseek( fdCrc, 4, SEEK_SET ) != 4 ) {
 		printf( "Could not seek to beginning of crc list in file\n" );
 		close( fdCrc );

@@ -14,7 +14,7 @@
 #include <inttypes.h>
 #include <time.h>
 #include <stdio.h>
-#include "../serialize.h"
+#include "protocol.h"
 
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLock;
@@ -277,20 +277,14 @@ static void *altserver_main(void *data)
 	struct epoll_event ev, events[MAXEVENTS];
 	int readPipe = -1, fdEpoll = -1;
 	int numSocks, ret, itLink, itAlt, numAlts;
-	int found, len;
+	int found;
 	char buffer[DNBD3_BLOCK_SIZE ];
-	dnbd3_host_t servers[ALTS + 1];
-	dnbd3_request_t request;
 	dnbd3_reply_t reply;
+	dnbd3_host_t servers[ALTS + 1];
 	serialized_buffer_t serialized;
-	struct iovec iov[2];
 	struct timespec start, end;
 
 	setThreadName( "altserver-check" );
-	// Make valgrind happy
-	memset( &reply, 0, sizeof(reply) );
-	memset( &request, 0, sizeof(request) );
-	request.magic = dnbd3_packet_magic;
 	// Init spinlock
 	spin_init( &pendingLock, PTHREAD_PROCESS_PRIVATE );
 	// Init waiting links queue
@@ -370,71 +364,43 @@ static void *altserver_main(void *data)
 				int sock = sock_connect( &servers[itAlt], 750, 1250 );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
-				serializer_reset_write( &serialized );
-				serializer_put_uint16( &serialized, PROTOCOL_VERSION );
-				serializer_put_string( &serialized, uplink->image->lower_name );
-				serializer_put_uint16( &serialized, uplink->image->rid );
-				serializer_put_uint8( &serialized, 1 ); // isServer = TRUE
-				len = serializer_get_written_length( &serialized );
-				request.cmd = CMD_SELECT_IMAGE;
-				request.size = len;
-				fixup_request( request );
-				iov[0].iov_base = &request;
-				iov[0].iov_len = sizeof(request);
-				iov[1].iov_base = &serialized;
-				iov[1].iov_len = len;
-				if ( writev( sock, iov, 2 ) != len + sizeof(request) ) {
+				if ( !dnbd3_select_image( sock, uplink->image->lower_name, uplink->image->rid, FLAGS8_SERVER ) ) {
 					goto server_failed;
 				}
 				// See if selecting the image succeeded ++++++++++++++++++++++++++++++
-				if ( recv( sock, &reply, sizeof(reply), MSG_WAITALL ) != sizeof(reply) ) {
+				uint16_t protocolVersion, rid;
+				uint64_t imageSize;
+				char *name;
+				if ( !dnbd3_select_image_reply( &serialized, sock, &protocolVersion, &name, &rid, &imageSize ) ) {
 					goto server_failed;
 				}
-				// check reply header
-				fixup_reply( reply );
-				if ( reply.cmd != CMD_SELECT_IMAGE || reply.size < 3 || reply.size > MAX_PAYLOAD || reply.magic != dnbd3_packet_magic ) {
-					goto server_failed;
-				}
-				// Not found
-				// receive reply payload
-				if ( recv( sock, &serialized, reply.size, MSG_WAITALL ) != reply.size ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Cold not read CMD_SELECT_IMAGE payload (%s)", uplink->image->lower_name );
-				}
-				// handle/check reply payload
-				serializer_reset_read( &serialized, reply.size );
-				const uint16_t protocol_version = serializer_get_uint16( &serialized );
-				if ( protocol_version < MIN_SUPPORTED_SERVER ) goto server_failed;
-				const char *name = serializer_get_string( &serialized );
+				if ( protocolVersion < MIN_SUPPORTED_SERVER ) goto server_failed;
 				if ( name == NULL || strcmp( name, uplink->image->lower_name ) != 0 ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Server offers image '%s', requested '%s'", name, uplink->image->lower_name );
 				}
-				const uint16_t rid = serializer_get_uint16( &serialized );
 				if ( rid != uplink->image->rid ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Server provides rid %d, requested was %d (%s)",
 					        (int)rid, (int)uplink->image->rid, uplink->image->lower_name );
 				}
-				const uint64_t image_size = serializer_get_uint64( &serialized );
-				if ( image_size != uplink->image->filesize ) {
+				if ( imageSize != uplink->image->filesize ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
-					        image_size, uplink->image->filesize, uplink->image->lower_name );
+					        imageSize, uplink->image->filesize, uplink->image->lower_name );
 				}
 				// Request random block ++++++++++++++++++++++++++++++
-				request.cmd = CMD_GET_BLOCK;
-				request.offset = (((uint64_t)start.tv_nsec | (uint64_t)rand()) * DNBD3_BLOCK_SIZE ) % uplink->image->filesize;
-				request.size = DNBD3_BLOCK_SIZE;
 				fixup_request( request );
-				if ( send( sock, &request, sizeof(request), 0 ) != sizeof(request) ) ERROR_GOTO_VA( server_failed,
-				        "[ERROR] Could not request random block for %s", uplink->image->lower_name );
+				if ( !dnbd3_get_block( sock,
+				        (((uint64_t)start.tv_nsec | (uint64_t)rand()) * DNBD3_BLOCK_SIZE )% uplink->image->filesize,
+				        DNBD3_BLOCK_SIZE) ) {
+					ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", uplink->image->lower_name );
+				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
-				const int retlen = recv( sock, &reply, sizeof(reply), MSG_WAITALL );
-				if ( retlen != sizeof(reply) ) {
+				if ( !dnbd3_get_reply( sock, &reply ) ) {
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
-					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%d, %s) after CMD_GET_BLOCK (%s)",
-					        retlen, buf, uplink->image->lower_name );
+					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
+					        buf, uplink->image->lower_name );
 				}
 				// check reply header
-				fixup_reply( reply );
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
 					        reply.size, uplink->image->lower_name );

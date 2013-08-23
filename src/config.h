@@ -36,6 +36,8 @@
 #define SERVER_RTT_DELAY_INIT 5
 #define SERVER_RTT_DELAY_MAX 15
 
+#define SERVER_REMOTE_IMAGE_CHECK_CACHETIME 600 // 10 minutes
+
 // +++++ Network +++++
 // Default port
 #define PORT 5003
