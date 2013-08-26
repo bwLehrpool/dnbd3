@@ -27,14 +27,19 @@ static int initDone = FALSE;
 
 static pthread_t altThread;
 
-static void *altserver_main(void *data);
-static unsigned int altservers_update_rtt(const dnbd3_host_t * const host, const unsigned int rtt);
+static void *altservers_main(void *data);
+static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const unsigned int rtt);
 
-void altserver_init()
+int altservers_getCount()
+{
+	return _num_alts;
+}
+
+void altservers_init()
 {
 	spin_init( &_alts_lock, PTHREAD_PROCESS_PRIVATE );
 	memset( _alt_servers, 0, SERVER_MAX_ALTS * sizeof(dnbd3_alt_server_t) );
-	if ( 0 != pthread_create( &altThread, NULL, &altserver_main, (void *)NULL ) ) {
+	if ( 0 != pthread_create( &altThread, NULL, &altservers_main, (void *)NULL ) ) {
 		memlogf( "[ERROR] Could not start altservers connector thread" );
 		exit( EXIT_FAILURE );
 	}
@@ -105,7 +110,7 @@ int altservers_add(dnbd3_host_t *host, const char *comment)
 /**
  * ONLY called from the passed uplink's main thread
  */
-void altserver_find_uplink(dnbd3_connection_t *uplink)
+void altservers_findUplink(dnbd3_connection_t *uplink)
 {
 	int i;
 	assert( uplink->betterFd == -1 );
@@ -133,7 +138,7 @@ void altserver_find_uplink(dnbd3_connection_t *uplink)
 /**
  * The given uplink is about to disappear, so remove it from any queues
  */
-void altservers_remove_uplink(dnbd3_connection_t *uplink)
+void altservers_removeUplink(dnbd3_connection_t *uplink)
 {
 	spin_lock( &pendingLock );
 	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
@@ -146,7 +151,7 @@ void altservers_remove_uplink(dnbd3_connection_t *uplink)
  * Get <size> known (working) alt servers, ordered by network closeness
  * (by finding the smallest possible subnet)
  */
-int altservers_get_matching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
+int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
 {
 	if ( host == NULL || host->type == 0 || _num_alts == 0 || output == NULL || size <= 0 ) return 0;
 	int i, j;
@@ -161,11 +166,11 @@ int altservers_get_matching(dnbd3_host_t *host, dnbd3_server_entry_t *output, in
 			// Trivial - this is the first entry
 			output[0].host = _alt_servers[i].host;
 			output[0].failures = 0;
-			distance[0] = altservers_net_closeness( host, &output[0].host );
+			distance[0] = altservers_netCloseness( host, &output[0].host );
 			count++;
 		} else {
 			// Other entries already exist, insert in proper position
-			const int dist = altservers_net_closeness( host, &_alt_servers[i].host );
+			const int dist = altservers_netCloseness( host, &_alt_servers[i].host );
 			for (j = 0; j < size; ++j) {
 				if ( j < count && dist <= distance[j] ) continue;
 				if ( j > count ) break; // Should never happen but just in case...
@@ -185,7 +190,7 @@ int altservers_get_matching(dnbd3_host_t *host, dnbd3_server_entry_t *output, in
 			}
 		}
 	}
-	// "if count < size then add servers of other address families"
+	// TODO: "if count < size then add servers of other address families"
 	spin_unlock( &_alts_lock );
 	return count;
 }
@@ -196,28 +201,22 @@ int altservers_get_matching(dnbd3_host_t *host, dnbd3_server_entry_t *output, in
  */
 int altservers_get(dnbd3_host_t *output, int size)
 {
-	int count = 0, i, j, num;
+	if ( size <= 0 ) return 0;
+	int count = 0, i;
 	spin_lock( &_alts_lock );
-	if ( size >= _num_alts ) {
-		for (i = 0; i < _num_alts; ++i) {
-			if ( _alt_servers[i].host.type == 0 ) continue;
-			output[count++] = _alt_servers[i].host;
-		}
-	} else {
-		int which[_num_alts]; // Generate random order over _num_alts
-		for (i = 0; i < _num_alts; ++i) {
-			again: ;
-			num = rand() % _num_alts;
-			for (j = 0; j < i; ++j) {
-				if ( which[j] == num ) goto again;
-			}
-			which[i] = num;
-		} // Now pick <size> working alt servers in that generated order
-		for (i = 0; i < size; ++i) {
-			if ( _alt_servers[which[i]].host.type == 0 ) continue;
-			output[count++] = _alt_servers[which[i]].host;
-			if ( count >= size ) break;
-		}
+	// Flip first server in list with a random one every time this is called
+	if ( _num_alts > 1 ) {
+		const dnbd3_alt_server_t tmp = _alt_servers[0];
+		do {
+			i = rand() % _num_alts;
+		} while ( i == 0 );
+		_alt_servers[0] = _alt_servers[i];
+		_alt_servers[i] = tmp;
+	}
+	for (i = 0; i < _num_alts; ++i) {
+		if ( _alt_servers[i].host.type == 0 ) continue;
+		output[count++] = _alt_servers[i].host;
+		if ( count >= size ) break;
 	}
 	spin_unlock( &_alts_lock );
 	return count;
@@ -226,7 +225,7 @@ int altservers_get(dnbd3_host_t *output, int size)
 /**
  * Update rtt history of given server - returns the new average for that server
  */
-static unsigned int altservers_update_rtt(const dnbd3_host_t * const host, const unsigned int rtt)
+static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const unsigned int rtt)
 {
 	unsigned int avg = rtt;
 	int i;
@@ -256,7 +255,7 @@ static unsigned int altservers_update_rtt(const dnbd3_host_t * const host, const
  * matching bits from the left of the address. Does not count individual bits but
  * groups of 4 for speed.
  */
-int altservers_net_closeness(dnbd3_host_t *host1, dnbd3_host_t *host2)
+int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 {
 	if ( host1 == NULL || host2 == NULL || host1->type != host2->type ) return -1;
 	int retval = 0;
@@ -270,7 +269,7 @@ int altservers_net_closeness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 	return retval;
 }
 
-static void *altserver_main(void *data)
+static void *altservers_main(void *data)
 {
 	const int MAXEVENTS = 3;
 	const int ALTS = 4;
@@ -411,7 +410,7 @@ static void *altserver_main(void *data)
 				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
 				// Measurement done - everything fine so far
 				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000; // µs
-				const unsigned int avg = altservers_update_rtt( &servers[itAlt], rtt );
+				const unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
 				if ( uplink->fd != -1 && is_same_server( &servers[itAlt], &uplink->currentServer ) ) {
 					currentRtt = avg;
 					close( sock );

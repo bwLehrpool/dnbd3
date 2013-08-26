@@ -18,6 +18,7 @@ _images_lock
 _images[].lock
 uplink.queueLock
 _alts_lock
+client.sendMutex
 
 If you need to lock multiple clients at once,
 lock the client with the lowest array index first.

@@ -203,7 +203,7 @@ int main(int argc, char *argv[])
 			_configDir = strdup( optarg );
 			break;
 		case 'd':
-#ifdef _DEBUG
+			#ifdef _DEBUG
 			_fake_delay = atoi( optarg );
 			break;
 #else
@@ -226,7 +226,7 @@ int main(int argc, char *argv[])
 			//dnbd3_rpc_send(RPC_IMG_LIST);
 			return EXIT_SUCCESS;
 		case 'h':
-		case '?':
+			case '?':
 			dnbd3_print_help( argv[0] );
 			break;
 		case 'v':
@@ -273,7 +273,7 @@ int main(int argc, char *argv[])
 	initmemlog();
 	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
-	altserver_init();
+	altservers_init();
 	integrity_init();
 	memlogf( "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
 
@@ -413,7 +413,8 @@ void dnbd3_remove_client(dnbd3_client_t *client)
 /**
  * Free the client struct recursively.
  * !! Make sure to call this function after removing the client from _dnbd3_clients !!
- * Locks on: _clients[].lock, might call function that locks on _images and _image[]
+ * Locks on: _clients[].lock, _images[].lock
+ * might call functions that lock on _images, _image[], uplink.queueLock, client.sendMutex
  */
 dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {
@@ -421,7 +422,9 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 	if ( client->sock >= 0 ) close( client->sock );
 	client->sock = -1;
 	if ( client->image != NULL ) {
+		spin_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
+		spin_unlock( &client->image->lock );
 		image_release( client->image );
 	}
 	client->image = NULL;

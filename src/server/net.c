@@ -156,7 +156,7 @@ void *net_client_handler(void *dnbd3_client)
 						printf( "[DEBUG] Incomplete handshake received\n" );
 					}
 				} else {
-					image = image_get( image_name, rid );
+					client->image = image = image_getOrClone( image_name, rid );
 					if ( image == NULL ) {
 						//printf( "[DEBUG] Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else if ( !image->working ) {
@@ -172,7 +172,6 @@ void *net_client_handler(void *dnbd3_client)
 							reply.cmd = CMD_SELECT_IMAGE;
 							reply.size = serializer_get_written_length( &payload );
 							if ( send_reply( client->sock, &reply, &payload ) ) {
-								client->image = image;
 								if ( !client->is_server ) image->atime = time( NULL );
 								bOk = TRUE;
 							}
@@ -310,7 +309,7 @@ void *net_client_handler(void *dnbd3_client)
 			case CMD_GET_SERVERS:
 				client->is_server = FALSE; // Only clients request list of servers
 				// Build list of known working alt servers
-				num = altservers_get_matching( &client->host, server_list, NUMBER_SERVERS );
+				num = altservers_getMatching( &client->host, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
 				reply.size = num * sizeof(dnbd3_server_entry_t);
 				send_reply( client->sock, &reply, server_list );

@@ -6,6 +6,7 @@
 #include "integrity.h"
 #include "protocol.h"
 #include "sockhelper.h"
+#include "altservers.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -41,9 +42,9 @@ static int remoteCloneCacheIndex = -1;
 
 static int image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static int image_load_all_internal(char *base, char *path);
-static int image_try_load(char *base, char *path);
+static int image_try_load(char *base, char *path, int withUplink);
 static int64_t image_pad(const char *path, const int64_t currentSize);
-static int image_clone(int sock, dnbd3_host_t *server, char *name, uint16_t revision, uint64_t imageSize);
+static int image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
 
 // ##########################################
 
@@ -442,7 +443,7 @@ static int image_load_all_internal(char *base, char *path)
 		if ( S_ISDIR( st.st_mode )) {
 			image_load_all_internal( base, subpath ); // Recurse
 		} else {
-			image_try_load( base, subpath ); // Load image if possible
+			image_try_load( base, subpath, TRUE ); // Load image if possible
 		}
 	}
 	closedir( dir );
@@ -450,7 +451,7 @@ static int image_load_all_internal(char *base, char *path)
 #undef SUBDIR_LEN
 }
 
-static int image_try_load(char *base, char *path)
+static int image_try_load(char *base, char *path, int withUplink)
 {
 	int i, revision;
 	struct stat st;
@@ -647,7 +648,9 @@ static int image_try_load(char *base, char *path)
 			image = image_free( image );
 			goto load_error;
 		}
-		uplink_init( image );
+		if ( withUplink ) {
+			uplink_init( image, -1, NULL );
+		}
 	}
 	// Prevent freeing in cleanup
 	cache_map = NULL;
@@ -775,11 +778,9 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	if ( len >= NAMELEN ) cmpname += 1 + len - NAMELEN;
 	pthread_mutex_lock( &remoteCloneLock );
 	for (i = 0; i < CACHELEN; ++i) {
-		if ( remoteCloneCache[i].rid != revision || strcmp( cmpname, remoteCloneCache[i].name ) != 0 ) continue;
-		if ( remoteCloneCache[i].deadline < now ) {
-			remoteCloneCache[i].name[0] = '\0';
-			continue;
-		}
+		if ( remoteCloneCache[i].rid != revision
+		        || remoteCloneCache[i].deadline < now
+		        || strcmp( cmpname, remoteCloneCache[i].name ) != 0 ) continue;
 		pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
 		return NULL ;
 	}
@@ -796,9 +797,13 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	remoteCloneCache[remoteCloneCacheIndex].deadline = now + SERVER_REMOTE_IMAGE_CHECK_CACHETIME;
 	snprintf( remoteCloneCache[remoteCloneCacheIndex].name, NAMELEN, "%s", cmpname );
 	remoteCloneCache[remoteCloneCacheIndex].rid = revision;
-	for (;;) {
-		dnbd3_host_t server; // TODO: Get server :-)
-		int sock = sock_connect( &server, 500, 1500 );
+	// Get some alt servers and try to get the image from there
+	dnbd3_host_t servers[4];
+	int uplinkSock = -1;
+	dnbd3_host_t *uplinkServer = NULL;
+	const int count = altservers_get( servers, 4 );
+	for (i = 0; i < count; ++i) {
+		int sock = sock_connect( &servers[i], 500, 1500 );
 		if ( sock < 0 ) continue;
 		if ( !dnbd3_select_image( sock, name, revision, FLAGS8_SERVER ) ) goto server_fail;
 		uint16_t remoteVersion, remoteRid;
@@ -806,18 +811,37 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 		char *remoteName;
 		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
 		if ( remoteVersion < MIN_SUPPORTED_SERVER ) goto server_fail;
-		if ( revision != 0 && remoteVersion != revision ) goto server_fail;
+		if ( revision != 0 && remoteRid != revision ) goto server_fail;
 		if ( remoteImageSize < DNBD3_BLOCK_SIZE || remoteName == NULL || strcmp( name, remoteName ) != 0 ) goto server_fail;
-		image_clone( sock, &server, name, remoteRid, remoteImageSize );
+		if ( !image_clone( sock, name, remoteRid, remoteImageSize ) ) goto server_fail;
+		// Cloning worked :-)
+		uplinkSock = sock;
+		uplinkServer = &servers[i];
 		break;
 		server_fail: ;
 		close( sock );
 	}
 	pthread_mutex_unlock( &remoteCloneLock );
-	return image_get( name, revision );
+	// If everything worked out, this call should now actually return the image
+	image = image_get( name, revision );
+	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
+		// If so, init the uplink and pass it the socket
+		uplink_init( image, uplinkSock, uplinkServer );
+		image->working = TRUE;
+	} else if ( uplinkSock >= 0 ) {
+		close( uplinkSock );
+	}
+	return image;
 }
 
-static int image_clone(int sock, dnbd3_host_t *server, char *name, uint16_t revision, uint64_t imageSize)
+/**
+ * Prepare a cloned image:
+ * 1. Allocate empty image file and its cache map
+ * 2. Use passed socket to request the crc32 list and save it to disk
+ * 3. Load the image from disk
+ * Returns: TRUE on success, FALSE otherwise
+ */
+static int image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize)
 {
 	// Allocate disk space and create cache map
 	if ( !image_create( name, revision, imageSize ) ) return FALSE;
@@ -842,7 +866,7 @@ static int image_clone(int sock, dnbd3_host_t *server, char *name, uint16_t revi
 	}
 	// HACK: Chop of ".crc" to get the image file name
 	crcFile[strlen( crcFile ) - 4] = '\0';
-	return image_try_load( _basePath, crcFile );
+	return image_try_load( _basePath, crcFile, FALSE );
 }
 
 /**

@@ -18,6 +18,8 @@ int image_saveCacheMap(dnbd3_image_t *image);
 
 dnbd3_image_t* image_get(char *name, uint16_t revision);
 
+dnbd3_image_t* image_getOrClone(char *name, uint16_t revision);
+
 dnbd3_image_t* image_lock(dnbd3_image_t *image);
 
 void image_release(dnbd3_image_t *image);
