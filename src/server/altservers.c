@@ -335,11 +335,13 @@ static void *altservers_main(void *data)
 			ret = read( readPipe, buffer, sizeof buffer );
 		} while ( ret == sizeof buffer ); // Throw data away, this is just used for waking this thread up
 		if ( ret == 0 ) {
-			memlogf( "[WARNING] Signal pipe of uplink_connector for %s closed! Things will break!" );
+			memlogf( "[WARNING] Signal pipe of alservers_main closed! Things will break!" );
 		}
-		ret = errno;
-		if ( ret != EAGAIN && ret != EWOULDBLOCK && ret != EBUSY && ret != EINTR ) {
-			memlogf( "[WARNING] Errno %d on pipe-read on uplink_connector for %s! Things will break!", ret );
+		if ( ret < 0 ) {
+			ret = errno;
+			if ( ret != EAGAIN && ret != EWOULDBLOCK && ret != EBUSY && ret != EINTR ) {
+				memlogf( "[WARNING] Errno %d on pipe-read on alservers_main! Things will break!", ret );
+			}
 		}
 		// Work your way through the queue
 		spin_lock( &pendingLock );

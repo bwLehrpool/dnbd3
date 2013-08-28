@@ -287,9 +287,11 @@ static void* uplink_mainloop(void *data)
 				if ( ret == 0 ) {
 					memlogf( "[WARNING] Eventfd of uplink for %s closed! Things will break!", link->image->lower_name );
 				}
-				ret = errno;
-				if ( ret != EAGAIN && ret != EWOULDBLOCK && ret != EBUSY && ret != EINTR ) {
-					memlogf( "[WARNING] Errno %d on eventfd on uplink for %s! Things will break!", ret, link->image->lower_name );
+				if ( ret < 0 ) {
+					ret = errno;
+					if ( ret != EAGAIN && ret != EWOULDBLOCK && ret != EBUSY && ret != EINTR ) {
+						memlogf( "[WARNING] Errno %d on eventfd on uplink for %s! Things will break!", ret, link->image->lower_name );
+					}
 				}
 				if ( link->fd != -1 ) {
 					uplink_send_requests( link, TRUE );
