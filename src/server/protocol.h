@@ -77,7 +77,7 @@ static inline int dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, size
 	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL ) != sizeof(uint32_t) ) return FALSE;
 	int done = 0;
 	while ( done < reply.size ) {
-		const int ret = recv( sock, buffer, reply.size, 0 );
+		const int ret = recv( sock, buffer + done, reply.size - done, 0 );
 		if ( ret <= 0 ) return FALSE;
 		done += ret;
 	}
