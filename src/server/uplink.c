@@ -40,7 +40,10 @@ int uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	dnbd3_connection_t *link = NULL;
 	assert( image != NULL );
 	spin_lock( &image->lock );
-	assert( image->uplink == NULL );
+	if ( image->uplink != NULL ) {
+		spin_unlock( &image->lock );
+		return TRUE;
+	}
 	if ( image->cache_map == NULL ) {
 		memlogf( "[WARNING] Uplink was requested for image %s, but it is already complete", image->lower_name );
 		goto failure;
@@ -127,8 +130,7 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 	int existingType = -1; // ULR_* type of existing request
 	int i;
 	int freeSlot = -1;
-	if ( length < 1024 * 1024 ) length = 1024 * 1024;
-	const uint64_t end = MIN(start + length, uplink->image->filesize);
+	const uint64_t end = start + length;
 
 	spin_lock( &uplink->queueLock );
 	spin_unlock( &client->image->lock );

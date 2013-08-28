@@ -251,7 +251,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 		// Either the image is already marked as "not working", or the file cannot be accessed
 		printf( "[DEBUG] File '%s' has gone away...\n", candidate->path );
 		candidate->working = FALSE; // No file? OUT!
-	} else if ( !candidate->working && candidate->cache_map != NULL && file_isWritable( candidate->path ) ) {
+	} else if ( !candidate->working && candidate->cache_map != NULL && candidate->uplink == NULL && file_isWritable( candidate->path ) ) {
 		// Not working and has file + cache-map, try to init uplink (uplink_init will check if proxy mode is enabled)
 		uplink_init( candidate, -1, NULL );
 	}

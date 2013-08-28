@@ -414,8 +414,8 @@ static void *altservers_main(void *data)
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
-					//ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
-					//        reply.size, uplink->image->lower_name );
+					ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
+					        reply.size, uplink->image->lower_name );
 					goto server_failed;
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
