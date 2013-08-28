@@ -74,8 +74,14 @@ static inline int dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, size
 	reply.size -= 4;
 	if ( reply.cmd != CMD_GET_CRC32 || reply.size > *bufferLen ) return FALSE;
 	*bufferLen = reply.size;
-	return recv( sock, master, sizeof(uint32_t), 0 ) == sizeof(uint32_t)
-	        && recv( sock, buffer, reply.size, 0 ) == (int)reply.size;
+	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL ) != sizeof(uint32_t) ) return FALSE;
+	int done = 0;
+	while ( done < reply.size ) {
+		const int ret = recv( sock, buffer, reply.size, 0 );
+		if ( ret <= 0 ) return FALSE;
+		done += ret;
+	}
+	return TRUE;
 }
 
 /**
