@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <zlib.h>
+#include <fcntl.h>
 
 static void* uplink_mainloop(void *data);
 static void uplink_send_requests(dnbd3_connection_t *link, int newOnly);
@@ -535,7 +536,7 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	size_t bytes = IMGSIZE_TO_HASHBLOCKS(image->filesize) * sizeof(uint32_t);
 	uint32_t masterCrc;
 	uint32_t *buffer = malloc( bytes );
-	if ( !dnbd3_get_crc32( uplink->fd, &masterCrc, &buffer, &bytes ) || bytes == 0 ) {
+	if ( !dnbd3_get_crc32( uplink->fd, &masterCrc, buffer, &bytes ) || bytes == 0 ) {
 		free( buffer );
 		return;
 	}
@@ -548,4 +549,13 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	}
 	uplink->image->masterCrc32 = masterCrc;
 	uplink->image->crc32 = buffer;
+	const size_t len = strlen( uplink->image->path ) + 30;
+	char path[len];
+	snprintf( path, len, "%s.crc", uplink->image->path );
+	const int fd = open( path, O_WRONLY | O_CREAT, 0640 );
+	if ( fd >= 0 ) {
+		write( fd, &masterCrc, sizeof(uint32_t) );
+		write( fd, buffer, bytes );
+		close( fd );
+	}
 }
