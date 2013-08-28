@@ -55,8 +55,10 @@ dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 int _num_clients = 0;
 pthread_spinlock_t _clients_lock;
 
-char *_rpc_password = NULL;
-char *_cache_dir = NULL;
+/**
+ * Time the server was started
+ */
+static time_t _startupTime = 0;
 
 static int dnbd3_add_client(dnbd3_client_t *client);
 static void dnbd3_load_config();
@@ -301,6 +303,8 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	_startupTime = time( NULL );
+
 	// setup network
 	sockets[socket_count] = sock_listen_any( PF_INET, PORT );
 	if ( sockets[socket_count] != -1 ) ++socket_count;
@@ -483,4 +487,9 @@ void dnbd3_handle_sigusr1(int signum)
 {
 	memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
 	image_loadAll( NULL );
+}
+
+int dnbd3_serverUptime()
+{
+	return (int)(time( NULL ) - _startupTime);
 }

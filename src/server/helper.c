@@ -2,11 +2,9 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <stdlib.h>
-#include <fcntl.h>
 #include <assert.h>
-#include <sys/stat.h>
 #include <sys/prctl.h> // For thread names
-#include "../types.h"
+
 #include "../config.h"
 
 /**
@@ -123,55 +121,6 @@ void trim_right(char * const string)
 	char *end = string + strlen( string ) - 1;
 	while ( end >= string && (*end == '\r' || *end == '\n' || *end == ' ' || *end == '\t') )
 		*end-- = '\0';
-}
-
-int file_exists(char *file)
-{
-	int fd = open( file, O_RDONLY );
-	if ( fd < 0 ) return FALSE;
-	close( fd );
-	return TRUE;
-}
-
-int file_writable(char *file)
-{
-	int fd = open( file, O_WRONLY );
-	if ( fd >= 0 ) {
-		close( fd );
-		return TRUE;
-	}
-	fd = open( file, O_WRONLY | O_CREAT, 0600 );
-	if ( fd < 0 ) return FALSE;
-	close( fd );
-	unlink( file );
-	return TRUE;
-}
-
-int mkdir_p(const char* path)
-{
-	assert( path != NULL );
-	if ( *path == '\0' ) return TRUE;
-	char buffer[strlen( path ) + 1];
-	strcpy( buffer, path );
-	char *current = buffer;
-	char *slash;
-	while ( (slash = strchr( current, '/' )) != NULL ) {
-		*slash = '\0';
-		if ( *buffer != '\0' && mkdir( buffer, 0750 ) != 0 && errno != EEXIST ) return FALSE;
-		*slash = '/';
-		current = slash + 1;
-	}
-	if ( mkdir( buffer, 0750 ) != 0 && errno != EEXIST ) return FALSE;
-	return TRUE;
-}
-
-int file_alloc(int fd, uint64_t offset, uint64_t size)
-{
-	if ( fallocate( fd, 0, offset, size ) == 0 ) return TRUE; // fast way
-	if ( posix_fallocate( fd, offset, size ) == 0 ) return TRUE; // slow way
-	if ( lseek( fd, offset + size - 1, SEEK_SET ) != offset ) return FALSE; // dumb way
-	if ( write( fd, "", 1 ) != 1 ) return FALSE;
-	return TRUE;
 }
 
 void setThreadName(char *name)

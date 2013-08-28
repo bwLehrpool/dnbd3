@@ -1,5 +1,6 @@
 #include "image.h"
 #include "helper.h"
+#include "fileutil.h"
 #include "memlog.h"
 #include "uplink.h"
 #include "locks.h"
@@ -7,6 +8,7 @@
 #include "protocol.h"
 #include "sockhelper.h"
 #include "altservers.h"
+#include "server.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -45,6 +47,7 @@ static int image_load_all_internal(char *base, char *path);
 static int image_try_load(char *base, char *path, int withUplink);
 static int64_t image_pad(const char *path, const int64_t currentSize);
 static int image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
+static int image_ensureDiskSpace(uint64_t size);
 
 // ##########################################
 
@@ -239,15 +242,19 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 
 	spin_lock( &candidate->lock );
 	spin_unlock( &_images_lock );
+	candidate->users++;
+	spin_unlock( &candidate->lock );
 
 	// Found, see if it works
 	struct stat st;
 	if ( candidate->working && stat( candidate->path, &st ) < 0 ) {
+		// Either the image is already marked as "not working", or the file cannot be accessed
 		printf( "[DEBUG] File '%s' has gone away...\n", candidate->path );
 		candidate->working = FALSE; // No file? OUT!
+	} else if ( !candidate->working && candidate->cache_map != NULL && file_isWritable( candidate->path ) ) {
+		// Not working and has file + cache-map, try to init uplink (uplink_init will check if proxy mode is enabled)
+		uplink_init( candidate, -1, NULL );
 	}
-	candidate->users++;
-	spin_unlock( &candidate->lock );
 	return candidate; // Success :-)
 }
 
@@ -259,6 +266,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
  */
 dnbd3_image_t* image_lock(dnbd3_image_t *image)
 {
+	if ( image == NULL ) return NULL ;
 	int i;
 	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
@@ -307,7 +315,6 @@ void image_release(dnbd3_image_t *image)
 	// Not found, free
 	spin_unlock( &image->lock );
 	spin_unlock( &_images_lock );
-	image_free( image );
 }
 
 /**
@@ -524,6 +531,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 	if ( fileSize % DNBD3_BLOCK_SIZE != 0 ) {
 		memlogf( "[INFO] Image size of '%s' is not a multiple of %d, fixing...", path, (int)DNBD3_BLOCK_SIZE );
 		fileSize = image_pad( path, fileSize );
+		if ( fileSize == 0 ) goto load_error;
 	}
 	// 1. Allocate memory for the cache map if the image is incomplete
 	sprintf( mapFile, "%s.map", path );
@@ -544,6 +552,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 	// but maybe later on you want better security
 	// 2. Load CRC-32 list of image
 	sprintf( hashFile, "%s.crc", path );
+	uint32_t masterCrc;
 	int fdHash = open( hashFile, O_RDONLY );
 	if ( fdHash >= 0 ) {
 		off_t fs = lseek( fdHash, 0, SEEK_END );
@@ -553,8 +562,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 			if ( 0 != lseek( fdHash, 0, SEEK_SET ) ) {
 				memlogf( "[WARNING] Could not seek back to beginning of '%s'", hashFile );
 			} else {
-				uint32_t crcCrc;
-				if ( read( fdHash, &crcCrc, sizeof(crcCrc) ) != 4 ) {
+				if ( read( fdHash, &masterCrc, sizeof(masterCrc) ) != 4 ) {
 					memlogf( "[WARNING] Error reading first crc32 of '%s'", path );
 				} else {
 					crc32list = calloc( hashBlocks, sizeof(uint32_t) );
@@ -565,7 +573,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 					} else {
 						uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
 						lists_crc = crc32( lists_crc, (Bytef*)crc32list, hashBlocks * sizeof(uint32_t) );
-						if ( lists_crc != crcCrc ) {
+						if ( lists_crc != masterCrc ) {
 							free( crc32list );
 							crc32list = NULL;
 							memlogf( "[WARNING] CRC-32 of CRC-32 list mismatch. CRC-32 list of '%s' might be corrupted.", path );
@@ -604,6 +612,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 		} else if ( existing->crc32 == NULL && crc32list != NULL ) {
 			memlogf( "[INFO] Found CRC-32 list for already loaded image, adding...", path );
 			existing->crc32 = crc32list;
+			existing->masterCrc32 = masterCrc;
 			crc32list = NULL;
 			function_return = TRUE;
 			goto load_error;
@@ -622,6 +631,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 	image->lower_name = strdup( imgName );
 	image->cache_map = cache_map;
 	image->crc32 = crc32list;
+	image->masterCrc32 = masterCrc;
 	image->uplink = NULL;
 	image->filesize = fileSize;
 	image->rid = revision;
@@ -707,7 +717,7 @@ int image_create(char *image, int revision, uint64_t size)
 		*lastSlash = '/';
 		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
 	}
-	if ( file_exists( path ) ) {
+	if ( file_isReadable( path ) ) {
 		memlogf( "[ERROR] Image %s with rid %d already exists!", image, revision );
 		return FALSE;
 	}
@@ -759,7 +769,7 @@ int image_create(char *image, int revision, uint64_t size)
  */
 dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 {
-	// TODO: Simply return image_get if no authoritative servers are configured
+	if ( !_isProxy ) return image_get( name, revision );
 	int i;
 	const size_t len = strlen( name );
 	// Sanity check
@@ -813,6 +823,8 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 		if ( remoteVersion < MIN_SUPPORTED_SERVER ) goto server_fail;
 		if ( revision != 0 && remoteRid != revision ) goto server_fail;
 		if ( remoteImageSize < DNBD3_BLOCK_SIZE || remoteName == NULL || strcmp( name, remoteName ) != 0 ) goto server_fail;
+		if ( remoteImageSize > SERVER_MAX_PROXY_IMAGE_SIZE ) goto server_fail;
+		if ( !image_ensureDiskSpace( remoteImageSize ) ) goto server_fail;
 		if ( !image_clone( sock, name, remoteRid, remoteImageSize ) ) goto server_fail;
 		// Cloning worked :-)
 		uplinkSock = sock;
@@ -849,20 +861,28 @@ static int image_clone(int sock, char *name, uint16_t revision, uint64_t imageSi
 	const size_t len = strlen( _basePath ) + strlen( name ) + 20;
 	char crcFile[len];
 	snprintf( crcFile, len, "%s/%s.r%d.crc", _basePath, name, (int)revision );
-	if ( !file_exists( crcFile ) ) {
+	if ( !file_isReadable( crcFile ) ) {
 		// Get crc32list from remote server
 		size_t crc32len = IMGSIZE_TO_HASHBLOCKS(imageSize) * sizeof(uint32_t);
-		uint8_t *crc32 = malloc( crc32len );
-		if ( !dnbd3_get_crc32( sock, crc32, &crc32len ) ) {
-			free( crc32 );
+		uint32_t masterCrc;
+		uint8_t *crc32list = malloc( crc32len );
+		if ( !dnbd3_get_crc32( sock, &masterCrc, crc32list, &crc32len ) ) {
+			free( crc32list );
 			return FALSE;
 		}
-		if ( crc32len > 0 ) {
-			int fd = open( crcFile, O_WRONLY | O_CREAT, 0640 );
-			write( fd, crc32, crc32len );
-			close( fd );
+		if ( crc32len != 0 ) {
+			uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
+			lists_crc = crc32( lists_crc, (Bytef*)crc32list, crc32len );
+			if ( lists_crc != masterCrc ) {
+				memlogf( "[WARNING] OTF-Clone: Corrupted CRC-32 list. ignored. (%s)", name );
+			} else {
+				int fd = open( crcFile, O_WRONLY | O_CREAT, 0640 );
+				write( fd, &lists_crc, sizeof(uint32_t) );
+				write( fd, crc32list, crc32len );
+				close( fd );
+			}
 		}
-		free( crc32 );
+		free( crc32list );
 	}
 	// HACK: Chop of ".crc" to get the image file name
 	crcFile[strlen( crcFile ) - 4] = '\0';
@@ -918,7 +938,7 @@ int image_generateCrcFile(char *image)
 		close( fdImage );
 		return FALSE;
 	}
-// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
+	// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
 	if ( write( fdCrc, crcFile, 4 ) != 4 ) {
 		printf( "Write error\n" );
 		close( fdImage );
@@ -969,7 +989,7 @@ int image_generateCrcFile(char *image)
 	close( fdImage );
 	printf( "done!\nGenerating master-crc..." );
 	fflush( stdout );
-// File is written - read again to calc master crc
+	// File is written - read again to calc master crc
 	if ( lseek( fdCrc, 4, SEEK_SET ) != 4 ) {
 		printf( "Could not seek to beginning of crc list in file\n" );
 		close( fdCrc );
@@ -1056,8 +1076,65 @@ static int64_t image_pad(const char *path, const int64_t currentSize)
 	if ( success ) {
 		return currentSize + missing;
 	} else {
-		return currentSize - (DNBD3_BLOCK_SIZE - missing);
+		return 0;
 	}
+}
+
+/**
+ * Make sure at least size bytes are available in _basePath.
+ * Will delete old images to make room for new ones.
+ * TODO: Store last access time of images. Currently the
+ * last access time is reset on server restart. Thus it will
+ * currently only delete images if server uptime is > 10 hours
+ * Return TRUE iff enough space is available. FALSE in random other cases
+ */
+static int image_ensureDiskSpace(uint64_t size)
+{
+	for (;;) {
+		const uint64_t available = file_freeDiskSpace( _basePath );
+		if ( available > size ) return TRUE;
+		if ( dnbd3_serverUptime() < 10 * 3600 ) {
+			memlogf( "[INFO] Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024 * 1024)),
+			        (int)(size / (1024 * 1024)) );
+			return FALSE;
+		}
+		memlogf( "[INFO] Only %dMiB free, %dMiB requested, freeing an image...", (int)(available / (1024 * 1024)),
+		        (int)(size / (1024 * 1024)) );
+		// Find least recently used image
+		dnbd3_image_t *oldest = NULL;
+		time_t mtime = 0;
+		int i;
+		spin_lock( &_images_lock );
+		for (i = 0; i < _num_images; ++i) {
+			if ( _images[i] == NULL ) continue;
+			dnbd3_image_t *current = image_lock( _images[i] );
+			if ( current == NULL ) continue;
+			if ( current->users == 1 ) { // Just from the lock above
+				if ( oldest == NULL || oldest->atime > _images[i]->atime ) {
+					// Oldest access time so far
+					oldest = _images[i];
+					if ( oldest->atime == 0 ) mtime = file_lastModification( oldest->path );
+				} else if ( oldest->atime == 0 && _images[i]->atime == 0 ) {
+					// Oldest access time is 0 (=never used since server startup), so take file modification time into account
+					const time_t m = file_lastModification( _images[i]->path );
+					if ( m < mtime ) {
+						mtime = m;
+						oldest = _images[i];
+					}
+				}
+			}
+			image_release( current );
+		}
+		spin_unlock( &_images_lock );
+		if ( oldest == NULL ) return FALSE;
+		oldest = image_lock( oldest );
+		if ( oldest == NULL ) return FALSE;
+		memlogf( "[INFO] '%s' has to go!", oldest->lower_name );
+		unlink( oldest->path );
+		image_remove( oldest );
+		image_release( oldest );
+	}
+	return FALSE;
 }
 
 /*

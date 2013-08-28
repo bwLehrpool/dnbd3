@@ -16,10 +16,6 @@ char host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen);
 void strtolower(char *string);
 void remove_trailing_slash(char *string);
 void trim_right(char * const string);
-int file_exists(char *file);
-int file_writable(char *file);
-int mkdir_p(const char* path);
-int file_alloc(int fd, uint64_t offset, uint64_t size);
 void setThreadName(char *name);
 
 static inline int is_same_server(const dnbd3_host_t * const a, const dnbd3_host_t * const b)

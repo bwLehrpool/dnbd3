@@ -34,8 +34,6 @@ extern dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 extern int _num_clients;
 extern pthread_spinlock_t _clients_lock;
 
-extern char *_rpc_password, *_cache_dir;
-
 #ifdef _DEBUG
 extern int _fake_delay;
 #endif
@@ -44,6 +42,7 @@ void dnbd3_cleanup();
 void dnbd3_remove_client(dnbd3_client_t *client);
 dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client);
 dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd);
+int dnbd3_serverUptime();
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
 #error Please set _FILE_OFFSET_BITS to 64 in your makefile/configuration

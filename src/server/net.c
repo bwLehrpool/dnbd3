@@ -329,10 +329,13 @@ void *net_client_handler(void *dnbd3_client)
 				reply.cmd = CMD_GET_CRC32;
 				if ( image->crc32 == NULL ) {
 					reply.size = 0;
+					send_reply( client->sock, &reply, NULL );
 				} else {
-					reply.size = IMGSIZE_TO_HASHBLOCKS(image->filesize) * 4;
+					const int size = reply.size = (IMGSIZE_TO_HASHBLOCKS(image->filesize) + 1) * sizeof(uint32_t);
+					send_reply( client->sock, &reply, NULL );
+					send( client->sock, &image->masterCrc32, sizeof(uint32_t), 0 );
+					send( client->sock, image->crc32, size - sizeof(uint32_t), 0 );
 				}
-				send_reply( client->sock, &reply, image->crc32 );
 				break;
 
 			default:

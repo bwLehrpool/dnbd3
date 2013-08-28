@@ -54,7 +54,7 @@ static inline int dnbd3_get_block(int sock, uint64_t offset, uint32_t size)
 	return send( sock, &request, sizeof(request), 0 ) == sizeof(request);
 }
 
-static inline int dnbd3_get_crc32(int sock, uint8_t *buffer, size_t *bufferLen)
+static inline int dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, size_t *bufferLen)
 {
 	dnbd3_request_t request;
 	dnbd3_reply_t reply;
@@ -66,10 +66,16 @@ static inline int dnbd3_get_crc32(int sock, uint8_t *buffer, size_t *bufferLen)
 	fixup_request( request );
 	if ( send( sock, &request, sizeof(request), 0 ) != sizeof(request) ) return FALSE;
 	if ( !dnbd3_get_reply( sock, &reply ) ) return FALSE;
+	if ( reply.size == 0 ) {
+		*bufferLen = 0;
+		return TRUE;
+	}
+	if ( reply.size < 4 ) return FALSE;
+	reply.size -= 4;
 	if ( reply.cmd != CMD_GET_CRC32 || reply.size > *bufferLen ) return FALSE;
 	*bufferLen = reply.size;
-	if ( reply.size == 0 ) return TRUE;
-	return recv( sock, buffer, reply.size, 0 ) == (int)reply.size;
+	return recv( sock, master, sizeof(uint32_t), 0 ) == sizeof(uint32_t)
+	        && recv( sock, buffer, reply.size, 0 ) == (int)reply.size;
 }
 
 /**

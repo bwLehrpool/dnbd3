@@ -57,7 +57,7 @@ int altservers_load()
 {
 	int count = 0;
 	char *name = NULL, *space;
-	char line[1000];
+	char buffer[1000], *line;
 	dnbd3_host_t host;
 	asprintf( &name, "%s/%s", _configDir, "alt-servers" );
 	if ( name == NULL ) return -1;
@@ -65,7 +65,13 @@ int altservers_load()
 	free( name );
 	if ( fp == NULL ) return -1;
 	while ( !feof( fp ) ) {
-		if ( fgets( line, 1000, fp ) == NULL ) break;
+		if ( fgets( buffer, 1000, fp ) == NULL ) break;
+		int isPrivate = FALSE;
+		for (line = buffer;;) { // Trim left and scan for "-" prefix
+			if ( *line == '-' ) isPrivate = TRUE;
+			else if ( *line != ' ' || *line != '\t' ) break;
+			line++;
+		}
 		trim_right( line );
 		space = strchr( line, ' ' );
 		if ( space != NULL ) *space++ = '\0';
@@ -74,14 +80,14 @@ int altservers_load()
 			memlogf( "[WARNING] Invalid entry in alt-servers file ignored: '%s'", line );
 			continue;
 		}
-		if ( altservers_add( &host, space ) ) ++count;
+		if ( altservers_add( &host, space, isPrivate ) ) ++count;
 	}
 	fclose( fp );
 	printf( "[DEBUG] Added %d alt servers\n", count );
 	return count;
 }
 
-int altservers_add(dnbd3_host_t *host, const char *comment)
+int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate)
 {
 	int i, freeSlot = -1;
 	spin_lock( &_alts_lock );
@@ -102,6 +108,7 @@ int altservers_add(dnbd3_host_t *host, const char *comment)
 		freeSlot = _num_alts++;
 	}
 	_alt_servers[freeSlot].host = *host;
+	_alt_servers[freeSlot].isPrivate = isPrivate;
 	if ( comment != NULL ) snprintf( _alt_servers[freeSlot].comment, COMMENT_LENGTH, "%s", comment );
 	spin_unlock( &_alts_lock );
 	return TRUE;
@@ -150,6 +157,7 @@ void altservers_removeUplink(dnbd3_connection_t *uplink)
 /**
  * Get <size> known (working) alt servers, ordered by network closeness
  * (by finding the smallest possible subnet)
+ * Private servers are excluded
  */
 int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
 {
@@ -160,6 +168,7 @@ int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int
 	spin_lock( &_alts_lock );
 	for (i = 0; i < _num_alts; ++i) {
 		if ( host->type != _alt_servers[i].host.type ) continue; // Wrong address family
+		if ( _alt_servers[i].isPrivate ) continue; // Do not tell clients about private servers
 		// TODO: Prefer same AF here, but if in the end we got less servers than requested, add
 		// servers of other AF too (after this loop)
 		if ( count == 0 ) {
@@ -324,7 +333,7 @@ static void *altservers_main(void *data)
 		// Empty pipe
 		do {
 			ret = read( readPipe, buffer, sizeof buffer );
-		} while ( ret > 0 ); // Throw data away, this is just used for waking this thread up
+		} while ( ret == sizeof buffer ); // Throw data away, this is just used for waking this thread up
 		if ( ret == 0 ) {
 			memlogf( "[WARNING] Signal pipe of uplink_connector for %s closed! Things will break!" );
 		}
@@ -390,22 +399,25 @@ static void *altservers_main(void *data)
 				if ( !dnbd3_get_block( sock,
 				        (((uint64_t)start.tv_nsec | (uint64_t)rand()) * DNBD3_BLOCK_SIZE )% uplink->image->filesize,
 				        DNBD3_BLOCK_SIZE) ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", uplink->image->lower_name );
+					//ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", uplink->image->lower_name );
+					goto server_failed;
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
 				if ( !dnbd3_get_reply( sock, &reply ) ) {
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
-					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
-					        buf, uplink->image->lower_name );
+					//ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
+					//        buf, uplink->image->lower_name );
+					goto server_failed;
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
-					        reply.size, uplink->image->lower_name );
+					//ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
+					//        reply.size, uplink->image->lower_name );
+					goto server_failed;
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Could not read random block from socket for %s", uplink->image->lower_name );
+					ERROR_GOTO_VA( server_failed, "[ERROR] Could not read random block payload for %s", uplink->image->lower_name );
 				}
 				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
 				// Measurement done - everything fine so far

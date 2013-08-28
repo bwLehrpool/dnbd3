@@ -62,7 +62,7 @@ typedef struct
 	uint8_t data[65535];
 } dnbd3_binstring_t;
 // Do not always allocate as much memory as required to hold the entire binstring struct,
-// but only as much as is required to hold the actual data
+// but only as much as is required to hold the actual data (relevant for kernel module)
 #define NEW_BINSTRING(_name, _len) \
 	dnbd3_binstring_t *_name = malloc(sizeof(uint16_t) + _len); \
 	_name->len = _len
@@ -70,10 +70,11 @@ typedef struct
 typedef struct
 {
 	char comment[COMMENT_LENGTH];
-	time_t last_told;
+	time_t lastReached;
 	dnbd3_host_t host;
 	int rtt[SERVER_RTT_PROBES];
 	int rttIndex;
+	int isPrivate;
 } dnbd3_alt_server_t;
 
 typedef struct
@@ -95,6 +96,7 @@ struct _dnbd3_image
 	char *lower_name;      // relative path, all lowercase, minus revision ID
 	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
+	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	dnbd3_connection_t *uplink; // pointer to a server connection
 	uint64_t filesize;     // size of image
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
@@ -145,7 +147,15 @@ extern int _serverPenalty;
  */
 extern int _clientPenalty;
 
+/**
+ * Is server shutting down?
+ */
 extern int _shutdown;
+
+/**
+ * Is server allowed to provide images in proxy mode?
+ */
+extern int _isProxy;
 
 void globals_loadConfig();
 

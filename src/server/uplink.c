@@ -6,6 +6,8 @@
 #include "helper.h"
 #include "altservers.h"
 #include "helper.h"
+#include "protocol.h"
+
 #include <pthread.h>
 #include <sys/socket.h>
 #include <string.h>
@@ -17,11 +19,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <zlib.h>
 
 static void* uplink_mainloop(void *data);
 static void uplink_send_requests(dnbd3_connection_t *link, int newOnly);
 static void uplink_handle_receive(dnbd3_connection_t *link);
 static int uplink_send_keepalive(const int fd);
+static void uplink_addCrc32(dnbd3_connection_t *uplink);
 
 // ############ uplink connection handling
 
@@ -32,6 +36,7 @@ static int uplink_send_keepalive(const int fd);
  */
 int uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 {
+	if ( !_isProxy ) return FALSE;
 	dnbd3_connection_t *link = NULL;
 	assert( image != NULL );
 	spin_lock( &image->lock );
@@ -122,7 +127,8 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 	int existingType = -1; // ULR_* type of existing request
 	int i;
 	int freeSlot = -1;
-	const uint64_t end = start + length;
+	if ( length < 1024 * 1024 ) length = 1024 * 1024;
+	const uint64_t end = MIN(start + length, uplink->image->filesize);
 
 	spin_lock( &uplink->queueLock );
 	spin_unlock( &client->image->lock );
@@ -193,19 +199,17 @@ static void* uplink_mainloop(void *data)
 		memlogf( "[WARNING] epoll_create failed. Uplink unavailable." );
 		goto cleanup;
 	}
-	{
-		link->signal = eventfd( 0, EFD_NONBLOCK );
-		if ( link->signal < 0 ) {
-			memlogf( "[WARNING] error creating pipe. Uplink unavailable." );
-			goto cleanup;
-		}
-		memset( &ev, 0, sizeof(ev) );
-		ev.events = EPOLLIN;
-		ev.data.fd = link->signal;
-		if ( epoll_ctl( fdEpoll, EPOLL_CTL_ADD, link->signal, &ev ) < 0 ) {
-			memlogf( "[WARNING] adding eventfd to epoll set failed" );
-			goto cleanup;
-		}
+	link->signal = eventfd( 0, EFD_NONBLOCK );
+	if ( link->signal < 0 ) {
+		memlogf( "[WARNING] error creating pipe. Uplink unavailable." );
+		goto cleanup;
+	}
+	memset( &ev, 0, sizeof(ev) );
+	ev.events = EPOLLIN;
+	ev.data.fd = link->signal;
+	if ( epoll_ctl( fdEpoll, EPOLL_CTL_ADD, link->signal, &ev ) < 0 ) {
+		memlogf( "[WARNING] adding eventfd to epoll set failed" );
+		goto cleanup;
 	}
 	while ( !_shutdown && !link->shutdown ) {
 		// Check if server switch is in order
@@ -216,6 +220,10 @@ static void* uplink_mainloop(void *data)
 			const int fd = link->fd;
 			link->fd = link->betterFd;
 			if ( fd != -1 ) close( fd );
+			// If we don't have a crc32 list yet, see if the new server has one
+			if ( link->image->crc32 == NULL ) {
+				uplink_addCrc32( link );
+			}
 			// Re-send all pending requests
 			uplink_send_requests( link, FALSE );
 			link->betterFd = -1;
@@ -275,7 +283,7 @@ static void* uplink_mainloop(void *data)
 				int ret;
 				do {
 					ret = read( link->signal, buffer, sizeof buffer );
-				} while ( ret > 0 ); // Throw data away, this is just used for waking this thread up
+				} while ( ret == sizeof buffer ); // Throw data away, this is just used for waking this thread up
 				if ( ret == 0 ) {
 					memlogf( "[WARNING] Eventfd of uplink for %s closed! Things will break!", link->image->lower_name );
 				}
@@ -296,7 +304,7 @@ static void* uplink_mainloop(void *data)
 			}
 		}
 		// Done handling epoll sockets
-		// See if we should trigger a RTT measurement
+		// See if we should trigger an RTT measurement
 		if ( link->rttTestResult == RTT_IDLE || link->rttTestResult == RTT_DONTCHANGE ) {
 			const time_t now = time( NULL );
 			if ( nextAltCheck - now > SERVER_RTT_DELAY_MAX ) {
@@ -514,4 +522,26 @@ static int uplink_send_keepalive(const int fd)
 		fixup_request( request );
 	}
 	return send( fd, &request, sizeof(request), 0 ) == sizeof(request);
+}
+
+static void uplink_addCrc32(dnbd3_connection_t *uplink)
+{
+	dnbd3_image_t *image = uplink->image;
+	if ( image == NULL || image->filesize == 0 ) return;
+	size_t bytes = IMGSIZE_TO_HASHBLOCKS(image->filesize) * sizeof(uint32_t);
+	uint32_t masterCrc;
+	uint32_t *buffer = malloc( bytes );
+	if ( !dnbd3_get_crc32( uplink->fd, &masterCrc, &buffer, &bytes ) || bytes == 0 ) {
+		free( buffer );
+		return;
+	}
+	uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
+	lists_crc = crc32( lists_crc, (Bytef*)buffer, bytes );
+	if ( lists_crc != masterCrc ) {
+		memlogf( "[WARNING] Received corrupted crc32 list from uplink server (%s)!", uplink->image->lower_name );
+		free( buffer );
+		return;
+	}
+	uplink->image->masterCrc32 = masterCrc;
+	uplink->image->crc32 = buffer;
 }

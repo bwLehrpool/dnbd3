@@ -37,7 +37,7 @@
 #define SERVER_RTT_DELAY_MAX 15
 
 #define SERVER_REMOTE_IMAGE_CHECK_CACHETIME 600 // 10 minutes
-
+#define SERVER_MAX_PROXY_IMAGE_SIZE 100000000000LL // 100GB
 // +++++ Network +++++
 // Default port
 #define PORT 5003
