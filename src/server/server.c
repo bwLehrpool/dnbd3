@@ -477,7 +477,7 @@ static void dnbd3_handle_signal(int signum)
 	} else if ( signum == SIGUSR1 ) {
 		memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
 		image_loadAll( NULL );
-	} else if ( signum == SIGUSR1 ) {
+	} else if ( signum == SIGUSR2 ) {
 		printf( "[DEBUG] SIGUSR2 (%s) received, stats incoming\n", strsignal( signum ) );
 		printf( " ** Images **\n" );
 		image_printAll();
