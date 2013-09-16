@@ -17,4 +17,6 @@ int altservers_get(dnbd3_host_t *output, int size);
 
 int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2);
 
+void altservers_serverFailed(const dnbd3_host_t * const host);
+
 #endif /* UPLINK_CONNECTOR_H_ */

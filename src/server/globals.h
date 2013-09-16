@@ -70,11 +70,12 @@ typedef struct
 typedef struct
 {
 	char comment[COMMENT_LENGTH];
-	time_t lastReached;
 	dnbd3_host_t host;
 	int rtt[SERVER_RTT_PROBES];
 	int rttIndex;
 	int isPrivate;
+	time_t lastFail;
+	int numFails;
 } dnbd3_alt_server_t;
 
 typedef struct

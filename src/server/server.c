@@ -44,6 +44,7 @@
 #include "memlog.h"
 #include "globals.h"
 #include "integrity.h"
+#include "helper.h"
 
 #define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
 static int sockets[MAX_SERVER_SOCKETS], socket_count = 0;
@@ -61,10 +62,8 @@ pthread_spinlock_t _clients_lock;
 static time_t _startupTime = 0;
 
 static int dnbd3_add_client(dnbd3_client_t *client);
-static void dnbd3_load_config();
-static void dnbd3_handle_sigpipe(int signum);
-static void dnbd3_handle_sigterm(int signum);
-static void dnbd3_handle_sigusr1(int signum);
+static void dnbd3_handle_signal(int signum);
+static void dnbd3_printClients();
 
 /**
  * Print help text for usage instructions
@@ -287,14 +286,12 @@ int main(int argc, char *argv[])
 	debug_locks_start_watchdog();
 #endif
 
-	// load config file
-	dnbd3_load_config();
-
 	// setup signal handler
-	signal( SIGPIPE, dnbd3_handle_sigpipe );
-	signal( SIGTERM, dnbd3_handle_sigterm );
-	signal( SIGINT, dnbd3_handle_sigterm );
-	signal( SIGUSR1, dnbd3_handle_sigusr1 );
+	signal( SIGPIPE, dnbd3_handle_signal );
+	signal( SIGTERM, dnbd3_handle_signal );
+	signal( SIGINT, dnbd3_handle_signal );
+	signal( SIGUSR1, dnbd3_handle_signal );
+	signal( SIGUSR2, dnbd3_handle_signal );
 
 	printf( "Loading images....\n" );
 	// Load all images in base path
@@ -304,6 +301,9 @@ int main(int argc, char *argv[])
 	}
 
 	_startupTime = time( NULL );
+
+	// Give other threads some time to start up before accepting connections
+	sleep( 2 );
 
 	// setup network
 	sockets[socket_count] = sock_listen_any( PF_INET, PORT );
@@ -467,29 +467,44 @@ static int dnbd3_add_client(dnbd3_client_t *client)
 	return TRUE;
 }
 
-static void dnbd3_load_config()
+static void dnbd3_handle_signal(int signum)
 {
-	// Load configuration
-}
-
-static void dnbd3_handle_sigpipe(int signum)
-{
-	memlogf( "INFO: SIGPIPE received (%s)", strsignal( signum ) );
-}
-
-static void dnbd3_handle_sigterm(int signum)
-{
-	memlogf( "INFO: SIGTERM or SIGINT received (%s)", strsignal( signum ) );
-	dnbd3_cleanup();
-}
-
-void dnbd3_handle_sigusr1(int signum)
-{
-	memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
-	image_loadAll( NULL );
+	if ( signum == SIGPIPE ) {
+		memlogf( "INFO: SIGPIPE received (%s)", strsignal( signum ) );
+	} else if ( signum == SIGINT || signum == SIGTERM ) {
+		memlogf( "INFO: SIGTERM or SIGINT received (%s)", strsignal( signum ) );
+		dnbd3_cleanup();
+	} else if ( signum == SIGUSR1 ) {
+		memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
+		image_loadAll( NULL );
+	} else if ( signum == SIGUSR1 ) {
+		printf( "[DEBUG] SIGUSR2 (%s) received, stats incoming\n", strsignal( signum ) );
+		printf( " ** Images **\n" );
+		image_printAll();
+		printf( " ** Clients **\n" );
+		dnbd3_printClients();
+	} else {
+		printf( "SIGNAL: %d (%s)\n", signum, strsignal( signum ) );
+	}
 }
 
 int dnbd3_serverUptime()
 {
 	return (int)(time( NULL ) - _startupTime);
+}
+
+static void dnbd3_printClients()
+{
+	int i;
+	char buffer[100];
+	spin_lock( &_clients_lock );
+	for (i = 0; i < _num_clients; ++i) {
+		if ( _clients[i] == NULL ) continue;
+		spin_lock( &_clients[i]->lock );
+		host_to_string( &_clients[i]->host, buffer, sizeof(buffer) );
+		printf( "Client %s\n", buffer );
+		if ( _clients[i]->image != NULL ) printf( "  Image: %s\n", _clients[i]->image->lower_name );
+		spin_unlock( &_clients[i]->lock );
+	}
+	spin_unlock( &_clients_lock );
 }

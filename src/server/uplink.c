@@ -341,6 +341,7 @@ static void* uplink_mainloop(void *data)
 					if ( link->fd != -1 ) {
 						if ( !uplink_send_keepalive( link->fd ) ) {
 							printf( "[DEBUG] Error sending keep-alive to uplink\n" );
+							altservers_serverFailed( &link->currentServer );
 							const int fd = link->fd;
 							link->fd = -1;
 							close( fd );
@@ -398,12 +399,14 @@ static void uplink_send_requests(dnbd3_connection_t *link, int newOnly)
 		request.size = link->queue[j].to - link->queue[j].from;
 		spin_unlock( &link->queueLock );
 		fixup_request( request );
-		const int ret = write( link->fd, &request, sizeof request );
+		const int ret = send( link->fd, &request, sizeof request, MSG_NOSIGNAL );
 		if ( ret != sizeof(request) ) {
 			// Non-critical - if the connection dropped or the server was changed
 			// the thread will re-send this request as soon as the connection
 			// is reestablished.
 			printf( "[DEBUG] Error sending request to uplink server!\n" );
+			altservers_serverFailed( &link->currentServer );
+			break;
 		}
 		spin_lock( &link->queueLock );
 	}
@@ -419,7 +422,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 	dnbd3_reply_t inReply, outReply;
 	int ret, i;
 	for (;;) {
-		ret = recv( link->fd, &inReply, sizeof inReply, MSG_DONTWAIT );
+		ret = recv( link->fd, &inReply, sizeof inReply, MSG_DONTWAIT | MSG_NOSIGNAL );
 		if ( ret < 0 ) {
 			const int err = errno;
 			if ( err == EAGAIN || err == EWOULDBLOCK || err == EINTR ) return; // OK cases
@@ -429,7 +432,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 			memlogf( "[INFO] Uplink: Remote host hung up (%s)", link->image->path );
 			goto error_cleanup;
 		}
-		if ( ret != sizeof inReply ) ret += recv( link->fd, &inReply + ret, sizeof(inReply) - ret, MSG_WAITALL );
+		if ( ret != sizeof inReply ) ret += recv( link->fd, &inReply + ret, sizeof(inReply) - ret, MSG_WAITALL | MSG_NOSIGNAL );
 		if ( ret != sizeof inReply ) {
 			const int err = errno;
 			memlogf( "[INFO] Lost connection to uplink server for %s (header %d/%d, e=%d)", link->image->path, ret, (int)sizeof(inReply),
@@ -452,7 +455,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 		}
 		uint32_t done = 0;
 		while ( done < inReply.size ) {
-			ret = recv( link->fd, link->recvBuffer + done, inReply.size - done, 0 );
+			ret = recv( link->fd, link->recvBuffer + done, inReply.size - done, MSG_NOSIGNAL );
 			if ( ret <= 0 ) {
 				memlogf( "[INFO] Lost connection to uplink server of %s (payload)", link->image->path );
 				goto error_cleanup;
@@ -484,7 +487,9 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 				req->status = ULR_PROCESSING;
 			}
 		}
-		// 3) Send to interested clients
+		// 3) Send to interested clients - iterate backwards so request collaboration works, and
+		// so we can decrease queueLen on the fly while iterating. Should you ever change this to start
+		// from 0, you also need to change the "attach to existing request"-logic in uplink_request()
 		outReply.magic = dnbd3_packet_magic;
 		for (i = link->queueLen - 1; i >= 0; --i) {
 			dnbd3_queued_request_t * const req = &link->queue[i];
@@ -510,6 +515,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 		spin_unlock( &link->queueLock );
 	}
 	error_cleanup: ;
+	altservers_serverFailed( &link->currentServer );
 	const int fd = link->fd;
 	link->fd = -1;
 	if ( fd != -1 ) close( fd );
@@ -526,7 +532,7 @@ static int uplink_send_keepalive(const int fd)
 		request.cmd = CMD_KEEPALIVE;
 		fixup_request( request );
 	}
-	return send( fd, &request, sizeof(request), 0 ) == sizeof(request);
+	return send( fd, &request, sizeof(request), MSG_NOSIGNAL ) == sizeof(request);
 }
 
 static void uplink_addCrc32(dnbd3_connection_t *uplink)

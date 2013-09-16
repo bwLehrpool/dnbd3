@@ -28,7 +28,10 @@
 #define SERVER_MAX_CLIENTS 5000
 #define SERVER_MAX_IMAGES  5000
 #define SERVER_MAX_ALTS    1000
-#define SERVER_MAX_UPLINK_QUEUE 1000
+#define SERVER_MAX_UPLINK_QUEUE 1500
+#define SERVER_MAX_UPLINK_FAILS 4 // How many times may a server fail until it is considered bad
+#define SERVER_BAD_UPLINK_IGNORE 300 // How many seconds is a server considered bad?
+#define SERVER_UPLINK_QUEUELEN_THRES 900
 #define SERVER_MAX_PENDING_ALT_CHECKS 50
 
 // +++++ Other magic constants

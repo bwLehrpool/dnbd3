@@ -142,7 +142,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 
 /**
  * Mark image as complete by freeing the cache_map and deleting the map file on disk
- * DOES NOT LOCK ON THE IMAGE
+ * DOES NOT LOCK ON THE IMAGE, DO SO BEFORE CALLING
  */
 void image_markComplete(dnbd3_image_t *image)
 {
@@ -235,6 +235,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 		}
 	}
 
+	// Not found
 	if ( candidate == NULL ) {
 		spin_unlock( &_images_lock );
 		return NULL ;
@@ -254,6 +255,11 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 	} else if ( !candidate->working && candidate->cache_map != NULL && candidate->uplink == NULL && file_isWritable( candidate->path ) ) {
 		// Not working and has file + cache-map, try to init uplink (uplink_init will check if proxy mode is enabled)
 		uplink_init( candidate, -1, NULL );
+	} else if ( candidate->working && candidate->uplink != NULL && candidate->uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
+		// To many pending uplink requests. We take that as a hint that the uplink is clogged or no working uplink server
+		// exists, so "working" is changed to FALSE for now. Should a new uplink server be found the uplink thread will
+		// set this back to TRUE some time.
+		candidate->working = FALSE;
 	}
 	return candidate; // Success :-)
 }
@@ -1019,6 +1025,51 @@ int image_generateCrcFile(char *image)
 	printf( "..done!\nCRC-32 file successfully generated.\n" );
 	fflush( stdout );
 	return TRUE;
+}
+
+void image_printAll()
+{
+	int i, percent, pending;
+	char buffer[100] = { 0 };
+	spin_lock( &_images_lock );
+	for (i = 0; i < _num_images; ++i) {
+		if ( _images[i] == NULL ) continue;
+		spin_lock( &_images[i]->lock );
+		printf( "Image: %s\n", _images[i]->lower_name );
+		percent = image_getCompletenessEstimate( _images[i] );
+		printf( "  Complete: %d%%\n", percent );
+		if ( _images[i]->uplink != NULL ) {
+			host_to_string( &_images[i]->uplink->currentServer, buffer, sizeof(buffer) );
+			pending = _images[i]->uplink->queueLen;
+			printf( "  Uplink: %s -- %d pending requests\n", buffer, pending );
+		}
+		printf( "  Users: %d\n", _images[i]->users );
+		spin_unlock( &_images[i]->lock );
+	}
+	spin_unlock( &_images_lock );
+}
+
+/**
+ * Get completeness of an image in percent. Only estimated, not exact.
+ * Returns: 0-100
+ * DOES NOT LOCK, so make sure to do so before calling
+ */
+int image_getCompletenessEstimate(const dnbd3_image_t * const image)
+{
+	assert( image != NULL );
+	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
+	int i;
+	int percent = 0;
+	const size_t len = IMGSIZE_TO_MAPBYTES(image->filesize);
+	if ( len == 0 ) return 0;
+	for (i = 0; i < len; ++i) {
+		if ( image->cache_map[i] == 0xff ) {
+			percent += 100;
+		} else if ( image->cache_map[i] > 0 ) {
+			percent += 50;
+		}
+	}
+	return percent / len;
 }
 
 /**

@@ -212,6 +212,7 @@ int altservers_get(dnbd3_host_t *output, int size)
 {
 	if ( size <= 0 ) return 0;
 	int count = 0, i;
+	const time_t now = time( NULL );
 	spin_lock( &_alts_lock );
 	// Flip first server in list with a random one every time this is called
 	if ( _num_alts > 1 ) {
@@ -224,6 +225,8 @@ int altservers_get(dnbd3_host_t *output, int size)
 	}
 	for (i = 0; i < _num_alts; ++i) {
 		if ( _alt_servers[i].host.type == 0 ) continue;
+		if ( _alt_servers[i].numFails > SERVER_MAX_UPLINK_FAILS && now - _alt_servers[i].lastFail > SERVER_BAD_UPLINK_IGNORE ) continue;
+		_alt_servers[i].numFails = 0;
 		output[count++] = _alt_servers[i].host;
 		if ( count >= size ) break;
 	}
@@ -276,6 +279,27 @@ int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 		++retval;
 	}
 	return retval;
+}
+
+/**
+ * Called if an uplink server failed during normal uplink operation. This unit keeps
+ * track of how often servers fail, and consider them disabled for some time if they
+ * fail too many times.
+ */
+void altservers_serverFailed(const dnbd3_host_t * const host)
+{
+	int i;
+	const time_t now = time( NULL );
+	spin_lock( &_alts_lock );
+	for (i = 0; i < _num_alts; ++i) {
+		if ( !is_same_server( host, &_alt_servers[i].host ) ) continue;
+		if ( now - _alt_servers[i].lastFail > SERVER_RTT_DELAY_INIT ) {
+			_alt_servers[i].numFails++;
+			_alt_servers[i].lastFail = now;
+		}
+		break;
+	}
+	spin_unlock( &_alts_lock );
 }
 
 static void *altservers_main(void *data)

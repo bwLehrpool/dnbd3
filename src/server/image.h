@@ -36,6 +36,10 @@ int image_create(char *image, int revision, uint64_t size);
 
 int image_generateCrcFile(char *image);
 
+void image_printAll();
+
+int image_getCompletenessEstimate(const dnbd3_image_t * const image);
+
 // one byte in the map covers 8 4kib blocks, so 32kib per byte
 // "+ (1 << 15) - 1" is required to account for the last bit of
 // the image that is smaller than 32kib
