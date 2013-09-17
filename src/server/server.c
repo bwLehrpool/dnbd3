@@ -328,11 +328,12 @@ int main(int argc, char *argv[])
 	memlogf( "[INFO] Server is ready..." );
 
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
-	while ( 1 ) {
+	while ( !_shutdown ) {
 		len = sizeof(client);
 		fd = accept_any( sockets, socket_count, &client, &len );
 		if ( fd < 0 ) {
 			const int err = errno;
+			if ( err == EINTR || err == EAGAIN ) continue;
 			memlogf( "[ERROR] Client accept failure (err=%d)", err );
 			usleep( 10000 ); // 10ms
 			continue;

@@ -194,6 +194,7 @@ static void* uplink_mainloop(void *data)
 	assert( link != NULL );
 	assert( link->queueLen == 0 );
 	setThreadName( "idle-uplink" );
+	blockNoncriticalSignals();
 	//
 	fdEpoll = epoll_create( 2 );
 	if ( fdEpoll == -1 ) {

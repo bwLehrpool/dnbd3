@@ -59,10 +59,10 @@ void sock_set_block(int sock);
  */
 inline void sock_set_addr4(char *ip, uint16_t port, struct sockaddr_in *addr)
 {
-	memset(addr, 0, sizeof(*addr));
+	memset( addr, 0, sizeof(*addr) );
 	addr->sin_family = AF_INET; // IPv4
-	addr->sin_addr.s_addr = inet_addr(ip);
-	addr->sin_port = htons(port); // set port number
+	addr->sin_addr.s_addr = inet_addr( ip );
+	addr->sin_port = htons( port ); // set port number
 }
 
 /**

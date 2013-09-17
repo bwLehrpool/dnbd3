@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <sys/prctl.h> // For thread names
+#include <signal.h>
 
 #include "../config.h"
 
@@ -127,4 +128,15 @@ void setThreadName(char *name)
 {
 	if ( strlen( name ) > 16 ) name[16] = '\0';
 	prctl( PR_SET_NAME, (unsigned long)name, 0, 0, 0 );
+}
+
+void blockNoncriticalSignals()
+{
+	sigset_t sigmask;
+    sigemptyset(&sigmask);
+    sigaddset(&sigmask, SIGUSR1);
+    sigaddset(&sigmask, SIGUSR2);
+    sigaddset(&sigmask, SIGHUP);
+    sigaddset(&sigmask, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &sigmask, NULL);
 }

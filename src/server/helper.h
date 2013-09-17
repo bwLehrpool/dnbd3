@@ -17,6 +17,7 @@ void strtolower(char *string);
 void remove_trailing_slash(char *string);
 void trim_right(char * const string);
 void setThreadName(char *name);
+void blockNoncriticalSignals();
 
 static inline int is_same_server(const dnbd3_host_t * const a, const dnbd3_host_t * const b)
 {

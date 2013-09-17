@@ -317,6 +317,7 @@ static void *altservers_main(void *data)
 	struct timespec start, end;
 
 	setThreadName( "altserver-check" );
+	blockNoncriticalSignals();
 	// Init spinlock
 	spin_init( &pendingLock, PTHREAD_PROCESS_PRIVATE );
 	// Init waiting links queue

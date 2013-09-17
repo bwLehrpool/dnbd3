@@ -30,6 +30,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <signal.h>
 
 #include "sockhelper.h"
 #include "helper.h"
@@ -46,11 +47,12 @@
 
 static inline char recv_request_header(int sock, dnbd3_request_t *request)
 {
-	int ret;
+	int ret, fails = 0;
 	// Read request header from socket
-	if ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
-		if ( ret == 0 ) return FALSE;
+	while ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
+		if ( ret >= 0 || ++fails > 10 ) return FALSE;
 		const int err = errno;
+		if ( err == EAGAIN || err == EINTR ) continue;
 		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), err );
 		return FALSE;
 	}
@@ -133,6 +135,9 @@ void *net_client_handler(void *dnbd3_client)
 	char buffer[100];
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
+
+	// Block some signals not important to this thread
+	blockNoncriticalSignals();
 
 	// Set to zero to make valgrind happy
 	memset( &reply, 0, sizeof(reply) );
