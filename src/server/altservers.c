@@ -183,13 +183,12 @@ int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int
 			for (j = 0; j < size; ++j) {
 				if ( j < count && dist <= distance[j] ) continue;
 				if ( j > count ) break; // Should never happen but just in case...
-				if ( j < count ) {
+				if ( j < count && j + 1 < size ) {
 					// Check if we're in the middle and need to move other entries...
-					if ( j + 1 < size ) {
-						memmove( &output[j + 1], &output[j], sizeof(dnbd3_server_entry_t) * (size - j - 1) );
-						memmove( &distance[j + 1], &distance[j], sizeof(int) * (size - j - 1) );
-					}
-				} else {
+					memmove( &output[j + 1], &output[j], sizeof(dnbd3_server_entry_t) * (size - j - 1) );
+					memmove( &distance[j + 1], &distance[j], sizeof(int) * (size - j - 1) );
+				}
+				if ( count < size ) {
 					count++;
 				}
 				output[j].host = _alt_servers[i].host;
@@ -266,6 +265,7 @@ static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const 
  * Determine how close two addresses are to each other by comparing the number of
  * matching bits from the left of the address. Does not count individual bits but
  * groups of 4 for speed.
+ * Return: Closeness - higher number means closer
  */
 int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 {
