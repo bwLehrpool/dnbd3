@@ -1029,7 +1029,7 @@ int image_generateCrcFile(char *image)
 
 void image_printAll()
 {
-	int i, percent, pending;
+	int i, percent, pending, j;
 	char buffer[100] = { 0 };
 	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
@@ -1040,7 +1040,12 @@ void image_printAll()
 		printf( "  Complete: %d%%\n", percent );
 		if ( _images[i]->uplink != NULL ) {
 			host_to_string( &_images[i]->uplink->currentServer, buffer, sizeof(buffer) );
-			pending = _images[i]->uplink->queueLen;
+			pending = 0;
+			spin_lock( &_images[i]->uplink->queueLock );
+			for (j = 0; j < _images[i]->uplink->queueLen; ++j) {
+				if ( _images[i]->uplink->queue[j].status != ULR_FREE ) pending++;
+			}
+			spin_unlock( &_images[i]->uplink->queueLock );
 			printf( "  Uplink: %s -- %d pending requests\n", buffer, pending );
 		}
 		printf( "  Users: %d\n", _images[i]->users );

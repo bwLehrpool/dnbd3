@@ -103,13 +103,11 @@ void uplink_shutdown(dnbd3_image_t *image)
 void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
 {
 	spin_lock( &uplink->queueLock );
-	for (int i = 0; i < uplink->queueLen; ++i) {
+	for (int i = uplink->queueLen - 1; i >= 0; --i) {
 		if ( uplink->queue[i].client == client ) {
-			// Lock on the send mutex as the uplink thread might just be writing to the client
-			pthread_mutex_lock( &client->sendMutex );
 			uplink->queue[i].client = NULL;
 			uplink->queue[i].status = ULR_FREE;
-			pthread_mutex_unlock( &client->sendMutex );
+			if ( i > 20 && uplink->queueLen == i + 1 ) uplink->queueLen--;
 		}
 	}
 	spin_unlock( &uplink->queueLock );
