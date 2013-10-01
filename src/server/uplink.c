@@ -405,7 +405,7 @@ static void uplink_send_requests(dnbd3_connection_t *link, int newOnly)
 			// is reestablished.
 			printf( "[DEBUG] Error sending request to uplink server!\n" );
 			altservers_serverFailed( &link->currentServer );
-			break;
+			return;
 		}
 		spin_lock( &link->queueLock );
 	}
