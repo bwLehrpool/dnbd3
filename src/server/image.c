@@ -818,12 +818,12 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	int uplinkSock = -1;
 	dnbd3_host_t *uplinkServer = NULL;
 	const int count = altservers_get( servers, 4 );
+	uint16_t remoteVersion, remoteRid;
+	uint64_t remoteImageSize;
 	for (i = 0; i < count; ++i) {
 		int sock = sock_connect( &servers[i], 500, 1500 );
 		if ( sock < 0 ) continue;
 		if ( !dnbd3_select_image( sock, name, revision, FLAGS8_SERVER ) ) goto server_fail;
-		uint16_t remoteVersion, remoteRid;
-		uint64_t remoteImageSize;
 		char *remoteName;
 		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
 		if ( remoteVersion < MIN_SUPPORTED_SERVER ) goto server_fail;
@@ -841,7 +841,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	}
 	pthread_mutex_unlock( &remoteCloneLock );
 	// If everything worked out, this call should now actually return the image
-	image = image_get( name, revision );
+	image = image_get( name, remoteRid );
 	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
 		// If so, init the uplink and pass it the socket
 		uplink_init( image, uplinkSock, uplinkServer );
