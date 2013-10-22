@@ -19,7 +19,12 @@ void trim_right(char * const string);
 void setThreadName(char *name);
 void blockNoncriticalSignals();
 
-static inline int is_same_server(const dnbd3_host_t * const a, const dnbd3_host_t * const b)
+static inline int isSameAddress(const dnbd3_host_t * const a, const dnbd3_host_t * const b)
+{
+	return (a->type == b->type) && (0 == memcmp( a->addr, b->addr, (a->type == AF_INET ? 4 : 16) ));
+}
+
+static inline int isSameAddressPort(const dnbd3_host_t * const a, const dnbd3_host_t * const b)
 {
 	return (a->type == b->type) && (a->port == b->port) && (0 == memcmp( a->addr, b->addr, (a->type == AF_INET ? 4 : 16) ));
 }

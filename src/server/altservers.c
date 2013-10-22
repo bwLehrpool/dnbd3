@@ -92,7 +92,7 @@ int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate)
 	int i, freeSlot = -1;
 	spin_lock( &_alts_lock );
 	for (i = 0; i < _num_alts; ++i) {
-		if ( is_same_server( &_alt_servers[i].host, host ) ) {
+		if ( isSameAddressPort( &_alt_servers[i].host, host ) ) {
 			spin_unlock( &_alts_lock );
 			return FALSE;
 		} else if ( freeSlot == -1 && _alt_servers[i].host.type == 0 ) {
@@ -242,7 +242,7 @@ static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const 
 	int i;
 	spin_lock( &_alts_lock );
 	for (i = 0; i < _num_alts; ++i) {
-		if ( !is_same_server( host, &_alt_servers[i].host ) ) continue;
+		if ( !isSameAddressPort( host, &_alt_servers[i].host ) ) continue;
 		_alt_servers[i].rtt[++_alt_servers[i].rttIndex % SERVER_RTT_PROBES] = rtt;
 #if SERVER_RTT_PROBES == 5
 		avg = (_alt_servers[i].rtt[0] + _alt_servers[i].rtt[1] + _alt_servers[i].rtt[2] + _alt_servers[i].rtt[3] + _alt_servers[i].rtt[4])
@@ -292,7 +292,7 @@ void altservers_serverFailed(const dnbd3_host_t * const host)
 	const time_t now = time( NULL );
 	spin_lock( &_alts_lock );
 	for (i = 0; i < _num_alts; ++i) {
-		if ( !is_same_server( host, &_alt_servers[i].host ) ) continue;
+		if ( !isSameAddressPort( host, &_alt_servers[i].host ) ) continue;
 		if ( now - _alt_servers[i].lastFail > SERVER_RTT_DELAY_INIT ) {
 			_alt_servers[i].numFails++;
 			_alt_servers[i].lastFail = now;
@@ -381,7 +381,7 @@ static void *altservers_main(void *data)
 				// Add current server if not already in list
 				found = FALSE;
 				for (itAlt = 0; itAlt < numAlts; ++itAlt) {
-					if ( !is_same_server( &uplink->currentServer, &servers[itAlt] ) ) continue;
+					if ( !isSameAddressPort( &uplink->currentServer, &servers[itAlt] ) ) continue;
 					found = TRUE;
 					break;
 				}
@@ -450,7 +450,7 @@ static void *altservers_main(void *data)
 				// Measurement done - everything fine so far
 				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000; // µs
 				const unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
-				if ( uplink->fd != -1 && is_same_server( &servers[itAlt], &uplink->currentServer ) ) {
+				if ( uplink->fd != -1 && isSameAddressPort( &servers[itAlt], &uplink->currentServer ) ) {
 					currentRtt = avg;
 					close( sock );
 				} else if ( avg < bestRtt ) {

@@ -115,6 +115,7 @@ void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
 
 /**
  * Request a chunk of data through an uplink server
+ * Locks on: image.lock, uplink.queueLock
  */
 int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint32_t length)
 {
@@ -122,9 +123,17 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 	spin_lock( &client->image->lock );
 	if ( client->image->uplink == NULL ) {
 		spin_unlock( &client->image->lock );
+		printf( "[DEBUG] Uplink request for image with no uplink (%s)\n", client->image->lower_name );
 		return FALSE;
 	}
 	dnbd3_connection_t * const uplink = client->image->uplink;
+	// Check if the client is the same host as the uplink. If so assume this is a circular proxy chain
+	if ( isSameAddress( &uplink->currentServer, &client->host ) ) {
+		spin_unlock( &client->image->lock );
+		printf( "[DEBUG] Proxy cycle detected.\n" );
+		return FALSE;
+	}
+
 	int foundExisting = -1; // Index of a pending request that is a superset of our range, -1 otherwise
 	int existingType = -1; // ULR_* type of existing request
 	int i;

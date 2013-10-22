@@ -18,7 +18,7 @@
 #include "memlog.h"
 #include "helper.h"
 
-#define MAXLOCKS 500
+#define MAXLOCKS 2000
 #define MAXTHREADS 500
 #define LOCKLEN 60
 typedef struct
@@ -69,6 +69,8 @@ int debug_spin_init(const char *name, const char *file, int line, pthread_spinlo
 	}
 	if ( first == -1 ) {
 		printf( "[ERROR] No more free debug locks (%s:%d)\n", file, line );
+		pthread_spin_unlock( &initdestory );
+		debug_dump_lock_stats();
 		exit( 4 );
 	}
 	locks[first].lock = (void*)lock;
