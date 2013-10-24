@@ -394,7 +394,8 @@ void dnbd3_net_heartbeat(unsigned long arg)
 				debug_dev("ERROR: Couldn't create keepalive request.");
 			}
 		}
-		if (timeout_seconds(TIMER_INTERVAL_PROBE_NORMAL))
+		if ((dev->heartbeat_count > STARTUP_MODE_DURATION && timeout_seconds(TIMER_INTERVAL_PROBE_NORMAL))
+				|| (dev->heartbeat_count <= STARTUP_MODE_DURATION && timeout_seconds(TIMER_INTERVAL_PROBE_STARTUP)))
 		{
 			// Normal discovery
 			dev->discover = 1;
@@ -436,9 +437,9 @@ int dnbd3_net_discover(void *data)
 	struct timeval start, end;
 	unsigned long rtt, best_rtt = 0;
 	unsigned long irqflags;
-	int i, best_server, current_server;
+	int i, istart, isize, best_server, current_server;
 	int turn = 0;
-	int ready = 0, do_change;
+	int ready = 0, do_change, last_alt_count = 0;
 	int mlen;
 
 	struct request *last_request = (struct request *)123, *cur_request = (struct request *)456;
@@ -524,12 +525,26 @@ int dnbd3_net_discover(void *data)
 		current_server = best_server = -1;
 		best_rtt = 0xFFFFFFFul;
 
-		for (i = 0; i < NUMBER_SERVERS; ++i)
+		if (dev->heartbeat_count < STARTUP_MODE_DURATION || last_alt_count == 0 || dev->panic)
+		{
+			istart = 0;
+			isize = NUMBER_SERVERS;
+		}
+		else
+		{
+			istart = jiffies % MAX(last_alt_count - 2, 1);
+			isize = 3;
+		}
+
+		for (i = istart; i < NUMBER_SERVERS; ++i)
 		{
 			if (dev->alt_servers[i].host.type == 0) // Empty slot
 				continue;
+			last_alt_count = i;
 			if (!dev->panic && dev->alt_servers[i].failures > 50 && (jiffies & 7) != 0) // If not in panic mode, skip server if it failed too many times
 				continue;
+			if (isize-- <= 0)
+				break;
 
 			// Initialize socket and connect
 			if (sock_create_kern(dev->alt_servers[i].host.type, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
@@ -783,7 +798,7 @@ int dnbd3_net_discover(void *data)
 			best_sock = NULL;
 		}
 
-		if (!ready || (jiffies & 3) != 0)
+		if (!ready || (jiffies & 7) != 0)
 			turn = (turn + 1) % 4;
 		if (turn == 3)
 			ready = 1;

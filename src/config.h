@@ -71,10 +71,12 @@
 // This must be a power of two:
 #define RTT_BLOCK_SIZE 4096
 
+#define STARTUP_MODE_DURATION 30
 // Interval of several repeating tasks (in seconds)
-#define TIMER_INTERVAL_PROBE_NORMAL 10
+#define TIMER_INTERVAL_PROBE_STARTUP 4
+#define TIMER_INTERVAL_PROBE_NORMAL 22
 #define TIMER_INTERVAL_PROBE_PANIC 2
-#define TIMER_INTERVAL_KEEPALIVE_PACKET 5
+#define TIMER_INTERVAL_KEEPALIVE_PACKET 6
 
 // Expect a keepalive response every X seconds
 #define SOCKET_KEEPALIVE_TIMEOUT 7
