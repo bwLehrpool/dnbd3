@@ -438,8 +438,10 @@ int dnbd3_net_discover(void *data)
 	unsigned long irqflags;
 	int i, best_server, current_server;
 	int turn = 0;
-	int ready = 0;
+	int ready = 0, do_change;
 	int mlen;
+
+	struct request *last_request = (struct request *)123, *cur_request = (struct request *)456;
 
 	struct timeval timeout;
 	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DISCOVERY;
@@ -739,9 +741,28 @@ int dnbd3_net_discover(void *data)
 			continue;
 		}
 
+		do_change = !dev->is_server && ready && best_server != current_server && (jiffies & 3) != 0
+				   && RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt;
+
+		if (ready && !do_change) {
+			spin_lock_irqsave(&dev->blk_lock, irqflags);
+			if (!list_empty(&dev->request_queue_send))
+			{
+				cur_request = list_entry(dev->request_queue_send.next, struct request, queuelist);
+				do_change = (cur_request == last_request);
+				if (do_change)
+					printk("WARNING: Hung request on %s\n", dev->disk->disk_name);
+			}
+			else
+			{
+				cur_request = (struct request *)123;
+			}
+			last_request = cur_request;
+			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+		}
+
 		// take server with lowest rtt (only if in client mode)
-		if (!dev->is_server && ready && best_server != current_server && (jiffies & 3) != 0
-		   && RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt)
+		if (do_change)
 		{
 			printk("INFO: Server %d on %s is faster (%lluµs vs. %lluµs)\n", best_server, dev->disk->disk_name,
 			   (unsigned long long)best_rtt, (unsigned long long)dev->cur_rtt);
