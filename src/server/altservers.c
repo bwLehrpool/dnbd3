@@ -407,7 +407,7 @@ static void *altservers_main(void *data)
 				uint64_t imageSize;
 				char *name;
 				if ( !dnbd3_select_image_reply( &serialized, sock, &protocolVersion, &name, &rid, &imageSize ) ) {
-					goto server_failed;
+					goto server_image_not_available;
 				}
 				if ( protocolVersion < MIN_SUPPORTED_SERVER ) goto server_failed;
 				if ( name == NULL || strcmp( name, uplink->image->lower_name ) != 0 ) {
@@ -426,22 +426,19 @@ static void *altservers_main(void *data)
 				if ( !dnbd3_get_block( sock,
 				        (((uint64_t)start.tv_nsec | (uint64_t)rand()) * DNBD3_BLOCK_SIZE )% uplink->image->filesize,
 				        DNBD3_BLOCK_SIZE) ) {
-					//ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", uplink->image->lower_name );
-					goto server_failed;
+					ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", uplink->image->lower_name );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
 				if ( !dnbd3_get_reply( sock, &reply ) ) {
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
-					//ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
-					//        buf, uplink->image->lower_name );
-					goto server_failed;
+					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
+					        buf, uplink->image->lower_name );
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
 					        reply.size, uplink->image->lower_name );
-					goto server_failed;
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Could not read random block payload for %s", uplink->image->lower_name );
@@ -464,6 +461,8 @@ static void *altservers_main(void *data)
 				continue;
 				// Jump here if anything went wrong
 				server_failed: ;
+				altservers_serverFailed( &servers[itAlt] );
+				server_image_not_available: ;
 				close( sock );
 			}
 			// Done testing all servers. See if we should switch
