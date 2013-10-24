@@ -757,7 +757,7 @@ int dnbd3_net_discover(void *data)
 		}
 
 		do_change = !dev->is_server && ready && best_server != current_server && (jiffies & 3) != 0
-				   && RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt;
+				   && RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt + 1500;
 
 		if (ready && !do_change) {
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
