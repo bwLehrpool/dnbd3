@@ -30,7 +30,7 @@ void sock_set_timeout(const int sockfd, const int milliseconds);
  * @param port port to listen on
  * @return the socket descriptor if successful, -1 otherwise.
  */
-int sock_listen_any(int protocol_family, uint16_t port);
+int sock_listen_any(int protocol_family, uint16_t port, char* bind_addr);
 
 /**
  * Listen on a specific address and port.

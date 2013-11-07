@@ -77,6 +77,7 @@ void dnbd3_print_help(char *argv_0)
 	printf( "-d or --delay       Add a fake network delay of X µs\n" );
 #endif
 	printf( "-n or --nodaemon    Start server in foreground\n" );
+	printf( "-b or --bind        Local Address to bind to\n" );
 	//printf( "-r or --reload      Reload configuration file\n" );
 	//printf( "-s or --stop        Stop running dnbd3-server\n" );
 	//printf( "-i or --info        Print connected clients and used images\n" );
@@ -176,6 +177,7 @@ int main(int argc, char *argv[])
 	int opt = 0;
 	int longIndex = 0;
 	char *paramCreate = NULL;
+	char *bindAddress = NULL;
 	int64_t paramSize = -1;
 	int paramRevision = -1;
 	static const char *optString = "c:d:nrsihv?";
@@ -188,6 +190,7 @@ int main(int argc, char *argv[])
 	        { "info", no_argument, NULL, 'i' },
 	        { "help", no_argument, NULL, 'h' },
 	        { "version", no_argument, NULL, 'v' },
+	        { "bind", required_argument, NULL, 'b' },
 	        { "crc", required_argument, NULL, 'crc4' },
 	        { "assert", no_argument, NULL, 'asrt' },
 	        { "create", required_argument, NULL, 'crat' },
@@ -232,6 +235,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'v':
 			dnbd3_print_version();
+			break;
+		case 'b':
+			bindAddress = strdup( optarg );
 			break;
 		case 'crc4':
 			return image_generateCrcFile( optarg ) ? 0 : EXIT_FAILURE;
@@ -306,10 +312,10 @@ int main(int argc, char *argv[])
 	sleep( 2 );
 
 	// setup network
-	sockets[socket_count] = sock_listen_any( PF_INET, PORT );
+	sockets[socket_count] = sock_listen_any( PF_INET, PORT, bindAddress );
 	if ( sockets[socket_count] != -1 ) ++socket_count;
 #ifdef WITH_IPV6
-	sockets[socket_count] = sock_listen_any(PF_INET6, PORT);
+	sockets[socket_count] = sock_listen_any(PF_INET6, PORT, NULL);
 	if (sockets[socket_count] != -1) ++socket_count;
 #endif
 	if ( socket_count == 0 ) exit( EXIT_FAILURE );

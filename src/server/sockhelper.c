@@ -81,13 +81,21 @@ void sock_set_timeout(const int sockfd, const int milliseconds)
 	setsockopt( sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv) );
 }
 
-int sock_listen_any(int protocol_family, uint16_t port)
+int sock_listen_any(int protocol_family, uint16_t port, char* bind_addr)
 {
 	struct sockaddr_storage addr;
+	struct in_addr local;
+	if (bind_addr == NULL) {
+		if (!inet_aton(bind_addr, &local)) return -1;
+	}
 	memset( &addr, 0, sizeof(addr) );
 	if ( protocol_family == PF_INET ) {
 		struct sockaddr_in *v4 = (struct sockaddr_in *)&addr;
-		v4->sin_addr.s_addr = INADDR_ANY;
+		if (bind_addr == NULL) {
+			v4->sin_addr.s_addr = INADDR_ANY;
+		} else {
+			v4->sin_addr = local;
+		}
 		v4->sin_port = htons( port );
 		v4->sin_family = AF_INET;
 	}
