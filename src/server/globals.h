@@ -158,6 +158,11 @@ extern int _shutdown;
  */
 extern int _isProxy;
 
+/**
+ * Only use servers as upstream proxy which are private?
+ */
+extern int _proxyPrivateOnly;
+
 void globals_loadConfig();
 
 #endif /* GLOBALS_H_ */
