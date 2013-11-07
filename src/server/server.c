@@ -180,7 +180,7 @@ int main(int argc, char *argv[])
 	char *bindAddress = NULL;
 	int64_t paramSize = -1;
 	int paramRevision = -1;
-	static const char *optString = "c:d:nrsihv?";
+	static const char *optString = "c:d:b:nrsihv?";
 	static const struct option longOpts[] = {
 	        { "config", required_argument, NULL, 'c' },
 	        { "delay", required_argument, NULL, 'd' },

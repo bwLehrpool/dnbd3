@@ -85,7 +85,7 @@ int sock_listen_any(int protocol_family, uint16_t port, char* bind_addr)
 {
 	struct sockaddr_storage addr;
 	struct in_addr local;
-	if (bind_addr == NULL) {
+	if (bind_addr != NULL) {
 		if (!inet_aton(bind_addr, &local)) return -1;
 	}
 	memset( &addr, 0, sizeof(addr) );
