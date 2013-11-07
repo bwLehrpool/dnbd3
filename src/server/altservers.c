@@ -224,6 +224,7 @@ int altservers_get(dnbd3_host_t *output, int size)
 	}
 	for (i = 0; i < _num_alts; ++i) {
 		if ( _alt_servers[i].host.type == 0 ) continue;
+		if ( _proxyPrivateOnly && !_alt_servers[i].isPrivate ) continue;
 		if ( _alt_servers[i].numFails > SERVER_MAX_UPLINK_FAILS && now - _alt_servers[i].lastFail > SERVER_BAD_UPLINK_IGNORE ) continue;
 		_alt_servers[i].numFails = 0;
 		output[count++] = _alt_servers[i].host;
