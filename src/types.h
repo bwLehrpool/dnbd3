@@ -64,7 +64,7 @@ static const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
 	(a).size = net_order_32((a).size); \
 } while (0)
 #define ENDIAN_MODE "Big Endian"
-#elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+#elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(__i386__) || defined(__i386)
 static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 // Make little endian our network byte order as probably 99.999% of machines this will be used on are LE
 #define net_order_64(a) (a)
