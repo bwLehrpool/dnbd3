@@ -184,7 +184,7 @@ int image_saveCacheMap(dnbd3_image_t *image)
 	strcpy( mapfile, image->path );
 	strcat( mapfile, ".map" );
 
-	fd = open( mapfile, O_WRONLY | O_CREAT, 0640 );
+	fd = open( mapfile, O_WRONLY | O_CREAT, 0644 );
 	if ( fd < 0 ) {
 		spin_lock( &image->lock );
 		image->users--;
@@ -732,8 +732,8 @@ int image_create(char *image, int revision, uint64_t size)
 	const int mapsize = IMGSIZE_TO_MAPBYTES(size);
 	// Write files
 	int fdImage = -1, fdCache = -1;
-	fdImage = open( path, O_RDWR | O_TRUNC | O_CREAT, 0640 );
-	fdCache = open( cache, O_RDWR | O_TRUNC | O_CREAT, 0640 );
+	fdImage = open( path, O_RDWR | O_TRUNC | O_CREAT, 0644 );
+	fdCache = open( cache, O_RDWR | O_TRUNC | O_CREAT, 0644 );
 	if ( fdImage < 0 ) {
 		memlogf( "[ERROR] Could not open %s for writing.", path );
 		goto failure_cleanup;
@@ -798,7 +798,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 		        || remoteCloneCache[i].deadline < now
 		        || strcmp( cmpname, remoteCloneCache[i].name ) != 0 ) continue;
 		pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
-		return NULL ;
+		return image_get( name, revision );
 	}
 	// Re-check to prevent two clients at the same time triggering this
 	image = image_get( name, revision );
@@ -821,7 +821,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	uint16_t remoteVersion, remoteRid;
 	uint64_t remoteImageSize;
 	for (i = 0; i < count; ++i) {
-		int sock = sock_connect( &servers[i], 500, 1500 );
+		int sock = sock_connect( &servers[i], 750, _uplinkTimeout );
 		if ( sock < 0 ) continue;
 		if ( !dnbd3_select_image( sock, name, revision, FLAGS8_SERVER ) ) goto server_fail;
 		char *remoteName;
@@ -882,7 +882,7 @@ static int image_clone(int sock, char *name, uint16_t revision, uint64_t imageSi
 			if ( lists_crc != masterCrc ) {
 				memlogf( "[WARNING] OTF-Clone: Corrupted CRC-32 list. ignored. (%s)", name );
 			} else {
-				int fd = open( crcFile, O_WRONLY | O_CREAT, 0640 );
+				int fd = open( crcFile, O_WRONLY | O_CREAT, 0644 );
 				write( fd, &lists_crc, sizeof(uint32_t) );
 				write( fd, crc32list, crc32len );
 				close( fd );
@@ -938,7 +938,7 @@ int image_generateCrcFile(char *image)
 		close( fdImage );
 		return FALSE;
 	}
-	int fdCrc = open( crcFile, O_RDWR | O_CREAT, 0640 );
+	int fdCrc = open( crcFile, O_RDWR | O_CREAT, 0644 );
 	if ( fdCrc < 0 ) {
 		printf( "Could not open CRC File %s for writing..\n", crcFile );
 		close( fdImage );

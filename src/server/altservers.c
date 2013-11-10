@@ -424,7 +424,7 @@ static void *altservers_main(void *data)
 				usleep( 1000 ); // Wait a very short moment for the network to recover (we might be doing lots of measurements...)
 				// Connect
 				clock_gettime( CLOCK_MONOTONIC_RAW, &start );
-				int sock = sock_connect( &servers[itAlt], 750, 1250 );
+				int sock = sock_connect( &servers[itAlt], 750, _uplinkTimeout );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
 				if ( !dnbd3_select_image( sock, uplink->image->lower_name, uplink->image->rid, FLAGS8_SERVER ) ) {
