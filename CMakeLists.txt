@@ -2,8 +2,8 @@
 # GENERAL                                                                      #
 ################################################################################
 
-PROJECT(dnbd3)
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.0)
+PROJECT(dnbd3 C)
+CMAKE_MINIMUM_REQUIRED(VERSION 2.6.2)
 IF (CMAKE_BUILD_TYPE STREQUAL "")
 	SET(CMAKE_BUILD_TYPE Debug)
 ENDIF()
@@ -12,10 +12,9 @@ message( "Build Type selected: ${CMAKE_BUILD_TYPE}" )
 
 SET(CMAKE_C_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG -Wno-multichar")
 SET(CMAKE_C_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG -Wno-multichar")
-SET(CMAKE_CXX_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG")
-SET(CMAKE_CXX_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG" )
+#SET(CMAKE_CXX_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG")
+#SET(CMAKE_CXX_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG" )
 
-ADD_DEFINITIONS(-DIPC_TCP)
 ADD_DEFINITIONS(-D_FILE_OFFSET_BITS=64)
 ADD_DEFINITIONS(-DWITH_IPV6)
 
