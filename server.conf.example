@@ -1,9 +1,0 @@
-# This is a sample configuration file for dnbd3-server
-
-[settings]
-default_namespace=uni-freiburg/rz/bunker
-
-[eclipse-cdt linux (tar.gz)]
-file=/home/sr/Downloads/eclipse-cpp-juno-linux-gtk-x86_64.tar.gz
-servers=127.0.0.20:1234;132.230.4.58;2000::dead:beef
-rid=3
