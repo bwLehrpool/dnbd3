@@ -17,10 +17,12 @@ remoteCloneLock
 _images_lock
 _images[].lock
 uplink.queueLock
-_alts_lock
+pendingLockProduce
+pendingLockConsume
+altServersLock
 client.sendMutex
 
-If you need to lock multiple clients at once,
+If you need to lock multiple clients/images/... at once,
 lock the client with the lowest array index first.
 
 If the program logic would require to aquire the
