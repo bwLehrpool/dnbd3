@@ -944,7 +944,7 @@ int dnbd3_net_receive(void *data)
 			continue;
 		}
 		if (ret <= 0)
-			error_dev_va("ERROR: Connection to server lost (receive)", ret);
+			error_dev("ERROR: Connection to server lost (receive)");
 		if (ret != sizeof(dnbd3_reply))
 			error_dev("ERROR: Recv msg header.");
 		fixup_reply(dnbd3_reply);
