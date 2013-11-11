@@ -122,11 +122,19 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	struct request *req1 = NULL;
 	struct timeval timeout;
 
-	char get_servers = 0, set_client = 0;
-
-	while (dev->disconnecting)
-	{
-		if (dev->better_sock)
+	if (dev->disconnecting) {
+		debug_dev("CONNECT: Still disconnecting!!!\n");
+		while (dev->disconnecting)
+			schedule();
+	}
+	if (dev->thread_receive != NULL) {
+		debug_dev("CONNECT: Still receiving!!!\n");
+		while (dev->thread_receive != NULL)
+			schedule();
+	}
+	if (dev->thread_send != NULL) {
+		debug_dev("CONNECT: Still sending!!!\n");
+		while (dev->thread_send != NULL)
 			schedule();
 	}
 
@@ -135,24 +143,9 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
 	// do some checks before connecting
 
-	if (!dev->is_server && is_same_server(&dev->cur_server, &dev->initial_server))
-	{
-		// Forget all known alt servers
-		memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0]) * NUMBER_SERVERS);
-		memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
-		get_servers = 1;
-	}
-	if (dev->better_sock)
-	{
-		set_client = 1;
-	}
-
-	if (get_servers || set_client)
-	{
-		req1 = kmalloc(sizeof(*req1), GFP_ATOMIC );
-		if (!req1)
-			error_dev("FATAL: Kmalloc(1) failed.");
-	}
+	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC );
+	if (!req1)
+		error_dev("FATAL: Kmalloc(1) failed.");
 
 	if (dev->cur_server.host.port == 0 || dev->cur_server.host.type == 0 || dev->imgname == NULL )
 		error_dev("FATAL: Host, port or image name not set.");
@@ -272,19 +265,10 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	dev->panic = 0;
 	dev->panic_count = 0;
 
-	if (get_servers) // This connection is established to the initial server (from the ioctl call)
-	{
-		// Enqueue request to request_queue_send for a fresh list of alt servers
-		req1->cmd_type = REQ_TYPE_SPECIAL;
-		req1->cmd_flags = CMD_GET_SERVERS;
-		list_add(&req1->queuelist, &dev->request_queue_send);
-	}
-	else if (set_client)
-	{
-		req1->cmd_type = REQ_TYPE_SPECIAL;
-		req1->cmd_flags = CMD_SET_CLIENT_MODE;
-		list_add(&req1->queuelist, &dev->request_queue_send);
-	}
+	// Enqueue request to request_queue_send for a fresh list of alt servers
+	req1->cmd_type = REQ_TYPE_SPECIAL;
+	req1->cmd_flags = CMD_GET_SERVERS;
+	list_add(&req1->queuelist, &dev->request_queue_send);
 
 	// create required threads
 	dev->thread_send = kthread_create(dnbd3_net_send, dev, dev->disk->disk_name);
@@ -306,7 +290,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	add_timer(&dev->hb_timer);
 
 	return 0;
-	error: if (dev->sock)
+	error: ;
+	if (dev->sock)
 	{
 		sock_release(dev->sock);
 		dev->sock = NULL;
@@ -340,13 +325,11 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 	if (dev->thread_send)
 	{
 		kthread_stop(dev->thread_send);
-		dev->thread_send = NULL;
 	}
 
 	if (dev->thread_receive)
 	{
 		kthread_stop(dev->thread_receive);
-		dev->thread_receive = NULL;
 	}
 
 	if (dev->thread_discover)
@@ -437,9 +420,10 @@ int dnbd3_net_discover(void *data)
 	struct timeval start, end;
 	unsigned long rtt, best_rtt = 0;
 	unsigned long irqflags;
-	int i, istart, isize, best_server, current_server;
+	int i, j, isize, best_server, current_server;
 	int turn = 0;
-	int ready = 0, do_change, last_alt_count = 0;
+	int ready = 0, do_change = 0;
+	char check_order[NUMBER_SERVERS];
 	int mlen;
 
 	struct request *last_request = (struct request *)123, *cur_request = (struct request *)456;
@@ -462,6 +446,10 @@ int dnbd3_net_discover(void *data)
 	payload = (serialized_buffer_t *)buf; // Reuse this buffer to save kernel mem
 
 	dnbd3_request.magic = dnbd3_packet_magic;
+
+	for (i = 0; i < NUMBER_SERVERS; ++i) {
+		check_order[i] = i;
+	}
 
 	for (;;)
 	{
@@ -525,26 +513,34 @@ int dnbd3_net_discover(void *data)
 		current_server = best_server = -1;
 		best_rtt = 0xFFFFFFFul;
 
-		if (dev->heartbeat_count < STARTUP_MODE_DURATION || last_alt_count == 0 || dev->panic)
+		if (dev->heartbeat_count < STARTUP_MODE_DURATION || dev->panic)
 		{
-			istart = 0;
 			isize = NUMBER_SERVERS;
 		}
 		else
 		{
-			istart = jiffies % MAX(last_alt_count - 2, 1);
 			isize = 3;
 		}
+		if (NUMBER_SERVERS > isize) {
+			for (i = 0; i < isize; ++i) {
+				j = ((start.tv_sec >> i) ^ (start.tv_usec >> j)) % NUMBER_SERVERS;
+				if (j != i) {
+					mlen = check_order[i];
+					check_order[i] = check_order[j];
+					check_order[j] = mlen;
+				}
+			}
+		}
 
-		for (i = istart; i < NUMBER_SERVERS; ++i)
+		for (j = 0; j < NUMBER_SERVERS; ++j)
 		{
+			i = check_order[j];
 			if (dev->alt_servers[i].host.type == 0) // Empty slot
 				continue;
-			last_alt_count = i;
-			if (!dev->panic && dev->alt_servers[i].failures > 50 && (jiffies & 7) != 0) // If not in panic mode, skip server if it failed too many times
+			if (!dev->panic && dev->alt_servers[i].failures > 50 && (start.tv_usec & 7) != 0) // If not in panic mode, skip server if it failed too many times
 				continue;
-			if (isize-- <= 0)
-				break;
+			if (isize-- <= 0 && !is_same_server(&dev->cur_server, &dev->alt_servers[i]))
+				continue;
 
 			// Initialize socket and connect
 			if (sock_create_kern(dev->alt_servers[i].host.type, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
@@ -653,13 +649,13 @@ int dnbd3_net_discover(void *data)
 			}
 			else if (sizeof(size_t) >= 8)
 			{
-				dnbd3_request.offset = ((((start.tv_usec << 12) ^ start.tv_usec) << 4) % dev->reported_size)
+				dnbd3_request.offset = ((((start.tv_sec << 12) ^ start.tv_usec) << 4) % dev->reported_size)
 				   & ~(uint64_t)(RTT_BLOCK_SIZE - 1);
 				//printk("Random offset 64bit: %lluMiB\n", (unsigned long long)(dnbd3_request.offset >> 20));
 			}
 			else // On 32bit, prevent modulo on a 64bit data type. This limits the random block picking to the first 4GB of the image
 			{
-				dnbd3_request.offset = ((((start.tv_usec << 12) ^ start.tv_usec) << 4) % (uint32_t)dev->reported_size)
+				dnbd3_request.offset = ((((start.tv_sec << 12) ^ start.tv_usec) << 4) % (uint32_t)dev->reported_size)
 				   & ~(RTT_BLOCK_SIZE - 1);
 				//printk("Random offset 32bit: %lluMiB\n", (unsigned long long)(dnbd3_request.offset >> 20));
 			}
@@ -727,7 +723,8 @@ int dnbd3_net_discover(void *data)
 
 			continue;
 
-			error: ++dev->alt_servers[i].failures;
+			error: ;
+			++dev->alt_servers[i].failures;
 			sock_release(sock);
 			sock = NULL;
 			dev->alt_servers[i].rtts[turn] = RTT_UNREACHABLE;
@@ -756,7 +753,7 @@ int dnbd3_net_discover(void *data)
 			continue;
 		}
 
-		do_change = !dev->is_server && ready && best_server != current_server && (jiffies & 3) != 0
+		do_change = !dev->is_server && ready && best_server != current_server && (start.tv_usec & 3) != 0
 				   && RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt + 1500;
 
 		if (ready && !do_change) {
@@ -798,7 +795,7 @@ int dnbd3_net_discover(void *data)
 			best_sock = NULL;
 		}
 
-		if (!ready || (jiffies & 7) != 0)
+		if (!ready || (start.tv_usec & 7) != 0)
 			turn = (turn + 1) % 4;
 		if (turn == 3)
 			ready = 1;
@@ -811,7 +808,7 @@ int dnbd3_net_discover(void *data)
 int dnbd3_net_send(void *data)
 {
 	dnbd3_device_t *dev = data;
-	struct request *blk_request;
+	struct request *blk_request, *tmp_request;
 
 	dnbd3_request_t dnbd3_request;
 	struct msghdr msg;
@@ -824,6 +821,19 @@ int dnbd3_net_send(void *data)
 	dnbd3_request.magic = dnbd3_packet_magic;
 
 	set_user_nice(current, -20);
+
+	// move already sent requests to request_queue_send again
+	while (!list_empty(&dev->request_queue_receive))
+	{
+		printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);
+		spin_lock_irqsave(&dev->blk_lock, irqflags);
+		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
+		{
+			list_del_init(&blk_request->queuelist);
+			list_add(&blk_request->queuelist, &dev->request_queue_send);
+		}
+		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+	}
 
 	for (;;)
 	{
@@ -879,29 +889,25 @@ int dnbd3_net_send(void *data)
 		iov.iov_len = sizeof(dnbd3_request);
 		if (kernel_sendmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_request)) != sizeof(dnbd3_request))
 		{
-			printk("Couldn't properly send a request header.\n");
+			debug_dev("ERROR: Connection to server lost (send)");
 			goto error;
 		}
 		wake_up(&dev->process_queue_receive);
 	}
 
+	dev->thread_send = NULL;
 	return 0;
 
-	error:
-	debug_dev("ERROR: Connection to server lost (send)");
+	error: ;
 	if (dev->sock)
-	{
 		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
-		dev->sock = NULL;
-	}
-	dev->thread_send = NULL;
 	if (!dev->disconnecting)
 	{
 		dev->panic = 1;
-		// start discover
 		dev->discover = 1;
 		wake_up(&dev->process_queue_discover);
 	}
+	dev->thread_send = NULL;
 	return -1;
 }
 
@@ -938,7 +944,7 @@ int dnbd3_net_receive(void *data)
 			continue;
 		}
 		if (ret <= 0)
-			error_dev_va("Connection closed (%d).", ret);
+			error_dev_va("ERROR: Connection to server lost (receive)", ret);
 		if (ret != sizeof(dnbd3_reply))
 			error_dev("ERROR: Recv msg header.");
 		fixup_reply(dnbd3_reply);
@@ -1065,30 +1071,19 @@ int dnbd3_net_receive(void *data)
 	}
 
 	printk("dnbd3_net_receive terminated normally.\n");
+	dev->thread_receive = NULL;
 	return 0;
 
 	error:
-	// move already sent requests to request_queue_send again
-	while (!list_empty(&dev->request_queue_receive))
-	{
-		printk("WARN: Request queue was not empty on %s\n", dev->disk->disk_name);
-		spin_lock_irqsave(&dev->blk_lock, irqflags);
-		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
-		{
-			list_del_init(&blk_request->queuelist);
-			list_add(&blk_request->queuelist, &dev->request_queue_send);
-		}
-		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-	}
 	if (dev->sock)
 		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
-	dev->thread_receive = NULL;
 	if (!dev->disconnecting)
 	{
 		dev->panic = 1;
-		// start discover
 		dev->discover = 1;
 		wake_up(&dev->process_queue_discover);
 	}
+	dev->thread_receive = NULL;
 	return -1;
 }
+
