@@ -42,8 +42,9 @@
 #define DEV_LEN 15
 #define MAX_DEVS 50
 
+
 static int openDevices[MAX_DEVS];
-static const char *optString = "f:h:i:r:d:a:c:s:HV?";
+static const char *optString = "f:h:i:r:d:a:cs:HV?k";
 static const struct option longOpts[] = {
         { "file", required_argument, NULL, 'f' },
         { "host", required_argument, NULL, 'h' },
@@ -51,8 +52,10 @@ static const struct option longOpts[] = {
         { "rid", required_argument, NULL, 'r' },
         { "device", required_argument, NULL, 'd' },
         { "ahead", required_argument, NULL, 'a' },
-        { "close", required_argument, NULL, 'c' },
+        { "close", no_argument, NULL, 'c' },
         { "switch", required_argument, NULL, 's' },
+        { "add", required_argument, NULL, 'adds' },
+        { "remove", required_argument, NULL, 'rems' },
         { "help", no_argument, NULL, 'H' },
         { "version", no_argument, NULL, 'V' },
         { "daemon", no_argument, NULL, 'D' },
@@ -65,11 +68,41 @@ static const struct option longOpts[] = {
 static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const msg);
 static void dnbd3_client_daemon();
 static void dnbd3_daemon_action(int client, int argc, char **argv);
-static int dnbd3_daemon_close(int uid, char *device);
+static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *actionName, char *host);
 static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead);
 static int dnbd3_daemon_send(int argc, char **argv);
 static void dnbd3_print_help(char *argv_0);
 static void dnbd3_print_version();
+
+/**
+ * Convert a host and port (network byte order) to printable representation.
+ * Worst case required buffer len is 48, eg. [1234:1234:1234:1234:1234:1234:1234:1234]:12345 (+ \0)
+ * Returns TRUE on success, FALSE on error
+ */
+static char host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen)
+{
+	// Worst case: Port 5 chars, ':' to separate ip and port 1 char, terminating null 1 char = 7, [] for IPv6
+	if ( targetlen < 10 ) return FALSE;
+	if ( host->type == AF_INET6 ) {
+		*target++ = '[';
+		inet_ntop( AF_INET6, host->addr, target, targetlen - 10 );
+		target += strlen( target );
+		*target++ = ']';
+	} else if ( host->type == AF_INET ) {
+		inet_ntop( AF_INET, host->addr, target, targetlen - 8 );
+		target += strlen( target );
+	} else {
+		snprintf( target, targetlen, "<?addrtype=%d>", (int)host->type );
+		return FALSE;
+	}
+	*target = '\0';
+	if ( host->port != 0 ) {
+		// There are still at least 7 bytes left in the buffer, port is at most 5 bytes + ':' + '\0' = 7
+		snprintf( target, 7, ":%d", (int)ntohs( host->port ) );
+	}
+	return TRUE;
+}
+
 
 /**
  * Parse IPv4 or IPv6 address in string representation to a suitable format usable by the BSD socket library
@@ -162,10 +195,9 @@ static int dnbd3_get_ip(char *hostname, dnbd3_host_t *host)
 int main(int argc, char *argv[])
 {
 	char *dev = NULL;
+	char host[50];
 
-	int close_dev = 0;
-	int switch_host = 0;
-	int killSwitch = FALSE;
+	int action = -1;
 
 	dnbd3_ioctl_t msg;
 	memset( &msg, 0, sizeof(dnbd3_ioctl_t) );
@@ -189,6 +221,7 @@ int main(int argc, char *argv[])
 			if ( !dnbd3_get_ip( optarg, &msg.host ) ) exit( EXIT_FAILURE );
 			break;
 		case 'i':
+			action = IOCTL_OPEN;
 			msg.imgname = strdup( optarg );
 			break;
 		case 'r':
@@ -202,12 +235,19 @@ int main(int argc, char *argv[])
 			msg.read_ahead_kb = atoi( optarg );
 			break;
 		case 'c':
-			dev = strdup( optarg );
-			close_dev = 1;
+			action = IOCTL_CLOSE;
 			break;
 		case 's':
 			dnbd3_get_ip( optarg, &msg.host );
-			switch_host = 1;
+			action = IOCTL_SWITCH;
+			break;
+		case 'adds':
+			dnbd3_get_ip( optarg, &msg.host );
+			action = IOCTL_ADD_SRV;
+			break;
+		case 'rems':
+			dnbd3_get_ip( optarg, &msg.host );
+			action = IOCTL_REM_SRV;
 			break;
 		case 'H':
 			dnbd3_print_help( argv[0] );
@@ -221,9 +261,6 @@ int main(int argc, char *argv[])
 		case 'D':
 			dnbd3_client_daemon();
 			break;
-		case 'k':
-			killSwitch = TRUE;
-			break;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
@@ -232,7 +269,7 @@ int main(int argc, char *argv[])
 	struct stat st;
 	if ( stat( SOCK_PATH, &st ) == 0 ) {
 		if ( dnbd3_daemon_send( argc, argv ) ) exit( 0 );
-		printf( "Failed.\n" );
+		printf( "\nFailed.\n" );
 		exit( 1 );
 	}
 
@@ -245,8 +282,10 @@ int main(int argc, char *argv[])
 		setuid( getuid() );
 	}
 
+	host_to_string( &msg.host, host, 50 );
+
 	// close device
-	if ( close_dev && msg.host.type == 0 && dev && (msg.imgname == NULL )) {
+	if ( action == IOCTL_CLOSE && msg.host.type == 0 && dev && (msg.imgname == NULL )) {
 		printf( "INFO: Closing device %s\n", dev );
 		if ( dnbd3_ioctl( dev, IOCTL_CLOSE, &msg ) ) exit( EXIT_SUCCESS );
 		printf( "Couldn't close device.\n" );
@@ -254,16 +293,18 @@ int main(int argc, char *argv[])
 	}
 
 	// switch host
-	if ( switch_host && msg.host.type != 0 && dev && (msg.imgname == NULL )) {
-		printf( "INFO: Switching device %s to %s\n", dev, "<fixme>" );
-		if ( dnbd3_ioctl( dev, IOCTL_SWITCH, &msg ) ) exit( EXIT_SUCCESS );
-		printf( "Switching server failed. Maybe the device is not connected?\n" );
+	if ( (action == IOCTL_SWITCH || action == IOCTL_ADD_SRV || action == IOCTL_REM_SRV) && msg.host.type != 0 && dev && (msg.imgname == NULL )) {
+		if ( action == IOCTL_SWITCH ) printf( "INFO: Switching device %s to %s\n", dev, host );
+		if ( action == IOCTL_ADD_SRV ) printf( "INFO: %s: adding %s\n", dev, host );
+		if ( action == IOCTL_REM_SRV ) printf( "INFO: %s: removing %s\n", dev, host );
+		if ( dnbd3_ioctl( dev, action, &msg ) ) exit( EXIT_SUCCESS );
+		printf( "Failed! Maybe the device is not connected?\n" );
 		exit( EXIT_FAILURE );
 	}
 
 	// connect
-	if ( msg.host.type != 0 && dev && (msg.imgname != NULL )) {
-		printf( "INFO: Connecting device %s to %s for image %s\n", dev, "<fixme>", msg.imgname );
+	if ( action == IOCTL_OPEN && msg.host.type != 0 && dev && (msg.imgname != NULL )) {
+		printf( "INFO: Connecting device %s to %s for image %s\n", dev, host, msg.imgname );
 		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) exit( EXIT_SUCCESS );
 		printf( "ERROR: connecting device failed. Maybe it's already connected?\n" );
 		exit( EXIT_FAILURE );
@@ -372,17 +413,24 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 	char *host = NULL, *image = NULL, *device = NULL;
 	int rid = 0, uid = 0, killMe = FALSE, ahead = 512;
 	int len;
+	int action = -1;
+	const char *actionName = NULL;
 
 	optind = 1;
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
 	while ( opt != -1 ) {
 		switch ( opt ) {
+		case 'd':
+			device = optarg;
+			break;
 		case 'h':
 			host = optarg;
 			break;
 		case 'i':
 			image = optarg;
+			action = IOCTL_OPEN;
+			actionName = "Open";
 			break;
 		case 'r':
 			rid = atoi( optarg );
@@ -391,7 +439,16 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 			uid = atoi( optarg );
 			break;
 		case 'c':
-			device = optarg;
+			action = IOCTL_CLOSE;
+			actionName = "Close";
+			break;
+		case 'adds':
+			action = IOCTL_ADD_SRV;
+			actionName = "Add Server";
+			break;
+		case 'rems':
+			action = IOCTL_REM_SRV;
+			actionName = "Remove Server";
 			break;
 		case 'a':
 			ahead = atoi( optarg );
@@ -415,8 +472,8 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		exit( 0 );
 	}
 
-	if ( device != NULL ) {
-		if ( dnbd3_daemon_close( uid, device ) ) {
+	if ( (action == IOCTL_CLOSE || ((action == IOCTL_ADD_SRV || action == IOCTL_REM_SRV) && host != NULL)) && device != NULL ) {
+		if ( dnbd3_daemon_ioctl( uid, device, action, actionName, host ) ) {
 			len = 0;
 		} else {
 			len = -1;
@@ -424,7 +481,7 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		send( client, &len, sizeof(len), 0 );
 		return;
 	}
-	if ( host != NULL && image != NULL && rid >= 0 ) {
+	if ( action == IOCTL_OPEN && host != NULL && image != NULL && rid >= 0 ) {
 		device = dnbd3_daemon_open( uid, host, image, rid, ahead );
 		if ( device != NULL ) {
 			len = strlen( device );
@@ -439,7 +496,7 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 	printf( "Received a client request I cannot understand.\n" );
 }
 
-static int dnbd3_daemon_close(int uid, char *device)
+static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *actionName, char *host)
 {
 	int index = -1;
 	char dev[DEV_LEN];
@@ -448,25 +505,31 @@ static int dnbd3_daemon_close(int uid, char *device)
 	} else {
 		index = atoi( device );
 	}
+	dnbd3_ioctl_t msg;
+	memset( &msg, 0, sizeof(msg) );
+	msg.len = (uint16_t)sizeof(msg);
+	if ( host != NULL ) {
+		dnbd3_get_ip( host, &msg.host );
+	}
 	if ( index < 0 || index >= MAX_DEVS ) {
-		printf( "Close request with invalid device id %d\n", index );
+		printf( "%s request with invalid device id %d\n", actionName, index );
 		return FALSE;
 	}
 	snprintf( dev, DEV_LEN, "/dev/dnbd%d", index );
 	if ( openDevices[index] == -1 ) {
-		printf( "Close request by %d for closed device %s\n", uid, dev );
+		printf( "%s request by %d for closed device %s\n", actionName, uid, dev );
 		return TRUE;
 	}
 	if ( openDevices[index] != uid ) {
-		printf( "User %d is not allowed to close %s owned by %d\n", uid, dev, openDevices[index] );
+		printf( "%s: User %d cannot access %s owned by %d\n", actionName, uid, dev, openDevices[index] );
 		return FALSE;
 	}
-	if ( dnbd3_ioctl( dev, IOCTL_CLOSE, NULL ) ) {
-		printf( "Closed device %s of user %d\n", dev, uid );
+	if ( dnbd3_ioctl( dev, action, &msg ) ) {
+		printf( "%s request for device %s of user %d successful\n", actionName, dev, uid );
 		openDevices[index] = -1;
 		return TRUE;
 	}
-	printf( "Error closing device %s, requested by %d\n", dev, uid );
+	printf( "%s: Error on device %s, requested by %d\n", actionName, dev, uid );
 	return FALSE;
 }
 
