@@ -67,9 +67,11 @@ int altservers_load()
 	while ( !feof( fp ) ) {
 		if ( fgets( buffer, 1000, fp ) == NULL ) break;
 		int isPrivate = FALSE;
-		for (line = buffer;;) { // Trim left and scan for "-" prefix
+		int isClientOnly = FALSE;
+		for (line = buffer; *line != '\0'; ) { // Trim left and scan for "-" prefix
 			if ( *line == '-' ) isPrivate = TRUE;
-			else if ( *line != ' ' || *line != '\t' ) break;
+			else if ( *line == '+' ) isClientOnly = TRUE;
+			else if ( *line != ' ' && *line != '\t' ) break;
 			line++;
 		}
 		trim_right( line );
@@ -80,14 +82,14 @@ int altservers_load()
 			memlogf( "[WARNING] Invalid entry in alt-servers file ignored: '%s'", line );
 			continue;
 		}
-		if ( altservers_add( &host, space, isPrivate ) ) ++count;
+		if ( altservers_add( &host, space, isPrivate, isClientOnly ) ) ++count;
 	}
 	fclose( fp );
 	printf( "[DEBUG] Added %d alt servers\n", count );
 	return count;
 }
 
-int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate)
+int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly)
 {
 	int i, freeSlot = -1;
 	spin_lock( &_alts_lock );
@@ -109,6 +111,7 @@ int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate)
 	}
 	_alt_servers[freeSlot].host = *host;
 	_alt_servers[freeSlot].isPrivate = isPrivate;
+	_alt_servers[freeSlot].isClientOnly = isClientOnly;
 	if ( comment != NULL ) snprintf( _alt_servers[freeSlot].comment, COMMENT_LENGTH, "%s", comment );
 	spin_unlock( &_alts_lock );
 	return TRUE;
@@ -225,6 +228,7 @@ int altservers_get(dnbd3_host_t *output, int size)
 	for (i = 0; i < _num_alts; ++i) {
 		if ( _alt_servers[i].host.type == 0 ) continue;
 		if ( _proxyPrivateOnly && !_alt_servers[i].isPrivate ) continue;
+		if ( _alt_servers[i].isClientOnly ) continue;
 		if ( _alt_servers[i].numFails > SERVER_MAX_UPLINK_FAILS && now - _alt_servers[i].lastFail > SERVER_BAD_UPLINK_IGNORE ) continue;
 		_alt_servers[i].numFails = 0;
 		output[count++] = _alt_servers[i].host;

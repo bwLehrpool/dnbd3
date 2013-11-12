@@ -73,7 +73,7 @@ typedef struct
 	dnbd3_host_t host;
 	int rtt[SERVER_RTT_PROBES];
 	int rttIndex;
-	int isPrivate;
+	int isPrivate, isClientOnly;
 	time_t lastFail;
 	int numFails;
 } dnbd3_alt_server_t;
