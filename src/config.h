@@ -25,19 +25,19 @@
 // ########### SERVER ###########
 
 // +++++ Performance related
-#define SERVER_MAX_CLIENTS 5000
+#define SERVER_MAX_CLIENTS 2000
 #define SERVER_MAX_IMAGES  5000
-#define SERVER_MAX_ALTS    1000
-#define SERVER_MAX_UPLINK_QUEUE 1500
-#define SERVER_MAX_UPLINK_FAILS 4 // How many times may a server fail until it is considered bad
-#define SERVER_BAD_UPLINK_IGNORE 300 // How many seconds is a server considered bad?
-#define SERVER_UPLINK_QUEUELEN_THRES 900
+#define SERVER_MAX_ALTS    250
+#define SERVER_MAX_UPLINK_QUEUE  1500
+#define SERVER_MAX_UPLINK_FAILS  8 // How many times may a server fail until it is considered bad
+#define SERVER_BAD_UPLINK_IGNORE 120 // How many seconds is a server considered bad?
+#define SERVER_UPLINK_QUEUELEN_THRES  900
 #define SERVER_MAX_PENDING_ALT_CHECKS 50
 
 // +++++ Other magic constants
 #define SERVER_RTT_PROBES 5
 #define SERVER_RTT_DELAY_INIT 5
-#define SERVER_RTT_DELAY_MAX 15
+#define SERVER_RTT_DELAY_MAX 45
 
 #define SERVER_REMOTE_IMAGE_CHECK_CACHETIME 600 // 10 minutes
 #define SERVER_MAX_PROXY_IMAGE_SIZE 100000000000LL // 100GB
@@ -61,7 +61,8 @@
 #define COMMENT_LENGTH 120
 
 // in seconds if not stated otherwise (MS = milliseconds)
-#define SOCKET_TIMEOUT_SERVER_MS 30000
+#define SOCKET_TIMEOUT_SERVER_MS 15000
+#define SOCKET_TIMEOUT_SERVER_RETRIES 3 // When waiting for next header, max reties * above timeout is the actual total timeout (ping timeout)
 #define SOCKET_TIMEOUT_CLIENT_DATA 2
 #define SOCKET_TIMEOUT_CLIENT_DISCOVERY 1
 

@@ -163,6 +163,11 @@ extern int _isProxy;
  */
 extern int _proxyPrivateOnly;
 
+/**
+ * Read timeout when waiting for data on an uplink
+ */
+extern int _uplinkTimeout;
+
 void globals_loadConfig();
 
 #endif /* GLOBALS_H_ */

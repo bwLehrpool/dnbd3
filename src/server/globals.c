@@ -14,6 +14,7 @@ int _serverPenalty = 0;
 int _clientPenalty = 0;
 int _isProxy = FALSE;
 int _proxyPrivateOnly = FALSE;
+int _uplinkTimeout = 1250;
 
 #define SAVE_TO_VAR_STR(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) { if (_ ## kk != NULL) free(_ ## kk); _ ## kk = strdup(value); } } while (0)
 #define SAVE_TO_VAR_BOOL(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "TRUE") == 0; } while (0)
@@ -27,6 +28,7 @@ static int ini_handler(void *custom, const char* section, const char* key, const
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_INT( dnbd3, serverPenalty );
 	SAVE_TO_VAR_INT( dnbd3, clientPenalty );
+	SAVE_TO_VAR_INT( dnbd3, uplinkTimeout );
 	return TRUE;
 }
 

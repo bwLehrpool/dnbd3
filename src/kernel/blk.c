@@ -200,18 +200,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 		break;
 
 	case IOCTL_SWITCH:
-		if (msg == NULL)
-		{
-			result = -EINVAL;
-		}
-		else if (memcmp(&dev->cur_server.host, &msg->host, sizeof(msg->host)))
-		{
-			dnbd3_net_disconnect(dev);
-			dev->cur_server.host = msg->host;
-			result = dnbd3_net_connect(dev);
-		}
-		else
-			result = 0;
+		result = -EINVAL;
 		break;
 
 	case IOCTL_ADD_SRV:
