@@ -118,6 +118,8 @@ void dnbd3_cleanup()
 	}
 	socket_count = 0;
 
+	altservers_shutdown();
+
 	// Terminate all uplinks
 	image_killUplinks();
 

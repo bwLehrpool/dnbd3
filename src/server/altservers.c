@@ -51,6 +51,7 @@ void altservers_init()
 void altservers_shutdown()
 {
 	if ( !initDone ) return;
+	write( signalPipe, "", 1 ); // Wake altservers thread up
 	pthread_join( altThread, NULL );
 }
 
@@ -345,7 +346,7 @@ static void *altservers_main(void *data)
 	dnbd3_host_t servers[ALTS + 1];
 	serialized_buffer_t serialized;
 	struct timespec start, end;
-	time_t nextCacheMapSave = time(NULL) + 120;
+	time_t nextCacheMapSave = time( NULL ) + 120;
 
 	setThreadName( "altserver-check" );
 	blockNoncriticalSignals();
@@ -386,6 +387,7 @@ static void *altservers_main(void *data)
 			memlogf( "[WARNING] epoll_wait() error in uplink_connector" );
 			usleep( 100000 );
 		}
+		if ( _shutdown ) goto cleanup;
 		// Empty pipe
 		do {
 			ret = read( readPipe, buffer, sizeof buffer );
@@ -521,10 +523,10 @@ static void *altservers_main(void *data)
 			pthread_mutex_unlock( &pendingLockConsume );
 		}
 		// Save cache maps of all images if applicable
-		const time_t now = time(NULL);
-		if (now > nextCacheMapSave) {
+		const time_t now = time( NULL );
+		if ( now > nextCacheMapSave ) {
 			nextCacheMapSave = now + SERVER_CACHE_MAP_SAVE_INTERVAL;
-			printf("[DEBUG] Saving cache maps...\n");
+			printf( "[DEBUG] Saving cache maps...\n" );
 			image_saveAllCacheMaps();
 		}
 	}

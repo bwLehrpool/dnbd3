@@ -5,6 +5,8 @@
 
 void altservers_init();
 
+void altservers_shutdown();
+
 int altservers_load();
 
 int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly);
