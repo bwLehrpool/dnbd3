@@ -33,6 +33,7 @@
 #define SERVER_BAD_UPLINK_IGNORE 120 // How many seconds is a server considered bad?
 #define SERVER_UPLINK_QUEUELEN_THRES  900
 #define SERVER_MAX_PENDING_ALT_CHECKS 50
+#define SERVER_CACHE_MAP_SAVE_INTERVAL 1800
 
 // +++++ Other magic constants
 #define SERVER_RTT_PROBES 5

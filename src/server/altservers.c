@@ -5,6 +5,7 @@
 #include "memlog.h"
 #include "helper.h"
 #include "globals.h"
+#include "image.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -344,6 +345,7 @@ static void *altservers_main(void *data)
 	dnbd3_host_t servers[ALTS + 1];
 	serialized_buffer_t serialized;
 	struct timespec start, end;
+	time_t nextCacheMapSave = time(NULL) + 120;
 
 	setThreadName( "altserver-check" );
 	blockNoncriticalSignals();
@@ -517,6 +519,13 @@ static void *altservers_main(void *data)
 			// end of loop over all pending uplinks
 			pending[itLink] = NULL;
 			pthread_mutex_unlock( &pendingLockConsume );
+		}
+		// Save cache maps of all images if applicable
+		const time_t now = time(NULL);
+		if (now > nextCacheMapSave) {
+			nextCacheMapSave = now + SERVER_CACHE_MAP_SAVE_INTERVAL;
+			printf("[DEBUG] Saving cache maps...\n");
+			image_saveAllCacheMaps();
 		}
 	}
 	cleanup: ;

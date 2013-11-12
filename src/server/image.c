@@ -156,6 +156,18 @@ void image_markComplete(dnbd3_image_t *image)
 }
 
 /**
+ * Save cache map of every image
+ */
+void image_saveAllCacheMaps()
+{
+	spin_lock( &_images_lock );
+	for (int i = 0; i < _num_images; ++i) {
+		image_saveCacheMap( _images[i] );
+	}
+	spin_unlock( &_images_lock );
+}
+
+/**
  * Saves the cache map of the given image.
  * Return TRUE on success.
  * Locks on: image.lock
@@ -1173,7 +1185,7 @@ static int image_ensureDiskSpace(uint64_t size)
 					if ( oldest->atime == 0 ) mtime = file_lastModification( oldest->path );
 				} else if ( oldest->atime == 0 && current->atime == 0 ) {
 					// Oldest access time is 0 (=never used since server startup), so take file modification time into account
-					const time_t m = file_lastModification(current->path );
+					const time_t m = file_lastModification( current->path );
 					if ( m < mtime ) {
 						mtime = m;
 						oldest = current;

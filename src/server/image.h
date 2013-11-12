@@ -14,6 +14,8 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 
 void image_markComplete(dnbd3_image_t *image);
 
+void image_saveAllCacheMaps();
+
 int image_saveCacheMap(dnbd3_image_t *image);
 
 dnbd3_image_t* image_get(char *name, uint16_t revision);
