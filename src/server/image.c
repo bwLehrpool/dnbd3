@@ -317,8 +317,11 @@ void image_release(dnbd3_image_t *image)
 				return;
 			}
 		}
+		spin_unlock( &image->lock );
+		spin_unlock( &_images_lock );
+		// Not found, free
+		image_free( image );
 	}
-	// Not found, free
 	spin_unlock( &image->lock );
 	spin_unlock( &_images_lock );
 }
@@ -366,7 +369,6 @@ void image_killUplinks()
 /**
  * Free image. DOES NOT check if it's in use.
  * Indirectly locks on image.lock, uplink.queueLock
- * DO NOT lock on the image when calling.
  */
 dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
@@ -1160,28 +1162,26 @@ static int image_ensureDiskSpace(uint64_t size)
 		dnbd3_image_t *oldest = NULL;
 		time_t mtime = 0;
 		int i;
-		spin_lock( &_images_lock );
 		for (i = 0; i < _num_images; ++i) {
 			if ( _images[i] == NULL ) continue;
 			dnbd3_image_t *current = image_lock( _images[i] );
 			if ( current == NULL ) continue;
 			if ( current->users == 1 ) { // Just from the lock above
-				if ( oldest == NULL || oldest->atime > _images[i]->atime ) {
+				if ( oldest == NULL || oldest->atime > current->atime ) {
 					// Oldest access time so far
-					oldest = _images[i];
+					oldest = current;
 					if ( oldest->atime == 0 ) mtime = file_lastModification( oldest->path );
-				} else if ( oldest->atime == 0 && _images[i]->atime == 0 ) {
+				} else if ( oldest->atime == 0 && current->atime == 0 ) {
 					// Oldest access time is 0 (=never used since server startup), so take file modification time into account
-					const time_t m = file_lastModification( _images[i]->path );
+					const time_t m = file_lastModification(current->path );
 					if ( m < mtime ) {
 						mtime = m;
-						oldest = _images[i];
+						oldest = current;
 					}
 				}
 			}
 			image_release( current );
 		}
-		spin_unlock( &_images_lock );
 		if ( oldest == NULL ) return FALSE;
 		oldest = image_lock( oldest );
 		if ( oldest == NULL ) return FALSE;
