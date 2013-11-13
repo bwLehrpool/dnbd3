@@ -331,6 +331,7 @@ void image_release(dnbd3_image_t *image)
 		spin_unlock( &_images_lock );
 		// Not found, free
 		image_free( image );
+		return;
 	}
 	spin_unlock( &image->lock );
 	spin_unlock( &_images_lock );
