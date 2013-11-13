@@ -38,6 +38,7 @@ typedef struct
 #define RTT_INPROGRESS 1 // In progess, not finished
 #define RTT_DONTCHANGE 2 // Finished, but no better alternative found
 #define RTT_DOCHANGE 3 // Finished, better alternative written to .betterServer + .betterFd
+#define RTT_NOT_REACHABLE 4 // No uplink was reachable
 struct _dnbd3_connection
 {
 	int fd;                     // socket fd to remote server

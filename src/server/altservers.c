@@ -346,7 +346,7 @@ static void *altservers_main(void *data)
 	dnbd3_host_t servers[ALTS + 1];
 	serialized_buffer_t serialized;
 	struct timespec start, end;
-	time_t nextCacheMapSave = time( NULL ) + 120;
+	time_t nextCacheMapSave = time( NULL ) + 90;
 
 	setThreadName( "altserver-check" );
 	blockNoncriticalSignals();
@@ -513,6 +513,9 @@ static void *altservers_main(void *data)
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];
 				uplink->rttTestResult = RTT_DOCHANGE;
+			} else if (bestSock == -1) {
+				// No server was reachable
+				uplink->rttTestResult = RTT_NOT_REACHABLE;
 			} else {
 				// nope
 				if ( bestSock != -1 ) close( bestSock );

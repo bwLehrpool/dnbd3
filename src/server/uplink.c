@@ -197,6 +197,7 @@ static void* uplink_mainloop(void *data)
 	int numSocks, i, waitTime;
 	int altCheckInterval = SERVER_RTT_DELAY_INIT;
 	int bFree = FALSE;
+	int discoverFailCount = 0;
 	time_t nextAltCheck = 0;
 	char buffer[100];
 	//
@@ -226,6 +227,7 @@ static void* uplink_mainloop(void *data)
 		// Check if server switch is in order
 		if ( link->rttTestResult == RTT_DOCHANGE ) {
 			link->rttTestResult = RTT_IDLE;
+			discoverFailCount = 0;
 			// The rttTest worker thread has finished our request.
 			// And says it's better to switch to another server
 			const int fd = link->fd;
@@ -257,13 +259,9 @@ static void* uplink_mainloop(void *data)
 			// more to do here
 		}
 		// epoll()
-		if ( link->fd == -1 ) {
-			waitTime = 2000;
-			nextAltCheck = 0;
-		} else {
-			waitTime = (time( NULL ) - nextAltCheck) * 1000;
-			if ( waitTime < 1500 ) waitTime = 1500;
-		}
+		waitTime = (time( NULL ) - nextAltCheck) * 1000;
+		if ( waitTime < 1500 ) waitTime = 1500;
+		if ( waitTime > 5000 ) waitTime = 5000;
 		numSocks = epoll_wait( fdEpoll, events, MAXEVENTS, waitTime );
 		if ( _shutdown || link->shutdown ) goto cleanup;
 		if ( numSocks < 0 ) { // Error?
@@ -320,9 +318,9 @@ static void* uplink_mainloop(void *data)
 		// See if we should trigger an RTT measurement
 		if ( link->rttTestResult == RTT_IDLE || link->rttTestResult == RTT_DONTCHANGE ) {
 			const time_t now = time( NULL );
-			if ( nextAltCheck - now > SERVER_RTT_DELAY_MAX ) {
+			if ( now + SERVER_RTT_DELAY_FAILED < nextAltCheck ) {
 				// This probably means the system time was changed - handle this case properly by capping the timeout
-				nextAltCheck = now + SERVER_RTT_DELAY_MAX;
+				nextAltCheck = now + SERVER_RTT_DELAY_FAILED;
 			} else if ( now >= nextAltCheck ) {
 				// It seems it's time for a check
 				if ( image_isComplete( link->image ) ) {
@@ -359,6 +357,10 @@ static void* uplink_mainloop(void *data)
 				altCheckInterval = MIN(altCheckInterval + 1, SERVER_RTT_DELAY_MAX);
 				nextAltCheck = now + altCheckInterval;
 			}
+		} else if ( link->rttTestResult == RTT_NOT_REACHABLE ) {
+			link->rttTestResult = RTT_IDLE;
+			discoverFailCount++;
+			nextAltCheck = time( NULL ) + (discoverFailCount < 5 ? altCheckInterval : SERVER_RTT_DELAY_FAILED);
 		}
 #ifdef _DEBUG
 		if ( link->fd != -1 ) {
