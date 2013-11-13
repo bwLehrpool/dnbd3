@@ -55,6 +55,8 @@ struct _dnbd3_connection
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	int recvBufferLen;          // Len of ^^
 	volatile int shutdown;      // bool to signal thread to stop, must only be set from uplink_shutdown()
+	int replicatedLastBlock;    // bool telling if the last block has been replicated yet
+	time_t lastReplication;     // timestamp of when last replication requests were sent
 };
 
 typedef struct
