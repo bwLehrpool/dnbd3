@@ -636,6 +636,11 @@ static int image_try_load(char *base, char *path, int withUplink)
 			crc32list = NULL;
 			function_return = TRUE;
 			goto load_error;
+		} else if ( existing->cache_map != NULL && cache_map == NULL ) {
+			// Image seems complete now!
+			memset( existing->cache_map, -1, IMGSIZE_TO_MAPBYTES(existing->filesize) );
+			function_return = TRUE;
+			goto load_error;
 		} else { // Nothing changed about the existing image, so do nothing
 			function_return = TRUE;
 			goto load_error;
