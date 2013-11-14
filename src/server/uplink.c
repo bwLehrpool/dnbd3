@@ -79,22 +79,32 @@ int uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	return FALSE;
 }
 
+/**
+ * Locks on image.lock, uplink.lock
+ */
 void uplink_shutdown(dnbd3_image_t *image)
 {
 	assert( image != NULL );
-	if ( image->uplink == NULL || image->uplink->shutdown ) return;
+	spin_lock( &image->lock );
+	if ( image->uplink == NULL || image->uplink->shutdown ) {
+		spin_unlock( &image->lock );
+		return;
+	}
 	dnbd3_connection_t * const uplink = image->uplink;
 	spin_lock( &uplink->queueLock );
+	if ( uplink->shutdown ) {
+		spin_unlock( &uplink->queueLock );
+		spin_unlock( &image->lock );
+		return;
+	}
 	image->uplink = NULL;
 	uplink->shutdown = TRUE;
 	spin_unlock( &uplink->queueLock );
+	spin_unlock( &image->lock );
 	if ( uplink->signal != -1 ) write( uplink->signal, "", 1 );
 	if ( uplink->image != NULL ) {
 		pthread_join( uplink->thread, NULL );
 	}
-	spin_destroy( &uplink->queueLock );
-	free( uplink->recvBuffer );
-	free( uplink );
 }
 
 /**
@@ -176,11 +186,12 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 #ifdef _DEBUG
 	uplink->queue[freeSlot].entered = time( NULL );
 #endif
+	const int signalFd = uplink->signal;
 	spin_unlock( &uplink->queueLock );
 
 	if ( foundExisting == -1 ) { // Only wake up uplink thread if the request needs to be relayed
 		static uint64_t counter = 1;
-		write( uplink->signal, &counter, sizeof(uint64_t) );
+		write( signalFd, &counter, sizeof(uint64_t) );
 	}
 	return TRUE;
 }
@@ -197,10 +208,9 @@ static void* uplink_mainloop(void *data)
 	int fdEpoll = -1;
 	int numSocks, i, waitTime;
 	int altCheckInterval = SERVER_RTT_DELAY_INIT;
-	int bFree = FALSE;
 	int discoverFailCount = 0;
 	time_t nextAltCheck = 0;
-	char buffer[100];
+	char buffer[200];
 	//
 	assert( link != NULL );
 	assert( link->queueLen == 0 );
@@ -334,16 +344,14 @@ static void* uplink_mainloop(void *data)
 					memlogf( "[INFO] Replication of %s complete.", link->image->lower_name );
 					if ( spin_trylock( &link->image->lock ) == 0 ) {
 						image_markComplete( link->image );
-						link->image->uplink = NULL;
-						link->shutdown = TRUE;
-						free( link->recvBuffer );
-						link->recvBuffer = NULL;
-						bFree = TRUE;
 						spin_lock( &link->queueLock );
+						if ( !link->shutdown ) {
+							link->image->uplink = NULL;
+							link->shutdown = TRUE;
+							pthread_detach( link->thread );
+						}
 						spin_unlock( &link->queueLock );
-						spin_destroy( &link->queueLock );
 						spin_unlock( &link->image->lock );
-						pthread_detach( link->thread );
 						goto cleanup;
 					}
 				} else {
@@ -369,14 +377,17 @@ static void* uplink_mainloop(void *data)
 			nextAltCheck = time( NULL ) + (discoverFailCount < 5 ? altCheckInterval : SERVER_RTT_DELAY_FAILED);
 		}
 #ifdef _DEBUG
-		if ( link->fd != -1 ) {
+		if ( link->fd != -1 && !link->shutdown ) {
 			time_t deadline = time( NULL ) - 10;
 			spin_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
-					printf( "[DEBUG WARNING] Starving request detected:\n"
+					snprintf( buffer, sizeof(buffer), "[DEBUG WARNING] Starving request detected:\n"
 							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", link->queue[i].client->image->lower_name,
 					        link->queue[i].from, link->queue[i].to, link->queue[i].status );
+					spin_unlock( &link->queueLock );
+					printf("%s", buffer);
+					spin_lock( &link->queueLock );
 				}
 			}
 			spin_unlock( &link->queueLock );
@@ -384,10 +395,15 @@ static void* uplink_mainloop(void *data)
 #endif
 	}
 	cleanup: ;
+	spin_lock( &link->image->lock );
+	spin_lock( &link->queueLock );
+	if (link->image != NULL) link->image->uplink = NULL;
+	spin_unlock( &link->image->lock );
 	const int fd = link->fd;
 	const int signal = link->signal;
 	link->fd = -1;
 	link->signal = -1;
+	spin_unlock( &link->queueLock );
 	if ( fd != -1 ) close( fd );
 	if ( signal != -1 ) close( signal );
 	if ( fdEpoll != -1 ) close( fdEpoll );
@@ -395,7 +411,10 @@ static void* uplink_mainloop(void *data)
 	while ( link->rttTestResult == RTT_INPROGRESS )
 		usleep( 10000 );
 	if ( link->betterFd != -1 ) close( link->betterFd );
-	if ( bFree ) free( link );
+	spin_destroy( &link->queueLock );
+	free( link->recvBuffer );
+	link->recvBuffer = NULL;
+	free( link );
 	return NULL ;
 }
 

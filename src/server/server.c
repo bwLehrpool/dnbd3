@@ -132,7 +132,7 @@ void dnbd3_cleanup()
 		if ( _clients[i] == NULL ) continue;
 		dnbd3_client_t * const client = _clients[i];
 		spin_lock( &client->lock );
-		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
+		if ( client->sock >= 0 ) close( client->sock );
 		client->sock = -1;
 		spin_unlock( &client->lock );
 	}
