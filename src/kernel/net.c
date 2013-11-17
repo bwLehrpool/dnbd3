@@ -642,23 +642,9 @@ int dnbd3_net_discover(void *data)
 
 			// Request block
 			dnbd3_request.cmd = CMD_GET_BLOCK;
-			// Pick random block
-			if (dev->reported_size == 0)
-			{
-				dnbd3_request.offset = 0;
-			}
-			else if (sizeof(size_t) >= 8)
-			{
-				dnbd3_request.offset = ((((start.tv_sec << 12) ^ start.tv_usec) << 4) % dev->reported_size)
-				   & ~(uint64_t)(RTT_BLOCK_SIZE - 1);
-				//printk("Random offset 64bit: %lluMiB\n", (unsigned long long)(dnbd3_request.offset >> 20));
-			}
-			else // On 32bit, prevent modulo on a 64bit data type. This limits the random block picking to the first 4GB of the image
-			{
-				dnbd3_request.offset = ((((start.tv_sec << 12) ^ start.tv_usec) << 4) % (uint32_t)dev->reported_size)
-				   & ~(RTT_BLOCK_SIZE - 1);
-				//printk("Random offset 32bit: %lluMiB\n", (unsigned long long)(dnbd3_request.offset >> 20));
-			}
+			// Do *NOT* pick a random block as it has proven to cause severe
+			// cache thrashing on the server
+			dnbd3_request.offset = 0;
 			dnbd3_request.size = RTT_BLOCK_SIZE;
 			fixup_request(dnbd3_request);
 			iov[0].iov_base = &dnbd3_request;
