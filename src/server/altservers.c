@@ -457,11 +457,9 @@ static void *altservers_main(void *data)
 					ERROR_GOTO_VA( server_failed, "[ERROR] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
 					        imageSize, uplink->image->filesize, uplink->image->lower_name );
 				}
-				// Request random block ++++++++++++++++++++++++++++++
+				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				fixup_request( request );
-				if ( !dnbd3_get_block( sock,
-				        (((uint64_t)start.tv_nsec ^ (uint64_t)rand()) * DNBD3_BLOCK_SIZE )% uplink->image->filesize,
-				        DNBD3_BLOCK_SIZE) ) {
+				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE ) ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", uplink->image->lower_name );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
