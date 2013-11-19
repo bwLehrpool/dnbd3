@@ -665,6 +665,9 @@ static int image_try_load(char *base, char *path, int withUplink)
 	image->rid = revision;
 	image->users = 0;
 	image->cacheFd = -1;
+	// Prevent freeing in cleanup
+	cache_map = NULL;
+	crc32list = NULL;
 	if ( stat( path, &st ) == 0 ) {
 		image->atime = st.st_mtime;
 	} else {
@@ -690,9 +693,6 @@ static int image_try_load(char *base, char *path, int withUplink)
 			uplink_init( image, -1, NULL );
 		}
 	}
-	// Prevent freeing in cleanup
-	cache_map = NULL;
-	crc32list = NULL;
 	// Add to images array
 	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
