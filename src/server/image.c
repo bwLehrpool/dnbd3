@@ -1202,7 +1202,7 @@ static int image_ensureDiskSpace(uint64_t size)
 			}
 			image_release( current );
 		}
-		if ( oldest == NULL ) return FALSE;
+		if ( oldest == NULL || mtime == 0 || time(NULL) - mtime < 86400 ) return FALSE;
 		oldest = image_lock( oldest );
 		if ( oldest == NULL ) return FALSE;
 		memlogf( "[INFO] '%s' has to go!", oldest->lower_name );
