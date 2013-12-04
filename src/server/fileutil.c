@@ -64,7 +64,7 @@ uint64_t file_freeDiskSpace(const char * const path)
 	if ( (statvfs( path, &fiData )) < 0 ) {
 		return 0;
 	}
-	return ((uint64_t)fiData.f_bfree * (uint64_t)fiData.f_bsize * 95LL) / 100LL; // Assume 5% root reservation is active
+	return ((uint64_t)fiData.f_bavail * (uint64_t)fiData.f_bsize);
 }
 
 time_t file_lastModification(const char * const file)

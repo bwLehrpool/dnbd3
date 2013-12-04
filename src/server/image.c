@@ -1170,6 +1170,10 @@ static int image_ensureDiskSpace(uint64_t size)
 {
 	for (;;) {
 		const uint64_t available = file_freeDiskSpace( _basePath );
+		if ( available == 0 ) {
+			memlogf( "[WARNING] Could not get free disk space, will assume there is enough space left... ;-)\n" );
+			return TRUE;
+		}
 		if ( available > size ) return TRUE;
 		if ( dnbd3_serverUptime() < 10 * 3600 ) {
 			memlogf( "[INFO] Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024 * 1024)),
