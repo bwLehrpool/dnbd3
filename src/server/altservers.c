@@ -524,10 +524,10 @@ static void *altservers_main(void *data)
 			pthread_mutex_unlock( &pendingLockConsume );
 		}
 		// Save cache maps of all images if applicable
+		// TODO: Has nothing to do with alt servers really, maybe move somewhere else?
 		const time_t now = time( NULL );
 		if ( now > nextCacheMapSave ) {
 			nextCacheMapSave = now + SERVER_CACHE_MAP_SAVE_INTERVAL;
-			printf( "[DEBUG] Saving cache maps...\n" );
 			image_saveAllCacheMaps();
 		}
 	}
