@@ -1206,11 +1206,19 @@ static int image_ensureDiskSpace(uint64_t size)
 			}
 			image_release( current );
 		}
-		if ( oldest == NULL || mtime == 0 || time(NULL) - mtime < 86400 ) return FALSE;
+		if ( oldest == NULL || mtime == 0 || time( NULL ) - mtime < 86400 ) return FALSE;
 		oldest = image_lock( oldest );
 		if ( oldest == NULL ) return FALSE;
 		memlogf( "[INFO] '%s' has to go!", oldest->lower_name );
 		unlink( oldest->path );
+		size_t len = strlen( oldest->path ) + 5 + 1;
+		char buffer[len];
+		snprintf( buffer, len, "%s.map", oldest->path );
+		unlink( buffer );
+		snprintf( buffer, len, "%s.crc", oldest->path );
+		unlink( buffer );
+		snprintf( buffer, len, "%s.meta", oldest->path );
+		unlink( buffer );
 		image_remove( oldest );
 		image_release( oldest );
 	}
