@@ -60,6 +60,7 @@ pthread_spinlock_t _clients_lock;
  * Time the server was started
  */
 static time_t _startupTime = 0;
+static int _doReload = FALSE, _printStats = FALSE;
 
 static int dnbd3_add_client(dnbd3_client_t *client);
 static void dnbd3_handle_signal(int signum);
@@ -295,7 +296,6 @@ int main(int argc, char *argv[])
 #endif
 
 	// setup signal handler
-	signal( SIGPIPE, dnbd3_handle_signal );
 	signal( SIGTERM, dnbd3_handle_signal );
 	signal( SIGINT, dnbd3_handle_signal );
 	signal( SIGUSR1, dnbd3_handle_signal );
@@ -337,6 +337,21 @@ int main(int argc, char *argv[])
 
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
 	while ( !_shutdown ) {
+		// Handle signals
+		if ( _doReload ) {
+			_doReload = FALSE;
+			memlogf( "INFO: SIGUSR1 received, re-scanning image directory" );
+			image_loadAll( NULL );
+		}
+		if ( _printStats ) {
+			_printStats = FALSE;
+			printf( "[DEBUG] SIGUSR2 received, stats incoming\n" );
+			printf( " ** Images **\n" );
+			image_printAll();
+			printf( " ** Clients **\n" );
+			dnbd3_printClients();
+		}
+		//
 		len = sizeof(client);
 		fd = accept_any( sockets, socket_count, &client, &len );
 		if ( fd < 0 ) {
@@ -369,6 +384,7 @@ int main(int argc, char *argv[])
 			continue;
 		}
 	}
+	dnbd3_cleanup();
 }
 
 /**
@@ -477,22 +493,12 @@ static int dnbd3_add_client(dnbd3_client_t *client)
 
 static void dnbd3_handle_signal(int signum)
 {
-	if ( signum == SIGPIPE ) {
-		memlogf( "INFO: SIGPIPE received (%s)", strsignal( signum ) );
-	} else if ( signum == SIGINT || signum == SIGTERM ) {
-		memlogf( "INFO: SIGTERM or SIGINT received (%s)", strsignal( signum ) );
-		dnbd3_cleanup();
+	if ( signum == SIGINT || signum == SIGTERM ) {
+		_shutdown = TRUE;
 	} else if ( signum == SIGUSR1 ) {
-		memlogf( "INFO: SIGUSR1 (%s) received, re-scanning image directory", strsignal( signum ) );
-		image_loadAll( NULL );
+		_doReload = TRUE;
 	} else if ( signum == SIGUSR2 ) {
-		printf( "[DEBUG] SIGUSR2 (%s) received, stats incoming\n", strsignal( signum ) );
-		printf( " ** Images **\n" );
-		image_printAll();
-		printf( " ** Clients **\n" );
-		dnbd3_printClients();
-	} else {
-		printf( "SIGNAL: %d (%s)\n", signum, strsignal( signum ) );
+		_printStats = TRUE;
 	}
 }
 
