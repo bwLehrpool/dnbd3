@@ -911,8 +911,9 @@ int dnbd3_net_receive(void *data)
 	unsigned long irqflags;
 	sigset_t blocked, oldset;
 	uint16_t rid;
+	unsigned long int recv_timeout = jiffies;
 
-	int count, remaining, ret, recv_timeout = 0;
+	int count, remaining, ret;
 
 	init_msghdr(msg);
 	set_user_nice(current, -20);
@@ -925,8 +926,9 @@ int dnbd3_net_receive(void *data)
 		ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags);
 		if (ret == -EAGAIN)
 		{
-			if ((recv_timeout += SOCKET_TIMEOUT_CLIENT_DATA) > SOCKET_KEEPALIVE_TIMEOUT)
-				error_dev("ERROR: Receive timeout reached.");
+			if (jiffies < recv_timeout) recv_timeout = jiffies; // Handle overflow
+			if ((jiffies - recv_timeout) / HZ > SOCKET_KEEPALIVE_TIMEOUT)
+				error_dev_va("ERROR: Receive timeout reached (%d of %d secs).", (int)((jiffies - recv_timeout) / HZ), (int)SOCKET_KEEPALIVE_TIMEOUT);
 			continue;
 		}
 		if (ret <= 0)
@@ -941,7 +943,8 @@ int dnbd3_net_receive(void *data)
 		if (dnbd3_reply.cmd == 0)
 			error_dev("ERROR: Command was 0 (Receive).");
 
-		recv_timeout = 0;
+		// Update timeout
+		recv_timeout = jiffies;
 
 		// what to do?
 		switch (dnbd3_reply.cmd)

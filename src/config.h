@@ -82,7 +82,7 @@
 #define TIMER_INTERVAL_KEEPALIVE_PACKET 6
 
 // Expect a keepalive response every X seconds
-#define SOCKET_KEEPALIVE_TIMEOUT 7
+#define SOCKET_KEEPALIVE_TIMEOUT 8
 
 // Number of unsuccessful alt_server probes before read errors are reported to the block layer
 // (ALL servers will be probed this many times)
