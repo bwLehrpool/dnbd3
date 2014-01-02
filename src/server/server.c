@@ -119,6 +119,18 @@ void dnbd3_cleanup()
 	}
 	socket_count = 0;
 
+	// Kill connection to all clients
+	spin_lock( &_clients_lock );
+	for (i = 0; i < _num_clients; ++i) {
+		if ( _clients[i] == NULL ) continue;
+		dnbd3_client_t * const client = _clients[i];
+		spin_lock( &client->lock );
+		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
+		spin_unlock( &client->lock );
+	}
+	spin_unlock( &_clients_lock );
+
+	// Terminate the altserver checking thread
 	altservers_shutdown();
 
 	// Terminate all uplinks
@@ -127,36 +139,20 @@ void dnbd3_cleanup()
 	// Terminate integrity checker
 	integrity_shutdown();
 
-	// Clean up clients
-	spin_lock( &_clients_lock );
-	for (i = 0; i < _num_clients; ++i) {
-		if ( _clients[i] == NULL ) continue;
-		dnbd3_client_t * const client = _clients[i];
-		spin_lock( &client->lock );
-		if ( client->sock >= 0 ) close( client->sock );
-		client->sock = -1;
-		spin_unlock( &client->lock );
-	}
-	spin_unlock( &_clients_lock );
-	count = -1;
-	while ( count != 0 ) {
+	// Wait for clients to disconnect
+	do {
 		count = 0;
 		spin_lock( &_clients_lock );
 		for (i = 0; i < _num_clients; ++i) {
 			if ( _clients[i] == NULL ) continue;
-			if ( _clients[i]->running ) {
-				count++;
-			} else {
-				_clients[i] = NULL;
-				dnbd3_free_client( _clients[i] );
-			}
+			count++;
 		}
 		spin_unlock( &_clients_lock );
 		if ( count != 0 ) {
 			printf( "%d clients still active...\n", count );
 			sleep( 1 );
 		}
-	}
+	} while ( count != 0 );
 	_num_clients = 0;
 
 	// Clean up images
@@ -299,6 +295,7 @@ int main(int argc, char *argv[])
 	signal( SIGTERM, dnbd3_handle_signal );
 	signal( SIGINT, dnbd3_handle_signal );
 	signal( SIGUSR1, dnbd3_handle_signal );
+	signal( SIGHUP, dnbd3_handle_signal );
 	signal( SIGUSR2, dnbd3_handle_signal );
 
 	printf( "Loading images....\n" );
@@ -495,7 +492,7 @@ static void dnbd3_handle_signal(int signum)
 {
 	if ( signum == SIGINT || signum == SIGTERM ) {
 		_shutdown = TRUE;
-	} else if ( signum == SIGUSR1 ) {
+	} else if ( signum == SIGUSR1 || signum == SIGHUP ) {
 		_doReload = TRUE;
 	} else if ( signum == SIGUSR2 ) {
 		_printStats = TRUE;
