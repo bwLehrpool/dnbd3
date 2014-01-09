@@ -44,10 +44,15 @@ static int remoteCloneCacheIndex = -1;
 
 static int image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static int image_load_all_internal(char *base, char *path);
-static int image_try_load(char *base, char *path, int withUplink);
+static int image_load(char *base, char *path, int withUplink);
 static int64_t image_pad(const char *path, const int64_t currentSize);
 static int image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
 static int image_ensureDiskSpace(uint64_t size);
+
+static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
+static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
+static int image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list,
+        uint8_t * const cache_map);
 
 // ##########################################
 
@@ -434,7 +439,7 @@ static int image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t bl
 
 /**
  * Load all images in the given path recursively,
- * consider bash the base path that is to be cut off
+ * consider *base the base path that is to be cut off
  */
 static int image_load_all_internal(char *base, char *path)
 {
@@ -469,7 +474,7 @@ static int image_load_all_internal(char *base, char *path)
 		if ( S_ISDIR( st.st_mode )) {
 			image_load_all_internal( base, subpath ); // Recurse
 		} else {
-			image_try_load( base, subpath, TRUE ); // Load image if possible
+			image_load( base, subpath, TRUE ); // Load image if possible
 		}
 	}
 	closedir( dir );
@@ -477,7 +482,7 @@ static int image_load_all_internal(char *base, char *path)
 #undef SUBDIR_LEN
 }
 
-static int image_try_load(char *base, char *path, int withUplink)
+static int image_load(char *base, char *path, int withUplink)
 {
 	int i, revision;
 	struct stat st;
@@ -485,7 +490,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 	uint32_t *crc32list = NULL;
 	dnbd3_image_t *existing = NULL;
 	int fdImage = -1;
-	int function_return = FALSE;
+	int function_return = FALSE; // Return false by default
 	assert( base != NULL );
 	assert( path != NULL );
 	assert( *path == '/' );
@@ -496,14 +501,17 @@ static int image_try_load(char *base, char *path, int withUplink)
 	char *fileName = lastSlash + 1;
 	char imgName[strlen( path )];
 	const int fileNameLen = strlen( fileName );
+
+	// Copy virtual path (relative path in "base")
 	char * const virtBase = path + strlen( base ) + 1;
-	// Copy virtual path
 	assert( *virtBase != '/' );
 	char *src = virtBase, *dst = imgName;
 	while ( src <= lastSlash ) {
 		*dst++ = *src++;
 	}
 	*dst = '\0';
+
+	// Parse file name for revision
 	if ( _vmdkLegacyMode && strend( fileName, ".vmdk" ) ) {
 		// Easy - legacy mode, simply append full file name and set rid to 1
 		strcat( dst, fileName );
@@ -523,128 +531,79 @@ static int image_try_load(char *base, char *path, int withUplink)
 		}
 		*dst = '\0';
 	}
-	char mapFile[strlen( path ) + 10 + 1];
-	char hashFile[strlen( path ) + 10 + 1];
 	if ( revision <= 0 ) {
 		memlogf( "[WARNING] Image '%s' has invalid revision ID %d", path, revision );
 		goto load_error;
 	}
+
 	strtolower( imgName );
+
 	// Get pointer to already existing image if possible
 	existing = image_get( imgName, revision );
+
 	// ### Now load the actual image related data ###
 	fdImage = open( path, O_RDONLY );
 	if ( fdImage < 0 ) {
 		memlogf( "[ERROR] Could not open '%s' for reading...", path );
 		goto load_error;
 	}
+	// Determine file size
 	int64_t fileSize = lseek( fdImage, 0, SEEK_END );
 	if ( fileSize < 0 ) {
 		memlogf( "[ERROR] Could not seek to end of file '%s'", path );
 		goto load_error;
-	}
-	if ( fileSize == 0 ) {
+	} else if ( fileSize == 0 ) {
 		memlogf( "[WARNING] Empty image file '%s'", path );
 		goto load_error;
 	}
+	// Filesize must be multiple of 4096
 	if ( fileSize % DNBD3_BLOCK_SIZE != 0 ) {
 		memlogf( "[INFO] Image size of '%s' is not a multiple of %d, fixing...", path, (int)DNBD3_BLOCK_SIZE );
 		fileSize = image_pad( path, fileSize );
 		if ( fileSize == 0 ) goto load_error;
 	}
+
 	// 1. Allocate memory for the cache map if the image is incomplete
-	sprintf( mapFile, "%s.map", path );
-	int fdMap = open( mapFile, O_RDONLY );
-	if ( fdMap >= 0 ) {
-		size_t map_size = IMGSIZE_TO_MAPBYTES( fileSize );
-		cache_map = calloc( 1, map_size );
-		int rd = read( fdMap, cache_map, map_size );
-		if ( map_size != rd ) {
-			memlogf( "[WARNING] Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, path );
-		}
-		close( fdMap );
-		// Later on we check if the hash map says the image is complete
-	}
+	cache_map = image_loadCacheMap( path, fileSize );
+
 	// TODO: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
-	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( fileSize );
-	// Currently this should only prevent accidental corruption (esp. regarding transparent proxy mode)
-	// but maybe later on you want better security
+
 	// 2. Load CRC-32 list of image
-	sprintf( hashFile, "%s.crc", path );
 	uint32_t masterCrc;
-	int fdHash = open( hashFile, O_RDONLY );
-	if ( fdHash >= 0 ) {
-		off_t fs = lseek( fdHash, 0, SEEK_END );
-		if ( fs < (hashBlocks + 1) * 4 ) {
-			memlogf( "[WARNING] Ignoring crc32 list for '%s' as it is too short", path );
-		} else {
-			if ( 0 != lseek( fdHash, 0, SEEK_SET ) ) {
-				memlogf( "[WARNING] Could not seek back to beginning of '%s'", hashFile );
-			} else {
-				if ( read( fdHash, &masterCrc, sizeof(masterCrc) ) != 4 ) {
-					memlogf( "[WARNING] Error reading first crc32 of '%s'", path );
-				} else {
-					crc32list = calloc( hashBlocks, sizeof(uint32_t) );
-					if ( read( fdHash, crc32list, hashBlocks * sizeof(uint32_t) ) != hashBlocks * sizeof(uint32_t) ) {
-						free( crc32list );
-						crc32list = NULL;
-						memlogf( "[WARNING] Could not read crc32 list of '%s'", path );
-					} else {
-						uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
-						lists_crc = crc32( lists_crc, (Bytef*)crc32list, hashBlocks * sizeof(uint32_t) );
-						if ( lists_crc != masterCrc ) {
-							free( crc32list );
-							crc32list = NULL;
-							memlogf( "[WARNING] CRC-32 of CRC-32 list mismatch. CRC-32 list of '%s' might be corrupted.", path );
-						}
-					}
-				}
-			}
-		}
-		close( fdHash );
-	}
+	const int hashBlockCount = IMGSIZE_TO_HASHBLOCKS( fileSize );
+	crc32list = image_loadCrcList( path, fileSize, &masterCrc );
+
 	// Check CRC32
 	if ( crc32list != NULL ) {
-		// This checks the first block and two random blocks (which might accidentally be the same)
-		// for corruption via the known crc32 list. This is very sloppy and is merely supposed
-		// to detect accidental corruption due to broken dnbd3-proxy functionality or file system
-		// corruption.
-		int blocks[4], index = 0, block; // = { 0, rand() % blcks, rand() % blcks, -1 };
-		if ( image_isHashBlockComplete( cache_map, 0, fileSize ) ) blocks[index++] = 0;
-		block = rand() % hashBlocks;
-		if ( image_isHashBlockComplete( cache_map, block, fileSize ) ) blocks[index++] = block;
-		block = rand() % hashBlocks;
-		if ( image_isHashBlockComplete( cache_map, block, fileSize ) ) blocks[index++] = block;
-		blocks[index] = -1;
-		if ( !image_checkBlocksCrc32( fdImage, crc32list, blocks, fileSize ) ) {
-			memlogf( "[ERROR] Quick integrity check for '%s' failed.", path );
+		if ( !image_checkRandomBlocks( 3, fdImage, fileSize, crc32list, cache_map ) ) {
+			memlogf( "[ERROR] quick crc32 check of %s failed. Data corruption?", path );
 			goto load_error;
 		}
 	}
-	// Compare to existing image
+
+	// Compare data just loaded to identical image we apparently already loaded
 	if ( existing != NULL ) {
 		if ( existing->filesize != fileSize ) {
-			memlogf( "[WARNING] Size of image '%s' has changed.", path );
+			// Image will be replaced below
+			memlogf( "[WARNING] Size of image '%s:%d' has changed.", existing->lower_name, (int)existing->rid );
 		} else if ( existing->crc32 != NULL && crc32list != NULL
-		        && memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlocks ) != 0 ) {
-			memlogf( "[WARNING] CRC32 list of image '%s' has changed.", path );
+		        && memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlockCount ) != 0 ) {
+			// Image will be replaced below
+			memlogf( "[WARNING] CRC32 list of image '%s:%d' has changed.", existing->lower_name, (int)existing->rid );
 		} else if ( existing->crc32 == NULL && crc32list != NULL ) {
-			memlogf( "[INFO] Found CRC-32 list for already loaded image, adding...", path );
+			memlogf( "[INFO] Found CRC-32 list for already loaded image '%s:%d', adding...", existing->lower_name, (int)existing->rid );
 			existing->crc32 = crc32list;
 			existing->masterCrc32 = masterCrc;
 			crc32list = NULL;
 			function_return = TRUE;
 			goto load_error;
 		} else if ( existing->cache_map != NULL && cache_map == NULL ) {
-			// Image seems complete now!
-			memlogf( "[INFO] Image %s is complete on disk now!", existing->lower_name );
-			memset( existing->cache_map, -1, IMGSIZE_TO_MAPBYTES(existing->filesize) );
-			spin_lock( &existing->lock );
-			image_markComplete( existing );
-			spin_unlock( &existing->lock );
+			// Just ignore that fact, if replication is really complete the cache map will be removed anyways
+			memlogf( "[INFO] Image '%s:%d' has no cache map on disk!", existing->lower_name, (int)existing->rid );
 			function_return = TRUE;
 			goto load_error;
-		} else { // Nothing changed about the existing image, so do nothing
+		} else {
+			// Nothing changed about the existing image, so do nothing
 			function_return = TRUE;
 			goto load_error;
 		}
@@ -653,6 +612,7 @@ static int image_try_load(char *base, char *path, int withUplink)
 		image_remove( existing );
 		existing = NULL;
 	}
+
 	// Load fresh image
 	dnbd3_image_t *image = calloc( 1, sizeof(dnbd3_image_t) );
 	image->path = strdup( path );
@@ -665,25 +625,30 @@ static int image_try_load(char *base, char *path, int withUplink)
 	image->rid = revision;
 	image->users = 0;
 	image->cacheFd = -1;
-	// Prevent freeing in cleanup
-	cache_map = NULL;
-	crc32list = NULL;
+	image->working = (image->cache_map == NULL );
+	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
 	if ( stat( path, &st ) == 0 ) {
 		image->atime = st.st_mtime;
 	} else {
 		image->atime = time( NULL );
 	}
-	image->working = (image->cache_map == NULL );
-	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
+
+	// Prevent freeing in cleanup
+	cache_map = NULL;
+	crc32list = NULL;
+
 	// Get rid of cache map if image is complete
 	if ( image->cache_map != NULL && image_isComplete( image ) ) {
 		image_markComplete( image );
 		image->working = TRUE;
 	}
+
+	// Image is definitely incomplete, open image file for writing, so we can update the cache
 	if ( image->cache_map != NULL ) {
 		image->working = FALSE;
 		image->cacheFd = open( path, O_WRONLY );
 		if ( image->cacheFd < 0 ) {
+			// Proxy mode without disk caching is pointless, bail out
 			image->cacheFd = -1;
 			memlogf( "[ERROR] Could not open incomplete image %s for writing!", path );
 			image = image_free( image );
@@ -693,6 +658,8 @@ static int image_try_load(char *base, char *path, int withUplink)
 			uplink_init( image, -1, NULL );
 		}
 	}
+
+	// ### Reaching this point means loading succeeded
 	// Add to images array
 	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
@@ -711,7 +678,9 @@ static int image_try_load(char *base, char *path, int withUplink)
 		printf( "[DEBUG] Loaded image '%s'\n", image->lower_name );
 	}
 	spin_unlock( &_images_lock );
+
 	function_return = TRUE;
+
 	// Clean exit:
 	load_error: ;
 	if ( existing != NULL ) image_release( existing );
@@ -719,6 +688,87 @@ static int image_try_load(char *base, char *path, int withUplink)
 	if ( cache_map != NULL ) free( cache_map );
 	if ( fdImage != -1 ) close( fdImage );
 	return function_return;
+}
+
+static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize)
+{
+	uint8_t *retval = NULL;
+	char mapFile[strlen( imagePath ) + 10 + 1];
+	sprintf( mapFile, "%s.map", imagePath );
+	int fdMap = open( mapFile, O_RDONLY );
+	if ( fdMap >= 0 ) {
+		size_t map_size = IMGSIZE_TO_MAPBYTES( fileSize );
+		retval = calloc( 1, map_size );
+		int rd = read( fdMap, retval, map_size );
+		if ( map_size != rd ) {
+			memlogf( "[WARNING] Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, fileSize );
+			// Could not read complete map, that means the rest of the image file will be considered incomplete
+		}
+		close( fdMap );
+		// Later on we check if the hash map says the image is complete
+	}
+	return retval;
+}
+
+static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc)
+{
+	assert( masterCrc != NULL );
+	uint32_t *retval = NULL;
+	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( fileSize );
+	// Currently this should only prevent accidental corruption (esp. regarding transparent proxy mode)
+	// but maybe later on you want better security
+	char hashFile[strlen( imagePath ) + 10 + 1];
+	sprintf( hashFile, "%s.crc", imagePath );
+	int fdHash = open( hashFile, O_RDONLY );
+	if ( fdHash >= 0 ) {
+		off_t fs = lseek( fdHash, 0, SEEK_END );
+		if ( fs < (hashBlocks + 1) * 4 ) {
+			memlogf( "[WARNING] Ignoring crc32 list for '%s' as it is too short", imagePath );
+		} else {
+			if ( 0 != lseek( fdHash, 0, SEEK_SET ) ) {
+				memlogf( "[WARNING] Could not seek back to beginning of '%s'", hashFile );
+			} else {
+				if ( read( fdHash, masterCrc, sizeof(uint32_t) ) != 4 ) {
+					memlogf( "[WARNING] Error reading first crc32 of '%s'", imagePath );
+				} else {
+					retval = calloc( hashBlocks, sizeof(uint32_t) );
+					if ( read( fdHash, retval, hashBlocks * sizeof(uint32_t) ) != hashBlocks * sizeof(uint32_t) ) {
+						free( retval );
+						retval = NULL;
+						memlogf( "[WARNING] Could not read crc32 list of '%s'", imagePath );
+					} else {
+						uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
+						lists_crc = crc32( lists_crc, (Bytef*)retval, hashBlocks * sizeof(uint32_t) );
+						if ( lists_crc != *masterCrc ) {
+							free( retval );
+							retval = NULL;
+							memlogf( "[WARNING] CRC-32 of CRC-32 list mismatch. CRC-32 list of '%s' might be corrupted.", imagePath );
+						}
+					}
+				}
+			}
+		}
+		close( fdHash );
+	}
+	return retval;
+}
+
+static int image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list,
+        uint8_t * const cache_map)
+{
+	// This checks the first block and two random blocks (which might accidentally be the same)
+	// for corruption via the known crc32 list. This is very sloppy and is merely supposed
+	// to detect accidental corruption due to broken dnbd3-proxy functionality or file system
+	// corruption.
+	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( fileSize );
+	int blocks[count + 1], index = 0, block; // = { 0, rand() % blcks, rand() % blcks, -1 };
+	if ( image_isHashBlockComplete( cache_map, 0, fileSize ) ) blocks[index++] = 0;
+	while ( index + 1 < count ) {
+		block = rand() % hashBlocks;
+		if ( image_isHashBlockComplete( cache_map, block, fileSize ) ) blocks[index++] = block;
+	}
+	if ( index < count ) blocks[index] = -1;
+	return image_checkBlocksCrc32( fdImage, crc32list, blocks, fileSize );
 }
 
 /**
@@ -914,7 +964,7 @@ static int image_clone(int sock, char *name, uint16_t revision, uint64_t imageSi
 	}
 	// HACK: Chop of ".crc" to get the image file name
 	crcFile[strlen( crcFile ) - 4] = '\0';
-	return image_try_load( _basePath, crcFile, FALSE );
+	return image_load( _basePath, crcFile, FALSE );
 }
 
 /**
@@ -1176,40 +1226,34 @@ static int image_ensureDiskSpace(uint64_t size)
 		}
 		if ( available > size ) return TRUE;
 		if ( dnbd3_serverUptime() < 10 * 3600 ) {
-			memlogf( "[INFO] Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024 * 1024)),
+			memlogf( "[INFO] Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024ll * 1024ll)),
 			        (int)(size / (1024 * 1024)) );
 			return FALSE;
 		}
-		memlogf( "[INFO] Only %dMiB free, %dMiB requested, freeing an image...", (int)(available / (1024 * 1024)),
+		memlogf( "[INFO] Only %dMiB free, %dMiB requested, freeing an image...", (int)(available / (1024ll * 1024ll)),
 		        (int)(size / (1024 * 1024)) );
 		// Find least recently used image
 		dnbd3_image_t *oldest = NULL;
-		time_t mtime = 0;
 		int i;
 		for (i = 0; i < _num_images; ++i) {
 			if ( _images[i] == NULL ) continue;
 			dnbd3_image_t *current = image_lock( _images[i] );
 			if ( current == NULL ) continue;
-			if ( current->users == 1 ) { // Just from the lock above
+			if ( current->atime != 0 && current->users == 1 ) { // Just from the lock above
 				if ( oldest == NULL || oldest->atime > current->atime ) {
 					// Oldest access time so far
 					oldest = current;
-					if ( oldest->atime == 0 ) mtime = file_lastModification( oldest->path );
-				} else if ( oldest->atime == 0 && current->atime == 0 ) {
-					// Oldest access time is 0 (=never used since server startup), so take file modification time into account
-					const time_t m = file_lastModification( current->path );
-					if ( m < mtime ) {
-						mtime = m;
-						oldest = current;
-					}
 				}
 			}
 			image_release( current );
 		}
-		if ( oldest == NULL || mtime == 0 || time( NULL ) - mtime < 86400 ) return FALSE;
+		if ( oldest == NULL || time( NULL ) - oldest->atime < 86400 ) {
+			printf( "[DEBUG] No image is old enough :-(\n" );
+			return FALSE;
+		}
 		oldest = image_lock( oldest );
 		if ( oldest == NULL ) return FALSE;
-		memlogf( "[INFO] '%s' has to go!", oldest->lower_name );
+		memlogf( "[INFO] '%s:%d' has to go!", oldest->lower_name, (int)oldest->rid );
 		unlink( oldest->path );
 		size_t len = strlen( oldest->path ) + 5 + 1;
 		char buffer[len];
