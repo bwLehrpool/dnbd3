@@ -384,7 +384,8 @@ static void *altservers_main(void *data)
 		// Wait 5 seconds max.
 		numSocks = epoll_wait( fdEpoll, events, MAXEVENTS, 5000 );
 		if ( numSocks < 0 ) {
-			memlogf( "[WARNING] epoll_wait() error in uplink_connector" );
+			const int err = errno;
+			memlogf( "[WARNING] epoll_wait() error %d in uplink_connector", err );
 			usleep( 100000 );
 		}
 		if ( _shutdown ) goto cleanup;

@@ -10,8 +10,15 @@ ENDIF()
 
 message( "Build Type selected: ${CMAKE_BUILD_TYPE}" )
 
-SET(CMAKE_C_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG -Wno-multichar")
-SET(CMAKE_C_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG -Wno-multichar")
+if (CMAKE_C_COMPILER STREQUAL "gcc")
+	message( "gcc flags." )
+	SET(CMAKE_C_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG -Wno-multichar")
+	SET(CMAKE_C_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG -Wno-multichar")
+else()
+	message( "clang flags." )
+	SET(CMAKE_C_FLAGS_DEBUG "-std=c99 -fsanitize=address -O1 -fno-omit-frame-pointer -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG -Wno-multichar")
+	SET(CMAKE_C_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG -Wno-multichar")
+endif()
 #SET(CMAKE_CXX_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG")
 #SET(CMAKE_CXX_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG" )
 
