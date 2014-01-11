@@ -90,6 +90,7 @@ int image_isComplete(dnbd3_image_t *image)
 	}
 	return complete;
 }
+
 /**
  * Update cache-map of given image for the given byte range
  * start (inclusive) - end (exclusive)
@@ -756,19 +757,28 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 static int image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list,
         uint8_t * const cache_map)
 {
-	// This checks the first block and two random blocks (which might accidentally be the same)
-	// for corruption via the known crc32 list. This is very sloppy and is merely supposed
-	// to detect accidental corruption due to broken dnbd3-proxy functionality or file system
+	// This checks the first block and (up to) count - 1 random blocks for corruption
+	// via the known crc32 list. This is very sloppy and is merely supposed to detect
+	// accidental corruption due to broken dnbd3-proxy functionality or file system
 	// corruption.
+	assert( count > 0 );
 	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( fileSize );
-	int blocks[count + 1], index = 0, block; // = { 0, rand() % blcks, rand() % blcks, -1 };
+	int blocks[count + 1];
+	int index = 0, j;
+	int block;
 	if ( image_isHashBlockComplete( cache_map, 0, fileSize ) ) blocks[index++] = 0;
-	while ( index + 1 < count ) {
-		block = rand() % hashBlocks;
+	int tries = count * 5; // Try only so many times to find a non-duplicate complete block
+	while ( index + 1 < count && --tries > 0 ) {
+		block = rand() % hashBlocks; // Random block
+		for ( j = 0; j < index; ++j ) { // Random block already in list?
+			if ( blocks[j] == block ) goto while_end;
+		}
+		// Block complete? If yes, add to list
 		if ( image_isHashBlockComplete( cache_map, block, fileSize ) ) blocks[index++] = block;
+while_end: ;
 	}
-	if ( index < count ) blocks[index] = -1;
-	return image_checkBlocksCrc32( fdImage, crc32list, blocks, fileSize );
+	blocks[MIN(index, count)] = -1; // End of array has to be marked by a -1
+	return image_checkBlocksCrc32( fdImage, crc32list, blocks, fileSize ); // Return result of check
 }
 
 /**
