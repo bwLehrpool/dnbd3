@@ -21,7 +21,10 @@
 #ifndef VERSION_H_
 #define VERSION_H_
 
-#define VERSION_STRING "1.0.0"
-#define VERSION_NUMBER 100
+extern const char *VERSION_STRING;
+
+// This is done in a little weird way but otherwise eclipse complains about
+// unresolvable symbols etc...
+#include "version.c"
 
 #endif /* VERSION_H_ */

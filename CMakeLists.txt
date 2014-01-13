@@ -36,7 +36,25 @@ FIND_PACKAGE(ZLIB REQUIRED)
 
 INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR})
 
+################################################################################
+# VERSION HEADER                                                               #
+################################################################################
 
+FILE(WRITE ${CMAKE_BINARY_DIR}/version.cmake
+"EXECUTE_PROCESS(
+	COMMAND \${CMD}
+	OUTPUT_VARIABLE VERSION
+	OUTPUT_STRIP_TRAILING_WHITESPACE
+ )
+ CONFIGURE_FILE(\${SRC} \${DST} @ONLY)
+")
+ADD_CUSTOM_TARGET(
+	version
+	${CMAKE_COMMAND} -D SRC=${CMAKE_SOURCE_DIR}/src/version.c.in
+						-D DST=${CMAKE_BINARY_DIR}/version.c
+						-D CMD=${CMAKE_SOURCE_DIR}/get-version.sh
+						-P ${CMAKE_BINARY_DIR}/version.cmake
+)
 
 ################################################################################
 # CLIENT                                                                       #
@@ -45,6 +63,7 @@ INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR})
 FILE(GLOB_RECURSE CLIENT_SRCS src/client/*.c)
 ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
 TARGET_LINK_LIBRARIES(dnbd3-client)
+ADD_DEPENDENCIES(dnbd3-client version)
 
 
 
@@ -58,6 +77,7 @@ TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES})
 if(UNIX AND NOT APPLE)
 	target_link_libraries(dnbd3-server rt)
 endif()
+ADD_DEPENDENCIES(dnbd3-server version)
 
 
 

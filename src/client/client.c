@@ -638,6 +638,7 @@ static int dnbd3_daemon_send(int argc, char **argv)
 
 static void dnbd3_print_help(char *argv_0)
 {
+	printf( "Version: %s\n\n", VERSION_STRING );
 	printf( "\nUsage: %s\n"
 			"\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c <device>\n\n", argv_0 );
 	printf( "Start the DNBD3 client.\n" );

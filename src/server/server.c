@@ -71,6 +71,7 @@ static void dnbd3_printClients();
  */
 void dnbd3_print_help(char *argv_0)
 {
+	printf( "Version: %s\n\n", VERSION_STRING );
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
 	printf( "-c or --config      Configuration file (default /etc/dnbd3-server.conf)\n" );
