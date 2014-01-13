@@ -213,7 +213,6 @@ static void* uplink_mainloop(void *data)
 	char buffer[200];
 	//
 	assert( link != NULL );
-	assert( link->queueLen == 0 );
 	setThreadName( "idle-uplink" );
 	blockNoncriticalSignals();
 	//
