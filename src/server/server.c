@@ -140,6 +140,7 @@ void dnbd3_cleanup()
 	integrity_shutdown();
 
 	// Wait for clients to disconnect
+	int retries = 10;
 	do {
 		count = 0;
 		spin_lock( &_clients_lock );
@@ -152,7 +153,7 @@ void dnbd3_cleanup()
 			printf( "%d clients still active...\n", count );
 			sleep( 1 );
 		}
-	} while ( count != 0 );
+	} while ( count != 0 && --retries > 0 );
 	_num_clients = 0;
 
 	// Clean up images
