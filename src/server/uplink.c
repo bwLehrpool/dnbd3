@@ -384,6 +384,7 @@ static void* uplink_mainloop(void *data)
 					snprintf( buffer, sizeof(buffer), "[DEBUG WARNING] Starving request detected:\n"
 							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", link->queue[i].client->image->lower_name,
 					        link->queue[i].from, link->queue[i].to, link->queue[i].status );
+					link->queue[i].status = ULR_NEW;
 					spin_unlock( &link->queueLock );
 					printf("%s", buffer);
 					spin_lock( &link->queueLock );

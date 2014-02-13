@@ -371,5 +371,6 @@ void *net_client_handler(void *dnbd3_client)
 	dnbd3_remove_client( client );
 	client->running = FALSE;
 	client = dnbd3_free_client( client );
+	pthread_exit( NULL );
 	return NULL ;
 }
