@@ -33,7 +33,6 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <errno.h>
-
 #include "../types.h"
 #include "../version.h"
 
@@ -379,7 +378,7 @@ static void dnbd3_client_daemon()
 
 		ret = recv( client, &len, sizeof(len), MSG_WAITALL );
 		if ( ret != sizeof(len) || len <= 0 || len + 4 > SOCK_BUFFER ) { // Leave a little room (at least one byte for the appended nullchar)
-			printf( "Error reading length field\n" );
+			printf( "Error reading length field (ret: %d, len: %d)\n", ret, len );
 			close( client );
 			continue;
 		}
@@ -391,13 +390,17 @@ static void dnbd3_client_daemon()
 			buffer[len] = '\0';
 			char *pos = buffer, *end = buffer + len;
 			int argc = 1;
-			char *argv[20] = { 0 };
-			while ( pos < end ) {
-				argv[argc++] = pos;
-				while ( *++pos != '\0' ) { // This will always be in bounds because of -4 above
-					if ( pos >= end ) break;
+			char *argv[20] = { "dnbd3-client" };
+			while ( pos < end && argc < 20 ) {
+				while ( *pos == '\0' ) {
+					if ( ++pos >= end ) break;
 				}
-				++pos;
+				if ( pos >= end ) break;
+				argv[argc++] = pos;
+				printf("Arg %d: '%s'\n", argc, pos);
+				while ( *pos != '\0' ) { // This will always be in bounds because of -4 above
+					if ( ++pos >= end ) break;
+				}
 			}
 			dnbd3_daemon_action( client, argc, argv );
 		}
@@ -598,8 +601,9 @@ static int dnbd3_daemon_send(int argc, char **argv)
 		return FALSE;
 	}
 	// (Re)build argument string into a single one, arguments separated by null chars
-	char *pos = buffer, *end = buffer + SOCK_BUFFER;
-	pos += snprintf( pos, end - pos, "--user%c%d", '\0', uid ) + 1;
+	char *pos = buffer;
+	char *end = buffer + SOCK_BUFFER;
+	pos += snprintf( pos, end - pos, "--user%c%d", (int)'\0', uid ) + 1;
 	for (i = 1; i < argc && pos < end; ++i) {
 		pos += snprintf( pos, end - pos, "%s", argv[i] ) + 1;
 	}
