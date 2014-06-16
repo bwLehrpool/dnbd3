@@ -66,7 +66,7 @@ int uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	link->recvBufferLen = 0;
 	link->shutdown = FALSE;
 	spin_init( &link->queueLock, PTHREAD_PROCESS_PRIVATE );
-	if ( 0 != pthread_create( &(link->thread), NULL, &uplink_mainloop, (void *)(uintptr_t)link ) ) {
+	if ( 0 != thread_create( &(link->thread), NULL, &uplink_mainloop, (void *)(uintptr_t)link ) ) {
 		memlogf( "[ERROR] Could not start thread for new client." );
 		goto failure;
 	}
@@ -81,6 +81,9 @@ int uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 
 /**
  * Locks on image.lock, uplink.lock
+ * Sets image->uplink to NULL while locked, so
+ * calling it multiple times, even concurrently, will
+ * not break anything.
  */
 void uplink_shutdown(dnbd3_image_t *image)
 {
@@ -99,12 +102,12 @@ void uplink_shutdown(dnbd3_image_t *image)
 	}
 	image->uplink = NULL;
 	uplink->shutdown = TRUE;
+	static uint64_t counter = 1;
+	if ( uplink->signal != -1 ) write( uplink->signal, &counter, sizeof(counter) );
+	pthread_t thread = uplink->thread;
 	spin_unlock( &uplink->queueLock );
 	spin_unlock( &image->lock );
-	if ( uplink->signal != -1 ) write( uplink->signal, "", 1 );
-	if ( uplink->image != NULL ) {
-		pthread_join( uplink->thread, NULL );
-	}
+	thread_join( thread, NULL );
 }
 
 /**
@@ -191,7 +194,7 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 
 	if ( foundExisting == -1 ) { // Only wake up uplink thread if the request needs to be relayed
 		static uint64_t counter = 1;
-		write( signalFd, &counter, sizeof(uint64_t) );
+		write( signalFd, &counter, sizeof(counter) );
 	}
 	return TRUE;
 }
@@ -343,13 +346,6 @@ static void* uplink_mainloop(void *data)
 					memlogf( "[INFO] Replication of %s complete.", link->image->lower_name );
 					if ( spin_trylock( &link->image->lock ) == 0 ) {
 						image_markComplete( link->image );
-						spin_lock( &link->queueLock );
-						if ( !link->shutdown ) {
-							link->image->uplink = NULL;
-							link->shutdown = TRUE;
-							pthread_detach( link->thread );
-						}
-						spin_unlock( &link->queueLock );
 						spin_unlock( &link->image->lock );
 						goto cleanup;
 					}
@@ -383,7 +379,7 @@ static void* uplink_mainloop(void *data)
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
 					snprintf( buffer, sizeof(buffer), "[DEBUG WARNING] Starving request detected:\n"
 							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", link->queue[i].client->image->lower_name,
-					        link->queue[i].from, link->queue[i].to, link->queue[i].status );
+							link->queue[i].from, link->queue[i].to, link->queue[i].status );
 					link->queue[i].status = ULR_NEW;
 					spin_unlock( &link->queueLock );
 					printf("%s", buffer);
@@ -395,14 +391,19 @@ static void* uplink_mainloop(void *data)
 #endif
 	}
 	cleanup: ;
+	altservers_removeUplink( link );
 	spin_lock( &link->image->lock );
 	spin_lock( &link->queueLock );
-	if (link->image != NULL) link->image->uplink = NULL;
-	spin_unlock( &link->image->lock );
+	link->image->uplink = NULL;
 	const int fd = link->fd;
 	const int signal = link->signal;
 	link->fd = -1;
 	link->signal = -1;
+	if ( !link->shutdown ) {
+		link->shutdown = TRUE;
+		thread_detach( link->thread );
+	}
+	spin_unlock( &link->image->lock );
 	spin_unlock( &link->queueLock );
 	if ( fd != -1 ) close( fd );
 	if ( signal != -1 ) close( signal );
@@ -517,7 +518,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 		if ( ret != sizeof inReply ) {
 			const int err = errno;
 			memlogf( "[INFO] Lost connection to uplink server for %s (header %d/%d, e=%d)", link->image->path, ret, (int)sizeof(inReply),
-			        err );
+					err );
 			goto error_cleanup;
 		}
 		fixup_reply( inReply );

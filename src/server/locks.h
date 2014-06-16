@@ -4,6 +4,9 @@
 #ifdef _DEBUG
 
 #include <pthread.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #define spin_init( lock, type ) debug_spin_init( #lock, __FILE__, __LINE__, lock, type)
 #define spin_lock( lock ) debug_spin_lock( #lock, __FILE__, __LINE__, lock)
@@ -19,6 +22,7 @@ int debug_spin_destroy(const char *name, const char *file, int line, pthread_spi
 
 void debug_dump_lock_stats();
 
+
 #else
 
 #define spin_init( lock, type ) pthread_spin_init(lock, type)
@@ -26,6 +30,52 @@ void debug_dump_lock_stats();
 #define spin_trylock( lock ) pthread_spin_trylock(lock)
 #define spin_unlock( lock ) pthread_spin_unlock(lock)
 #define spin_destroy( lock ) pthread_spin_destroy(lock)
+
+#endif
+
+#ifdef DEBUG_THREADS
+
+extern int debugThreadCount;
+#define thread_create(thread,attr,routine,arg) (printf("[THREAD CREATE] %d @ %s:%d\n", debugThreadCount, __FILE__, (int)__LINE__), debug_thread_create(thread, attr, routine, arg))
+static inline pthread_t debug_thread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void*), void *arg)
+{
+	int i;
+	if (attr == NULL || pthread_attr_getdetachstate(attr, &i) != 0 || i == PTHREAD_CREATE_JOINABLE) {
+		++debugThreadCount;
+	}
+	return pthread_create( thread, attr, start_routine, arg );
+}
+
+#define thread_detach(thread) (printf("[THREAD DETACH] %d @ %s:%d\n", debugThreadCount, __FILE__, __LINE__), debug_thread_detach(thread))
+static inline int debug_thread_detach(pthread_t thread)
+{
+	const int ret = pthread_detach(thread);
+	if (ret == 0) {
+		--debugThreadCount;
+	} else {
+		printf("[THREAD DETACH] Tried to detach invalid thread (error %d)\n", (int)errno);
+		exit(1);
+	}
+	return ret;
+}
+#define thread_join(thread,value) (printf("[THREAD JOIN] %d @ %s:%d\n", debugThreadCount, __FILE__, __LINE__), debug_thread_join(thread,value))
+static inline int debug_thread_join(pthread_t thread, void **value_ptr)
+{
+	const int ret = pthread_join(thread, value_ptr);
+	if (ret == 0) {
+		--debugThreadCount;
+	} else {
+		printf("[THREAD JOIN] Tried to join invalid thread (error %d)\n", (int)errno);
+		exit(1);
+	}
+	return ret;
+}
+
+#else
+
+#define thread_create(thread,attr,routine,param)  pthread_create( thread, attr, routine, param )
+#define thread_detach(thread) pthread_detach( thread )
+#define thread_join(thread,value) pthread_join( thread, value )
 
 #endif
 

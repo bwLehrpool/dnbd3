@@ -41,6 +41,8 @@ typedef struct
 
 } debug_thread_t;
 
+int debugThreadCount = 0;
+
 static debug_lock_t locks[MAXLOCKS];
 static debug_thread_t threads[MAXTHREADS];
 static int init_done = 0;
@@ -284,7 +286,7 @@ static void *debug_thread_watchdog(void *something)
 void debug_locks_start_watchdog()
 {
 #ifdef _DEBUG
-	if ( 0 != pthread_create( &watchdog, NULL, &debug_thread_watchdog, (void *)NULL ) ) {
+	if ( 0 != thread_create( &watchdog, NULL, &debug_thread_watchdog, (void *)NULL ) ) {
 		memlogf( "[ERROR] Could not start debug-lock watchdog." );
 		return;
 	}
@@ -298,6 +300,6 @@ void debug_locks_stop_watchdog()
 	printf( "Killing debug watchdog...\n" );
 	pthread_spin_lock( &initdestory );
 	pthread_spin_unlock( &initdestory );
-	pthread_join( watchdog, NULL );
+	thread_join( watchdog, NULL );
 #endif
 }

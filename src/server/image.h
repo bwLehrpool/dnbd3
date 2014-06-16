@@ -24,7 +24,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision);
 
 dnbd3_image_t* image_lock(dnbd3_image_t *image);
 
-void image_release(dnbd3_image_t *image);
+dnbd3_image_t* image_release(dnbd3_image_t *image);
 
 int image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, const uint64_t fileSize);
 

@@ -42,7 +42,7 @@ void integrity_init()
 	pthread_mutex_init( &integrityQueueLock, NULL );
 	pthread_cond_init( &queueSignal, NULL );
 	bRunning = TRUE;
-	if ( 0 != pthread_create( &thread, NULL, &integrity_main, (void *)NULL ) ) {
+	if ( 0 != thread_create( &thread, NULL, &integrity_main, (void *)NULL ) ) {
 		bRunning = FALSE;
 		memlogf( "[WARNING] Could not start integrity check thread. Corrupted images will not be detected." );
 		return;
@@ -57,7 +57,7 @@ void integrity_shutdown()
 	pthread_mutex_lock( &integrityQueueLock );
 	pthread_cond_signal( &queueSignal );
 	pthread_mutex_unlock( &integrityQueueLock );
-	pthread_join( thread, NULL );
+	thread_join( thread, NULL );
 	while ( bRunning )
 		usleep( 10000 );
 	pthread_mutex_destroy( &integrityQueueLock );
@@ -135,7 +135,7 @@ static void* integrity_main(void *data)
 				int fd = open( image->path, O_RDONLY );
 				if ( fd >= 0 ) {
 					if ( image_checkBlocksCrc32( fd, (uint32_t*)buffer, blocks, fileSize ) ) {
-						printf( "[DEBUG] CRC check of block %d for %s succeeded :-)\n", blocks[0], image->lower_name );
+						//printf( "[DEBUG] CRC check of block %d for %s succeeded :-)\n", blocks[0], image->lower_name );
 					} else {
 						memlogf( "[WARNING] Hash check for block %d of %s failed!", blocks[0], image->lower_name );
 						image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, FALSE );

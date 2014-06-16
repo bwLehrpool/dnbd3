@@ -21,6 +21,7 @@
 #include <zlib.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <errno.h>
 
 // ##########################################
 
@@ -310,15 +311,15 @@ dnbd3_image_t* image_lock(dnbd3_image_t *image)
  * anymore, the image will be freed
  * Locks on: _images_lock, _images[].lock
  */
-void image_release(dnbd3_image_t *image)
+dnbd3_image_t* image_release(dnbd3_image_t *image)
 {
-	assert( image != NULL );
+	if ( image == NULL ) return NULL;
 	spin_lock( &image->lock );
 	assert( image->users > 0 );
 	image->users--;
 	if ( image->users > 0 ) { // Still in use, do nothing
 		spin_unlock( &image->lock );
-		return;
+		return NULL;
 	}
 	spin_unlock( &image->lock );
 	spin_lock( &_images_lock );
@@ -330,17 +331,18 @@ void image_release(dnbd3_image_t *image)
 			if ( _images[i] == image ) { // Found, do nothing
 				spin_unlock( &image->lock );
 				spin_unlock( &_images_lock );
-				return;
+				return NULL;
 			}
 		}
 		spin_unlock( &image->lock );
 		spin_unlock( &_images_lock );
 		// Not found, free
 		image_free( image );
-		return;
+		return NULL;
 	}
 	spin_unlock( &image->lock );
 	spin_unlock( &_images_lock );
+	return NULL;
 }
 
 /**
@@ -576,7 +578,7 @@ static int image_load(char *base, char *path, int withUplink)
 
 	// Check CRC32
 	if ( crc32list != NULL ) {
-		if ( !image_checkRandomBlocks( 3, fdImage, fileSize, crc32list, cache_map ) ) {
+		if ( !image_checkRandomBlocks( 4, fdImage, fileSize, crc32list, cache_map ) ) {
 			memlogf( "[ERROR] quick crc32 check of %s failed. Data corruption?", path );
 			goto load_error;
 		}
@@ -1229,9 +1231,10 @@ static int64_t image_pad(const char *path, const int64_t currentSize)
 static int image_ensureDiskSpace(uint64_t size)
 {
 	for (;;) {
-		const uint64_t available = file_freeDiskSpace( _basePath );
-		if ( available == 0 ) {
-			memlogf( "[WARNING] Could not get free disk space, will assume there is enough space left... ;-)\n" );
+		const int64_t available = file_freeDiskSpace( _basePath );
+		if ( available == -1 ) {
+			const int e = errno;
+			memlogf( "[WARNING] Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", e );
 			return TRUE;
 		}
 		if ( available > size ) return TRUE;

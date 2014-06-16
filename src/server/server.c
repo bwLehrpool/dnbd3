@@ -326,7 +326,10 @@ int main(int argc, char *argv[])
 
 	// setup rpc
 	//pthread_t thread_rpc;
-	//pthread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
+	//thread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
+	pthread_attr_t threadAttrs;
+	pthread_attr_init( &threadAttrs );
+	pthread_attr_setdetachstate( &threadAttrs, PTHREAD_CREATE_DETACHED );
 
 	memlogf( "[INFO] Server is ready..." );
 
@@ -372,16 +375,14 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		pthread_attr_t threadAttrs;
-		pthread_attr_init( &threadAttrs );
-		pthread_attr_setdetachstate( &threadAttrs, PTHREAD_CREATE_DETACHED );
-		if ( 0 != pthread_create( &(dnbd3_client->thread), &threadAttrs, net_client_handler, (void *)(uintptr_t)dnbd3_client ) ) {
+		if ( 0 != thread_create( &(dnbd3_client->thread), &threadAttrs, net_client_handler, (void *)(uintptr_t)dnbd3_client ) ) {
 			memlogf( "[ERROR] Could not start thread for new client." );
 			dnbd3_remove_client( dnbd3_client );
 			dnbd3_client = dnbd3_free_client( dnbd3_client );
 			continue;
 		}
 	}
+	pthread_attr_destroy( &threadAttrs );
 	dnbd3_cleanup();
 }
 

@@ -42,19 +42,19 @@ typedef struct
 struct _dnbd3_connection
 {
 	int fd;                     // socket fd to remote server
-	int signal;                 // write end of pipe used to wake up the process
+	int signal;                 // eventfd used to wake up the process
 	pthread_t thread;           // thread holding the connection
 	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
 	volatile int queueLen;      // length of queue
-	dnbd3_image_t *image;       // image that this uplink is used for do not call get/release for this pointer
+	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	dnbd3_host_t currentServer; // Current server we're connected to
 	volatile int rttTestResult; // RTT_*
 	dnbd3_host_t betterServer;  // The better server
 	int betterFd;               // Active connection to better server, ready to use
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	int recvBufferLen;          // Len of ^^
-	volatile int shutdown;      // bool to signal thread to stop, must only be set from uplink_shutdown()
+	volatile int shutdown;      // bool to signal thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
 	int replicatedLastBlock;    // bool telling if the last block has been replicated yet
 	time_t lastReplication;     // timestamp of when last replication requests were sent
 };
@@ -98,10 +98,10 @@ struct _dnbd3_image
 {
 	char *path;            // absolute path of the image
 	char *lower_name;      // relative path, all lowercase, minus revision ID
-	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
+	uint8_t * volatile cache_map;    // cache map telling which parts are locally cached, NULL if complete
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
-	dnbd3_connection_t *uplink; // pointer to a server connection
+	dnbd3_connection_t * volatile uplink; // pointer to a server connection
 	uint64_t filesize;     // size of image
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int rid;               // revision of image

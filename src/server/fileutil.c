@@ -58,13 +58,13 @@ int file_alloc(int fd, uint64_t offset, uint64_t size)
 	return TRUE;
 }
 
-uint64_t file_freeDiskSpace(const char * const path)
+int64_t file_freeDiskSpace(const char * const path)
 {
 	struct statvfs fiData;
 	if ( (statvfs( path, &fiData )) < 0 ) {
-		return 0;
+		return -1;
 	}
-	return ((uint64_t)fiData.f_bavail * (uint64_t)fiData.f_bsize);
+	return ((int64_t)fiData.f_bavail * (int64_t)fiData.f_bsize);
 }
 
 time_t file_lastModification(const char * const file)

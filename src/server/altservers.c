@@ -41,7 +41,7 @@ void altservers_init()
 {
 	spin_init( &altServersLock, PTHREAD_PROCESS_PRIVATE );
 	memset( altServers, 0, SERVER_MAX_ALTS * sizeof(dnbd3_alt_server_t) );
-	if ( 0 != pthread_create( &altThread, NULL, &altservers_main, (void *)NULL ) ) {
+	if ( 0 != thread_create( &altThread, NULL, &altservers_main, (void *)NULL ) ) {
 		memlogf( "[ERROR] Could not start altservers connector thread" );
 		exit( EXIT_FAILURE );
 	}
@@ -52,7 +52,7 @@ void altservers_shutdown()
 {
 	if ( !initDone ) return;
 	write( signalPipe, "", 1 ); // Wake altservers thread up
-	pthread_join( altThread, NULL );
+	thread_join( altThread, NULL );
 }
 
 int altservers_load()
@@ -162,7 +162,10 @@ void altservers_removeUplink(dnbd3_connection_t *uplink)
 {
 	pthread_mutex_lock( &pendingLockConsume );
 	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
-		if ( pending[i] == uplink ) pending[i] = NULL;
+		if ( pending[i] == uplink ) {
+			uplink->rttTestResult = RTT_NOT_REACHABLE;
+			pending[i] = NULL;
+		}
 	}
 	pthread_mutex_unlock( &pendingLockConsume );
 }
@@ -404,13 +407,21 @@ static void *altservers_main(void *data)
 		}
 		// Work your way through the queue
 		for (itLink = 0; itLink < SERVER_MAX_PENDING_ALT_CHECKS; ++itLink) {
-			if ( pending[itLink] == NULL ) continue; // Check once before locking, as a mutex is expensive
-			pthread_mutex_lock( &pendingLockConsume );
-			if ( pending[itLink] == NULL ) { // Check again after locking
-				continue;
-				pthread_mutex_unlock( &pendingLockConsume );
-			}
 			dnbd3_connection_t * const uplink = pending[itLink];
+			if ( uplink == NULL ) continue; // Check once before locking, as a mutex is expensive
+			pthread_mutex_lock( &pendingLockConsume );
+			if ( uplink == NULL ) { // Check again after locking
+				pthread_mutex_unlock( &pendingLockConsume );
+				continue;
+			}
+			dnbd3_image_t * const image = image_lock( uplink->image );
+			if ( image == NULL ) { // Check again after locking
+				uplink->rttTestResult = RTT_NOT_REACHABLE;
+				pending[itLink] = NULL;
+				pthread_mutex_unlock( &pendingLockConsume );
+				printf( "[DEBUG] Image has gone away that was queued for RTT measurement\n" );
+				continue;
+			}
 			assert( uplink->rttTestResult == RTT_INPROGRESS );
 			// Now get 4 alt servers
 			numAlts = altservers_get( servers, ALTS );
@@ -436,7 +447,7 @@ static void *altservers_main(void *data)
 				int sock = sock_connect( &servers[itAlt], 750, _uplinkTimeout );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
-				if ( !dnbd3_select_image( sock, uplink->image->lower_name, uplink->image->rid, FLAGS8_SERVER ) ) {
+				if ( !dnbd3_select_image( sock, image->lower_name, image->rid, FLAGS8_SERVER ) ) {
 					goto server_failed;
 				}
 				// See if selecting the image succeeded ++++++++++++++++++++++++++++++
@@ -447,36 +458,36 @@ static void *altservers_main(void *data)
 					goto server_image_not_available;
 				}
 				if ( protocolVersion < MIN_SUPPORTED_SERVER ) goto server_failed;
-				if ( name == NULL || strcmp( name, uplink->image->lower_name ) != 0 ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Server offers image '%s', requested '%s'", name, uplink->image->lower_name );
+				if ( name == NULL || strcmp( name, image->lower_name ) != 0 ) {
+					ERROR_GOTO_VA( server_failed, "[ERROR] Server offers image '%s', requested '%s'", name, image->lower_name );
 				}
-				if ( rid != uplink->image->rid ) {
+				if ( rid != image->rid ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Server provides rid %d, requested was %d (%s)",
-					        (int)rid, (int)uplink->image->rid, uplink->image->lower_name );
+					        (int)rid, (int)image->rid, image->lower_name );
 				}
-				if ( imageSize != uplink->image->filesize ) {
+				if ( imageSize != image->filesize ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
-					        imageSize, uplink->image->filesize, uplink->image->lower_name );
+					        imageSize, image->filesize, image->lower_name );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				fixup_request( request );
 				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE ) ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", uplink->image->lower_name );
+					ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", image->lower_name );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
 				if ( !dnbd3_get_reply( sock, &reply ) ) {
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
 					ERROR_GOTO_VA( server_failed, "[ERROR] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
-					        buf, uplink->image->lower_name );
+					        buf, image->lower_name );
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
-					        reply.size, uplink->image->lower_name );
+					        reply.size, image->lower_name );
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO_VA( server_failed, "[ERROR] Could not read random block payload for %s", uplink->image->lower_name );
+					ERROR_GOTO_VA( server_failed, "[ERROR] Could not read random block payload for %s", image->lower_name );
 				}
 				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
 				// Measurement done - everything fine so far
@@ -505,6 +516,7 @@ static void *altservers_main(void *data)
 				server_image_not_available: ;
 				close( sock );
 			}
+			image_release( image );
 			// Done testing all servers. See if we should switch
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
@@ -539,3 +551,4 @@ static void *altservers_main(void *data)
 	signalPipe = -1;
 	return NULL ;
 }
+
