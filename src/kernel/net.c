@@ -906,7 +906,8 @@ int dnbd3_net_receive(void *data)
 	struct msghdr msg;
 	struct kvec iov;
 	struct req_iterator iter;
-	struct bio_vec *bvec;
+	struct bio_vec bvec_inst;
+	struct bio_vec *bvec = &bvec_inst;
 	void *kaddr;
 	unsigned long irqflags;
 	sigset_t blocked, oldset;
@@ -966,7 +967,11 @@ int dnbd3_net_receive(void *data)
 				error_dev_va("ERROR: Received block data for unrequested handle (%llu: %llu).\n",
 				   (unsigned long long)dnbd3_reply.handle, (unsigned long long)dnbd3_reply.size);
 			// receive data and answer to block layer
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
+			rq_for_each_segment(bvec_inst, blk_request, iter)
+#else
 			rq_for_each_segment(bvec, blk_request, iter)
+#endif
 			{
 				siginitsetinv(&blocked, sigmask(SIGKILL));
 				sigprocmask(SIG_SETMASK, &blocked, &oldset);
