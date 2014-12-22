@@ -359,9 +359,9 @@ int main(int argc, char *argv[])
 			usleep( 10000 ); // 10ms
 			continue;
 		}
-		//memlogf("INFO: Client %s connected\n", inet_ntoa(client.sin_addr));
+		//memlogf("INFO: Client connected\n");
 
-		sock_set_timeout( fd, SOCKET_TIMEOUT_SERVER_MS );
+		sock_set_timeout( fd, _clientTimeout );
 
 		dnbd3_client_t *dnbd3_client = dnbd3_init_client( &client, fd );
 		if ( dnbd3_client == NULL ) {

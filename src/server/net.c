@@ -301,11 +301,15 @@ void *net_client_handler(void *dnbd3_client)
 
 				if ( request.size != 0 ) {
 					// Send payload if request length > 0
-					const ssize_t ret = sendfile( client->sock, image_file, (off_t *)&request.offset, request.size );
-					if ( ret != request.size ) {
-						pthread_mutex_unlock( &client->sendMutex );
-						printf( "[ERROR] sendfile failed (image to net %d/%d)\n", (int)ret, (int)request.size );
-						goto exit_client_cleanup;
+					size_t done = 0;
+					while ( done < request.size ) {
+						const ssize_t ret = sendfile( client->sock, image_file, (off_t *)&request.offset, request.size );
+						if ( ret <= 0 ) {
+							pthread_mutex_unlock( &client->sendMutex );
+							printf( "[ERROR] sendfile failed (image to net. ret=%d, sent %d/%d, errno=%d)\n", (int)ret, (int)done, (int)request.size, (int)errno );
+							goto exit_client_cleanup;
+						}
+						done += ret;
 					}
 				}
 				pthread_mutex_unlock( &client->sendMutex );

@@ -395,6 +395,7 @@ static void *altservers_main(void *data)
 		// Empty pipe
 		do {
 			ret = read( readPipe, buffer, sizeof buffer );
+			if ( ret > 0 ) printf("*********** altserver thread woke up\n");
 		} while ( ret == sizeof buffer ); // Throw data away, this is just used for waking this thread up
 		if ( ret == 0 ) {
 			memlogf( "[WARNING] Signal pipe of alservers_main closed! Things will break!" );

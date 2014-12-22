@@ -56,7 +56,8 @@ struct _dnbd3_connection
 	int recvBufferLen;          // Len of ^^
 	volatile int shutdown;      // bool to signal thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
 	int replicatedLastBlock;    // bool telling if the last block has been replicated yet
-	time_t lastReplication;     // timestamp of when last replication requests were sent
+	//time_t lastReplication;     // timestamp of when last replication requests were sent
+	uint64_t replicationHandle; // Handle of pending replication request
 };
 
 typedef struct
@@ -167,9 +168,14 @@ extern int _isProxy;
 extern int _proxyPrivateOnly;
 
 /**
- * Read timeout when waiting for data on an uplink
+ * Read timeout when waiting for or sending data on an uplink
  */
 extern int _uplinkTimeout;
+
+/**
+ * Read timeout when waiting for or sending data fron/to client
+ */
+extern int _clientTimeout;
 
 void globals_loadConfig();
 

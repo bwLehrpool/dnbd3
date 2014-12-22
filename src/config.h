@@ -63,7 +63,6 @@
 #define COMMENT_LENGTH 120
 
 // in seconds if not stated otherwise (MS = milliseconds)
-#define SOCKET_TIMEOUT_SERVER_MS 15000
 #define SOCKET_TIMEOUT_SERVER_RETRIES 3 // When waiting for next header, max reties * above timeout is the actual total timeout (ping timeout)
 #define SOCKET_TIMEOUT_CLIENT_DATA 2
 #define SOCKET_TIMEOUT_CLIENT_DISCOVERY 1
