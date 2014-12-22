@@ -302,8 +302,9 @@ void *net_client_handler(void *dnbd3_client)
 				if ( request.size != 0 ) {
 					// Send payload if request length > 0
 					size_t done = 0;
+					off_t offset = (off_t)request.offset;
 					while ( done < request.size ) {
-						const ssize_t ret = sendfile( client->sock, image_file, (off_t *)&request.offset, request.size );
+						const ssize_t ret = sendfile( client->sock, image_file, &offset, request.size - done );
 						if ( ret <= 0 ) {
 							pthread_mutex_unlock( &client->sendMutex );
 							printf( "[ERROR] sendfile failed (image to net. ret=%d, sent %d/%d, errno=%d)\n",

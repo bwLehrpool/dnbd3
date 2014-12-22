@@ -524,6 +524,8 @@ static void *altservers_main(void *data)
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];
 				uplink->rttTestResult = RTT_DOCHANGE;
+				static uint64_t counter = 1;
+				write( uplink->signal, &counter, sizeof(counter) );
 			} else if (bestSock == -1) {
 				// No server was reachable
 				uplink->rttTestResult = RTT_NOT_REACHABLE;
