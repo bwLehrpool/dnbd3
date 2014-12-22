@@ -901,7 +901,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	dnbd3_host_t servers[4];
 	int uplinkSock = -1;
 	dnbd3_host_t *uplinkServer = NULL;
-	const int count = altservers_get( servers, 4 );
+	const int count = altservers_get( servers, 4, FALSE );
 	uint16_t remoteVersion, remoteRid;
 	uint64_t remoteImageSize;
 	for (i = 0; i < count; ++i) {

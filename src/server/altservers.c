@@ -226,7 +226,7 @@ int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int
  * This function is suited for finding uplink servers as
  * it includes private servers and ignores any "client only" servers
  */
-int altservers_get(dnbd3_host_t *output, int size)
+int altservers_get(dnbd3_host_t *output, int size, int emergency)
 {
 	if ( size <= 0 ) return 0;
 	int count = 0, i;
@@ -245,10 +245,10 @@ int altservers_get(dnbd3_host_t *output, int size)
 		if ( altServers[i].host.type == 0 ) continue; // Slot is empty
 		if ( _proxyPrivateOnly && !altServers[i].isPrivate ) continue; // Config says to consider private alt-servers only? ignore!
 		if ( altServers[i].isClientOnly ) continue;
-		if ( altServers[i].numFails > SERVER_MAX_UPLINK_FAILS // server failed X times in a row
+		if ( !emergency && altServers[i].numFails > SERVER_MAX_UPLINK_FAILS // server failed X times in a row
 			&& now - altServers[i].lastFail > SERVER_BAD_UPLINK_IGNORE ) continue; // and last fail was not too long ago? ignore!
 		// server seems ok, include in output and reset its fail counter
-		altServers[i].numFails = 0;
+		if ( !emergency ) altServers[i].numFails = 0;
 		output[count++] = altServers[i].host;
 		if ( count >= size ) break;
 	}
@@ -395,7 +395,6 @@ static void *altservers_main(void *data)
 		// Empty pipe
 		do {
 			ret = read( readPipe, buffer, sizeof buffer );
-			if ( ret > 0 ) printf("*********** altserver thread woke up\n");
 		} while ( ret == sizeof buffer ); // Throw data away, this is just used for waking this thread up
 		if ( ret == 0 ) {
 			memlogf( "[WARNING] Signal pipe of alservers_main closed! Things will break!" );
@@ -425,7 +424,7 @@ static void *altservers_main(void *data)
 			}
 			assert( uplink->rttTestResult == RTT_INPROGRESS );
 			// Now get 4 alt servers
-			numAlts = altservers_get( servers, ALTS );
+			numAlts = altservers_get( servers, ALTS, uplink->fd == -1 );
 			if ( uplink->fd != -1 ) {
 				// Add current server if not already in list
 				found = FALSE;

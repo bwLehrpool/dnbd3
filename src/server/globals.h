@@ -41,7 +41,7 @@ typedef struct
 #define RTT_NOT_REACHABLE 4 // No uplink was reachable
 struct _dnbd3_connection
 {
-	int fd;                     // socket fd to remote server
+	volatile int fd;            // socket fd to remote server
 	int signal;                 // eventfd used to wake up the process
 	pthread_t thread;           // thread holding the connection
 	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
