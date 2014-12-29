@@ -177,6 +177,12 @@ extern int _uplinkTimeout;
  */
 extern int _clientTimeout;
 
+/**
+ * Should we replicate incomplete images in the background?
+ * Otherwise, only blocks that were explicitly requested will be cached.
+ */
+extern int _backgroundReplication;
+
 void globals_loadConfig();
 
 #endif /* GLOBALS_H_ */

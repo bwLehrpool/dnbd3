@@ -455,16 +455,24 @@ static void uplink_send_requests(dnbd3_connection_t *link, int newOnly)
 }
 
 /**
- * Sent a block request to an uplink server without really having
- * any client that needs that data. This will be used for background replication
+ * Send a block request to an uplink server without really having
+ * any client that needs that data. This will be used for background replication.
+ *
+ * We'll go through the cache map of the image and look for bytes that don't have
+ * all bits set. We then request the corresponding 8 blocks of 4kb from the uplink
+ * server. This means we might request data we already have, but it makes
+ * the code simpler. Worst case would be only one bit is zero, which means
+ * 4kb are missing, but we will request 32kb.
  */
 static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 {
+	if ( !_backgroundReplication ) return; // Don't do background replication
 	if ( link == NULL || link->fd == -1 ) return;
 	dnbd3_image_t * const image = link->image;
-	if ( image == NULL || image->cache_map == NULL || image->filesize < DNBD3_BLOCK_SIZE ) return;
+	if ( image->filesize < DNBD3_BLOCK_SIZE ) return;
 	spin_lock( &image->lock );
 	if ( image == NULL || image->cache_map == NULL || link->replicationHandle != 0 ) {
+		// No cache map (=image complete), or replication pending, do nothing
 		spin_unlock( &image->lock );
 		return;
 	}
@@ -474,7 +482,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 	for (int i = 0; i <= len; ++i) {
 		if ( image->cache_map == NULL || link->fd == -1 ) break;
 		if ( image->cache_map[i] == 0xff || (i == len && link->replicatedLastBlock) ) continue;
-		if ( i == len ) link->replicatedLastBlock = TRUE;
+		if ( i == len ) link->replicatedLastBlock = TRUE; // Special treatment, last byte in map could represent less than 8 blocks
 		link->replicationHandle = 1; // Prevent race condition
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
