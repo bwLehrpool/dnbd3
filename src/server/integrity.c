@@ -28,8 +28,8 @@ static pthread_t thread;
 static queue_entry checkQueue[CHECK_QUEUE_SIZE];
 static pthread_mutex_t integrityQueueLock;
 static pthread_cond_t queueSignal;
-static int queueLen = -1;
-static int bRunning = FALSE;
+static volatile int queueLen = -1;
+static volatile int bRunning = FALSE;
 
 static void* integrity_main(void *data);
 
@@ -103,6 +103,7 @@ static void* integrity_main(void *data)
 	uint8_t *buffer = NULL;
 	size_t bufferSize = 0;
 	setThreadName( "image-check" );
+	blockNoncriticalSignals();
 #if defined(linux) || defined(__linux)
 	// Setting nice of this thread - this is not POSIX conforming, so check if other platforms support this.
 	// POSIX says that setpriority() should set the nice value of all threads belonging to the current process,
@@ -112,7 +113,11 @@ static void* integrity_main(void *data)
 #endif
 	pthread_mutex_lock( &integrityQueueLock );
 	while ( !_shutdown ) {
+		if ( queueLen == 0 ) {
+			pthread_cond_wait( &queueSignal, &integrityQueueLock );
+		}
 		for (i = queueLen - 1; i >= 0; --i) {
+			if ( _shutdown ) break;
 			if ( checkQueue[i].image == NULL ) continue;
 			dnbd3_image_t * const image = image_lock( checkQueue[i].image );
 			checkQueue[i].image = NULL;
@@ -148,9 +153,6 @@ static void* integrity_main(void *data)
 			}
 			// Release :-)
 			image_release( image );
-		}
-		if ( queueLen == 0 ) {
-			pthread_cond_wait( &queueSignal, &integrityQueueLock );
 		}
 	}
 	pthread_mutex_unlock( &integrityQueueLock );

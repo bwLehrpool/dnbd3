@@ -17,6 +17,7 @@
 #include "globals.h"
 #include "memlog.h"
 #include "helper.h"
+#include "signal.h"
 
 #define MAXLOCKS 2000
 #define MAXTHREADS 500
@@ -49,6 +50,7 @@ static int init_done = 0;
 static pthread_spinlock_t initdestory;
 static volatile int lockId = 0;
 static pthread_t watchdog = 0;
+static int watchdogSignal = -1;
 
 static void *debug_thread_watchdog(void *something);
 
@@ -276,7 +278,7 @@ static void *debug_thread_watchdog(void *something)
 			}
 			pthread_spin_unlock( &initdestory );
 		}
-		sleep( 5 );
+		if ( watchdogSignal == -1 || signal_wait( watchdogSignal, 5000 ) == SIGNAL_ERROR ) sleep( 5 );
 	}
 	return NULL ;
 }
@@ -290,6 +292,7 @@ void debug_locks_start_watchdog()
 		memlogf( "[ERROR] Could not start debug-lock watchdog." );
 		return;
 	}
+	watchdogSignal = signal_new();
 #endif
 }
 
@@ -299,6 +302,7 @@ void debug_locks_stop_watchdog()
 	_shutdown = TRUE;
 	printf( "Killing debug watchdog...\n" );
 	pthread_spin_lock( &initdestory );
+	signal_call( watchdogSignal );
 	pthread_spin_unlock( &initdestory );
 	thread_join( watchdog, NULL );
 #endif

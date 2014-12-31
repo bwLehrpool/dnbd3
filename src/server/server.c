@@ -446,8 +446,10 @@ void dnbd3_remove_client(dnbd3_client_t *client)
 dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 {
 	spin_lock( &client->lock );
+	pthread_mutex_lock( &client->sendMutex );
 	if ( client->sock >= 0 ) close( client->sock );
 	client->sock = -1;
+	pthread_mutex_unlock( &client->sendMutex );
 	if ( client->image != NULL ) {
 		spin_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
@@ -457,8 +459,6 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
 	client->image = NULL;
 	spin_unlock( &client->lock );
 	spin_destroy( &client->lock );
-	pthread_mutex_lock( &client->sendMutex );
-	pthread_mutex_unlock( &client->sendMutex );
 	pthread_mutex_destroy( &client->sendMutex );
 	free( client );
 	return NULL ;
