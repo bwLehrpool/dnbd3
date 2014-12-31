@@ -45,62 +45,62 @@
 #include "../types.h"
 #include "locks.h"
 
-static inline char recv_request_header(int sock, dnbd3_request_t *request)
+static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
 	int ret, fails = 0;
 	// Read request header from socket
 	while ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
-		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_SERVER_RETRIES ) return FALSE;
+		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_SERVER_RETRIES ) return false;
 		const int err = errno;
 		if ( err == EAGAIN || err == EINTR ) continue;
 		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), err );
-		return FALSE;
+		return false;
 	}
 	// Make sure all bytes are in the right order (endianness)
 	fixup_request( *request );
 	if ( request->magic != dnbd3_packet_magic ) {
 		printf( "[DEBUG] Magic in client request incorrect (cmd: %d, len: %d)\n", (int)request->cmd, (int)request->size );
-		return FALSE;
+		return false;
 	}
 	// Payload sanity check
 	if ( request->cmd != CMD_GET_BLOCK && request->size > MAX_PAYLOAD ) {
 		memlogf( "[WARNING] Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd,
 		        (int)request->size );
-		return FALSE;
+		return false;
 	}
 #ifdef _DEBUG
 	if ( _fake_delay ) usleep( _fake_delay );
 #endif
-	return TRUE;
+	return true;
 }
 
-static inline char recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
+static inline bool recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
 {
 	if ( size == 0 ) {
 		memlogf( "[BUG] Called recv_request_payload() to receive 0 bytes" );
-		return FALSE;
+		return false;
 	}
 	if ( size > MAX_PAYLOAD ) {
 		memlogf( "[BUG] Called recv_request_payload() for more bytes than the passed buffer could hold!" );
-		return FALSE;
+		return false;
 	}
 	if ( recv( sock, payload->buffer, size, MSG_WAITALL ) != size ) {
 		printf( "[ERROR] Could not receive request payload of length %d\n", (int)size );
-		return FALSE;
+		return false;
 	}
 	// Prepare payload buffer for reading
 	serializer_reset_read( payload, size );
-	return TRUE;
+	return true;
 }
 
-static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
+static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 {
 	const unsigned int size = reply->size;
 	fixup_reply( *reply );
 	if ( !payload || size == 0 ) {
 		if ( send( sock, reply, sizeof(dnbd3_reply_t), MSG_WAITALL ) != sizeof(dnbd3_reply_t) ) {
 			printf( "[DEBUG] Send failed (header-only)\n" );
-			return FALSE;
+			return false;
 		}
 	} else {
 		struct iovec iov[2];
@@ -110,10 +110,10 @@ static inline char send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 		iov[1].iov_len = (size_t)size;
 		if ( writev( sock, iov, 2 ) != sizeof(dnbd3_reply_t) + size ) {
 			printf( "[DEBUG] Send failed (reply with payload of %u bytes)\n", size );
-			return FALSE;
+			return false;
 		}
 	}
-	return TRUE;
+	return true;
 }
 
 void *net_client_handler(void *dnbd3_client)
@@ -126,7 +126,7 @@ void *net_client_handler(void *dnbd3_client)
 	int image_file = -1;
 
 	int num;
-	int bOk = FALSE;
+	bool bOk = false;
 
 	serialized_buffer_t payload;
 	char *image_name;
@@ -153,7 +153,7 @@ void *net_client_handler(void *dnbd3_client)
 				client_version = serializer_get_uint16( &payload );
 				image_name = serializer_get_string( &payload );
 				rid = serializer_get_uint16( &payload );
-				client->is_server = serializer_get_uint8( &payload );
+				client->isServer = serializer_get_uint8( &payload );
 				if ( request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT ) {
 					if ( client_version < MIN_SUPPORTED_CLIENT ) {
 						printf( "[DEBUG] Client too old\n" );
@@ -177,8 +177,8 @@ void *net_client_handler(void *dnbd3_client)
 							reply.cmd = CMD_SELECT_IMAGE;
 							reply.size = serializer_get_written_length( &payload );
 							if ( send_reply( client->sock, &reply, &payload ) ) {
-								if ( !client->is_server ) image->atime = time( NULL );
-								bOk = TRUE;
+								if ( !client->isServer ) image->atime = time( NULL );
+								bOk = true;
 							}
 						}
 					}
@@ -189,9 +189,9 @@ void *net_client_handler(void *dnbd3_client)
 
 	if ( bOk ) {
 		// add artificial delay if applicable
-		if ( client->is_server && _serverPenalty != 0 ) {
+		if ( client->isServer && _serverPenalty != 0 ) {
 			usleep( _serverPenalty );
-		} else if ( !client->is_server && _clientPenalty != 0 ) {
+		} else if ( !client->isServer && _clientPenalty != 0 ) {
 			usleep( _clientPenalty );
 		}
 		if ( host_to_string( &client->host, buffer, sizeof buffer ) ) {
@@ -233,7 +233,7 @@ void *net_client_handler(void *dnbd3_client)
 					// This is a proxyed image, check if we need to relay the request...
 					start = request.offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					end = (request.offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-					int isCached = TRUE;
+					bool isCached = true;
 					spin_lock( &image->lock );
 					// Check again as we only aquired the lock just now
 					if ( image->cache_map != NULL ) {
@@ -245,7 +245,7 @@ void *net_client_handler(void *dnbd3_client)
 							const int map_x = (pos >> 12) & 7; // mod 8
 							const uint8_t bit_mask = 0b00000001 << map_x;
 							if ( (image->cache_map[firstByte] & bit_mask) == 0 ) {
-								isCached = FALSE;
+								isCached = false;
 								break;
 							}
 							pos += DNBD3_BLOCK_SIZE;
@@ -255,7 +255,7 @@ void *net_client_handler(void *dnbd3_client)
 							pos = firstByte + 1;
 							while ( pos < lastByte ) {
 								if ( image->cache_map[pos] != 0xff ) {
-									isCached = FALSE;
+									isCached = false;
 									break;
 								}
 								++pos;
@@ -269,7 +269,7 @@ void *net_client_handler(void *dnbd3_client)
 								const int map_x = (pos >> 12) & 7; // mod 8
 								const uint8_t bit_mask = 0b00000001 << map_x;
 								if ( (image->cache_map[lastByte] & bit_mask) == 0 ) {
-									isCached = FALSE;
+									isCached = false;
 									break;
 								}
 								pos += DNBD3_BLOCK_SIZE;
@@ -318,7 +318,7 @@ void *net_client_handler(void *dnbd3_client)
 				break;
 
 			case CMD_GET_SERVERS:
-				client->is_server = FALSE; // Only clients request list of servers
+				client->isServer = false; // Only clients request list of servers
 				// Build list of known working alt servers
 				num = altservers_getMatching( &client->host, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
@@ -375,7 +375,7 @@ void *net_client_handler(void *dnbd3_client)
 	exit_client_cleanup: ;
 	if ( image_file != -1 ) close( image_file );
 	dnbd3_remove_client( client );
-	client->running = FALSE;
+	client->running = false;
 	client = dnbd3_free_client( client );
 	pthread_exit( NULL );
 	return NULL ;

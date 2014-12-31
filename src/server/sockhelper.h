@@ -77,8 +77,8 @@ inline void sock_set_addr4(char *ip, uint16_t port, struct sockaddr_in *addr)
  * in between are counted too. In other words: represents the index of the last valid socket fd in the
  * array plus one, or 0 if there are none.
  * @param array_length the capacity of the array
- * @return TRUE on success or if the passed fd was -1, FALSE iff the array is already full
+ * @return true on success or if the passed fd was -1, false iff the array is already full
  */
-int sock_add_array(const int sock, int *array, int *array_fill, const int array_length);
+bool sock_add_array(const int sock, int *array, int *array_fill, const int array_length);
 
 #endif /* SOCKHELPER_H_ */

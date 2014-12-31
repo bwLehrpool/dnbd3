@@ -8,15 +8,15 @@ extern dnbd3_image_t *_images[SERVER_MAX_IMAGES];
 extern int _num_images;
 extern pthread_spinlock_t _images_lock;
 
-int image_isComplete(dnbd3_image_t *image);
+bool image_isComplete(dnbd3_image_t *image);
 
-void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const int set);
+void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const bool set);
 
 void image_markComplete(dnbd3_image_t *image);
 
 void image_saveAllCacheMaps();
 
-int image_saveCacheMap(dnbd3_image_t *image);
+bool image_saveCacheMap(dnbd3_image_t *image);
 
 dnbd3_image_t* image_get(char *name, uint16_t revision);
 
@@ -26,17 +26,17 @@ dnbd3_image_t* image_lock(dnbd3_image_t *image);
 
 dnbd3_image_t* image_release(dnbd3_image_t *image);
 
-int image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, const uint64_t fileSize);
+bool image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, const uint64_t fileSize);
 
 void image_killUplinks();
 
 dnbd3_image_t* image_free(dnbd3_image_t *image);
 
-int image_loadAll(char *path);
+bool image_loadAll(char *path);
 
-int image_create(char *image, int revision, uint64_t size);
+bool image_create(char *image, int revision, uint64_t size);
 
-int image_generateCrcFile(char *image);
+bool image_generateCrcFile(char *image);
 
 void image_printAll();
 

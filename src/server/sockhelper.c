@@ -187,17 +187,17 @@ void sock_set_block(int sock)
 	fcntl( sock, F_SETFL, flags & ~(int)O_NONBLOCK );
 }
 
-int sock_add_array(const int sock, int *array, int *array_fill, const int array_length)
+bool sock_add_array(const int sock, int *array, int *array_fill, const int array_length)
 {
-	if ( sock == -1 ) return TRUE;
+	if ( sock == -1 ) return true;
 	for (int i = 0; i < *array_fill; ++i) {
 		if ( array[i] == -1 ) {
 			array[i] = sock;
-			return TRUE;
+			return true;
 		}
 	}
-	if ( *array_fill >= array_length ) return FALSE;
+	if ( *array_fill >= array_length ) return false;
 	array[*array_fill] = sock;
 	(*array_fill) += 1;
-	return TRUE;
+	return true;
 }

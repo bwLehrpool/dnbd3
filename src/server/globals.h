@@ -54,9 +54,8 @@ struct _dnbd3_connection
 	int betterFd;               // Active connection to better server, ready to use
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	int recvBufferLen;          // Len of ^^
-	volatile int shutdown;      // bool to signal thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
+	volatile bool shutdown;     // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
 	int replicatedLastBlock;    // bool telling if the last block has been replicated yet
-	//time_t lastReplication;     // timestamp of when last replication requests were sent
 	uint64_t replicationHandle; // Handle of pending replication request
 };
 
@@ -77,7 +76,7 @@ typedef struct
 	dnbd3_host_t host;
 	int rtt[SERVER_RTT_PROBES];
 	int rttIndex;
-	int isPrivate, isClientOnly;
+	bool isPrivate, isClientOnly;
 	time_t lastFail;
 	int numFails;
 } dnbd3_alt_server_t;
@@ -108,7 +107,7 @@ struct _dnbd3_image
 	int rid;               // revision of image
 	int users;             // clients currently using this image
 	time_t atime;          // last access time
-	char working;          // TRUE if image exists and completeness is == 100% or a working upstream proxy is connected
+	bool working;          // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;
 };
 
@@ -116,12 +115,12 @@ struct _dnbd3_client
 {
 	int sock;
 	dnbd3_host_t host;
-	uint8_t is_server;         // TRUE if a server in proxy mode, FALSE if real client
 	pthread_t thread;
 	dnbd3_image_t *image;
 	pthread_spinlock_t lock;
 	pthread_mutex_t sendMutex;
-	int running;
+	bool running;
+	bool isServer;         // true if a server in proxy mode, false if real client
 };
 
 // #######################################################
@@ -140,7 +139,7 @@ extern char *_basePath;
 /**
  * Whether or not simple *.vmdk files should be treated as revision 1
  */
-extern int _vmdkLegacyMode;
+extern bool _vmdkLegacyMode;
 
 /**
  * How much artificial delay should we add when a server connects to us?
@@ -155,17 +154,17 @@ extern int _clientPenalty;
 /**
  * Is server shutting down?
  */
-extern int _shutdown;
+extern bool _shutdown;
 
 /**
  * Is server allowed to provide images in proxy mode?
  */
-extern int _isProxy;
+extern bool _isProxy;
 
 /**
  * Only use servers as upstream proxy which are private?
  */
-extern int _proxyPrivateOnly;
+extern bool _proxyPrivateOnly;
 
 /**
  * Read timeout when waiting for or sending data on an uplink
@@ -181,8 +180,11 @@ extern int _clientTimeout;
  * Should we replicate incomplete images in the background?
  * Otherwise, only blocks that were explicitly requested will be cached.
  */
-extern int _backgroundReplication;
+extern bool _backgroundReplication;
 
+/**
+ * Load the server configuration.
+ */
 void globals_loadConfig();
 
 #endif /* GLOBALS_H_ */

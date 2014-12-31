@@ -6,17 +6,17 @@
 
 #define FLAGS8_SERVER 1
 
-static inline int dnbd3_get_reply(int sock, dnbd3_reply_t *reply)
+static inline bool dnbd3_get_reply(int sock, dnbd3_reply_t *reply)
 {
 	if ( recv( sock, reply, sizeof(*reply), MSG_WAITALL ) != sizeof(*reply) ) {
-		return FALSE;
+		return false;
 	}
 	fixup_reply( *reply );
-	if ( reply->magic != dnbd3_packet_magic ) return FALSE;
-	return TRUE;
+	if ( reply->magic != dnbd3_packet_magic ) return false;
+	return true;
 }
 
-static inline int dnbd3_select_image(int sock, char *lower_name, uint16_t rid, uint8_t flags8)
+static inline bool dnbd3_select_image(int sock, char *lower_name, uint16_t rid, uint8_t flags8)
 {
 	serialized_buffer_t serialized;
 	dnbd3_request_t request;
@@ -42,19 +42,19 @@ static inline int dnbd3_select_image(int sock, char *lower_name, uint16_t rid, u
 	return writev( sock, iov, 2 ) == len + sizeof(request);
 }
 
-static inline int dnbd3_get_block(int sock, uint64_t offset, uint32_t size)
+static inline bool dnbd3_get_block(int sock, uint64_t offset, uint32_t size, uint64_t handle)
 {
 	dnbd3_request_t request;
 	request.magic = dnbd3_packet_magic;
-	request.handle = 0;
+	request.handle = handle;
 	request.cmd = CMD_GET_BLOCK;
 	request.offset = offset;
 	request.size = size;
 	fixup_request( request );
-	return send( sock, &request, sizeof(request), 0 ) == sizeof(request);
+	return send( sock, &request, sizeof(request), MSG_NOSIGNAL ) == sizeof(request);
 }
 
-static inline int dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, size_t *bufferLen)
+static inline bool dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, size_t *bufferLen)
 {
 	dnbd3_request_t request;
 	dnbd3_reply_t reply;
@@ -64,43 +64,45 @@ static inline int dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, size
 	request.offset = 0;
 	request.size = 0;
 	fixup_request( request );
-	if ( send( sock, &request, sizeof(request), 0 ) != sizeof(request) ) return FALSE;
-	if ( !dnbd3_get_reply( sock, &reply ) ) return FALSE;
+	if ( send( sock, &request, sizeof(request), 0 ) != sizeof(request) ) return false;
+	if ( !dnbd3_get_reply( sock, &reply ) ) return false;
 	if ( reply.size == 0 ) {
 		*bufferLen = 0;
-		return TRUE;
+		return true;
 	}
-	if ( reply.size < 4 ) return FALSE;
+	if ( reply.size < 4 ) return false;
 	reply.size -= 4;
-	if ( reply.cmd != CMD_GET_CRC32 || reply.size > *bufferLen ) return FALSE;
+	if ( reply.cmd != CMD_GET_CRC32 || reply.size > *bufferLen ) return false;
 	*bufferLen = reply.size;
-	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL ) != sizeof(uint32_t) ) return FALSE;
+	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL ) != sizeof(uint32_t) ) return false;
 	int done = 0;
 	while ( done < reply.size ) {
-		const int ret = recv( sock, buffer + done, reply.size - done, 0 );
-		if ( ret <= 0 ) return FALSE;
+		const int ret = recv( sock, (char*)buffer + done, reply.size - done, 0 );
+		if ( ret <= 0 ) return false;
 		done += ret;
 	}
-	return TRUE;
+	return true;
 }
 
 /**
  * Pass a full serialized_buffer_t and a socket fd. Parsed data will be returned in further arguments.
  * Note that all strings will point into the passed buffer, so there's no need to free them.
+ * This function will also read the header for you, as this message can only occur during connection,
+ * where no unrequested messages could arrive inbetween.
  */
-static inline int dnbd3_select_image_reply(serialized_buffer_t *buffer, int sock, uint16_t *protocol_version, char **name, uint16_t *rid,
+static inline bool dnbd3_select_image_reply(serialized_buffer_t *buffer, int sock, uint16_t *protocol_version, char **name, uint16_t *rid,
         uint64_t *imageSize)
 {
 	dnbd3_reply_t reply;
 	if ( !dnbd3_get_reply( sock, &reply ) ) {
-		return FALSE;
+		return false;
 	}
 	if ( reply.cmd != CMD_SELECT_IMAGE || reply.size < 3 || reply.size > MAX_PAYLOAD ) {
-		return FALSE;
+		return false;
 	}
 // receive reply payload
 	if ( recv( sock, buffer, reply.size, MSG_WAITALL ) != reply.size ) {
-		return FALSE;
+		return false;
 	}
 // handle/check reply payload
 	serializer_reset_read( buffer, reply.size );
@@ -108,7 +110,7 @@ static inline int dnbd3_select_image_reply(serialized_buffer_t *buffer, int sock
 	*name = serializer_get_string( buffer );
 	*rid = serializer_get_uint16( buffer );
 	*imageSize = serializer_get_uint64( buffer );
-	return TRUE;
+	return true;
 }
 
 #endif

@@ -26,7 +26,7 @@ static int signalPipe = -1;
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
 static int numAltServers = 0;
 static pthread_spinlock_t altServersLock;
-static int initDone = FALSE;
+static bool initDone = false;
 
 static pthread_t altThread;
 
@@ -46,7 +46,7 @@ void altservers_init()
 		memlogf( "[ERROR] Could not start altservers connector thread" );
 		exit( EXIT_FAILURE );
 	}
-	initDone = TRUE;
+	initDone = true;
 }
 
 void altservers_shutdown()
@@ -69,11 +69,11 @@ int altservers_load()
 	if ( fp == NULL ) return -1;
 	while ( !feof( fp ) ) {
 		if ( fgets( buffer, 1000, fp ) == NULL ) break;
-		int isPrivate = FALSE;
-		int isClientOnly = FALSE;
+		bool isPrivate = false;
+		bool isClientOnly = false;
 		for (line = buffer; *line != '\0'; ) { // Trim left and scan for "-" prefix
-			if ( *line == '-' ) isPrivate = TRUE;
-			else if ( *line == '+' ) isClientOnly = TRUE;
+			if ( *line == '-' ) isPrivate = true;
+			else if ( *line == '+' ) isClientOnly = true;
 			else if ( *line != ' ' && *line != '\t' ) break;
 			line++;
 		}
@@ -92,14 +92,14 @@ int altservers_load()
 	return count;
 }
 
-int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly)
+bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly)
 {
 	int i, freeSlot = -1;
 	spin_lock( &altServersLock );
 	for (i = 0; i < numAltServers; ++i) {
 		if ( isSameAddressPort( &altServers[i].host, host ) ) {
 			spin_unlock( &altServersLock );
-			return FALSE;
+			return false;
 		} else if ( freeSlot == -1 && altServers[i].host.type == 0 ) {
 			freeSlot = i;
 		}
@@ -108,7 +108,7 @@ int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate,
 		if ( numAltServers >= SERVER_MAX_ALTS ) {
 			memlogf( "[WARNING] Cannot add another alt server, maximum of %d already reached.", (int)SERVER_MAX_ALTS );
 			spin_unlock( &altServersLock );
-			return FALSE;
+			return false;
 		}
 		freeSlot = numAltServers++;
 	}
@@ -117,7 +117,7 @@ int altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate,
 	altServers[freeSlot].isClientOnly = isClientOnly;
 	if ( comment != NULL ) snprintf( altServers[freeSlot].comment, COMMENT_LENGTH, "%s", comment );
 	spin_unlock( &altServersLock );
-	return TRUE;
+	return true;
 }
 
 /**
@@ -344,7 +344,7 @@ static void *altservers_main(void *data)
 	struct epoll_event ev, events[MAXEVENTS];
 	int fdEpoll = -1;
 	int numSocks, ret, itLink, itAlt, numAlts;
-	int found;
+	bool found;
 	char buffer[DNBD3_BLOCK_SIZE ];
 	dnbd3_reply_t reply;
 	dnbd3_host_t servers[ALTS + 1];
@@ -416,10 +416,10 @@ static void *altservers_main(void *data)
 			numAlts = altservers_get( servers, ALTS, uplink->fd == -1 );
 			if ( uplink->fd != -1 ) {
 				// Add current server if not already in list
-				found = FALSE;
+				found = false;
 				for (itAlt = 0; itAlt < numAlts; ++itAlt) {
 					if ( !isSameAddressPort( &uplink->currentServer, &servers[itAlt] ) ) continue;
-					found = TRUE;
+					found = true;
 					break;
 				}
 				if ( !found ) servers[numAlts++] = uplink->currentServer;
@@ -460,7 +460,7 @@ static void *altservers_main(void *data)
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				fixup_request( request );
-				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE ) ) {
+				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0 ) ) {
 					ERROR_GOTO_VA( server_failed, "[ERROR] Could not request random block for %s", image->lower_name );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++

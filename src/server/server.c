@@ -60,9 +60,9 @@ pthread_spinlock_t _clients_lock;
  * Time the server was started
  */
 static time_t _startupTime = 0;
-static int _doReload = FALSE, _printStats = FALSE;
+static bool sigReload = false, sigPrintStats = false;
 
-static int dnbd3_add_client(dnbd3_client_t *client);
+static bool dnbd3_add_client(dnbd3_client_t *client);
 static void dnbd3_handle_signal(int signum);
 static void dnbd3_printClients();
 
@@ -109,7 +109,7 @@ void dnbd3_cleanup()
 {
 	int i, count;
 
-	_shutdown = TRUE;
+	_shutdown = true;
 	debug_locks_stop_watchdog();
 	memlogf( "INFO: Cleanup...\n" );
 
@@ -336,13 +336,13 @@ int main(int argc, char *argv[])
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
 	while ( !_shutdown ) {
 		// Handle signals
-		if ( _doReload ) {
-			_doReload = FALSE;
+		if ( sigReload ) {
+			sigReload = false;
 			memlogf( "INFO: SIGUSR1 received, re-scanning image directory" );
 			image_loadAll( NULL );
 		}
-		if ( _printStats ) {
-			_printStats = FALSE;
+		if ( sigPrintStats ) {
+			sigPrintStats = false;
 			printf( "[DEBUG] SIGUSR2 received, stats incoming\n" );
 			printf( " ** Images **\n" );
 			image_printAll();
@@ -413,7 +413,7 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 		free( dnbd3_client );
 		return NULL ;
 	}
-	dnbd3_client->running = TRUE;
+	dnbd3_client->running = true;
 	dnbd3_client->sock = fd;
 	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
 	pthread_mutex_init( &dnbd3_client->sendMutex, NULL );
@@ -470,7 +470,7 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
  * Add client to the clients array.
  * Locks on: _clients_lock
  */
-static int dnbd3_add_client(dnbd3_client_t *client)
+static bool dnbd3_add_client(dnbd3_client_t *client)
 {
 	int i;
 	spin_lock( &_clients_lock );
@@ -478,26 +478,26 @@ static int dnbd3_add_client(dnbd3_client_t *client)
 		if ( _clients[i] != NULL ) continue;
 		_clients[i] = client;
 		spin_unlock( &_clients_lock );
-		return TRUE;
+		return true;
 	}
 	if ( _num_clients >= SERVER_MAX_CLIENTS ) {
 		spin_unlock( &_clients_lock );
 		memlogf( "[ERROR] Maximum number of clients reached!" );
-		return FALSE;
+		return false;
 	}
 	_clients[_num_clients++] = client;
 	spin_unlock( &_clients_lock );
-	return TRUE;
+	return true;
 }
 
 static void dnbd3_handle_signal(int signum)
 {
 	if ( signum == SIGINT || signum == SIGTERM ) {
-		_shutdown = TRUE;
+		_shutdown = true;
 	} else if ( signum == SIGUSR1 || signum == SIGHUP ) {
-		_doReload = TRUE;
+		sigReload = true;
 	} else if ( signum == SIGUSR2 ) {
-		_printStats = TRUE;
+		sigPrintStats = true;
 	}
 }
 

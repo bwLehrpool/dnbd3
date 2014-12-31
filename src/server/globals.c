@@ -8,18 +8,18 @@
 
 char *_configDir = NULL;
 char *_basePath = NULL;
-int _vmdkLegacyMode = FALSE;
-int _shutdown = 0;
+bool _vmdkLegacyMode = false;
+bool _shutdown = false;
 int _serverPenalty = 0;
 int _clientPenalty = 0;
-int _isProxy = FALSE;
-int _proxyPrivateOnly = FALSE;
+bool _isProxy = false;
+bool _proxyPrivateOnly = false;
+bool _backgroundReplication = true;
 int _uplinkTimeout = 1250;
 int _clientTimeout = 15000;
-int _backgroundReplication = TRUE;
 
 #define SAVE_TO_VAR_STR(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) { if (_ ## kk != NULL) free(_ ## kk); _ ## kk = strdup(value); } } while (0)
-#define SAVE_TO_VAR_BOOL(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "TRUE") == 0; } while (0)
+#define SAVE_TO_VAR_BOOL(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "true") == 0; } while (0)
 #define SAVE_TO_VAR_INT(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = atoi(value); } while (0)
 
 static int ini_handler(void *custom, const char* section, const char* key, const char* value)
@@ -33,7 +33,7 @@ static int ini_handler(void *custom, const char* section, const char* key, const
 	SAVE_TO_VAR_INT( dnbd3, clientPenalty );
 	SAVE_TO_VAR_INT( dnbd3, uplinkTimeout );
 	SAVE_TO_VAR_INT( dnbd3, clientTimeout );
-	return TRUE;
+	return 1;
 }
 
 void globals_loadConfig()

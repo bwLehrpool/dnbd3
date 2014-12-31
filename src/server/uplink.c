@@ -23,9 +23,9 @@
 #include <fcntl.h>
 
 static void* uplink_mainloop(void *data);
-static void uplink_send_requests(dnbd3_connection_t *link, int newOnly);
-static void uplink_handle_receive(dnbd3_connection_t *link);
-static int uplink_send_keepalive(const int fd);
+static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly);
+static void uplink_handleReceive(dnbd3_connection_t *link);
+static int uplink_sendKeepalive(const int fd);
 static void uplink_addCrc32(dnbd3_connection_t *uplink);
 static void uplink_sendReplicationRequest(dnbd3_connection_t *link);
 
@@ -36,15 +36,15 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link);
  * image. Uplinks run in their own thread.
  * Locks on: _images[].lock
  */
-int uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
+bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 {
-	if ( !_isProxy ) return FALSE;
+	if ( !_isProxy ) return false;
 	dnbd3_connection_t *link = NULL;
 	assert( image != NULL );
 	spin_lock( &image->lock );
 	if ( image->uplink != NULL ) {
 		spin_unlock( &image->lock );
-		return TRUE;
+		return true;
 	}
 	if ( image->cache_map == NULL ) {
 		memlogf( "[WARNING] Uplink was requested for image %s, but it is already complete", image->lower_name );
@@ -65,19 +65,19 @@ int uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 		link->rttTestResult = RTT_IDLE;
 	}
 	link->recvBufferLen = 0;
-	link->shutdown = FALSE;
+	link->shutdown = false;
 	spin_init( &link->queueLock, PTHREAD_PROCESS_PRIVATE );
 	if ( 0 != thread_create( &(link->thread), NULL, &uplink_mainloop, (void *)(uintptr_t)link ) ) {
 		memlogf( "[ERROR] Could not start thread for new client." );
 		goto failure;
 	}
 	spin_unlock( &image->lock );
-	return TRUE;
+	return true;
 	failure: ;
 	if ( link != NULL ) free( link );
 	link = image->uplink = NULL;
 	spin_unlock( &image->lock );
-	return FALSE;
+	return false;
 }
 
 /**
@@ -102,7 +102,7 @@ void uplink_shutdown(dnbd3_image_t *image)
 		return;
 	}
 	image->uplink = NULL;
-	uplink->shutdown = TRUE;
+	uplink->shutdown = true;
 	if ( uplink->signal != -1 ) signal_call( uplink->signal );
 	pthread_t thread = uplink->thread;
 	spin_unlock( &uplink->queueLock );
@@ -131,21 +131,21 @@ void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
  * Request a chunk of data through an uplink server
  * Locks on: image.lock, uplink.queueLock
  */
-int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint32_t length)
+bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint32_t length)
 {
-	if ( client == NULL || client->image == NULL ) return FALSE;
+	if ( client == NULL || client->image == NULL ) return false;
 	spin_lock( &client->image->lock );
 	if ( client->image->uplink == NULL ) {
 		spin_unlock( &client->image->lock );
 		printf( "[DEBUG] Uplink request for image with no uplink (%s)\n", client->image->lower_name );
-		return FALSE;
+		return false;
 	}
 	dnbd3_connection_t * const uplink = client->image->uplink;
 	// Check if the client is the same host as the uplink. If so assume this is a circular proxy chain
 	if ( isSameAddress( &uplink->currentServer, &client->host ) ) {
 		spin_unlock( &client->image->lock );
 		printf( "[DEBUG] Proxy cycle detected.\n" );
-		return FALSE;
+		return false;
 	}
 
 	int foundExisting = -1; // Index of a pending request that is a superset of our range, -1 otherwise
@@ -169,7 +169,7 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 		if ( uplink->queueLen >= SERVER_MAX_UPLINK_QUEUE ) {
 			spin_unlock( &uplink->queueLock );
 			memlogf( "[WARNING] Uplink queue is full, consider increasing SERVER_MAX_UPLINK_QUEUE. Dropping client..." );
-			return FALSE;
+			return false;
 		}
 		freeSlot = uplink->queueLen++;
 	}
@@ -194,7 +194,7 @@ int uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint
 	if ( foundExisting == -1 ) { // Only wake up uplink thread if the request needs to be relayed
 		signal_call( uplink->signal );
 	}
-	return TRUE;
+	return true;
 }
 
 /**
@@ -252,9 +252,9 @@ static void* uplink_mainloop(void *data)
 			link->currentServer = link->betterServer;
 			link->replicationHandle = 0;
 			// Re-send all pending requests
-			uplink_send_requests( link, FALSE );
+			uplink_sendRequests( link, false );
 			uplink_sendReplicationRequest( link );
-			link->image->working = TRUE;
+			link->image->working = true;
 			buffer[0] = '@';
 			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
 				printf( "[DEBUG] Now connected to %s\n", buffer + 1 );
@@ -309,10 +309,10 @@ static void* uplink_mainloop(void *data)
 				}
 				if ( link->fd != -1 ) {
 					// Uplink seems fine, relay requests to it...
-					uplink_send_requests( link, TRUE );
+					uplink_sendRequests( link, true );
 				}
 			} else if ( events[i].data.fd == link->fd ) {
-				uplink_handle_receive( link );
+				uplink_handleReceive( link );
 				if ( link->fd == -1 ) nextAltCheck = 0;
 				if ( _shutdown || link->shutdown ) goto cleanup;
 			} else {
@@ -342,7 +342,7 @@ static void* uplink_mainloop(void *data)
 					altservers_findUplink( link ); // This will set RTT_INPROGRESS (synchronous)
 					// Also send a keepalive packet to the currently connected server
 					if ( link->fd != -1 ) {
-						if ( !uplink_send_keepalive( link->fd ) ) {
+						if ( !uplink_sendKeepalive( link->fd ) ) {
 							printf( "[DEBUG] Error sending keep-alive to uplink\n" );
 							altservers_serverFailed( &link->currentServer );
 							const int fd = link->fd;
@@ -362,7 +362,7 @@ static void* uplink_mainloop(void *data)
 		// TODO: If background replication is disabled, send keepalive every 30 seconds or so
 #ifdef _DEBUG
 		if ( link->fd != -1 && !link->shutdown ) {
-			int resend = FALSE;
+			bool resend = false;
 			time_t deadline = time( NULL ) - 10;
 			spin_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
@@ -371,7 +371,7 @@ static void* uplink_mainloop(void *data)
 							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", link->queue[i].client->image->lower_name,
 							link->queue[i].from, link->queue[i].to, link->queue[i].status );
 					//link->queue[i].status = ULR_NEW;
-					//resend = TRUE;
+					//resend = true;
 					spin_unlock( &link->queueLock );
 					printf("%s", buffer);
 					spin_lock( &link->queueLock );
@@ -379,7 +379,7 @@ static void* uplink_mainloop(void *data)
 			}
 			spin_unlock( &link->queueLock );
 			if ( resend )
-				uplink_send_requests( link,  TRUE );
+				uplink_sendRequests( link,  true );
 		}
 #endif
 	}
@@ -393,7 +393,7 @@ static void* uplink_mainloop(void *data)
 	link->fd = -1;
 	link->signal = -1;
 	if ( !link->shutdown ) {
-		link->shutdown = TRUE;
+		link->shutdown = true;
 		thread_detach( link->thread );
 	}
 	spin_unlock( &link->image->lock );
@@ -412,24 +412,19 @@ static void* uplink_mainloop(void *data)
 	return NULL ;
 }
 
-static void uplink_send_requests(dnbd3_connection_t *link, int newOnly)
+static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 {
 	// Scan for new requests
 	int j;
-	dnbd3_request_t request;
-	request.magic = dnbd3_packet_magic;
 	spin_lock( &link->queueLock );
 	for (j = 0; j < link->queueLen; ++j) {
 		if ( link->queue[j].status != ULR_NEW && (newOnly || link->queue[j].status != ULR_PENDING) ) continue;
 		link->queue[j].status = ULR_PENDING;
-		request.handle = link->queue[j].from; // HACK: Store offset in handle too, as it won't be included in the reply
-		request.cmd = CMD_GET_BLOCK;
-		request.offset = link->queue[j].from;
-		request.size = link->queue[j].to - link->queue[j].from;
+		const uint64_t offset = link->queue[j].from;
+		const uint32_t size = link->queue[j].to - link->queue[j].from;
 		spin_unlock( &link->queueLock );
-		fixup_request( request );
-		const int ret = send( link->fd, &request, sizeof request, MSG_NOSIGNAL );
-		if ( ret != sizeof(request) ) {
+		const int ret = dnbd3_get_block( link->fd, offset, size, offset );
+		if ( !ret ) {
 			// Non-critical - if the connection dropped or the server was changed
 			// the thread will re-send this request as soon as the connection
 			// is reestablished.
@@ -470,7 +465,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 	for (int i = 0; i <= len; ++i) {
 		if ( image->cache_map == NULL || link->fd == -1 ) break;
 		if ( image->cache_map[i] == 0xff || (i == len && link->replicatedLastBlock) ) continue;
-		if ( i == len ) link->replicatedLastBlock = TRUE; // Special treatment, last byte in map could represent less than 8 blocks
+		if ( i == len ) link->replicatedLastBlock = true; // Special treatment, last byte in map could represent less than 8 blocks
 		link->replicationHandle = 1; // Prevent race condition
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
@@ -497,7 +492,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
  * Receive data from uplink server and process/dispatch
  * Locks on: link.lock, indirectly on images[].lock
  */
-static void uplink_handle_receive(dnbd3_connection_t *link)
+static void uplink_handleReceive(dnbd3_connection_t *link)
 {
 	dnbd3_reply_t inReply, outReply;
 	int ret, i;
@@ -554,7 +549,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 			memlogf( "[ERROR] lseek() failed when writing to cache for %s", link->image->path );
 		} else {
 			ret = (int)write( link->image->cacheFd, link->recvBuffer, inReply.size );
-			if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, TRUE );
+			if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, true );
 		}
 		// 2) Figure out which clients are interested in it
 		struct iovec iov[2];
@@ -611,7 +606,7 @@ static void uplink_handle_receive(dnbd3_connection_t *link)
 /**
  * Send keep alive request to server
  */
-static int uplink_send_keepalive(const int fd)
+static int uplink_sendKeepalive(const int fd)
 {
 	static dnbd3_request_t request = { 0, 0, 0, 0, 0 };
 	if ( request.magic == 0 ) {

@@ -24,13 +24,7 @@
 #include "config.h"
 #ifndef KERNEL_MODULE
 #include <stdint.h>
-#endif
-
-#ifndef TRUE
-#define TRUE 1
-#endif
-#ifndef FALSE
-#define FALSE 0
+#include <stdbool.h>
 #endif
 
 #ifndef MIN
