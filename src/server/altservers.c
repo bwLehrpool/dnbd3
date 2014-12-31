@@ -6,6 +6,7 @@
 #include "helper.h"
 #include "globals.h"
 #include "image.h"
+#include "signal.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -19,7 +20,7 @@
 
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLockProduce; // Lock for adding something to pending. (NULL -> nonNULL)
-static pthread_mutex_t pendingLockConsume = PTHREAD_MUTEX_INITIALIZER; // Lock for removegin something (nunNULL -> NULL)
+static pthread_mutex_t pendingLockConsume = PTHREAD_MUTEX_INITIALIZER; // Lock for removing something (nonNULL -> NULL)
 static int signalPipe = -1;
 
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
@@ -51,7 +52,7 @@ void altservers_init()
 void altservers_shutdown()
 {
 	if ( !initDone ) return;
-	write( signalPipe, "", 1 ); // Wake altservers thread up
+	signal_call( signalPipe ); // Wake altservers thread up
 	thread_join( altThread, NULL );
 }
 
@@ -147,7 +148,7 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
 		pending[i] = uplink;
 		uplink->rttTestResult = RTT_INPROGRESS;
 		spin_unlock( &pendingLockProduce );
-		write( signalPipe, "", 1 ); // Wake altservers thread up
+		signal_call( signalPipe ); // Wake altservers thread up
 		return;
 	}
 	// End of loop - no free slot
@@ -341,7 +342,7 @@ static void *altservers_main(void *data)
 	const int MAXEVENTS = 3;
 	const int ALTS = 4;
 	struct epoll_event ev, events[MAXEVENTS];
-	int readPipe = -1, fdEpoll = -1;
+	int fdEpoll = -1;
 	int numSocks, ret, itLink, itAlt, numAlts;
 	int found;
 	char buffer[DNBD3_BLOCK_SIZE ];
@@ -365,19 +366,15 @@ static void *altservers_main(void *data)
 		goto cleanup;
 	}
 	{
-		int pipes[2];
-		if ( pipe( pipes ) < 0 ) {
-			memlogf( "[WARNING] error creating pipe. Uplink unavailable." );
+		signalPipe = signal_new();
+		if ( signalPipe < 0 ) {
+			memlogf( "[WARNING] error creating signal object. Uplink feature unavailable." );
 			goto cleanup;
 		}
-		sock_set_nonblock( pipes[0] );
-		sock_set_nonblock( pipes[1] );
-		readPipe = pipes[0];
-		signalPipe = pipes[1];
 		memset( &ev, 0, sizeof(ev) );
 		ev.events = EPOLLIN;
-		ev.data.fd = readPipe;
-		if ( epoll_ctl( fdEpoll, EPOLL_CTL_ADD, readPipe, &ev ) < 0 ) {
+		ev.data.fd = signalPipe;
+		if ( epoll_ctl( fdEpoll, EPOLL_CTL_ADD, signalPipe, &ev ) < 0 ) {
 			memlogf( "[WARNING] adding read-signal-pipe to epoll set failed" );
 			goto cleanup;
 		}
@@ -392,18 +389,10 @@ static void *altservers_main(void *data)
 			usleep( 100000 );
 		}
 		if ( _shutdown ) goto cleanup;
-		// Empty pipe
-		do {
-			ret = read( readPipe, buffer, sizeof buffer );
-		} while ( ret == sizeof buffer ); // Throw data away, this is just used for waking this thread up
-		if ( ret == 0 ) {
-			memlogf( "[WARNING] Signal pipe of alservers_main closed! Things will break!" );
-		}
-		if ( ret < 0 ) {
-			ret = errno;
-			if ( ret != EAGAIN && ret != EWOULDBLOCK && ret != EBUSY && ret != EINTR ) {
-				memlogf( "[WARNING] Errno %d on pipe-read on alservers_main! Things will break!", ret );
-			}
+		// Clear signal
+		ret = signal_clear( signalPipe );
+		if ( ret == SIGNAL_ERROR ) {
+			memlogf( "[WARNING] Error on signal_clear on alservers_main! Things will break!" );
 		}
 		// Work your way through the queue
 		for (itLink = 0; itLink < SERVER_MAX_PENDING_ALT_CHECKS; ++itLink) {
@@ -548,8 +537,7 @@ static void *altservers_main(void *data)
 	}
 	cleanup: ;
 	if ( fdEpoll != -1 ) close( fdEpoll );
-	if ( readPipe != -1 ) close( readPipe );
-	if ( signalPipe != -1 ) close( signalPipe );
+	if ( signalPipe != -1 ) signal_close( signalPipe );
 	signalPipe = -1;
 	return NULL ;
 }
