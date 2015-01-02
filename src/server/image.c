@@ -212,9 +212,9 @@ bool image_saveCacheMap(dnbd3_image_t *image)
 
 	write( fd, map, size );
 	if ( image->cacheFd != -1 ) {
-		fsync( image->cacheFd );
+		fdatasync( image->cacheFd );
 	}
-	fsync( fd );
+	fdatasync( fd );
 	close( fd );
 	free( map );
 

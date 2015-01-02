@@ -30,56 +30,6 @@ static inline bool isSameAddressPort(const dnbd3_host_t * const a, const dnbd3_h
 }
 
 /**
- * Send message to client.
- * @return true on success, false on failure
- */
-static inline int send_data(int client_sock, void *data_in, int len)
-{
-	if ( len <= 0 ) return true; // Nothing to send
-	char *data = data_in; // Needed for pointer arithmetic
-	int ret, i;
-	for (i = 0; i < 3; ++i) // Retry at most 3 times, each try takes at most 0.5 seconds (socket timeout)
-	{
-		ret = send( client_sock, data, len, 0 );
-		if ( ret == 0 ) return false; // Connection closed
-		if ( ret < 0 ) {
-			if ( errno != EAGAIN ) return false; // Some unexpected error
-			usleep( 1000 ); // 1ms
-			continue;
-		}
-		len -= ret;
-		if ( len <= 0 ) return true; // Sent everything
-		data += ret; // move target buffer pointer
-	}
-	return false;
-}
-
-/**
- * Receive data from client.
- * @return true on success, false otherwise
- */
-static inline bool recv_data(int client_sock, void *buffer_out, int len)
-{
-	if ( len <= 0 ) return true; // Nothing to receive
-	char *data = buffer_out; // Needed for pointer arithmetic
-	int ret, i;
-	for (i = 0; i < 3; ++i) // Retry at most 3 times, each try takes at most 0.5 seconds (socket timeout)
-	        {
-		ret = recv( client_sock, data, len, MSG_WAITALL );
-		if ( ret == 0 ) return false; // Connection closed
-		if ( ret < 0 ) {
-			if ( errno != EAGAIN ) return false; // Some unexpected error
-			usleep( 1000 ); // 1ms
-			continue;
-		}
-		len -= ret;
-		if ( len <= 0 ) return true; // Received everything
-		data += ret; // move target buffer pointer
-	}
-	return false;
-}
-
-/**
  * Test whether string ends in suffix.
  * @return true if string =~ /suffix$/
  */

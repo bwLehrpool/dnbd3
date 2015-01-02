@@ -459,9 +459,8 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		spin_unlock( &image->lock );
 		return;
 	}
-	dnbd3_request_t request;
-	request.magic = dnbd3_packet_magic;
 	const size_t len = IMGSIZE_TO_MAPBYTES( image->filesize ) - 1;
+	const uint32_t requestBlockSize = DNBD3_BLOCK_SIZE * 8;
 	for (int i = 0; i <= len; ++i) {
 		if ( image->cache_map == NULL || link->fd == -1 ) break;
 		if ( image->cache_map[i] == 0xff || (i == len && link->replicatedLastBlock) ) continue;
@@ -469,16 +468,10 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		link->replicationHandle = 1; // Prevent race condition
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
-		request.cmd = CMD_GET_BLOCK;
 		// Needs to be 8 (bit->byte, bitmap)
-		link->replicationHandle = request.offset = request.handle = (uint64_t)i * DNBD3_BLOCK_SIZE * (uint64_t)8;
-		request.size = DNBD3_BLOCK_SIZE * (uint64_t)8;
-		if ( request.offset + request.size > image->filesize ) {
-			request.size = image->filesize - request.offset;
-		}
-		fixup_request( request );
-		const int ret = send( link->fd, &request, sizeof request, MSG_NOSIGNAL );
-		if ( ret != sizeof(request) ) {
+		const uint64_t offset = link->replicationHandle = (uint64_t)i * DNBD3_BLOCK_SIZE * (uint64_t)requestBlockSize;
+		const uint32_t size = MIN( image->filesize - offset, requestBlockSize );
+		if ( !dnbd3_get_block( link->fd, offset, size, link->replicationHandle ) ) {
 			printf( "[DEBUG] Error sending background replication request to uplink server!\n" );
 			return;
 		}
@@ -541,18 +534,16 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		// Bail out if we're not interested
 		if ( inReply.cmd != CMD_GET_BLOCK ) continue;
 		// Is a legit block reply
+		struct iovec iov[2];
 		const uint64_t start = inReply.handle;
 		const uint64_t end = inReply.handle + inReply.size;
 		// 1) Write to cache file
 		assert( link->image->cacheFd != -1 );
-		if ( lseek( link->image->cacheFd, start, SEEK_SET ) != start ) {
-			memlogf( "[ERROR] lseek() failed when writing to cache for %s", link->image->path );
-		} else {
-			ret = (int)write( link->image->cacheFd, link->recvBuffer, inReply.size );
-			if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, true );
-		}
+		iov[0].iov_base = link->recvBuffer;
+		iov[0].iov_len = inReply.size;
+		ret = (int)pwritev( link->image->cacheFd, iov, 1, start );
+		if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, true );
 		// 2) Figure out which clients are interested in it
-		struct iovec iov[2];
 		spin_lock( &link->queueLock );
 		for (i = 0; i < link->queueLen; ++i) {
 			dnbd3_queued_request_t * const req = &link->queue[i];

@@ -50,10 +50,10 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 	int ret, fails = 0;
 	// Read request header from socket
 	while ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
+		if ( errno == EINTR ) continue;
 		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_SERVER_RETRIES ) return false;
-		const int err = errno;
-		if ( err == EAGAIN || err == EINTR ) continue;
-		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), err );
+		if ( errno == EAGAIN ) continue;
+		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), errno );
 		return false;
 	}
 	// Make sure all bytes are in the right order (endianness)
@@ -98,7 +98,7 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 	const unsigned int size = reply->size;
 	fixup_reply( *reply );
 	if ( !payload || size == 0 ) {
-		if ( send( sock, reply, sizeof(dnbd3_reply_t), MSG_WAITALL ) != sizeof(dnbd3_reply_t) ) {
+		if ( send( sock, reply, sizeof(dnbd3_reply_t), 0 ) != sizeof(dnbd3_reply_t) ) {
 			printf( "[DEBUG] Send failed (header-only)\n" );
 			return false;
 		}
@@ -354,22 +354,6 @@ void *net_client_handler(void *dnbd3_client)
 				break;
 
 			}
-
-			/*
-			 // Check for messages that have been queued from another thread
-			 while ( client->sendqueue != NULL ) {
-			 dnbd3_binstring_t *message = NULL;
-			 spin_lock( &client->lock );
-			 if ( client->sendqueue != NULL ) {
-			 message = client->sendqueue->data;
-			 client->sendqueue = g_slist_remove( client->sendqueue, message );
-			 }
-			 spin_unlock( &client->lock );
-			 send_data( client->sock, message->data, message->len );
-			 free( message );
-			 }
-			 */
-
 		}
 	}
 	exit_client_cleanup: ;
