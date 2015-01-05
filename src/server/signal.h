@@ -19,7 +19,8 @@ int signal_call(int signalFd);
 
 /**
  * Wait for given signal, with an optional timeout.
- * If timeout == 0, wait forever.
+ * If timeout == 0, just poll once.
+ * If timeout < 0, wait forever.
  * @return > 0 telling how many times the signal was called,
  *    SIGNAL_TIMEOUT if the timeout was reached,
  *    SIGNAL_ERROR if some error occured

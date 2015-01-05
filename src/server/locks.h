@@ -1,9 +1,10 @@
 #ifndef _LOCKS_H_
 #define _LOCKS_H_
 
+#include <pthread.h>
+
 #ifdef _DEBUG
 
-#include <pthread.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>

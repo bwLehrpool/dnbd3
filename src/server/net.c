@@ -23,7 +23,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <pthread.h>
 #include <fcntl.h>
 #include <sys/sendfile.h>
 #include <sys/types.h>
@@ -118,7 +117,7 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 
 void *net_client_handler(void *dnbd3_client)
 {
-	dnbd3_client_t *client = (dnbd3_client_t *)(uintptr_t)dnbd3_client;
+	dnbd3_client_t *client = (dnbd3_client_t *)dnbd3_client;
 	dnbd3_request_t request;
 	dnbd3_reply_t reply;
 
@@ -135,9 +134,6 @@ void *net_client_handler(void *dnbd3_client)
 	char buffer[100];
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
-
-	// Block some signals not important to this thread
-	blockNoncriticalSignals();
 
 	// Set to zero to make valgrind happy
 	memset( &reply, 0, sizeof(reply) );
@@ -359,8 +355,7 @@ void *net_client_handler(void *dnbd3_client)
 	exit_client_cleanup: ;
 	if ( image_file != -1 ) close( image_file );
 	dnbd3_remove_client( client );
-	client->running = false;
 	client = dnbd3_free_client( client );
-	pthread_exit( NULL );
 	return NULL ;
 }
+

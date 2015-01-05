@@ -22,7 +22,6 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <getopt.h>
-#include <pthread.h>
 #include <string.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -45,6 +44,7 @@
 #include "globals.h"
 #include "integrity.h"
 #include "helper.h"
+#include "threadpool.h"
 
 #define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
 static int sockets[MAX_SERVER_SOCKETS], socket_count = 0;
@@ -327,9 +327,11 @@ int main(int argc, char *argv[])
 	// setup rpc
 	//pthread_t thread_rpc;
 	//thread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
-	pthread_attr_t threadAttrs;
-	pthread_attr_init( &threadAttrs );
-	pthread_attr_setdetachstate( &threadAttrs, PTHREAD_CREATE_DETACHED );
+	// Initialize thread pool
+	if ( !threadpool_init( 10 ) ) {
+		printf( "Could not init thread pool!\n" );
+		exit( EXIT_FAILURE );
+	}
 
 	memlogf( "[INFO] Server is ready..." );
 
@@ -375,14 +377,13 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		if ( 0 != thread_create( &(dnbd3_client->thread), &threadAttrs, net_client_handler, (void *)(uintptr_t)dnbd3_client ) ) {
+		if ( !threadpool_run( net_client_handler, (void *)dnbd3_client ) ) {
 			memlogf( "[ERROR] Could not start thread for new client." );
 			dnbd3_remove_client( dnbd3_client );
 			dnbd3_client = dnbd3_free_client( dnbd3_client );
 			continue;
 		}
 	}
-	pthread_attr_destroy( &threadAttrs );
 	dnbd3_cleanup();
 }
 
@@ -413,7 +414,6 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
 		free( dnbd3_client );
 		return NULL ;
 	}
-	dnbd3_client->running = true;
 	dnbd3_client->sock = fd;
 	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
 	pthread_mutex_init( &dnbd3_client->sendMutex, NULL );

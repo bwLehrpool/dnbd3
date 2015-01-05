@@ -115,11 +115,9 @@ struct _dnbd3_client
 {
 	int sock;
 	dnbd3_host_t host;
-	pthread_t thread;
 	dnbd3_image_t *image;
 	pthread_spinlock_t lock;
 	pthread_mutex_t sendMutex;
-	bool running;
 	bool isServer;         // true if a server in proxy mode, false if real client
 };
 

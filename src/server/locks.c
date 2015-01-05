@@ -288,11 +288,11 @@ static void *debug_thread_watchdog(void *something)
 void debug_locks_start_watchdog()
 {
 #ifdef _DEBUG
+	watchdogSignal = signal_new();
 	if ( 0 != thread_create( &watchdog, NULL, &debug_thread_watchdog, (void *)NULL ) ) {
 		memlogf( "[ERROR] Could not start debug-lock watchdog." );
 		return;
 	}
-	watchdogSignal = signal_new();
 #endif
 }
 
