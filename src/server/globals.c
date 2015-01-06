@@ -9,7 +9,7 @@
 char *_configDir = NULL;
 char *_basePath = NULL;
 bool _vmdkLegacyMode = false;
-bool _shutdown = false;
+volatile bool _shutdown = false;
 int _serverPenalty = 0;
 int _clientPenalty = 0;
 bool _isProxy = false;

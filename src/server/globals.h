@@ -152,7 +152,7 @@ extern int _clientPenalty;
 /**
  * Is server shutting down?
  */
-extern bool _shutdown;
+extern volatile bool _shutdown;
 
 /**
  * Is server allowed to provide images in proxy mode?

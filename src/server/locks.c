@@ -305,5 +305,6 @@ void debug_locks_stop_watchdog()
 	signal_call( watchdogSignal );
 	pthread_spin_unlock( &initdestory );
 	thread_join( watchdog, NULL );
+	signal_close( watchdogSignal );
 #endif
 }

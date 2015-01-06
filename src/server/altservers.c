@@ -9,7 +9,6 @@
 #include "signal.h"
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/epoll.h>
 #include <sys/errno.h>
 #include <math.h>
 #include <assert.h>
@@ -21,7 +20,7 @@
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLockProduce; // Lock for adding something to pending. (NULL -> nonNULL)
 static pthread_mutex_t pendingLockConsume = PTHREAD_MUTEX_INITIALIZER; // Lock for removing something (nonNULL -> NULL)
-static int signalPipe = -1;
+static int signalFd = -1;
 
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
 static int numAltServers = 0;
@@ -52,7 +51,7 @@ void altservers_init()
 void altservers_shutdown()
 {
 	if ( !initDone ) return;
-	signal_call( signalPipe ); // Wake altservers thread up
+	signal_call( signalFd ); // Wake altservers thread up
 	thread_join( altThread, NULL );
 }
 
@@ -148,7 +147,7 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
 		pending[i] = uplink;
 		uplink->rttTestResult = RTT_INPROGRESS;
 		spin_unlock( &pendingLockProduce );
-		signal_call( signalPipe ); // Wake altservers thread up
+		signal_call( signalFd ); // Wake altservers thread up
 		return;
 	}
 	// End of loop - no free slot
@@ -339,11 +338,8 @@ void altservers_serverFailed(const dnbd3_host_t * const host)
  */
 static void *altservers_main(void *data)
 {
-	const int MAXEVENTS = 3;
 	const int ALTS = 4;
-	struct epoll_event ev, events[MAXEVENTS];
-	int fdEpoll = -1;
-	int numSocks, ret, itLink, itAlt, numAlts;
+	int ret, itLink, itAlt, numAlts;
 	bool found;
 	char buffer[DNBD3_BLOCK_SIZE ];
 	dnbd3_reply_t reply;
@@ -360,39 +356,20 @@ static void *altservers_main(void *data)
 	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i)
 		pending[i] = NULL;
 	// Init signal-pipe
-	fdEpoll = epoll_create( 2 );
-	if ( fdEpoll == -1 ) {
-		memlogf( "[WARNING] epoll_create failed. Uplink unavailable." );
+	signalFd = signal_new();
+	if ( signalFd < 0 ) {
+		memlogf( "[WARNING] error creating signal object. Uplink feature unavailable." );
 		goto cleanup;
-	}
-	{
-		signalPipe = signal_new();
-		if ( signalPipe < 0 ) {
-			memlogf( "[WARNING] error creating signal object. Uplink feature unavailable." );
-			goto cleanup;
-		}
-		memset( &ev, 0, sizeof(ev) );
-		ev.events = EPOLLIN;
-		ev.data.fd = signalPipe;
-		if ( epoll_ctl( fdEpoll, EPOLL_CTL_ADD, signalPipe, &ev ) < 0 ) {
-			memlogf( "[WARNING] adding read-signal-pipe to epoll set failed" );
-			goto cleanup;
-		}
 	}
 	// LOOP
 	while ( !_shutdown ) {
 		// Wait 5 seconds max.
-		numSocks = epoll_wait( fdEpoll, events, MAXEVENTS, 5000 );
-		if ( numSocks < 0 ) {
-			const int err = errno;
-			memlogf( "[WARNING] epoll_wait() error %d in uplink_connector", err );
-			usleep( 100000 );
-		}
+		ret = signal_wait( signalFd, 5000 );
 		if ( _shutdown ) goto cleanup;
-		// Clear signal
-		ret = signal_clear( signalPipe );
 		if ( ret == SIGNAL_ERROR ) {
+			if ( errno == EAGAIN || errno == EINTR ) continue;
 			memlogf( "[WARNING] Error on signal_clear on alservers_main! Things will break!" );
+			usleep( 100000 );
 		}
 		// Work your way through the queue
 		for (itLink = 0; itLink < SERVER_MAX_PENDING_ALT_CHECKS; ++itLink) {
@@ -536,9 +513,8 @@ static void *altservers_main(void *data)
 		}
 	}
 	cleanup: ;
-	if ( fdEpoll != -1 ) close( fdEpoll );
-	if ( signalPipe != -1 ) signal_close( signalPipe );
-	signalPipe = -1;
+	if ( signalFd != -1 ) signal_close( signalFd );
+	signalFd = -1;
 	return NULL ;
 }
 

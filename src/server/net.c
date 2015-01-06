@@ -49,7 +49,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 	int ret, fails = 0;
 	// Read request header from socket
 	while ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
-		if ( errno == EINTR ) continue;
+		if ( errno == EINTR && ++fails < 10 ) continue;
 		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_SERVER_RETRIES ) return false;
 		if ( errno == EAGAIN ) continue;
 		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), errno );
@@ -196,6 +196,7 @@ void *net_client_handler(void *dnbd3_client)
 		}
 		// client handling mainloop
 		while ( recv_request_header( client->sock, &request ) ) {
+			if ( _shutdown ) break;
 			switch ( request.cmd ) {
 
 			case CMD_GET_BLOCK:
