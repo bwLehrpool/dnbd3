@@ -12,6 +12,12 @@
 bool threadpool_init(int maxIdleThreadCount);
 
 /**
+ * Shut down threadpool.
+ * Only call if it has been initialized before.
+ */
+void threadpool_close();
+
+/**
  * Run a thread using the thread pool.
  * @param startRoutine function to run in new thread
  * @param arg argument to pass to thead

@@ -239,7 +239,7 @@ void *net_client_handler(void *dnbd3_client)
 						const uint64_t lastByte = (end - 1) >> 15;
 						do {
 							const int map_x = (pos >> 12) & 7; // mod 8
-							const uint8_t bit_mask = 0b00000001 << map_x;
+							const uint8_t bit_mask = 1 << map_x;
 							if ( (image->cache_map[firstByte] & bit_mask) == 0 ) {
 								isCached = false;
 								break;
@@ -263,7 +263,7 @@ void *net_client_handler(void *dnbd3_client)
 							while ( pos < end ) {
 								assert( lastByte == (pos >> 15) );
 								const int map_x = (pos >> 12) & 7; // mod 8
-								const uint8_t bit_mask = 0b00000001 << map_x;
+								const uint8_t bit_mask = 1 << map_x;
 								if ( (image->cache_map[lastByte] & bit_mask) == 0 ) {
 									isCached = false;
 									break;
@@ -354,8 +354,8 @@ void *net_client_handler(void *dnbd3_client)
 	}
 	exit_client_cleanup: ;
 	if ( image_file != -1 ) close( image_file );
-	dnbd3_remove_client( client );
-	client = dnbd3_free_client( client );
+	dnbd3_removeClient( client );
+	client = dnbd3_freeClient( client );
 	return NULL ;
 }
 

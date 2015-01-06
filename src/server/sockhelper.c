@@ -1,78 +1,71 @@
 #include "sockhelper.h"
 #include "memlog.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h> // inet_ntop
+#include <netdb.h>
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <stdlib.h>
 
-static inline int connect_shared(const int client_sock, void* addr, const int addrlen, int connect_ms, int rw_ms)
+#define MAXLISTEN 20
+
+struct _poll_list {
+	int count;
+	struct pollfd entry[MAXLISTEN];
+};
+
+int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const int rw_ms)
 {
-	struct timeval tv;
-	// Connect to server
-	tv.tv_sec = connect_ms / 1000;
-	tv.tv_usec = connect_ms * 1000;
-	setsockopt( client_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv) );
-	setsockopt( client_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv) );
-	if ( connect( client_sock, (struct sockaddr *)addr, addrlen ) == -1 ) {
+	// TODO: Move out of here, this unit should contain general socket functions
+	// TODO: Rework the dnbd3_host_t to not use AF_* as these could theoretically change
+	// TODO: Abstract away from sockaddr_in* like the rest of the functions here do,
+	// so WITH_IPV6 can finally be removed as everything is transparent.
+	struct sockaddr_storage ss;
+	int proto, addrlen;
+	memset( &ss, 0, sizeof ss );
+	if ( addr->type == AF_INET ) {
+		// Set host (IPv4)
+		struct sockaddr_in *addr4 = (struct sockaddr_in*)&ss;
+		addr4->sin_family = AF_INET;
+		memcpy( &addr4->sin_addr, addr->addr, 4 );
+		addr4->sin_port = addr->port;
+		proto = PF_INET;
+		addrlen = sizeof *addr4;
+	}
+#ifdef WITH_IPV6
+	else if ( addr->type == AF_INET6 ) {
+		// Set host (IPv6)
+		struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)&ss;
+		addr6->sin6_family = AF_INET6;
+		memcpy( &addr6->sin6_addr, addr->addr, 16 );
+		addr6->sin6_port = addr->port;
+		proto = PF_INET6;
+		addrlen = sizeof *addr6;
+	}
+#endif
+	else {
+		printf( "[DEBUG] Unsupported address type: %d\n", (int)addr->type );
+		return -1;
+	}
+	int client_sock = socket( proto, SOCK_STREAM, IPPROTO_TCP );
+	if ( client_sock == -1 ) return -1;
+	// Apply connect timeout
+	sock_setTimeout( client_sock, connect_ms );
+	if ( connect( client_sock, (struct sockaddr *)&ss, addrlen ) == -1 ) {
 		close( client_sock );
 		return -1;
 	}
 	// Apply read/write timeout
-	tv.tv_sec = rw_ms / 1000;
-	tv.tv_usec = rw_ms * 1000;
-	setsockopt( client_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv) );
-	setsockopt( client_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv) );
+	sock_setTimeout( client_sock, rw_ms );
 	return client_sock;
 }
 
-int sock_connect4(struct sockaddr_in *addr, const int connect_ms, const int rw_ms)
-{
-	int client_sock = socket( PF_INET, SOCK_STREAM, IPPROTO_TCP );
-	if ( client_sock == -1 ) return -1;
-	return connect_shared( client_sock, addr, sizeof(struct sockaddr_in), connect_ms, rw_ms );
-}
-
-int sock_connect6(struct sockaddr_in6 *addr, const int connect_ms, const int rw_ms)
-{
-#ifdef WITH_IPV6
-	int client_sock = socket(PF_INET6, SOCK_STREAM, IPPROTO_TCP);
-	if (client_sock == -1) return -1;
-	return connect_shared(client_sock, addr, sizeof(struct sockaddr_in6), connect_ms, rw_ms);
-#else
-	printf( "[DEBUG] Not compiled with IPv6 support.\n" );
-	return -1;
-#endif
-}
-
-int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const int rw_ms)
-{
-	if ( addr->type == AF_INET ) {
-		// Set host (IPv4)
-		struct sockaddr_in addr4;
-		memset( &addr4, 0, sizeof(addr4) );
-		addr4.sin_family = AF_INET;
-		memcpy( &addr4.sin_addr, addr->addr, 4 );
-		addr4.sin_port = addr->port;
-		return sock_connect4( &addr4, connect_ms, rw_ms );
-	}
-#ifdef WITH_IPV6
-	else if (addr->type == AF_INET6)
-	{
-		// Set host (IPv6)
-		struct sockaddr_in6 addr6;
-		memset(&addr6, 0, sizeof(addr6));
-		addr6.sin6_family = AF_INET6;
-		memcpy(&addr6.sin6_addr, addr->addr, 16);
-		addr6.sin6_port = addr->port;
-		return sock_connect6(&addr6, connect_ms, rw_ms);
-	}
-#endif
-	printf( "[DEBUG] Unsupported address type: %d\n", (int)addr->type );
-	return -1;
-}
-
-void sock_set_timeout(const int sockfd, const int milliseconds)
+void sock_setTimeout(const int sockfd, const int milliseconds)
 {
 	struct timeval tv;
 	tv.tv_sec = milliseconds / 1000;
@@ -81,94 +74,97 @@ void sock_set_timeout(const int sockfd, const int milliseconds)
 	setsockopt( sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv) );
 }
 
-int sock_listen_any(int protocol_family, uint16_t port, char* bind_addr)
+poll_list_t* sock_newPollList()
 {
-	struct sockaddr_storage addr;
-	struct in_addr local;
-	if (bind_addr != NULL) {
-		if (!inet_aton(bind_addr, &local)) return -1;
-	}
-	memset( &addr, 0, sizeof(addr) );
-	if ( protocol_family == PF_INET ) {
-		struct sockaddr_in *v4 = (struct sockaddr_in *)&addr;
-		if (bind_addr == NULL) {
-			v4->sin_addr.s_addr = INADDR_ANY;
-		} else {
-			v4->sin_addr = local;
-		}
-		v4->sin_port = htons( port );
-		v4->sin_family = AF_INET;
-	}
-#ifdef WITH_IPV6
-	else if (protocol_family == PF_INET6)
-	{
-		struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)&addr;
-		v6->sin6_addr = in6addr_any;
-		v6->sin6_port = htons(port);
-		v6->sin6_family = AF_INET6;
-	}
-#endif
-	else {
-		printf( "[DEBUG] sock_listen: Unsupported protocol: %d\n", protocol_family );
-		return -1;
-	}
-	return sock_listen( &addr, sizeof(addr) );
+	poll_list_t *list = (poll_list_t*)malloc( sizeof( poll_list_t ) );
+	list->count = 0;
+	return list;
 }
 
-int sock_listen(struct sockaddr_storage *addr, int addrlen)
+void sock_destroyPollList(poll_list_t *list)
 {
-	int pf; // On Linux AF_* == PF_*, but this is not guaranteed on all platforms, so let's be safe here:
-	if ( addr->ss_family == AF_INET ) pf = PF_INET;
-#ifdef WITH_IPV6
-	else if (addr->ss_family == AF_INET6)
-	pf = PF_INET6;
-#endif
-	else {
-		printf( "[DEBUG] sock_listen: unsupported address type: %d\n", (int)addr->ss_family );
-		return -1;
+	for ( int i = 0; i < list->count; ++i ) {
+		if ( list->entry[i].fd >= 0 ) close( list->entry[i].fd );
 	}
-	int sock;
+	free( list );
+}
 
-	// Create socket
-	sock = socket( pf, SOCK_STREAM, IPPROTO_TCP );
-	if ( sock < 0 ) {
-		memlogf( "[ERROR] sock_listen: Socket setup failure" ); // TODO: print port number to help troubleshooting
-		return -1;
-	}
+bool sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int len)
+{
+	char host[100], port[10];
+	int ret = getnameinfo( addr, addrLen, host, 100, port, 10, NI_NUMERICHOST | NI_NUMERICSERV );
+	if ( ret == 0 ) snprintf( output, len, "[%s]:%s", host, port );
+	return ret == 0;
+}
+
+bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port)
+{
+	if ( list->count >= MAXLISTEN ) return false;
+	struct addrinfo hints, *res, *ptr;
+	char portStr[6];
 	const int on = 1;
-	setsockopt( sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on) );
-	if ( pf == PF_INET6 ) setsockopt( sock, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on) );
-
-	// Bind to socket
-	if ( bind( sock, (struct sockaddr *)addr, addrlen ) < 0 ) {
-		int e = errno;
-		close( sock );
-		memlogf( "[ERROR] Bind failure (%d)", e ); // TODO: print port number to help troubleshooting
-		return -1;
+	int openCount = 0;
+	// Set hints for local addresses.
+	memset( &hints, 0, sizeof(hints) );
+	hints.ai_flags = AI_PASSIVE;
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	snprintf( portStr, sizeof portStr, "%d", (int)port );
+	if ( getaddrinfo( bind_addr, portStr, &hints, &res ) != 0 || res == NULL ) return false;
+	// Attempt to bind to all of the addresses as long as there's room in the poll list
+	for( ptr = res; ptr != NULL; ptr = ptr->ai_next ) {
+		char bla[100];
+		if ( !sock_printable( (struct sockaddr*)ptr->ai_addr, ptr->ai_addrlen, bla, 100 ) ) snprintf( bla, 100, "[invalid]" );
+		printf( "Trying to bind to %s ", bla );
+		int sock = socket( ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol );
+		if ( sock < 0 ) {
+			printf( "...cannot socket(), errno=%d\n", errno );
+			continue;
+		}
+		setsockopt( sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on) );
+		if ( ptr->ai_family == PF_INET6 ) setsockopt( sock, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on) );
+		if ( bind( sock, ptr->ai_addr, ptr->ai_addrlen ) == -1 ) {
+			printf( "...cannot bind(), errno=%d\n", errno );
+			close( sock );
+			continue;
+		}
+		if ( listen( sock, 20 ) == -1 ) {
+			printf( "...cannot listen(), errno=%d\n", errno );
+			close( sock );
+			continue;
+		}
+		printf( "...OK!\n" );
+		list->entry[list->count].fd = sock;
+		list->entry[list->count].events = POLLIN | POLLRDHUP;
+		list->count++;
+		openCount++;
+		if ( list->count >= MAXLISTEN ) break;
 	}
-
-	// Listen on socket
-	if ( listen( sock, 20 ) == -1 ) {
-		close( sock );
-		memlogf( "[ERROR] Listen failure" ); // TODO ...
-		return -1;
-	}
-
-	return sock;
+	freeaddrinfo( res );
+	return openCount > 0;
 }
 
-int accept_any(const int * const sockets, const int socket_count, struct sockaddr_storage *addr, socklen_t *length_ptr)
+int sock_listenAny(poll_list_t* list, uint16_t port)
 {
-	fd_set set;
-	FD_ZERO( &set );
-	int max = 0;
-	for (int i = 0; i < socket_count; ++i) {
-		FD_SET( sockets[i], &set );
-		if ( sockets[i] > max ) max = sockets[i];
+	return sock_listen( list, NULL, port );
+}
+
+int sock_accept(poll_list_t *list, struct sockaddr_storage *addr, socklen_t *length_ptr)
+{
+	int ret = poll( list->entry, list->count, -1 );
+	if ( ret < 0 ) {
+		printf( "poll errno=%d\n", errno );
+		return -1;
 	}
-	if ( select( max + 1, &set, NULL, NULL, NULL ) <= 0 ) return -1;
-	for (int i = 0; i < socket_count; ++i) {
-		if ( FD_ISSET(sockets[i], &set)) return accept( sockets[i], (struct sockaddr *)addr, length_ptr );
+	for ( int i = list->count - 1; i >= 0; --i ) {
+		if ( list->entry[i].revents == 0 ) continue;
+		if ( list->entry[i].revents == POLLIN ) return accept( list->entry[i].fd, (struct sockaddr *)addr, length_ptr );
+		if ( list->entry[i].revents & ( POLLNVAL | POLLHUP | POLLERR | POLLRDHUP ) ) {
+			printf( "poll fd revents=%d for index=%d and fd=%d\n", (int)list->entry[i].revents, i, list->entry[i].fd );
+			if ( ( list->entry[i].revents & POLLNVAL ) == 0 ) close( list->entry[i].fd );
+			if ( i != list->count ) list->entry[i] = list->entry[list->count];
+			list->count--;
+		}
 	}
 	return -1;
 }
@@ -187,17 +183,11 @@ void sock_set_block(int sock)
 	fcntl( sock, F_SETFL, flags & ~(int)O_NONBLOCK );
 }
 
-bool sock_add_array(const int sock, int *array, int *array_fill, const int array_length)
+bool sock_append(poll_list_t *list, const int sock, bool wantRead, bool wantWrite)
 {
-	if ( sock == -1 ) return true;
-	for (int i = 0; i < *array_fill; ++i) {
-		if ( array[i] == -1 ) {
-			array[i] = sock;
-			return true;
-		}
-	}
-	if ( *array_fill >= array_length ) return false;
-	array[*array_fill] = sock;
-	(*array_fill) += 1;
+	if ( sock == -1 || list->count >= MAXLISTEN ) return false;
+	list->entry[list->count++].fd = sock;
+	list->entry[list->count++].events = ( wantRead ? POLLIN : 0 ) | ( wantWrite ? POLLOUT : 0 ) | POLLRDHUP;
+	list->count++;
 	return true;
 }

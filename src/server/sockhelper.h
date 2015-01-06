@@ -1,16 +1,17 @@
 #ifndef SOCKHELPER_H_
 #define SOCKHELPER_H_
 
+/*
+ * Helper functions for dealing with sockets. These functions should
+ * abstract from the IP version by using getaddrinfo() and thelike.
+ */
+
 #include <stdint.h>
 #include "../types.h"
 #include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <string.h>
 
-int sock_connect4(struct sockaddr_in *addr, const int connect_ms, const int rw_ms);
-
-int sock_connect6(struct sockaddr_in6 *addr, const int connect_ms, const int rw_ms);
+typedef struct _poll_list poll_list_t;
 
 /**
  * Connect to given dnbd3_host_t.
@@ -21,7 +22,17 @@ int sock_connect6(struct sockaddr_in6 *addr, const int connect_ms, const int rw_
  */
 int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const int rw_ms);
 
-void sock_set_timeout(const int sockfd, const int milliseconds);
+void sock_setTimeout(const int sockfd, const int milliseconds);
+
+/**
+ * Create new poll list.
+ */
+poll_list_t* sock_newPollList();
+
+/**
+ * Delete a poll list, closing all sockets first if necessary.
+ */
+void sock_destroyPollList(poll_list_t *list);
 
 /**
  * Listen on all interfaces/available IP addresses, using the given protocol.
@@ -30,14 +41,14 @@ void sock_set_timeout(const int sockfd, const int milliseconds);
  * @param port port to listen on
  * @return the socket descriptor if successful, -1 otherwise.
  */
-int sock_listen_any(int protocol_family, uint16_t port, char* bind_addr);
+int sock_listenAny(poll_list_t* list, uint16_t port);
 
 /**
  * Listen on a specific address and port.
  * @param addr pointer to a properly filled sockaddr_in or sockaddr_in6
  * @param addrlen length of the passed struct
  */
-int sock_listen(struct sockaddr_storage *addr, int addrlen);
+bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port);
 
 /**
  * This is a multi-socket version of accept. Pass in an array of listening sockets.
@@ -47,38 +58,22 @@ int sock_listen(struct sockaddr_storage *addr, int addrlen);
  * @param socket_count number of sockets in that array
  * @return fd of new client socket, -1 on error
  */
-int accept_any(const int * const sockets, const int socket_count, struct sockaddr_storage *addr, socklen_t *length_ptr);
+int sock_accept(poll_list_t *list, struct sockaddr_storage *addr, socklen_t *length_ptr);
 
 void sock_set_nonblock(int sock);
 
 void sock_set_block(int sock);
 
 /**
- * Take IPv4 as string and a port and fill sockaddr_in struct.
- * This should be refactored to work for IPv4 and IPv6 and use sockaddr_storage.
- */
-inline void sock_set_addr4(char *ip, uint16_t port, struct sockaddr_in *addr)
-{
-	memset( addr, 0, sizeof(*addr) );
-	addr->sin_family = AF_INET; // IPv4
-	addr->sin_addr.s_addr = inet_addr( ip );
-	addr->sin_port = htons( port ); // set port number
-}
-
-/**
  * Add given socket to array. Take an existing empty slot ( == -1) if available,
  * append to end otherwise. Updates socket count variable passed by reference.
- * The passed socket fd is only added if it is != -1 for convenience, so you can
- * directly pass the return value of sock_listen or sock_create, without checking the
- * return value first.
+ *
+ * @param poll_list_t list the poll list to add the socket to
  * @param sock socket fd to add
- * @param array the array of socket fds to add the socket to
- * @param array_fill pointer to int telling how many sockets there are in the array. Empty slots
- * in between are counted too. In other words: represents the index of the last valid socket fd in the
- * array plus one, or 0 if there are none.
- * @param array_length the capacity of the array
- * @return true on success or if the passed fd was -1, false iff the array is already full
+ * @param wantRead whether to set the EPOLLIN flag
+ * @param wantWrite whether to set the EPOLLOUT flag
+ * @return true on success, false iff the array is already full or socket is < 0
  */
-bool sock_add_array(const int sock, int *array, int *array_fill, const int array_length);
+bool sock_append(poll_list_t *list, const int sock, bool wantRead, bool wantWrite);
 
 #endif /* SOCKHELPER_H_ */

@@ -30,9 +30,9 @@ bool image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, cons
 
 void image_killUplinks();
 
-dnbd3_image_t* image_free(dnbd3_image_t *image);
-
 bool image_loadAll(char *path);
+
+bool image_tryFreeAll();
 
 bool image_create(char *image, int revision, uint64_t size);
 

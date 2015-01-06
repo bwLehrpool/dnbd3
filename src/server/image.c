@@ -9,6 +9,7 @@
 #include "sockhelper.h"
 #include "altservers.h"
 #include "server.h"
+#include "signal.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -43,6 +44,7 @@ static int remoteCloneCacheIndex = -1;
 
 // ##########################################
 
+static dnbd3_image_t* image_free(dnbd3_image_t *image);
 static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static bool image_load_all_internal(char *base, char *path);
 static bool image_load(char *base, char *path, int withUplink);
@@ -116,7 +118,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	while ( pos < end ) {
 		const int map_y = pos >> 15;
 		const int map_x = (pos >> 12) & 7; // mod 8
-		const uint8_t bit_mask = 0b00000001 << map_x;
+		const uint8_t bit_mask = 1 << map_x;
 		if ( set ) {
 			if ( (image->cache_map[map_y] & bit_mask) == 0 ) dirty = true;
 			image->cache_map[map_y] |= bit_mask;
@@ -322,26 +324,21 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 		return NULL;
 	}
 	spin_unlock( &image->lock );
+	// Getting here means we decreased the usage counter to zero
+	// If the image is not in the images list anymore, we're
+	// responsible for freeing it
 	spin_lock( &_images_lock );
-	spin_lock( &image->lock );
-	// Check active users again as we unlocked
-	if ( image->users == 0 ) {
-		// Not in use anymore, see if it's in the images array
-		for (int i = 0; i < _num_images; ++i) {
-			if ( _images[i] == image ) { // Found, do nothing
-				spin_unlock( &image->lock );
-				spin_unlock( &_images_lock );
-				return NULL;
-			}
+	for (int i = 0; i < _num_images; ++i) {
+		if ( _images[i] == image ) { // Found, do nothing
+			spin_unlock( &_images_lock );
+			return NULL;
 		}
-		spin_unlock( &image->lock );
-		spin_unlock( &_images_lock );
-		// Not found, free
-		image_free( image );
-		return NULL;
 	}
-	spin_unlock( &image->lock );
 	spin_unlock( &_images_lock );
+	// So it wasn't in the images list anymore either, get rid of it,
+	// but check usage count once again, since it might have been increased
+	// after we unlocked above
+	if ( image->users == 0 ) image_free( image );
 	return NULL;
 }
 
@@ -376,35 +373,11 @@ void image_killUplinks()
 		spin_lock( &_images[i]->lock );
 		if ( _images[i]->uplink != NULL ) {
 			_images[i]->uplink->shutdown = true;
-			if ( _images[i]->uplink->signal != -1 ) {
-				write( _images[i]->uplink->signal, "", 1 );
-			}
+			signal_call( _images[i]->uplink->signal );
 		}
 		spin_unlock( &_images[i]->lock );
 	}
 	spin_unlock( &_images_lock );
-}
-
-/**
- * Free image. DOES NOT check if it's in use.
- * Indirectly locks on image.lock, uplink.queueLock
- */
-dnbd3_image_t* image_free(dnbd3_image_t *image)
-{
-	assert( image != NULL );
-	//
-	image_saveCacheMap( image );
-	uplink_shutdown( image );
-	free( image->cache_map );
-	free( image->crc32 );
-	free( image->path );
-	free( image->lower_name );
-	if ( image->cacheFd != -1 ) close( image->cacheFd );
-	spin_destroy( &image->lock );
-	//
-	memset( image, 0, sizeof(dnbd3_image_t) );
-	free( image );
-	return NULL ;
 }
 
 /**
@@ -417,6 +390,48 @@ bool image_loadAll(char *path)
 		return image_load_all_internal( _basePath, _basePath );
 	}
 	return image_load_all_internal( path, path );
+}
+
+/**
+ * Free all images we have, but only if they're not in use anymore.
+ * Locks on _images_lock
+ * @return true if all images have been freed
+ */
+bool image_tryFreeAll()
+{
+	spin_lock( &_images_lock );
+	for (int i = _num_images - 1; i >= 0; --i) {
+		if ( _images[i] != NULL && _images[i]->users == 0 ) {
+			_images[i] = image_free( _images[i] );
+		}
+		if ( i + 1 == _num_images && _images[i] == NULL ) _num_images--;
+	}
+	spin_unlock( &_images_lock );
+	return _num_images == 0;
+}
+
+/**
+ * Free image. DOES NOT check if it's in use.
+ * Indirectly locks on image.lock, uplink.queueLock
+ */
+static dnbd3_image_t* image_free(dnbd3_image_t *image)
+{
+	assert( image != NULL );
+	//
+	image_saveCacheMap( image );
+	uplink_shutdown( image );
+	free( image->cache_map );
+	free( image->crc32 );
+	free( image->path );
+	free( image->lower_name );
+	if ( image->cacheFd != -1 ) {
+		close( image->cacheFd );
+	}
+	spin_destroy( &image->lock );
+	//
+	memset( image, 0, sizeof(dnbd3_image_t) );
+	free( image );
+	return NULL ;
 }
 
 static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize)

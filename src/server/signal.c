@@ -12,6 +12,7 @@ int signal_new()
 
 int signal_call(int signalFd)
 {
+	if ( signalFd < 0 ) return 0;
 	static uint64_t one = 1;
 	return write( signalFd, &one, sizeof one ) == sizeof one;
 }

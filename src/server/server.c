@@ -46,8 +46,7 @@
 #include "helper.h"
 #include "threadpool.h"
 
-#define MAX_SERVER_SOCKETS 50 // Assume there will be no more than 50 sockets the server will listen on
-static int sockets[MAX_SERVER_SOCKETS], socket_count = 0;
+poll_list_t *listeners = NULL;
 #ifdef _DEBUG
 int _fake_delay = 0;
 #endif
@@ -59,17 +58,17 @@ pthread_spinlock_t _clients_lock;
 /**
  * Time the server was started
  */
-static time_t _startupTime = 0;
+static time_t startupTime = 0;
 static bool sigReload = false, sigPrintStats = false;
 
-static bool dnbd3_add_client(dnbd3_client_t *client);
-static void dnbd3_handle_signal(int signum);
+static bool dnbd3_addClient(dnbd3_client_t *client);
+static void dnbd3_handleSignal(int signum);
 static void dnbd3_printClients();
 
 /**
  * Print help text for usage instructions
  */
-void dnbd3_print_help(char *argv_0)
+void dnbd3_printHelp(char *argv_0)
 {
 	printf( "Version: %s\n\n", VERSION_STRING );
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
@@ -96,7 +95,7 @@ void dnbd3_print_help(char *argv_0)
 /**
  * Print version information
  */
-void dnbd3_print_version()
+void dnbd3_printVersion()
 {
 	printf( "Version: %s\n", VERSION_STRING );
 	exit( 0 );
@@ -107,18 +106,14 @@ void dnbd3_print_version()
  */
 void dnbd3_cleanup()
 {
-	int i, count;
+	int i, count, retries;
 
 	_shutdown = true;
 	debug_locks_stop_watchdog();
 	memlogf( "INFO: Cleanup...\n" );
 
-	for (int i = 0; i < socket_count; ++i) {
-		if ( sockets[i] == -1 ) continue;
-		close( sockets[i] );
-		sockets[i] = -1;
-	}
-	socket_count = 0;
+	if ( listeners != NULL ) sock_destroyPollList( listeners );
+	listeners = NULL;
 
 	// Kill connection to all clients
 	spin_lock( &_clients_lock );
@@ -131,6 +126,9 @@ void dnbd3_cleanup()
 	}
 	spin_unlock( &_clients_lock );
 
+	// Disable threadpool
+	threadpool_close();
+
 	// Terminate the altserver checking thread
 	altservers_shutdown();
 
@@ -141,7 +139,7 @@ void dnbd3_cleanup()
 	integrity_shutdown();
 
 	// Wait for clients to disconnect
-	int retries = 10;
+	retries = 10;
 	do {
 		count = 0;
 		spin_lock( &_clients_lock );
@@ -158,13 +156,11 @@ void dnbd3_cleanup()
 	_num_clients = 0;
 
 	// Clean up images
-	spin_lock( &_images_lock );
-	for (i = 0; i < _num_images; ++i) {
-		if ( _images[i] == NULL ) continue;
-		_images[i] = image_free( _images[i] );
+	retries = 5;
+	while ( !image_tryFreeAll() && --retries > 0 ) {
+		printf( "Waiting for images to free...\n" );
+		sleep( 1 );
 	}
-	_num_images = 0;
-	spin_unlock( &_images_lock );
 
 	exit( EXIT_SUCCESS );
 }
@@ -232,10 +228,10 @@ int main(int argc, char *argv[])
 			return EXIT_SUCCESS;
 		case 'h':
 			case '?':
-			dnbd3_print_help( argv[0] );
+			dnbd3_printHelp( argv[0] );
 			break;
 		case 'v':
-			dnbd3_print_version();
+			dnbd3_printVersion();
 			break;
 		case 'b':
 			bindAddress = strdup( optarg );
@@ -294,11 +290,11 @@ int main(int argc, char *argv[])
 #endif
 
 	// setup signal handler
-	signal( SIGTERM, dnbd3_handle_signal );
-	signal( SIGINT, dnbd3_handle_signal );
-	signal( SIGUSR1, dnbd3_handle_signal );
-	signal( SIGHUP, dnbd3_handle_signal );
-	signal( SIGUSR2, dnbd3_handle_signal );
+	signal( SIGTERM, dnbd3_handleSignal );
+	signal( SIGINT, dnbd3_handleSignal );
+	signal( SIGUSR1, dnbd3_handleSignal );
+	signal( SIGHUP, dnbd3_handleSignal );
+	signal( SIGUSR2, dnbd3_handleSignal );
 
 	printf( "Loading images....\n" );
 	// Load all images in base path
@@ -307,19 +303,21 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	_startupTime = time( NULL );
+	startupTime = time( NULL );
 
 	// Give other threads some time to start up before accepting connections
-	sleep( 2 );
+	sleep( 1 );
 
 	// setup network
-	sockets[socket_count] = sock_listen_any( PF_INET, PORT, bindAddress );
-	if ( sockets[socket_count] != -1 ) ++socket_count;
-#ifdef WITH_IPV6
-	sockets[socket_count] = sock_listen_any(PF_INET6, PORT, NULL);
-	if (sockets[socket_count] != -1) ++socket_count;
-#endif
-	if ( socket_count == 0 ) exit( EXIT_FAILURE );
+	listeners = sock_newPollList();
+	if ( listeners == NULL ) {
+		printf( "Didnt get a poll list!\n" );
+		exit( EXIT_FAILURE );
+	}
+	if ( !sock_listen( listeners, bindAddress, PORT ) ) {
+		printf( "Could not listen on any local interface.\n" );
+		exit( EXIT_FAILURE );
+	}
 	struct sockaddr_storage client;
 	socklen_t len;
 	int fd;
@@ -328,7 +326,7 @@ int main(int argc, char *argv[])
 	//pthread_t thread_rpc;
 	//thread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
 	// Initialize thread pool
-	if ( !threadpool_init( 10 ) ) {
+	if ( !threadpool_init( 8 ) ) {
 		printf( "Could not init thread pool!\n" );
 		exit( EXIT_FAILURE );
 	}
@@ -353,7 +351,7 @@ int main(int argc, char *argv[])
 		}
 		//
 		len = sizeof(client);
-		fd = accept_any( sockets, socket_count, &client, &len );
+		fd = sock_accept( listeners, &client, &len );
 		if ( fd < 0 ) {
 			const int err = errno;
 			if ( err == EINTR || err == EAGAIN ) continue;
@@ -363,24 +361,25 @@ int main(int argc, char *argv[])
 		}
 		//memlogf("INFO: Client connected\n");
 
-		sock_set_timeout( fd, _clientTimeout );
+		sock_setTimeout( fd, _clientTimeout );
 
-		dnbd3_client_t *dnbd3_client = dnbd3_init_client( &client, fd );
+		dnbd3_client_t *dnbd3_client = dnbd3_initClient( &client, fd );
 		if ( dnbd3_client == NULL ) {
 			close( fd );
 			continue;
 		}
 
-		// This has to be done before creating the thread, otherwise a race condition might occur when the new thread dies faster than this thread adds the client to the list after creating the thread
-		if ( !dnbd3_add_client( dnbd3_client ) ) {
-			dnbd3_client = dnbd3_free_client( dnbd3_client );
+		// This has to be done before creating the thread, otherwise a race condition might occur when the new thread
+		// dies faster than this thread adds the client to the list after creating the thread
+		if ( !dnbd3_addClient( dnbd3_client ) ) {
+			dnbd3_client = dnbd3_freeClient( dnbd3_client );
 			continue;
 		}
 
 		if ( !threadpool_run( net_client_handler, (void *)dnbd3_client ) ) {
 			memlogf( "[ERROR] Could not start thread for new client." );
-			dnbd3_remove_client( dnbd3_client );
-			dnbd3_client = dnbd3_free_client( dnbd3_client );
+			dnbd3_removeClient( dnbd3_client );
+			dnbd3_client = dnbd3_freeClient( dnbd3_client );
 			continue;
 		}
 	}
@@ -391,7 +390,7 @@ int main(int argc, char *argv[])
  * Initialize and populate the client struct - called when an incoming
  * connection is accepted
  */
-dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
+dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd)
 {
 	dnbd3_client_t *dnbd3_client = calloc( 1, sizeof(dnbd3_client_t) );
 	if ( dnbd3_client == NULL ) { // This will never happen thanks to memory overcommit
@@ -424,7 +423,7 @@ dnbd3_client_t* dnbd3_init_client(struct sockaddr_storage *client, int fd)
  * Remove a client from the clients array
  * Locks on: _clients_lock
  */
-void dnbd3_remove_client(dnbd3_client_t *client)
+void dnbd3_removeClient(dnbd3_client_t *client)
 {
 	int i;
 	spin_lock( &_clients_lock );
@@ -443,7 +442,7 @@ void dnbd3_remove_client(dnbd3_client_t *client)
  * Locks on: _clients[].lock, _images[].lock
  * might call functions that lock on _images, _image[], uplink.queueLock, client.sendMutex
  */
-dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
+dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client)
 {
 	spin_lock( &client->lock );
 	pthread_mutex_lock( &client->sendMutex );
@@ -470,7 +469,7 @@ dnbd3_client_t* dnbd3_free_client(dnbd3_client_t *client)
  * Add client to the clients array.
  * Locks on: _clients_lock
  */
-static bool dnbd3_add_client(dnbd3_client_t *client)
+static bool dnbd3_addClient(dnbd3_client_t *client)
 {
 	int i;
 	spin_lock( &_clients_lock );
@@ -490,7 +489,7 @@ static bool dnbd3_add_client(dnbd3_client_t *client)
 	return true;
 }
 
-static void dnbd3_handle_signal(int signum)
+static void dnbd3_handleSignal(int signum)
 {
 	if ( signum == SIGINT || signum == SIGTERM ) {
 		_shutdown = true;
@@ -503,7 +502,7 @@ static void dnbd3_handle_signal(int signum)
 
 int dnbd3_serverUptime()
 {
-	return (int)(time( NULL ) - _startupTime);
+	return (int)(time( NULL ) - startupTime);
 }
 
 static void dnbd3_printClients()

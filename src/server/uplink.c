@@ -43,8 +43,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	assert( image != NULL );
 	spin_lock( &image->lock );
 	if ( image->uplink != NULL ) {
-		spin_unlock( &image->lock );
-		return true;
+		goto failure;
 	}
 	if ( image->cache_map == NULL ) {
 		memlogf( "[WARNING] Uplink was requested for image %s, but it is already complete", image->lower_name );
@@ -73,7 +72,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	}
 	spin_unlock( &image->lock );
 	return true;
-	failure: ;
+failure: ;
 	if ( link != NULL ) free( link );
 	link = image->uplink = NULL;
 	spin_unlock( &image->lock );
@@ -103,7 +102,7 @@ void uplink_shutdown(dnbd3_image_t *image)
 	}
 	image->uplink = NULL;
 	uplink->shutdown = true;
-	if ( uplink->signal != -1 ) signal_call( uplink->signal );
+	signal_call( uplink->signal );
 	pthread_t thread = uplink->thread;
 	spin_unlock( &uplink->queueLock );
 	spin_unlock( &image->lock );
@@ -251,15 +250,15 @@ static void* uplink_mainloop(void *data)
 			link->betterFd = -1;
 			link->currentServer = link->betterServer;
 			link->replicationHandle = 0;
-			// Re-send all pending requests
-			uplink_sendRequests( link, false );
-			uplink_sendReplicationRequest( link );
 			link->image->working = true;
 			buffer[0] = '@';
 			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
 				printf( "[DEBUG] Now connected to %s\n", buffer + 1 );
 				setThreadName( buffer );
 			}
+			// Re-send all pending requests
+			uplink_sendRequests( link, false );
+			uplink_sendReplicationRequest( link );
 			memset( &ev, 0, sizeof(ev) );
 			ev.events = EPOLLIN | EPOLLRDHUP | EPOLLPRI;
 			ev.data.fd = link->fd;
@@ -469,7 +468,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
 		// Needs to be 8 (bit->byte, bitmap)
-		const uint64_t offset = link->replicationHandle = (uint64_t)i * DNBD3_BLOCK_SIZE * (uint64_t)requestBlockSize;
+		const uint64_t offset = link->replicationHandle = (uint64_t)i * (uint64_t)requestBlockSize;
 		const uint32_t size = MIN( image->filesize - offset, requestBlockSize );
 		if ( !dnbd3_get_block( link->fd, offset, size, link->replicationHandle ) ) {
 			printf( "[DEBUG] Error sending background replication request to uplink server!\n" );
