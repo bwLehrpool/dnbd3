@@ -140,6 +140,8 @@ void *net_client_handler(void *dnbd3_client)
 	memset( &payload, 0, sizeof(payload) );
 	reply.magic = dnbd3_packet_magic;
 
+	sock_setTimeout( client->sock, _clientTimeout );
+
 	// Receive first packet. This must be CMD_SELECT_IMAGE by protocol specification
 	if ( recv_request_header( client->sock, &request ) ) {
 		if ( request.cmd != CMD_SELECT_IMAGE ) {

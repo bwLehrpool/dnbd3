@@ -361,8 +361,6 @@ int main(int argc, char *argv[])
 		}
 		//memlogf("INFO: Client connected\n");
 
-		sock_setTimeout( fd, _clientTimeout );
-
 		dnbd3_client_t *dnbd3_client = dnbd3_initClient( &client, fd );
 		if ( dnbd3_client == NULL ) {
 			close( fd );
