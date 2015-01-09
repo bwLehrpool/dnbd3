@@ -362,7 +362,7 @@ static void* uplink_mainloop(void *data)
 #ifdef _DEBUG
 		if ( link->fd != -1 && !link->shutdown ) {
 			bool resend = false;
-			time_t deadline = time( NULL ) - 10;
+			time_t deadline = time( NULL ) - 15;
 			spin_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
@@ -489,36 +489,29 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 	dnbd3_reply_t inReply, outReply;
 	int ret, i;
 	for (;;) {
-		ret = recv( link->fd, &inReply, sizeof inReply, MSG_DONTWAIT | MSG_NOSIGNAL );
-		if ( ret < 0 ) {
-			const int err = errno;
-			if ( err == EAGAIN || err == EWOULDBLOCK || err == EINTR ) break; // OK cases
-			goto error_cleanup;
-		}
-		if ( ret == 0 ) {
+		ret = dnbd3_read_reply( link->fd, &inReply, false );
+		if ( ret == REPLY_INTR && !_shutdown && !link->shutdown ) continue;
+		if ( ret == REPLY_AGAIN ) break;
+		if ( ret == REPLY_CLOSED ) {
 			memlogf( "[INFO] Uplink: Remote host hung up (%s)", link->image->path );
 			goto error_cleanup;
 		}
-		if ( ret != sizeof inReply ) ret += recv( link->fd, &inReply + ret, sizeof(inReply) - ret, MSG_WAITALL | MSG_NOSIGNAL );
-		if ( ret != sizeof inReply ) {
-			const int err = errno;
-			memlogf( "[INFO] Lost connection to uplink server for %s (header %d/%d, e=%d)", link->image->path, ret, (int)sizeof(inReply),
-					err );
+		if ( ret == REPLY_WRONGMAGIC ) {
+			memlogf( "[WARNING] Uplink server's packet did not start with dnbd3_packet_magic (%s)", link->image->path );
 			goto error_cleanup;
 		}
-		fixup_reply( inReply );
-		if ( inReply.magic != dnbd3_packet_magic ) {
-			memlogf( "[WARNING] Uplink server's packet did not start with dnbd3_packet_magic (%s)", link->image->path );
+		if ( ret != REPLY_OK ) {
+			memlogf( "[INFO] Uplink: Connection error (%s)", link->image->path );
 			goto error_cleanup;
 		}
 		if ( inReply.size > 9000000 ) { // TODO: Configurable
 			memlogf( "[WARNING] Pure evil: Uplink server sent too much payload for %s", link->image->path );
 			goto error_cleanup;
 		}
+
 		if ( link->recvBufferLen < inReply.size ) {
-			if ( link->recvBuffer != NULL ) free( link->recvBuffer );
-			link->recvBufferLen = MIN(9000000, inReply.size + 8192); // XXX dont miss occurrence
-			link->recvBuffer = malloc( link->recvBufferLen );
+			link->recvBufferLen = MIN(9000000, inReply.size + 65536); // XXX dont miss occurrence
+			link->recvBuffer = realloc( link->recvBuffer, link->recvBufferLen );
 		}
 		uint32_t done = 0;
 		while ( done < inReply.size ) {
@@ -538,9 +531,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		const uint64_t end = inReply.handle + inReply.size;
 		// 1) Write to cache file
 		assert( link->image->cacheFd != -1 );
-		iov[0].iov_base = link->recvBuffer;
-		iov[0].iov_len = inReply.size;
-		ret = (int)pwritev( link->image->cacheFd, iov, 1, start );
+		ret = (int)pwrite( link->image->cacheFd, link->recvBuffer, inReply.size, start );
 		if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, true );
 		// 2) Figure out which clients are interested in it
 		spin_lock( &link->queueLock );

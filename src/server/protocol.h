@@ -4,16 +4,35 @@
 #include "../types.h"
 #include "../serialize.h"
 
-#define FLAGS8_SERVER 1
+#define FLAGS8_SERVER (1)
+
+#define REPLY_OK (0)
+#define REPLY_ERRNO (-1)
+#define REPLY_AGAIN (-2)
+#define REPLY_INTR (-3)
+#define REPLY_CLOSED (-4)
+#define REPLY_INCOMPLETE (-5)
+#define REPLY_WRONGMAGIC (-6)
+
+static inline int dnbd3_read_reply(int sock, dnbd3_reply_t *reply, bool wait)
+{
+	int ret = recv( sock, reply, sizeof(*reply), (wait ? MSG_WAITALL : MSG_DONTWAIT) | MSG_NOSIGNAL );
+	if ( ret == 0 ) return REPLY_CLOSED;
+	if ( ret < 0 ) {
+		if ( ret == EAGAIN || ret == EWOULDBLOCK ) return REPLY_AGAIN;
+		if ( ret == EINTR ) return REPLY_INTR;
+		return REPLY_ERRNO;
+	}
+	if ( !wait && ret != sizeof(*reply) ) ret += recv( sock, reply + ret, sizeof(*reply) - ret, MSG_WAITALL | MSG_NOSIGNAL );
+	if ( ret != sizeof(*reply) ) return REPLY_INCOMPLETE;
+	fixup_reply( *reply );
+	if ( reply->magic != dnbd3_packet_magic ) return REPLY_WRONGMAGIC;
+	return REPLY_OK;
+}
 
 static inline bool dnbd3_get_reply(int sock, dnbd3_reply_t *reply)
 {
-	if ( recv( sock, reply, sizeof(*reply), MSG_WAITALL ) != sizeof(*reply) ) {
-		return false;
-	}
-	fixup_reply( *reply );
-	if ( reply->magic != dnbd3_packet_magic ) return false;
-	return true;
+	return dnbd3_read_reply( sock, reply, true ) == REPLY_OK;
 }
 
 static inline bool dnbd3_select_image(int sock, char *lower_name, uint16_t rid, uint8_t flags8)
@@ -74,7 +93,7 @@ static inline bool dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, siz
 	reply.size -= 4;
 	if ( reply.cmd != CMD_GET_CRC32 || reply.size > *bufferLen ) return false;
 	*bufferLen = reply.size;
-	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL ) != sizeof(uint32_t) ) return false;
+	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL | MSG_NOSIGNAL ) != sizeof(uint32_t) ) return false;
 	int done = 0;
 	while ( done < reply.size ) {
 		const int ret = recv( sock, (char*)buffer + done, reply.size - done, 0 );
@@ -101,7 +120,7 @@ static inline bool dnbd3_select_image_reply(serialized_buffer_t *buffer, int soc
 		return false;
 	}
 // receive reply payload
-	if ( recv( sock, buffer, reply.size, MSG_WAITALL ) != reply.size ) {
+	if ( recv( sock, buffer, reply.size, MSG_WAITALL | MSG_NOSIGNAL ) != reply.size ) {
 		return false;
 	}
 // handle/check reply payload
