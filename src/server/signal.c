@@ -10,6 +10,11 @@ int signal_new()
 	return eventfd( 0, EFD_NONBLOCK );
 }
 
+int signal_newBlocking()
+{
+	return eventfd( 0, 0 );
+}
+
 int signal_call(int signalFd)
 {
 	if ( signalFd < 0 ) return 0;

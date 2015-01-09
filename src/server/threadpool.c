@@ -60,7 +60,7 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 			printf( "[WARNING] Could not alloc entry_t for new thread\n" );
 			return false;
 		}
-		entry->signalFd = signal_new();
+		entry->signalFd = signal_newBlocking();
 		if ( entry->signalFd < 0 ) {
 			printf( "[WARNING] Could not create signalFd for new thread pool thread\n" );
 			free( entry );
@@ -90,7 +90,7 @@ static void *threadpool_worker(void *entryPtr)
 	entry_t *entry = (entry_t*)entryPtr;
 	for ( ;; ) {
 		// Wait for signal from outside that we have work to do
-		int ret = signal_wait( entry->signalFd, -1 );
+		int ret = signal_clear( entry->signalFd );
 		if ( _shutdown ) break;
 		if ( ret > 0 ) {
 			if ( entry->startRoutine == NULL ) {

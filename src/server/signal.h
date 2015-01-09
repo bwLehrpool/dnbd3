@@ -12,6 +12,12 @@
 int signal_new();
 
 /**
+ * Create a new signal fd (eventfd), blocking.
+ * @return >= 0 on success, which is the fd; < 0 on error
+ */
+int signal_newBlocking();
+
+/**
  * Trigger the given signal, so a wait or clear call will succeed.
  * @return SIGNAL_OK on success, SIGNAL_ERROR on error
  */
