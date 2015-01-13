@@ -76,12 +76,12 @@ static void dnbd3_print_version();
 /**
  * Convert a host and port (network byte order) to printable representation.
  * Worst case required buffer len is 48, eg. [1234:1234:1234:1234:1234:1234:1234:1234]:12345 (+ \0)
- * Returns TRUE on success, FALSE on error
+ * Returns true on success, false on error
  */
 static char host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen)
 {
 	// Worst case: Port 5 chars, ':' to separate ip and port 1 char, terminating null 1 char = 7, [] for IPv6
-	if ( targetlen < 10 ) return FALSE;
+	if ( targetlen < 10 ) return false;
 	if ( host->type == AF_INET6 ) {
 		*target++ = '[';
 		inet_ntop( AF_INET6, host->addr, target, targetlen - 10 );
@@ -92,14 +92,14 @@ static char host_to_string(const dnbd3_host_t *host, char *target, size_t target
 		target += strlen( target );
 	} else {
 		snprintf( target, targetlen, "<?addrtype=%d>", (int)host->type );
-		return FALSE;
+		return false;
 	}
 	*target = '\0';
 	if ( host->port != 0 ) {
 		// There are still at least 7 bytes left in the buffer, port is at most 5 bytes + ':' + '\0' = 7
 		snprintf( target, 7, ":%d", (int)ntohs( host->port ) );
 	}
-	return TRUE;
+	return true;
 }
 
 
@@ -170,12 +170,12 @@ static char parse_address(char *string, dnbd3_host_t *host)
 
 static int dnbd3_get_ip(char *hostname, dnbd3_host_t *host)
 {
-	if ( parse_address( hostname, host ) ) return TRUE;
+	if ( parse_address( hostname, host ) ) return true;
 	// TODO: Parse port too for host names
 	struct hostent *hent;
 	if ( (hent = gethostbyname( hostname )) == NULL ) {
 		printf( "Unknown host '%s'\n", hostname );
-		return FALSE;
+		return false;
 	}
 
 	host->type = (uint8_t)hent->h_addrtype;
@@ -185,10 +185,10 @@ static int dnbd3_get_ip(char *hostname, dnbd3_host_t *host)
 		memcpy(host->addr, hent->h_addr, 16);
 	} else {
 		printf("FATAL: Unknown address type: %d\n", hent->h_addrtype);
-		return FALSE;
+		return false;
 	}
 	host->port = htons( PORT );
-	return TRUE;
+	return true;
 }
 
 int main(int argc, char *argv[])
@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
 	msg.host.port = htons( PORT );
 	msg.host.type = 0;
 	msg.imgname = NULL;
-	msg.is_server = FALSE;
+	msg.is_server = false;
 
 	int opt = 0;
 	int longIndex = 0;
@@ -318,7 +318,7 @@ static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const
 	const int fd = open( dev, O_WRONLY );
 	if ( fd < 0 ) {
 		printf( "open() for %s failed.\n", dev );
-		return FALSE;
+		return false;
 	}
 	if ( msg != NULL && msg->imgname != NULL ) msg->imgnamelen = (uint16_t)strlen( msg->imgname );
 	const int ret = ioctl( fd, command, msg );
@@ -414,7 +414,7 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 	int opt = 0;
 	int longIndex = 0;
 	char *host = NULL, *image = NULL, *device = NULL;
-	int rid = 0, uid = 0, killMe = FALSE, ahead = 512;
+	int rid = 0, uid = 0, killMe = false, ahead = 512;
 	int len;
 	int action = -1;
 	const char *actionName = NULL;
@@ -457,7 +457,7 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 			ahead = atoi( optarg );
 			break;
 		case 'k':
-			killMe = TRUE;
+			killMe = true;
 			break;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
@@ -516,24 +516,24 @@ static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *act
 	}
 	if ( index < 0 || index >= MAX_DEVS ) {
 		printf( "%s request with invalid device id %d\n", actionName, index );
-		return FALSE;
+		return false;
 	}
 	snprintf( dev, DEV_LEN, "/dev/dnbd%d", index );
 	if ( openDevices[index] == -1 ) {
 		printf( "%s request by %d for closed device %s\n", actionName, uid, dev );
-		return TRUE;
+		return true;
 	}
 	if ( openDevices[index] != uid ) {
 		printf( "%s: User %d cannot access %s owned by %d\n", actionName, uid, dev, openDevices[index] );
-		return FALSE;
+		return false;
 	}
 	if ( dnbd3_ioctl( dev, action, &msg ) ) {
 		printf( "%s request for device %s of user %d successful\n", actionName, dev, uid );
 		openDevices[index] = -1;
-		return TRUE;
+		return true;
 	}
 	printf( "%s: Error on device %s, requested by %d\n", actionName, dev, uid );
-	return FALSE;
+	return false;
 }
 
 static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead)
@@ -567,7 +567,7 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int re
 		msg.imgname = image;
 		msg.imgnamelen = strlen( image );
 		msg.rid = rid;
-		msg.is_server = FALSE;
+		msg.is_server = false;
 		msg.read_ahead_kb = readAhead;
 		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) {
 			openDevices[i] = uid;
@@ -590,7 +590,7 @@ static int dnbd3_daemon_send(int argc, char **argv)
 
 	if ( (s = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1 ) {
 		perror( "socket" );
-		return FALSE;
+		return false;
 	}
 
 	remote.sun_family = AF_UNIX;
@@ -598,7 +598,7 @@ static int dnbd3_daemon_send(int argc, char **argv)
 	if ( connect( s, (struct sockaddr *)&remote, sizeof(remote) ) == -1 ) {
 		perror( "connect" );
 		close( s );
-		return FALSE;
+		return false;
 	}
 	// (Re)build argument string into a single one, arguments separated by null chars
 	char *pos = buffer;
@@ -612,13 +612,13 @@ static int dnbd3_daemon_send(int argc, char **argv)
 	if ( send( s, &len, sizeof(len), 0 ) != sizeof(len) || send( s, buffer, len, 0 ) != len ) {
 		perror( "Sending request to daemon failed" );
 		close( s );
-		return FALSE;
+		return false;
 	}
 	// Read reply
 	if ( recv( s, &len, sizeof(len), MSG_WAITALL ) != sizeof(len) ) {
 		perror( "Reading length-field from daemon failed" );
 		close( s );
-		return FALSE;
+		return false;
 	}
 	if ( len <= 0 ) {
 		printf( "Daemon returned exit code %d\n", -len );
@@ -628,16 +628,16 @@ static int dnbd3_daemon_send(int argc, char **argv)
 	if ( len + 4 > SOCK_BUFFER ) {
 		printf( "Reply too long (is %d bytes)\n", len );
 		close( s );
-		return FALSE;
+		return false;
 	}
 	if ( recv( s, buffer, len, MSG_WAITALL ) != len ) {
 		perror( "Reading reply payload from daemon failed" );
 		close( s );
-		return FALSE;
+		return false;
 	}
 	buffer[len] = '\0';
 	printf( "%s", buffer );
-	return TRUE;
+	return true;
 }
 
 static void dnbd3_print_help(char *argv_0)
