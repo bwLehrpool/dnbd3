@@ -501,7 +501,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 			goto error_cleanup;
 		}
 		if ( ret != REPLY_OK ) {
-			memlogf( "[INFO] Uplink: Connection error (%s)", link->image->path );
+			memlogf( "[INFO] Uplink: Connection error %d (%s)", ret, link->image->path );
 			goto error_cleanup;
 		}
 		if ( inReply.size > 9000000 ) { // TODO: Configurable

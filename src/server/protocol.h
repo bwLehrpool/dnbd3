@@ -3,6 +3,7 @@
 
 #include "../types.h"
 #include "../serialize.h"
+#include <errno.h>
 
 #define FLAGS8_SERVER (1)
 
@@ -19,8 +20,8 @@ static inline int dnbd3_read_reply(int sock, dnbd3_reply_t *reply, bool wait)
 	int ret = recv( sock, reply, sizeof(*reply), (wait ? MSG_WAITALL : MSG_DONTWAIT) | MSG_NOSIGNAL );
 	if ( ret == 0 ) return REPLY_CLOSED;
 	if ( ret < 0 ) {
-		if ( ret == EAGAIN || ret == EWOULDBLOCK ) return REPLY_AGAIN;
-		if ( ret == EINTR ) return REPLY_INTR;
+		if ( errno == EAGAIN || errno == EWOULDBLOCK ) return REPLY_AGAIN;
+		if ( errno == EINTR ) return REPLY_INTR;
 		return REPLY_ERRNO;
 	}
 	if ( !wait && ret != sizeof(*reply) ) ret += recv( sock, reply + ret, sizeof(*reply) - ret, MSG_WAITALL | MSG_NOSIGNAL );
