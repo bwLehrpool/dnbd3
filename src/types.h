@@ -34,6 +34,12 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #endif
 
+#ifdef __GNUC__
+#define UNUSED __attribute__ ((unused))
+#else
+#define UNUSED dfg dsfg dg
+#endif
+
 // ioctl
 #define DNBD3_MAGIC     'd'
 #define IOCTL_OPEN      _IO(0xab, 1)

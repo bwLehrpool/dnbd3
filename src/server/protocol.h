@@ -59,7 +59,7 @@ static inline bool dnbd3_select_image(int sock, char *lower_name, uint16_t rid, 
 	iov[0].iov_len = sizeof(request);
 	iov[1].iov_base = &serialized;
 	iov[1].iov_len = len;
-	return writev( sock, iov, 2 ) == len + sizeof(request);
+	return writev( sock, iov, 2 ) == len + (ssize_t)sizeof(request);
 }
 
 static inline bool dnbd3_get_block(int sock, uint64_t offset, uint32_t size, uint64_t handle)
@@ -95,9 +95,9 @@ static inline bool dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, siz
 	if ( reply.cmd != CMD_GET_CRC32 || reply.size > *bufferLen ) return false;
 	*bufferLen = reply.size;
 	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL | MSG_NOSIGNAL ) != sizeof(uint32_t) ) return false;
-	int done = 0;
+	uint32_t done = 0;
 	while ( done < reply.size ) {
-		const int ret = recv( sock, (char*)buffer + done, reply.size - done, 0 );
+		const ssize_t ret = recv( sock, (char*)buffer + done, reply.size - done, 0 );
 		if ( ret <= 0 ) return false;
 		done += ret;
 	}

@@ -97,7 +97,7 @@ void integrity_check(dnbd3_image_t *image, int block)
 	pthread_mutex_unlock( &integrityQueueLock );
 }
 
-static void* integrity_main(void *data)
+static void* integrity_main(void * data UNUSED)
 {
 	int i;
 	uint8_t *buffer = NULL;

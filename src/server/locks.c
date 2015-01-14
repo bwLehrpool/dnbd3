@@ -259,7 +259,7 @@ void debug_dump_lock_stats()
 	pthread_spin_unlock( &initdestory );
 }
 
-static void *debug_thread_watchdog(void *something)
+static void *debug_thread_watchdog(void *something UNUSED)
 {
 	setThreadName("debug-watchdog");
 	while ( !_shutdown ) {

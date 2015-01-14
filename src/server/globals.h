@@ -53,7 +53,7 @@ struct _dnbd3_connection
 	dnbd3_host_t betterServer;  // The better server
 	int betterFd;               // Active connection to better server, ready to use
 	uint8_t *recvBuffer;        // Buffer for receiving payload
-	int recvBufferLen;          // Len of ^^
+	uint32_t recvBufferLen;     // Len of ^^
 	volatile bool shutdown;     // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
 	int replicatedLastBlock;    // bool telling if the last block has been replicated yet
 	uint64_t replicationHandle; // Handle of pending replication request

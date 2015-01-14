@@ -107,7 +107,7 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 		iov[0].iov_len = sizeof(dnbd3_reply_t);
 		iov[1].iov_base = payload;
 		iov[1].iov_len = (size_t)size;
-		if ( writev( sock, iov, 2 ) != sizeof(dnbd3_reply_t) + size ) {
+		if ( (size_t)writev( sock, iov, 2 ) != sizeof(dnbd3_reply_t) + size ) {
 			printf( "[DEBUG] Send failed (reply with payload of %u bytes)\n", size );
 			return false;
 		}

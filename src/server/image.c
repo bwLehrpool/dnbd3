@@ -566,14 +566,15 @@ static bool image_load(char *base, char *path, int withUplink)
 		goto load_error;
 	}
 	// Determine file size
-	int64_t fileSize = lseek( fdImage, 0, SEEK_END );
-	if ( fileSize < 0 ) {
+	const off_t seekret = lseek( fdImage, 0, SEEK_END );
+	if ( seekret < 0 ) {
 		memlogf( "[ERROR] Could not seek to end of file '%s'", path );
 		goto load_error;
-	} else if ( fileSize == 0 ) {
+	} else if ( seekret == 0 ) {
 		memlogf( "[WARNING] Empty image file '%s'", path );
 		goto load_error;
 	}
+	uint64_t fileSize = (uint64_t)seekret;
 	// Filesize must be multiple of 4096
 	if ( fileSize % DNBD3_BLOCK_SIZE != 0 ) {
 		memlogf( "[INFO] Image size of '%s' is not a multiple of %d, fixing...", path, (int)DNBD3_BLOCK_SIZE );
@@ -715,9 +716,9 @@ static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t f
 	sprintf( mapFile, "%s.map", imagePath );
 	int fdMap = open( mapFile, O_RDONLY );
 	if ( fdMap >= 0 ) {
-		size_t map_size = IMGSIZE_TO_MAPBYTES( fileSize );
+		const int map_size = IMGSIZE_TO_MAPBYTES( fileSize );
 		retval = calloc( 1, map_size );
-		int rd = read( fdMap, retval, map_size );
+		const ssize_t rd = read( fdMap, retval, map_size );
 		if ( map_size != rd ) {
 			memlogf( "[WARNING] Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, fileSize );
 			// Could not read complete map, that means the rest of the image file will be considered incomplete
@@ -750,7 +751,7 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 					memlogf( "[WARNING] Error reading first crc32 of '%s'", imagePath );
 				} else {
 					retval = calloc( hashBlocks, sizeof(uint32_t) );
-					if ( read( fdHash, retval, hashBlocks * sizeof(uint32_t) ) != hashBlocks * sizeof(uint32_t) ) {
+					if ( read( fdHash, retval, hashBlocks * sizeof(uint32_t) ) != hashBlocks * (ssize_t)sizeof(uint32_t) ) {
 						free( retval );
 						retval = NULL;
 						memlogf( "[WARNING] Could not read crc32 list of '%s'", imagePath );
@@ -1061,7 +1062,7 @@ bool image_generateCrcFile(char *image)
 		int remaining = HASH_BLOCK_SIZE;
 		hasSum = false;
 		while ( remaining > 0 ) {
-			const int blockSize = MIN(remaining, sizeof(buffer));
+			const int blockSize = MIN(remaining, (int)sizeof(buffer));
 			const int ret = read( fdImage, buffer, blockSize );
 			if ( ret < 0 ) { // Error
 				printf( "Read error\n" );
@@ -1163,9 +1164,9 @@ int image_getCompletenessEstimate(const dnbd3_image_t * const image)
 	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
 	int i;
 	int percent = 0;
-	const size_t len = IMGSIZE_TO_MAPBYTES(image->filesize);
+	const int len = IMGSIZE_TO_MAPBYTES(image->filesize);
 	if ( len == 0 ) return 0;
-	for (i = 0; i < len; ++i) {
+	for ( i = 0; i < len; ++i ) {
 		if ( image->cache_map[i] == 0xff ) {
 			percent += 100;
 		} else if ( image->cache_map[i] > 0 ) {
@@ -1192,7 +1193,7 @@ bool image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, cons
 		int bytes = 0;
 		const int bytesToGo = MIN(HASH_BLOCK_SIZE, fileSize - ((int64_t)*blocks * HASH_BLOCK_SIZE));
 		while ( bytes < bytesToGo ) {
-			const int n = MIN(sizeof(buffer), bytesToGo - bytes);
+			const int n = MIN((int)sizeof(buffer), bytesToGo - bytes);
 			const int r = read( fd, buffer, n );
 			if ( r <= 0 ) {
 				memlogf( "Read error" );
@@ -1251,7 +1252,7 @@ static bool image_ensureDiskSpace(uint64_t size)
 			memlogf( "[WARNING] Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", e );
 			return true;
 		}
-		if ( available > size ) return true;
+		if ( (uint64_t)available > size ) return true;
 		if ( dnbd3_serverUptime() < 10 * 3600 ) {
 			memlogf( "[INFO] Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024ll * 1024ll)),
 			        (int)(size / (1024 * 1024)) );

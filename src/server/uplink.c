@@ -458,12 +458,11 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		spin_unlock( &image->lock );
 		return;
 	}
-	const size_t len = IMGSIZE_TO_MAPBYTES( image->filesize ) - 1;
+	const int len = IMGSIZE_TO_MAPBYTES( image->filesize ) - 1;
 	const uint32_t requestBlockSize = DNBD3_BLOCK_SIZE * 8;
 	for (int i = 0; i <= len; ++i) {
 		if ( image->cache_map == NULL || link->fd == -1 ) break;
 		if ( image->cache_map[i] == 0xff || (i == len && link->replicatedLastBlock) ) continue;
-		if ( i == len ) link->replicatedLastBlock = true; // Special treatment, last byte in map could represent less than 8 blocks
 		link->replicationHandle = 1; // Prevent race condition
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
@@ -474,6 +473,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 			printf( "[DEBUG] Error sending background replication request to uplink server!\n" );
 			return;
 		}
+		if ( i == len ) link->replicatedLastBlock = true; // Special treatment, last byte in map could represent less than 8 blocks
 		return; // Request was sent, bail out, nothing is locked
 	}
 	spin_unlock( &image->lock );

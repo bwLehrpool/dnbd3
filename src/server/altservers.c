@@ -66,8 +66,7 @@ int altservers_load()
 	FILE *fp = fopen( name, "r" );
 	free( name );
 	if ( fp == NULL ) return -1;
-	while ( !feof( fp ) ) {
-		if ( fgets( buffer, 1000, fp ) == NULL ) break;
+	while ( fgets( buffer, 1000, fp ) != NULL ) {
 		bool isPrivate = false;
 		bool isClientOnly = false;
 		for (line = buffer; *line != '\0'; ) { // Trim left and scan for "-" prefix
@@ -76,9 +75,15 @@ int altservers_load()
 			else if ( *line != ' ' && *line != '\t' ) break;
 			line++;
 		}
+		if ( *line == '\r' || *line == '\n' || *line == '\0' ) continue; // Ignore empty lines
 		trim_right( line );
-		space = strchr( line, ' ' );
-		if ( space != NULL ) *space++ = '\0';
+		space = line;
+		while ( *space != '\0' ) {
+			if ( *space == ' ' || *space == '\t' ) break;
+			space++;
+		}
+		if ( *space == '\0' ) space = NULL;
+		else *space++ = '\0';
 		if ( !parse_address( line, &host ) ) {
 			if ( space != NULL ) *--space = ' ';
 			memlogf( "[WARNING] Invalid entry in alt-servers file ignored: '%s'", line );
@@ -336,7 +341,7 @@ void altservers_serverFailed(const dnbd3_host_t * const host)
  * will update quite quickly. Needs to be improved some time, ie. by only
  * updating the rtt if the last update was at least X seconds ago.
  */
-static void *altservers_main(void *data)
+static void *altservers_main(void *data UNUSED)
 {
 	const int ALTS = 4;
 	int ret, itLink, itAlt, numAlts;

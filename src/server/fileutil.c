@@ -53,7 +53,7 @@ bool file_alloc(int fd, uint64_t offset, uint64_t size)
 {
 	if ( fallocate( fd, 0, offset, size ) == 0 ) return true; // fast way
 	if ( posix_fallocate( fd, offset, size ) == 0 ) return true; // slow way
-	if ( lseek( fd, offset + size - 1, SEEK_SET ) != offset ) return false; // dumb way
+	if ( lseek( fd, offset + size - 1, SEEK_SET ) != (off_t)offset ) return false; // dumb way
 	if ( write( fd, "", 1 ) != 1 ) return false;
 	return true;
 }

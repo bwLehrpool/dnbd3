@@ -189,11 +189,14 @@ struct kobj_type device_ktype =
 
 void dnbd3_sysfs_init(dnbd3_device_t *dev)
 {
+	int error;
 	struct kobject *kobj = &dev->kobj;
 	struct kobj_type *ktype = &device_ktype;
 	struct kobject *parent = &disk_to_dev(dev->disk)->kobj;
 
-	kobject_init_and_add(kobj, ktype, parent, "net");
+	error = kobject_init_and_add(kobj, ktype, parent, "%s", "net");
+	if (error)
+		printk("Error initializing dnbd3 device!\n");
 }
 
 void dnbd3_sysfs_exit(dnbd3_device_t *dev)

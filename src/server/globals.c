@@ -22,7 +22,7 @@ int _clientTimeout = 15000;
 #define SAVE_TO_VAR_BOOL(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "true") == 0; } while (0)
 #define SAVE_TO_VAR_INT(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = atoi(value); } while (0)
 
-static int ini_handler(void *custom, const char* section, const char* key, const char* value)
+static int ini_handler(void *custom UNUSED, const char* section, const char* key, const char* value)
 {
 	if ( _basePath == NULL ) SAVE_TO_VAR_STR( dnbd3, basePath );
 	SAVE_TO_VAR_BOOL( dnbd3, vmdkLegacyMode );
