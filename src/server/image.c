@@ -40,7 +40,7 @@ typedef struct
 	time_t deadline;
 } imagecache;
 static imagecache remoteCloneCache[CACHELEN];
-static int remoteCloneCacheIndex = -1;
+static int remoteCloneCacheIndex = 0;
 
 // ##########################################
 
@@ -232,7 +232,7 @@ bool image_saveCacheMap(dnbd3_image_t *image)
  * point...
  * Locks on: _images_lock, _images[].lock
  */
-dnbd3_image_t* image_get(char *name, uint16_t revision)
+dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 {
 	int i;
 	dnbd3_image_t *candidate = NULL;
@@ -264,6 +264,8 @@ dnbd3_image_t* image_get(char *name, uint16_t revision)
 	spin_unlock( &_images_lock );
 	candidate->users++;
 	spin_unlock( &candidate->lock );
+
+	if ( !checkIfWorking ) return candidate;
 
 	// Found, see if it works
 	struct stat st;
@@ -420,16 +422,18 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	//
 	image_saveCacheMap( image );
 	uplink_shutdown( image );
+	spin_lock( &image->lock );
 	free( image->cache_map );
 	free( image->crc32 );
 	free( image->path );
 	free( image->lower_name );
+	spin_unlock( &image->lock );
 	if ( image->cacheFd != -1 ) {
 		close( image->cacheFd );
 	}
 	spin_destroy( &image->lock );
 	//
-	memset( image, 0, sizeof(dnbd3_image_t) );
+	memset( image, 0, sizeof(*image) );
 	free( image );
 	return NULL ;
 }
@@ -557,7 +561,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	strtolower( imgName );
 
 	// Get pointer to already existing image if possible
-	existing = image_get( imgName, revision );
+	existing = image_get( imgName, revision, true );
 
 	// ### Now load the actual image related data ###
 	fdImage = open( path, O_RDONLY );
@@ -874,19 +878,15 @@ bool image_create(char *image, int revision, uint64_t size)
  */
 dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 {
-	if ( !_isProxy ) return image_get( name, revision );
+	if ( !_isProxy ) return image_get( name, revision, true );
 	int i;
 	const size_t len = strlen( name );
 	// Sanity check
 	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL ;
 	// Already existing locally?
-	dnbd3_image_t *image = image_get( name, revision );
+	dnbd3_image_t *image = image_get( name, revision, true );
 	if ( image != NULL ) return image;
 	// Doesn't exist, try remote if not already tried it recently
-	if ( remoteCloneCacheIndex == -1 ) {
-		remoteCloneCacheIndex = 0;
-		memset( remoteCloneCache, 0, sizeof(remoteCloneCache) );
-	}
 	const time_t now = time( NULL );
 
 	char *cmpname = name;
@@ -897,10 +897,10 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 		        || remoteCloneCache[i].deadline < now
 		        || strcmp( cmpname, remoteCloneCache[i].name ) != 0 ) continue;
 		pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
-		return image_get( name, revision );
+		return image_get( name, revision, true );
 	}
 	// Re-check to prevent two clients at the same time triggering this
-	image = image_get( name, revision );
+	image = image_get( name, revision, true );
 	if ( image != NULL ) {
 		pthread_mutex_unlock( &remoteCloneLock );
 		return image;
@@ -940,11 +940,13 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	}
 	pthread_mutex_unlock( &remoteCloneLock );
 	// If everything worked out, this call should now actually return the image
-	image = image_get( name, remoteRid );
+	image = image_get( name, remoteRid, false );
 	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
 		// If so, init the uplink and pass it the socket
 		uplink_init( image, uplinkSock, uplinkServer );
-		image->working = true;
+		i = 0;
+		while ( !image->working && ++i < 100 )
+			usleep( 1000 );
 	} else if ( uplinkSock >= 0 ) {
 		close( uplinkSock );
 	}

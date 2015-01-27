@@ -107,7 +107,7 @@ struct _dnbd3_image
 	int rid;               // revision of image
 	int users;             // clients currently using this image
 	time_t atime;          // last access time
-	bool working;          // true if image exists and completeness is == 100% or a working upstream proxy is connected
+	volatile bool working; // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;
 };
 

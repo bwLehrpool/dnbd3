@@ -72,7 +72,6 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 			free( entry );
 			return false;
 		}
-		printf( "[DEBUG] Thread created!\n" );
 	}
 	entry->next = NULL;
 	entry->startRoutine = startRoutine;
@@ -125,7 +124,6 @@ static void *threadpool_worker(void *entryPtr)
 	}
 	signal_close( entry->signalFd );
 	free( entry );
-	printf(" [DEBUG] Thread killed!\n" );
 	return NULL;
 }
 

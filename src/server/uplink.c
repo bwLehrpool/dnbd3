@@ -43,7 +43,8 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	assert( image != NULL );
 	spin_lock( &image->lock );
 	if ( image->uplink != NULL ) {
-		goto failure;
+		spin_unlock( &image->lock );
+		return true; // There's already an uplink, so should we consider this success or failure?
 	}
 	if ( image->cache_map == NULL ) {
 		memlogf( "[WARNING] Uplink was requested for image %s, but it is already complete", image->lower_name );
@@ -66,47 +67,49 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	link->recvBufferLen = 0;
 	link->shutdown = false;
 	spin_init( &link->queueLock, PTHREAD_PROCESS_PRIVATE );
-	if ( 0 != thread_create( &(link->thread), NULL, &uplink_mainloop, (void *)(uintptr_t)link ) ) {
-		memlogf( "[ERROR] Could not start thread for new client." );
+	if ( 0 != thread_create( &(link->thread), NULL, &uplink_mainloop, (void *)link ) ) {
+		memlogf( "[ERROR] Could not start thread for new uplink." );
 		goto failure;
 	}
 	spin_unlock( &image->lock );
 	return true;
 failure: ;
-	if ( link != NULL ) free( link );
-	link = image->uplink = NULL;
+	if ( link != NULL ) {
+		free( link );
+		link = image->uplink = NULL;
+	}
 	spin_unlock( &image->lock );
 	return false;
 }
 
 /**
  * Locks on image.lock, uplink.lock
- * Sets image->uplink to NULL while locked, so
- * calling it multiple times, even concurrently, will
+ * Calling it multiple times, even concurrently, will
  * not break anything.
  */
 void uplink_shutdown(dnbd3_image_t *image)
 {
+	bool join = false;
+	pthread_t thread;
 	assert( image != NULL );
 	spin_lock( &image->lock );
-	if ( image->uplink == NULL || image->uplink->shutdown ) {
+	if ( image->uplink == NULL ) {
 		spin_unlock( &image->lock );
 		return;
 	}
 	dnbd3_connection_t * const uplink = image->uplink;
 	spin_lock( &uplink->queueLock );
-	if ( uplink->shutdown ) {
-		spin_unlock( &uplink->queueLock );
-		spin_unlock( &image->lock );
-		return;
+	if ( !uplink->shutdown ) {
+		uplink->shutdown = true;
+		signal_call( uplink->signal );
+		thread = uplink->thread;
+		join = true;
 	}
-	image->uplink = NULL;
-	uplink->shutdown = true;
-	signal_call( uplink->signal );
-	pthread_t thread = uplink->thread;
 	spin_unlock( &uplink->queueLock );
 	spin_unlock( &image->lock );
-	thread_join( thread, NULL );
+	if ( join ) thread_join( thread, NULL );
+	while ( image->uplink != NULL )
+		usleep( 10000 );
 }
 
 /**
@@ -140,6 +143,11 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 		return false;
 	}
 	dnbd3_connection_t * const uplink = client->image->uplink;
+	if ( uplink->shutdown ) {
+		spin_unlock( &client->image->lock );
+		printf( "[DEBUG] Uplink request for image with uplink shutting down (%s)\n", client->image->lower_name );
+		return false;
+	}
 	// Check if the client is the same host as the uplink. If so assume this is a circular proxy chain
 	if ( isSameAddress( &uplink->currentServer, &client->host ) ) {
 		spin_unlock( &client->image->lock );
@@ -253,7 +261,7 @@ static void* uplink_mainloop(void *data)
 			link->image->working = true;
 			buffer[0] = '@';
 			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
-				printf( "[DEBUG] Now connected to %s\n", buffer + 1 );
+				printf( "[DEBUG] (Uplink %s) Now connected to %s\n", link->image->lower_name, buffer + 1 );
 				setThreadName( buffer );
 			}
 			// Re-send all pending requests
