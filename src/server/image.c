@@ -943,7 +943,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	image = image_get( name, remoteRid, false );
 	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
 		// If so, init the uplink and pass it the socket
-		uplink_init( image, uplinkSock, uplinkServer );
+		if ( !uplink_init( image, uplinkSock, uplinkServer ) ) close( uplinkSock );
 		i = 0;
 		while ( !image->working && ++i < 100 )
 			usleep( 1000 );

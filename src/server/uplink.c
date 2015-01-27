@@ -44,6 +44,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	spin_lock( &image->lock );
 	if ( image->uplink != NULL ) {
 		spin_unlock( &image->lock );
+		if ( sock >= 0 ) close( sock );
 		return true; // There's already an uplink, so should we consider this success or failure?
 	}
 	if ( image->cache_map == NULL ) {
