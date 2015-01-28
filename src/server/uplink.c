@@ -218,7 +218,7 @@ static void* uplink_mainloop(void *data)
 	int numSocks, i, waitTime;
 	int altCheckInterval = SERVER_RTT_DELAY_INIT;
 	int discoverFailCount = 0;
-	time_t nextAltCheck = 0;
+	time_t nextAltCheck = 0, nextKeepalive = 0;
 	char buffer[200];
 	//
 	assert( link != NULL );
@@ -302,7 +302,8 @@ static void* uplink_mainloop(void *data)
 					link->fd = -1;
 					close( events[i].data.fd );
 					printf( "[DEBUG] Uplink gone away, panic!\n" );
-					nextAltCheck = 0;
+				} else if ( events[i].data.fd == link->signal ) {
+					printf( "[DEBUG] Error on uplink signal fd!\n" );
 				} else {
 					printf( "[DEBUG] Error on unknown FD in uplink epoll\n" );
 					close( events[i].data.fd );
@@ -329,9 +330,18 @@ static void* uplink_mainloop(void *data)
 			}
 		}
 		// Done handling epoll sockets
+		const time_t now = time( NULL );
+		// Send keep alive if nothing is happening
+		if ( link->fd != -1 && link->replicationHandle == 0 && now > nextKeepalive ) {
+			nextKeepalive = now + 29;
+			if ( !uplink_sendKeepalive( link->fd ) ) {
+				const int fd = link->fd;
+				link->fd = -1;
+				close( fd );
+			}
+		}
 		// See if we should trigger an RTT measurement
 		if ( link->rttTestResult == RTT_IDLE || link->rttTestResult == RTT_DONTCHANGE ) {
-			const time_t now = time( NULL );
 			if ( now + SERVER_RTT_DELAY_FAILED < nextAltCheck ) {
 				// This probably means the system time was changed - handle this case properly by capping the timeout
 				nextAltCheck = now + SERVER_RTT_DELAY_FAILED / 2;
@@ -348,16 +358,6 @@ static void* uplink_mainloop(void *data)
 				} else {
 					// Not complete - do measurement
 					altservers_findUplink( link ); // This will set RTT_INPROGRESS (synchronous)
-					// Also send a keepalive packet to the currently connected server
-					if ( link->fd != -1 ) {
-						if ( !uplink_sendKeepalive( link->fd ) ) {
-							printf( "[DEBUG] Error sending keep-alive to uplink\n" );
-							altservers_serverFailed( &link->currentServer );
-							const int fd = link->fd;
-							link->fd = -1;
-							close( fd );
-						}
-					}
 				}
 				altCheckInterval = MIN(altCheckInterval + 1, SERVER_RTT_DELAY_MAX);
 				nextAltCheck = now + altCheckInterval;
@@ -365,13 +365,12 @@ static void* uplink_mainloop(void *data)
 		} else if ( link->rttTestResult == RTT_NOT_REACHABLE ) {
 			link->rttTestResult = RTT_IDLE;
 			discoverFailCount++;
-			nextAltCheck = time( NULL ) + (discoverFailCount < 5 ? altCheckInterval : SERVER_RTT_DELAY_FAILED);
+			nextAltCheck = now + (discoverFailCount < 5 ? altCheckInterval : SERVER_RTT_DELAY_FAILED);
 		}
-		// TODO: If background replication is disabled, send keepalive every 30 seconds or so
 #ifdef _DEBUG
 		if ( link->fd != -1 && !link->shutdown ) {
 			bool resend = false;
-			time_t deadline = time( NULL ) - 15;
+			const time_t deadline = now - 15;
 			spin_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
@@ -468,6 +467,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		return;
 	}
 	const int len = IMGSIZE_TO_MAPBYTES( image->filesize ) - 1;
+	// Needs to be 8 (bit->byte, bitmap)
 	const uint32_t requestBlockSize = DNBD3_BLOCK_SIZE * 8;
 	for (int i = 0; i <= len; ++i) {
 		if ( image->cache_map == NULL || link->fd == -1 ) break;
@@ -475,7 +475,6 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		link->replicationHandle = 1; // Prevent race condition
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
-		// Needs to be 8 (bit->byte, bitmap)
 		const uint64_t offset = link->replicationHandle = (uint64_t)i * (uint64_t)requestBlockSize;
 		const uint32_t size = MIN( image->filesize - offset, requestBlockSize );
 		if ( !dnbd3_get_block( link->fd, offset, size, link->replicationHandle ) ) {

@@ -32,7 +32,7 @@ pthread_spinlock_t _images_lock;
 
 static pthread_mutex_t remoteCloneLock = PTHREAD_MUTEX_INITIALIZER;
 #define NAMELEN  500
-#define CACHELEN 100
+#define CACHELEN 20
 typedef struct
 {
 	char name[NAMELEN];
@@ -890,14 +890,16 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	const time_t now = time( NULL );
 
 	char *cmpname = name;
+	int useIndex = -1;
 	if ( len >= NAMELEN ) cmpname += 1 + len - NAMELEN;
 	pthread_mutex_lock( &remoteCloneLock );
 	for (i = 0; i < CACHELEN; ++i) {
-		if ( remoteCloneCache[i].rid != revision
-		        || remoteCloneCache[i].deadline < now
-		        || strcmp( cmpname, remoteCloneCache[i].name ) != 0 ) continue;
-		pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
-		return image_get( name, revision, true );
+		if ( remoteCloneCache[i].rid == revision && strcmp( cmpname, remoteCloneCache[i].name ) == 0 ) {
+			useIndex = i;
+			if ( remoteCloneCache[i].deadline < now ) break;
+			pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
+			return image_get( name, revision, true );
+		}
 	}
 	// Re-check to prevent two clients at the same time triggering this
 	image = image_get( name, revision, true );
@@ -908,10 +910,12 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	// Reaching this point means we should contact an authority server
 	serialized_buffer_t serialized;
 	// Mark as recently checked
-	remoteCloneCacheIndex = (remoteCloneCacheIndex + 1) % CACHELEN;
-	remoteCloneCache[remoteCloneCacheIndex].deadline = now + SERVER_REMOTE_IMAGE_CHECK_CACHETIME;
-	snprintf( remoteCloneCache[remoteCloneCacheIndex].name, NAMELEN, "%s", cmpname );
-	remoteCloneCache[remoteCloneCacheIndex].rid = revision;
+	if ( useIndex == -1 ) {
+		useIndex = remoteCloneCacheIndex = (remoteCloneCacheIndex + 1) % CACHELEN;
+	}
+	remoteCloneCache[useIndex].deadline = now + SERVER_REMOTE_IMAGE_CHECK_CACHETIME;
+	snprintf( remoteCloneCache[useIndex].name, NAMELEN, "%s", cmpname );
+	remoteCloneCache[useIndex].rid = revision;
 	// Get some alt servers and try to get the image from there
 	dnbd3_host_t servers[4];
 	int uplinkSock = -1;
