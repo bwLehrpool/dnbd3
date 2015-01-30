@@ -268,12 +268,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	if ( !checkIfWorking ) return candidate;
 
 	// Found, see if it works
-	struct stat st;
-	if ( candidate->working && stat( candidate->path, &st ) < 0 ) {
-		// Either the image is already marked as "not working", or the file cannot be accessed
-		printf( "[DEBUG] File '%s' has gone away...\n", candidate->path );
-		candidate->working = false; // No file? OUT!
-	} else if ( !candidate->working && candidate->cache_map != NULL && candidate->uplink == NULL && file_isWritable( candidate->path ) ) {
+	if ( !candidate->working && candidate->cache_map != NULL && candidate->uplink == NULL && file_isWritable( candidate->path ) ) {
 		// Not working and has file + cache-map, try to init uplink (uplink_init will check if proxy mode is enabled)
 		uplink_init( candidate, -1, NULL );
 	} else if ( candidate->working && candidate->uplink != NULL && candidate->uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
@@ -428,9 +423,8 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	free( image->path );
 	free( image->lower_name );
 	spin_unlock( &image->lock );
-	if ( image->cacheFd != -1 ) {
-		close( image->cacheFd );
-	}
+	if ( image->cacheFd != -1 ) close( image->cacheFd );
+	if ( image->readFd != -1 ) close( image->readFd );
 	spin_destroy( &image->lock );
 	//
 	memset( image, 0, sizeof(*image) );
@@ -613,6 +607,8 @@ static bool image_load(char *base, char *path, int withUplink)
 		        && memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlockCount ) != 0 ) {
 			// Image will be replaced below
 			memlogf( "[WARNING] CRC32 list of image '%s:%d' has changed.", existing->lower_name, (int)existing->rid );
+			memlogf( "[WARNING] The image will be reloaded, but you should NOT replace existing images while the server is running." );
+			memlogf( "[WARNING] Actually even if it's not running this should never be done. Use a new RID instead!" );
 		} else if ( existing->crc32 == NULL && crc32list != NULL ) {
 			memlogf( "[INFO] Found CRC-32 list for already loaded image '%s:%d', adding...", existing->lower_name, (int)existing->rid );
 			existing->crc32 = crc32list;
@@ -647,6 +643,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->filesize = fileSize;
 	image->rid = revision;
 	image->users = 0;
+	image->readFd = -1;
 	image->cacheFd = -1;
 	image->working = (image->cache_map == NULL );
 	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
@@ -700,6 +697,9 @@ static bool image_load(char *base, char *path, int withUplink)
 		_images[_num_images++] = image;
 		printf( "[DEBUG] Loaded image '%s'\n", image->lower_name );
 	}
+	// Keep fd for reading
+	image->readFd = fdImage;
+	fdImage = -1;
 	spin_unlock( &_images_lock );
 
 	function_return = true;
@@ -1191,22 +1191,20 @@ bool image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, cons
 {
 	char buffer[40000];
 	while ( *blocks != -1 ) {
-		if ( lseek( fd, (int64_t)*blocks * HASH_BLOCK_SIZE, SEEK_SET ) != (int64_t)*blocks * HASH_BLOCK_SIZE ) {
-			memlogf( "Seek error" );
-			return false;
-		}
 		uint32_t crc = crc32( 0L, Z_NULL, 0 );
 		int bytes = 0;
-		const int bytesToGo = MIN(HASH_BLOCK_SIZE, fileSize - ((int64_t)*blocks * HASH_BLOCK_SIZE));
+		const int bytesToGo = MIN( HASH_BLOCK_SIZE, fileSize - ((int64_t)*blocks * HASH_BLOCK_SIZE) );
+		off_t readPos = (int64_t)*blocks * HASH_BLOCK_SIZE;
 		while ( bytes < bytesToGo ) {
-			const int n = MIN((int)sizeof(buffer), bytesToGo - bytes);
-			const int r = read( fd, buffer, n );
+			const int n = MIN( (int)sizeof(buffer), bytesToGo - bytes );
+			const int r = pread( fd, buffer, n, readPos );
 			if ( r <= 0 ) {
-				memlogf( "Read error" );
+				memlogf( "[WARNING] CRC-Check: Read error (errno=%d)", errno );
 				return false;
 			}
 			crc = crc32( crc, (Bytef*)buffer, r );
 			bytes += r;
+			readPos += r;
 		}
 		if ( crc != crc32list[*blocks] ) {
 			printf( "Block %d is %x, should be %x\n", *blocks, crc, crc32list[*blocks] );

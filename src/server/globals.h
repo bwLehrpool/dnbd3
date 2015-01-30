@@ -103,6 +103,7 @@ struct _dnbd3_image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	dnbd3_connection_t * volatile uplink; // pointer to a server connection
 	uint64_t filesize;     // size of image
+	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int rid;               // revision of image
 	int users;             // clients currently using this image

@@ -121,9 +121,9 @@ static void* integrity_main(void * data UNUSED)
 			if ( checkQueue[i].image == NULL ) continue;
 			dnbd3_image_t * const image = image_lock( checkQueue[i].image );
 			checkQueue[i].image = NULL;
+			if ( i + 1 == queueLen ) queueLen--;
 			if ( image == NULL ) continue;
 			// We have the image. Call image_release() some time
-			if ( i + 1 == queueLen ) queueLen--;
 			spin_lock( &image->lock );
 			if ( image->crc32 != NULL && image->filesize != 0 ) {
 				int const blocks[2] = { checkQueue[i].block, -1 };
@@ -137,15 +137,11 @@ static void* integrity_main(void * data UNUSED)
 				}
 				memcpy( buffer, image->crc32, required );
 				spin_unlock( &image->lock );
-				int fd = open( image->path, O_RDONLY );
-				if ( fd >= 0 ) {
-					if ( image_checkBlocksCrc32( fd, (uint32_t*)buffer, blocks, fileSize ) ) {
-						//printf( "[DEBUG] CRC check of block %d for %s succeeded :-)\n", blocks[0], image->lower_name );
-					} else {
-						memlogf( "[WARNING] Hash check for block %d of %s failed!", blocks[0], image->lower_name );
-						image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
-					}
-					close( fd );
+				if ( image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
+					//printf( "[DEBUG] CRC check of block %d for %s succeeded :-)\n", blocks[0], image->lower_name );
+				} else {
+					memlogf( "[WARNING] Hash check for block %d of %s failed!", blocks[0], image->lower_name );
+					image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
 				}
 				pthread_mutex_lock( &integrityQueueLock );
 			} else {

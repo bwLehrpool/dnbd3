@@ -126,6 +126,7 @@ void *net_client_handler(void *dnbd3_client)
 
 	int num;
 	bool bOk = false;
+	bool hasName = false;
 
 	serialized_buffer_t payload;
 	char *image_name;
@@ -165,19 +166,17 @@ void *net_client_handler(void *dnbd3_client)
 					} else if ( !image->working ) {
 						printf( "[DEBUG] Client requested non-working image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else {
-						image_file = open( image->path, O_RDONLY );
-						if ( image_file >= 0 ) {
-							serializer_reset_write( &payload );
-							serializer_put_uint16( &payload, PROTOCOL_VERSION );
-							serializer_put_string( &payload, image->lower_name );
-							serializer_put_uint16( &payload, image->rid );
-							serializer_put_uint64( &payload, image->filesize );
-							reply.cmd = CMD_SELECT_IMAGE;
-							reply.size = serializer_get_written_length( &payload );
-							if ( send_reply( client->sock, &reply, &payload ) ) {
-								if ( !client->isServer ) image->atime = time( NULL );
-								bOk = true;
-							}
+						image_file = image->readFd;
+						serializer_reset_write( &payload );
+						serializer_put_uint16( &payload, PROTOCOL_VERSION );
+						serializer_put_string( &payload, image->lower_name );
+						serializer_put_uint16( &payload, image->rid );
+						serializer_put_uint64( &payload, image->filesize );
+						reply.cmd = CMD_SELECT_IMAGE;
+						reply.size = serializer_get_written_length( &payload );
+						if ( send_reply( client->sock, &reply, &payload ) ) {
+							if ( !client->isServer ) image->atime = time( NULL );
+							bOk = true;
 						}
 					}
 				}
@@ -191,10 +190,6 @@ void *net_client_handler(void *dnbd3_client)
 			usleep( _serverPenalty );
 		} else if ( !client->isServer && _clientPenalty != 0 ) {
 			usleep( _clientPenalty );
-		}
-		if ( host_to_string( &client->host, buffer, sizeof buffer ) ) {
-			//printf( "[DEBUG] Client %s gets %s\n", buffer, image_name );
-			setThreadName( buffer );
 		}
 		// client handling mainloop
 		while ( recv_request_header( client->sock, &request ) ) {
@@ -290,10 +285,11 @@ void *net_client_handler(void *dnbd3_client)
 				reply.handle = request.handle;
 
 				fixup_reply( reply );
-				pthread_mutex_lock( &client->sendMutex );
+				const bool lock = image->uplink != NULL;
+				if ( lock ) pthread_mutex_lock( &client->sendMutex );
 				// Send reply header
 				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
-					pthread_mutex_unlock( &client->sendMutex );
+					if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 					printf( "[DEBUG] Sending CMD_GET_BLOCK header failed\n" );
 					goto exit_client_cleanup;
 				}
@@ -305,34 +301,42 @@ void *net_client_handler(void *dnbd3_client)
 					while ( done < request.size ) {
 						const ssize_t ret = sendfile( client->sock, image_file, &offset, request.size - done );
 						if ( ret <= 0 ) {
-							pthread_mutex_unlock( &client->sendMutex );
+							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 							printf( "[DEBUG] sendfile failed (image to net. ret=%d, sent %d/%d, errno=%d)\n",
 									(int)ret, (int)done, (int)request.size, (int)errno );
+							if ( errno == EBADF || errno == EINVAL || errno == EIO ) image->working = false;
 							goto exit_client_cleanup;
 						}
 						done += ret;
 					}
 				}
-				pthread_mutex_unlock( &client->sendMutex );
+				if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 				break;
 
 			case CMD_GET_SERVERS:
-				client->isServer = false; // Only clients request list of servers
 				// Build list of known working alt servers
 				num = altservers_getMatching( &client->host, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
 				reply.size = num * sizeof(dnbd3_server_entry_t);
 				send_reply( client->sock, &reply, server_list );
+				client->isServer = false; // Only clients request list of servers
+				goto set_name;
 				break;
 
 			case CMD_KEEPALIVE:
 				reply.cmd = CMD_KEEPALIVE;
 				reply.size = 0;
 				send_reply( client->sock, &reply, NULL );
+set_name: ;
+				if ( !hasName && host_to_string( &client->host, buffer, sizeof buffer ) ) {
+					hasName = true;
+					setThreadName( buffer );
+				}
 				break;
 
 			case CMD_SET_CLIENT_MODE:
 				image->atime = time( NULL );
+				client->isServer = false;
 				break;
 
 			case CMD_GET_CRC32:
@@ -355,8 +359,7 @@ void *net_client_handler(void *dnbd3_client)
 			}
 		}
 	}
-	exit_client_cleanup: ;
-	if ( image_file != -1 ) close( image_file );
+exit_client_cleanup: ;
 	dnbd3_removeClient( client );
 	client = dnbd3_freeClient( client );
 	return NULL ;
