@@ -118,7 +118,6 @@ static void* integrity_main(void * data UNUSED)
 		}
 		for (i = queueLen - 1; i >= 0; --i) {
 			if ( _shutdown ) break;
-			if ( checkQueue[i].image == NULL ) continue;
 			dnbd3_image_t * const image = image_lock( checkQueue[i].image );
 			checkQueue[i].image = NULL;
 			if ( i + 1 == queueLen ) queueLen--;

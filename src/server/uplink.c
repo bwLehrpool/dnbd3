@@ -124,7 +124,7 @@ void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
 		if ( uplink->queue[i].client == client ) {
 			uplink->queue[i].client = NULL;
 			uplink->queue[i].status = ULR_FREE;
-			if ( i > 20 && uplink->queueLen == i + 1 ) uplink->queueLen--;
+			if ( uplink->queueLen == i + 1 ) uplink->queueLen--;
 		}
 	}
 	spin_unlock( &uplink->queueLock );
