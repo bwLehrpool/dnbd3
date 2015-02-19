@@ -24,7 +24,7 @@ static inline int dnbd3_read_reply(int sock, dnbd3_reply_t *reply, bool wait)
 		if ( errno == EINTR ) return REPLY_INTR;
 		return REPLY_ERRNO;
 	}
-	if ( !wait && ret != sizeof(*reply) ) ret += recv( sock, reply + ret, sizeof(*reply) - ret, MSG_WAITALL | MSG_NOSIGNAL );
+	if ( !wait && ret != sizeof(*reply) ) ret += recv( sock, ((char*)reply) + ret, sizeof(*reply) - ret, MSG_WAITALL | MSG_NOSIGNAL );
 	if ( ret != sizeof(*reply) ) return REPLY_INCOMPLETE;
 	fixup_reply( *reply );
 	if ( reply->magic != dnbd3_packet_magic ) return REPLY_WRONGMAGIC;
