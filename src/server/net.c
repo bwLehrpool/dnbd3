@@ -231,10 +231,10 @@ void *net_client_handler(void *dnbd3_client)
 					spin_lock( &image->lock );
 					// Check again as we only aquired the lock just now
 					if ( image->cache_map != NULL ) {
-						// First byte
-						uint64_t pos = start;
 						const uint64_t firstByte = start >> 15;
 						const uint64_t lastByte = (end - 1) >> 15;
+						// First byte
+						uint64_t pos = start;
 						do {
 							const int map_x = (pos >> 12) & 7; // mod 8
 							const uint8_t bit_mask = 1 << map_x;
@@ -243,7 +243,7 @@ void *net_client_handler(void *dnbd3_client)
 								break;
 							}
 							pos += DNBD3_BLOCK_SIZE;
-						} while ( firstByte == (pos >> 15) );
+						} while ( firstByte == (pos >> 15) && pos < end );
 						// Middle - quick checking
 						if ( isCached ) {
 							pos = firstByte + 1;
@@ -256,7 +256,7 @@ void *net_client_handler(void *dnbd3_client)
 							}
 						}
 						// Last byte
-						if ( isCached ) {
+						if ( isCached && firstByte != lastByte ) {
 							pos = lastByte << 15;
 							while ( pos < end ) {
 								assert( lastByte == (pos >> 15) );
@@ -302,8 +302,9 @@ void *net_client_handler(void *dnbd3_client)
 						const ssize_t ret = sendfile( client->sock, image_file, &offset, request.size - done );
 						if ( ret <= 0 ) {
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-							printf( "[DEBUG] sendfile failed (image to net. ret=%d, sent %d/%d, errno=%d)\n",
-									(int)ret, (int)done, (int)request.size, (int)errno );
+							if ( ret < 0 && errno != 32 )
+								printf( "[DEBUG] sendfile failed (image to net. sent %d/%d, errno=%d)\n",
+										(int)done, (int)request.size, (int)errno );
 							if ( errno == EBADF || errno == EINVAL || errno == EIO ) image->working = false;
 							goto exit_client_cleanup;
 						}
