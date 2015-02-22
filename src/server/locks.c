@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "globals.h"
-#include "memlog.h"
+#include "log.h"
 #include "helper.h"
 #include "signal.h"
 
@@ -66,13 +66,13 @@ int debug_spin_init(const char *name, const char *file, int line, pthread_spinlo
 	pthread_spin_lock( &initdestory );
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == lock ) {
-			printf( "[ERROR] Lock %p (%s) already initialized (%s:%d)\n", (void*)lock, name, file, line );
+			logadd( LOG_ERROR, "Lock %p (%s) already initialized (%s:%d)\n", (void*)lock, name, file, line );
 			exit( 4 );
 		}
 		if ( first == -1 && locks[i].lock == NULL ) first = i;
 	}
 	if ( first == -1 ) {
-		printf( "[ERROR] No more free debug locks (%s:%d)\n", file, line );
+		logadd( LOG_ERROR, "No more free debug locks (%s:%d)\n", file, line );
 		pthread_spin_unlock( &initdestory );
 		debug_dump_lock_stats();
 		exit( 4 );
@@ -97,7 +97,7 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 	}
 	pthread_spin_unlock( &initdestory );
 	if ( l == NULL ) {
-		printf( "[ERROR] Tried to lock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
+		logadd( LOG_ERROR, "Tried to lock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		debug_dump_lock_stats();
 		exit( 4 );
 	}
@@ -119,7 +119,7 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 	t->time = 0;
 	pthread_spin_unlock( &initdestory );
 	if ( l->locked ) {
-		printf( "[ERROR] Lock sanity check: lock %p (%s) already locked at %s:%d\n", (void*)lock, name, file, line );
+		logadd( LOG_ERROR, "Lock sanity check: lock %p (%s) already locked at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
 	l->locked = 1;
@@ -144,7 +144,7 @@ int debug_spin_trylock(const char *name, const char *file, int line, pthread_spi
 	}
 	pthread_spin_unlock( &initdestory );
 	if ( l == NULL ) {
-		printf( "[ERROR] Tried to lock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
+		logadd( LOG_ERROR, "Tried to lock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		debug_dump_lock_stats();
 		exit( 4 );
 	}
@@ -167,7 +167,7 @@ int debug_spin_trylock(const char *name, const char *file, int line, pthread_spi
 	pthread_spin_unlock( &initdestory );
 	if ( retval == 0 ) {
 		if ( l->locked ) {
-			printf( "[ERROR] Lock sanity check: lock %p (%s) already locked at %s:%d\n", (void*)lock, name, file, line );
+			logadd( LOG_ERROR, "Lock sanity check: lock %p (%s) already locked at %s:%d\n", (void*)lock, name, file, line );
 			exit( 4 );
 		}
 		l->locked = 1;
@@ -193,11 +193,11 @@ int debug_spin_unlock(const char *name, const char *file, int line, pthread_spin
 	}
 	pthread_spin_unlock( &initdestory );
 	if ( l == NULL ) {
-		printf( "[ERROR] Tried to unlock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
+		logadd( LOG_ERROR, "Tried to unlock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
 	if ( !l->locked ) {
-		printf( "[ERROR] Unlock sanity check: lock %p (%s) not locked at %s:%d\n", (void*)lock, name, file, line );
+		logadd( LOG_ERROR, "Unlock sanity check: lock %p (%s) not locked at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
 	l->locked = 0;
@@ -214,7 +214,7 @@ int debug_spin_destroy(const char *name, const char *file, int line, pthread_spi
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == lock ) {
 			if ( locks[i].locked ) {
-				printf( "[ERROR] Tried to destroy lock %p (%s) at %s:%d when it is still locked\n", (void*)lock, name, file, line );
+				logadd( LOG_ERROR, "Tried to destroy lock %p (%s) at %s:%d when it is still locked\n", (void*)lock, name, file, line );
 				exit( 4 );
 			}
 			locks[i].lock = NULL;
@@ -223,7 +223,7 @@ int debug_spin_destroy(const char *name, const char *file, int line, pthread_spi
 			return pthread_spin_destroy( lock );
 		}
 	}
-	printf( "[ERROR] Tried to destroy non-existent lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
+	logadd( LOG_ERROR, "Tried to destroy non-existent lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 	exit( 4 );
 }
 
@@ -290,7 +290,7 @@ void debug_locks_start_watchdog()
 #ifdef _DEBUG
 	watchdogSignal = signal_new();
 	if ( 0 != thread_create( &watchdog, NULL, &debug_thread_watchdog, (void *)NULL ) ) {
-		memlogf( "[ERROR] Could not start debug-lock watchdog." );
+		logadd( LOG_ERROR, "Could not start debug-lock watchdog." );
 		return;
 	}
 #endif

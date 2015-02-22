@@ -37,7 +37,7 @@
 #include "image.h"
 #include "uplink.h"
 #include "altservers.h"
-#include "memlog.h"
+#include "log.h"
 #include "helper.h"
 #include "../serialize.h"
 #include "../config.h"
@@ -52,18 +52,18 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 		if ( errno == EINTR && ++fails < 10 ) continue;
 		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_SERVER_RETRIES ) return false;
 		if ( errno == EAGAIN ) continue;
-		printf( "[DEBUG] Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), errno );
+		logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), errno );
 		return false;
 	}
 	// Make sure all bytes are in the right order (endianness)
 	fixup_request( *request );
 	if ( request->magic != dnbd3_packet_magic ) {
-		printf( "[DEBUG] Magic in client request incorrect (cmd: %d, len: %d)\n", (int)request->cmd, (int)request->size );
+		logadd( LOG_DEBUG1, "Magic in client request incorrect (cmd: %d, len: %d)\n", (int)request->cmd, (int)request->size );
 		return false;
 	}
 	// Payload sanity check
 	if ( request->cmd != CMD_GET_BLOCK && request->size > MAX_PAYLOAD ) {
-		memlogf( "[WARNING] Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd,
+		logadd( LOG_WARNING, "Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd,
 		        (int)request->size );
 		return false;
 	}
@@ -76,15 +76,15 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 static inline bool recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
 {
 	if ( size == 0 ) {
-		memlogf( "[BUG] Called recv_request_payload() to receive 0 bytes" );
+		logadd( LOG_ERROR, "Called recv_request_payload() to receive 0 bytes" );
 		return false;
 	}
 	if ( size > MAX_PAYLOAD ) {
-		memlogf( "[BUG] Called recv_request_payload() for more bytes than the passed buffer could hold!" );
+		logadd( LOG_ERROR, "Called recv_request_payload() for more bytes than the passed buffer could hold!" );
 		return false;
 	}
 	if ( recv( sock, payload->buffer, size, MSG_WAITALL ) != size ) {
-		printf( "[ERROR] Could not receive request payload of length %d\n", (int)size );
+		logadd( LOG_DEBUG1, "Could not receive request payload of length %d\n", (int)size );
 		return false;
 	}
 	// Prepare payload buffer for reading
@@ -98,7 +98,7 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 	fixup_reply( *reply );
 	if ( !payload || size == 0 ) {
 		if ( send( sock, reply, sizeof(dnbd3_reply_t), 0 ) != sizeof(dnbd3_reply_t) ) {
-			printf( "[DEBUG] Send failed (header-only)\n" );
+			logadd( LOG_DEBUG1, "Send failed (header-only)\n" );
 			return false;
 		}
 	} else {
@@ -108,7 +108,7 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 		iov[1].iov_base = payload;
 		iov[1].iov_len = (size_t)size;
 		if ( (size_t)writev( sock, iov, 2 ) != sizeof(dnbd3_reply_t) + size ) {
-			printf( "[DEBUG] Send failed (reply with payload of %u bytes)\n", size );
+			logadd( LOG_DEBUG1, "Send failed (reply with payload of %u bytes)\n", size );
 			return false;
 		}
 	}
@@ -146,7 +146,7 @@ void *net_client_handler(void *dnbd3_client)
 	// Receive first packet. This must be CMD_SELECT_IMAGE by protocol specification
 	if ( recv_request_header( client->sock, &request ) ) {
 		if ( request.cmd != CMD_SELECT_IMAGE ) {
-			printf( "[DEBUG] Client sent invalid handshake (%d). Dropping Client\n", (int)request.cmd );
+			logadd( LOG_DEBUG1, "Client sent invalid handshake (%d). Dropping Client\n", (int)request.cmd );
 		} else {
 			if ( recv_request_payload( client->sock, request.size, &payload ) ) {
 				client_version = serializer_get_uint16( &payload );
@@ -155,16 +155,16 @@ void *net_client_handler(void *dnbd3_client)
 				client->isServer = serializer_get_uint8( &payload );
 				if ( request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT ) {
 					if ( client_version < MIN_SUPPORTED_CLIENT ) {
-						printf( "[DEBUG] Client too old\n" );
+						logadd( LOG_DEBUG1, "Client too old\n" );
 					} else {
-						printf( "[DEBUG] Incomplete handshake received\n" );
+						logadd( LOG_DEBUG1, "Incomplete handshake received\n" );
 					}
 				} else {
 					client->image = image = image_getOrClone( image_name, rid );
 					if ( image == NULL ) {
-						//printf( "[DEBUG] Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
+						//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else if ( !image->working ) {
-						printf( "[DEBUG] Client requested non-working image '%s' (rid:%d), rejected\n", image_name, (int)rid );
+						logadd( LOG_DEBUG1, "Client requested non-working image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else {
 						image_file = image->readFd;
 						serializer_reset_write( &payload );
@@ -199,7 +199,7 @@ void *net_client_handler(void *dnbd3_client)
 			case CMD_GET_BLOCK:
 				if ( request.offset >= image->filesize ) {
 					// Sanity check
-					memlogf( "[WARNING] Client requested non-existent block" );
+					logadd( LOG_WARNING, "Client requested non-existent block" );
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
 					send_reply( client->sock, &reply, NULL );
@@ -207,7 +207,7 @@ void *net_client_handler(void *dnbd3_client)
 				}
 				if ( request.offset + request.size > image->filesize ) {
 					// Sanity check
-					memlogf( "[WARNING] Client requested data block that extends beyond image size" );
+					logadd( LOG_WARNING, "Client requested data block that extends beyond image size" );
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
 					send_reply( client->sock, &reply, NULL );
@@ -215,7 +215,7 @@ void *net_client_handler(void *dnbd3_client)
 				}
 				if ( request.size > image->filesize ) {
 					// Sanity check
-					memlogf( "[WARNING] Client requested data block that is bigger than the image size" );
+					logadd( LOG_WARNING, "Client requested data block that is bigger than the image size" );
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
 					send_reply( client->sock, &reply, NULL );
@@ -273,7 +273,7 @@ void *net_client_handler(void *dnbd3_client)
 					spin_unlock( &image->lock );
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, request.offset, request.size ) ) {
-							printf( "[DEBUG] Could not relay uncached request to upstream proxy\n" );
+							logadd( LOG_DEBUG1, "Could not relay uncached request to upstream proxy\n" );
 							goto exit_client_cleanup;
 						}
 						break; // DONE
@@ -290,7 +290,7 @@ void *net_client_handler(void *dnbd3_client)
 				// Send reply header
 				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
 					if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-					printf( "[DEBUG] Sending CMD_GET_BLOCK header failed\n" );
+					logadd( LOG_DEBUG1, "Sending CMD_GET_BLOCK header failed\n" );
 					goto exit_client_cleanup;
 				}
 
@@ -303,7 +303,7 @@ void *net_client_handler(void *dnbd3_client)
 						if ( ret <= 0 ) {
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 							if ( ret < 0 && errno != 32 && errno != 104 )
-								printf( "[DEBUG] sendfile failed (image to net. sent %d/%d, errno=%d)\n",
+								logadd( LOG_DEBUG1, "sendfile failed (image to net. sent %d/%d, errno=%d)\n",
 										(int)done, (int)request.size, (int)errno );
 							if ( errno == EBADF || errno == EINVAL || errno == EIO ) image->working = false;
 							goto exit_client_cleanup;
@@ -354,7 +354,7 @@ set_name: ;
 				break;
 
 			default:
-				memlogf( "[ERROR] Unknown command: %d", (int)request.cmd );
+				logadd( LOG_ERROR, "Unknown command: %d", (int)request.cmd );
 				break;
 
 			}

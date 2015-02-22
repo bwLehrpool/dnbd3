@@ -1,5 +1,5 @@
 #include "sockhelper.h"
-#include "memlog.h"
+#include "log.h"
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h> // inet_ntop
@@ -49,7 +49,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	}
 #endif
 	else {
-		printf( "[DEBUG] Unsupported address type: %d\n", (int)addr->type );
+		logadd( LOG_DEBUG1, "Unsupported address type: %d\n", (int)addr->type );
 		return -1;
 	}
 	int client_sock = socket( proto, SOCK_STREAM, IPPROTO_TCP );

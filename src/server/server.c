@@ -40,7 +40,7 @@
 #include "uplink.h"
 #include "net.h"
 #include "altservers.h"
-#include "memlog.h"
+#include "log.h"
 #include "globals.h"
 #include "integrity.h"
 #include "helper.h"
@@ -110,7 +110,7 @@ void dnbd3_cleanup()
 
 	_shutdown = true;
 	debug_locks_stop_watchdog();
-	memlogf( "INFO: Cleanup...\n" );
+	logadd( LOG_INFO, "Cleanup..." );
 
 	if ( listeners != NULL ) sock_destroyPollList( listeners );
 	listeners = NULL;
@@ -274,15 +274,14 @@ int main(int argc, char *argv[])
 	// No one-shot detected, normal server operation
 
 	if ( demonize ) daemon( 1, 0 );
-	initmemlog();
 	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
 	altservers_init();
 	integrity_init();
-	memlogf( "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
+	logadd( LOG_INFO, "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
 
 	if ( altservers_load() < 0 ) {
-		memlogf( "[WARNING] Could not load alt-servers. Does the file exist in %s?", _configDir );
+		logadd( LOG_WARNING, "Could not load alt-servers. Does the file exist in %s?", _configDir );
 	}
 
 #ifdef _DEBUG
@@ -296,10 +295,10 @@ int main(int argc, char *argv[])
 	signal( SIGHUP, dnbd3_handleSignal );
 	signal( SIGUSR2, dnbd3_handleSignal );
 
-	printf( "Loading images....\n" );
+	logadd( LOG_INFO, "Loading images...." );
 	// Load all images in base path
 	if ( !image_loadAll( NULL ) ) {
-		printf( "[ERROR] Could not load images.\n" );
+		logadd( LOG_ERROR, "Could not load images." );
 		return EXIT_FAILURE;
 	}
 
@@ -311,11 +310,11 @@ int main(int argc, char *argv[])
 	// setup network
 	listeners = sock_newPollList();
 	if ( listeners == NULL ) {
-		printf( "Didnt get a poll list!\n" );
+		logadd( LOG_ERROR, "Didnt get a poll list!" );
 		exit( EXIT_FAILURE );
 	}
 	if ( !sock_listen( listeners, bindAddress, PORT ) ) {
-		printf( "Could not listen on any local interface.\n" );
+		logadd( LOG_ERROR, "Could not listen on any local interface." );
 		exit( EXIT_FAILURE );
 	}
 	struct sockaddr_storage client;
@@ -327,26 +326,25 @@ int main(int argc, char *argv[])
 	//thread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
 	// Initialize thread pool
 	if ( !threadpool_init( 8 ) ) {
-		printf( "Could not init thread pool!\n" );
+		logadd( LOG_ERROR, "Could not init thread pool!\n" );
 		exit( EXIT_FAILURE );
 	}
 
-	memlogf( "[INFO] Server is ready..." );
+	logadd( LOG_INFO, "Server is ready..." );
 
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
 	while ( !_shutdown ) {
 		// Handle signals
 		if ( sigReload ) {
 			sigReload = false;
-			memlogf( "INFO: SIGUSR1 received, re-scanning image directory" );
+			logadd( LOG_INFO, "SIGUSR1 received, re-scanning image directory" );
 			image_loadAll( NULL );
 		}
 		if ( sigPrintStats ) {
 			sigPrintStats = false;
-			printf( "[DEBUG] SIGUSR2 received, stats incoming\n" );
-			printf( " ** Images **\n" );
+			logadd( LOG_WARNING, " ** Images **" );
 			image_printAll();
-			printf( " ** Clients **\n" );
+			logadd( LOG_WARNING, " ** Clients **" );
 			dnbd3_printClients();
 		}
 		//
@@ -355,11 +353,10 @@ int main(int argc, char *argv[])
 		if ( fd < 0 ) {
 			const int err = errno;
 			if ( err == EINTR || err == EAGAIN ) continue;
-			memlogf( "[ERROR] Client accept failure (err=%d)", err );
+			logadd( LOG_ERROR, "Client accept failure (err=%d)", err );
 			usleep( 10000 ); // 10ms
 			continue;
 		}
-		//memlogf("INFO: Client connected\n");
 
 		dnbd3_client_t *dnbd3_client = dnbd3_initClient( &client, fd );
 		if ( dnbd3_client == NULL ) {
@@ -375,7 +372,7 @@ int main(int argc, char *argv[])
 		}
 
 		if ( !threadpool_run( net_client_handler, (void *)dnbd3_client ) ) {
-			memlogf( "[ERROR] Could not start thread for new client." );
+			logadd( LOG_ERROR, "Could not start thread for new client." );
 			dnbd3_removeClient( dnbd3_client );
 			dnbd3_client = dnbd3_freeClient( dnbd3_client );
 			continue;
@@ -392,7 +389,7 @@ dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd)
 {
 	dnbd3_client_t *dnbd3_client = calloc( 1, sizeof(dnbd3_client_t) );
 	if ( dnbd3_client == NULL ) { // This will never happen thanks to memory overcommit
-		memlogf( "[ERROR] Could not alloc dnbd3_client_t for new client." );
+		logadd( LOG_ERROR, "Could not alloc dnbd3_client_t for new client." );
 		return NULL ;
 	}
 
@@ -407,7 +404,7 @@ dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd)
 		memcpy( dnbd3_client->host.addr, &(v6->sin6_addr), 16 );
 		dnbd3_client->host.port = v6->sin6_port;
 	} else {
-		memlogf( "[ERROR] New client has unknown address family %d, disconnecting...", (int)client->ss_family );
+		logadd( LOG_ERROR, "New client has unknown address family %d, disconnecting...", (int)client->ss_family );
 		free( dnbd3_client );
 		return NULL ;
 	}
@@ -479,7 +476,7 @@ static bool dnbd3_addClient(dnbd3_client_t *client)
 	}
 	if ( _num_clients >= SERVER_MAX_CLIENTS ) {
 		spin_unlock( &_clients_lock );
-		memlogf( "[ERROR] Maximum number of clients reached!" );
+		logadd( LOG_ERROR, "Maximum number of clients reached!" );
 		return false;
 	}
 	_clients[_num_clients++] = client;

@@ -3,7 +3,7 @@
 #include "locks.h"
 #include "image.h"
 #include "globals.h"
-#include "memlog.h"
+#include "log.h"
 #include "helper.h"
 
 #include <pthread.h>
@@ -44,7 +44,7 @@ void integrity_init()
 	bRunning = true;
 	if ( 0 != thread_create( &thread, NULL, &integrity_main, (void *)NULL ) ) {
 		bRunning = false;
-		memlogf( "[WARNING] Could not start integrity check thread. Corrupted images will not be detected." );
+		logadd( LOG_WARNING, "Could not start integrity check thread. Corrupted images will not be detected." );
 		return;
 	}
 	queueLen = 0;
@@ -53,7 +53,7 @@ void integrity_init()
 void integrity_shutdown()
 {
 	assert( queueLen != -1 );
-	printf( "[DEBUG] Shutting down integrity checker...\n" );
+	logadd( LOG_DEBUG1, "Shutting down integrity checker...\n" );
 	pthread_mutex_lock( &integrityQueueLock );
 	pthread_cond_signal( &queueSignal );
 	pthread_mutex_unlock( &integrityQueueLock );
@@ -62,7 +62,7 @@ void integrity_shutdown()
 		usleep( 10000 );
 	pthread_mutex_destroy( &integrityQueueLock );
 	pthread_cond_destroy( &queueSignal );
-	printf( "[DEBUG] Integrity checker exited normally.\n" );
+	logadd( LOG_DEBUG1, "Integrity checker exited normally.\n" );
 }
 
 /**
@@ -86,7 +86,7 @@ void integrity_check(dnbd3_image_t *image, int block)
 	if ( freeSlot == -1 ) {
 		if ( queueLen >= CHECK_QUEUE_SIZE ) {
 			pthread_mutex_unlock( &integrityQueueLock );
-			printf( "[DEBUG] Check queue full, discarding check request...\n" );
+			logadd( LOG_DEBUG1, "Check queue full, discarding check request...\n" );
 			return;
 		}
 		freeSlot = queueLen++;
@@ -137,9 +137,9 @@ static void* integrity_main(void * data UNUSED)
 				memcpy( buffer, image->crc32, required );
 				spin_unlock( &image->lock );
 				if ( image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
-					//printf( "[DEBUG] CRC check of block %d for %s succeeded :-)\n", blocks[0], image->lower_name );
+					//logadd( LOG_DEBUG] CRC check of block %d for %s succeeded :-)\n", blocks[0, ", image->lower_name );
 				} else {
-					memlogf( "[WARNING] Hash check for block %d of %s failed!", blocks[0], image->lower_name );
+					logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->lower_name );
 					image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
 				}
 				pthread_mutex_lock( &integrityQueueLock );

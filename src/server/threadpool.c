@@ -57,17 +57,17 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 	if ( entry == NULL ) {
 		entry = (entry_t*)malloc( sizeof(entry_t) );
 		if ( entry == NULL ) {
-			printf( "[WARNING] Could not alloc entry_t for new thread\n" );
+			logadd( LOG_WARNING, "Could not alloc entry_t for new thread\n" );
 			return false;
 		}
 		entry->signalFd = signal_newBlocking();
 		if ( entry->signalFd < 0 ) {
-			printf( "[WARNING] Could not create signalFd for new thread pool thread\n" );
+			logadd( LOG_WARNING, "Could not create signalFd for new thread pool thread\n" );
 			free( entry );
 			return false;
 		}
 		if ( 0 != thread_create( &(entry->thread), &threadAttrs, threadpool_worker, (void*)entry ) ) {
-			printf( "[WARNING] Could not create new thread for thread pool\n" );
+			logadd( LOG_WARNING, "Could not create new thread for thread pool\n" );
 			signal_close( entry->signalFd );
 			free( entry );
 			return false;
@@ -93,7 +93,7 @@ static void *threadpool_worker(void *entryPtr)
 		if ( _shutdown ) break;
 		if ( ret > 0 ) {
 			if ( entry->startRoutine == NULL ) {
-				printf( "[DEBUG] Worker woke up but has no work to do!\n" );
+				logadd( LOG_DEBUG1, "Worker woke up but has no work to do!\n" );
 				continue;
 			}
 			// Start assigned work
@@ -119,7 +119,7 @@ static void *threadpool_worker(void *entryPtr)
 			spin_unlock( &poolLock );
 			setThreadName( "[pool]" );
 		} else {
-			printf( "[DEBUG] Unexpected return value %d for signal_wait in threadpool worker!\n", ret );
+			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!\n", ret );
 		}
 	}
 	signal_close( entry->signalFd );

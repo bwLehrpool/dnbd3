@@ -1,6 +1,6 @@
 #include "uplink.h"
 #include "locks.h"
-#include "memlog.h"
+#include "log.h"
 #include "sockhelper.h"
 #include "image.h"
 #include "helper.h"
@@ -48,7 +48,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 		return true; // There's already an uplink, so should we consider this success or failure?
 	}
 	if ( image->cache_map == NULL ) {
-		memlogf( "[WARNING] Uplink was requested for image %s, but it is already complete", image->lower_name );
+		logadd( LOG_WARNING, "Uplink was requested for image %s, but it is already complete", image->lower_name );
 		goto failure;
 	}
 	link = image->uplink = calloc( 1, sizeof(dnbd3_connection_t) );
@@ -69,7 +69,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	link->shutdown = false;
 	spin_init( &link->queueLock, PTHREAD_PROCESS_PRIVATE );
 	if ( 0 != thread_create( &(link->thread), NULL, &uplink_mainloop, (void *)link ) ) {
-		memlogf( "[ERROR] Could not start thread for new uplink." );
+		logadd( LOG_ERROR, "Could not start thread for new uplink." );
 		goto failure;
 	}
 	spin_unlock( &image->lock );
@@ -140,19 +140,19 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	spin_lock( &client->image->lock );
 	if ( client->image->uplink == NULL ) {
 		spin_unlock( &client->image->lock );
-		printf( "[DEBUG] Uplink request for image with no uplink (%s)\n", client->image->lower_name );
+		logadd( LOG_DEBUG1, "Uplink request for image with no uplink (%s)\n", client->image->lower_name );
 		return false;
 	}
 	dnbd3_connection_t * const uplink = client->image->uplink;
 	if ( uplink->shutdown ) {
 		spin_unlock( &client->image->lock );
-		printf( "[DEBUG] Uplink request for image with uplink shutting down (%s)\n", client->image->lower_name );
+		logadd( LOG_DEBUG1, "Uplink request for image with uplink shutting down (%s)\n", client->image->lower_name );
 		return false;
 	}
 	// Check if the client is the same host as the uplink. If so assume this is a circular proxy chain
 	if ( isSameAddress( &uplink->currentServer, &client->host ) ) {
 		spin_unlock( &client->image->lock );
-		printf( "[DEBUG] Proxy cycle detected.\n" );
+		logadd( LOG_DEBUG1, "Proxy cycle detected.\n" );
 		return false;
 	}
 
@@ -176,7 +176,7 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	if ( freeSlot == -1 ) {
 		if ( uplink->queueLen >= SERVER_MAX_UPLINK_QUEUE ) {
 			spin_unlock( &uplink->queueLock );
-			memlogf( "[WARNING] Uplink queue is full, consider increasing SERVER_MAX_UPLINK_QUEUE. Dropping client..." );
+			logadd( LOG_WARNING, "Uplink queue is full, consider increasing SERVER_MAX_UPLINK_QUEUE. Dropping client..." );
 			return false;
 		}
 		freeSlot = uplink->queueLen++;
@@ -206,7 +206,7 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	uplink->queue[freeSlot].status = (foundExisting == -1 ? ULR_NEW : ULR_PENDING);
 #ifdef _DEBUG
 	uplink->queue[freeSlot].entered = time( NULL );
-	//printf( "[V %p] Inserting request at slot %d, was %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)uplink, freeSlot, old, uplink->queue[freeSlot].status, uplink->queue[freeSlot].handle, start, end );
+	//logadd( LOG_DEBUG2 %p] Inserting request at slot %d, was %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)uplink, freeSlot, old, uplink->queue[freeSlot].status, uplink->queue[freeSlot, ".handle, start, end );
 #endif
 	spin_unlock( &uplink->queueLock );
 
@@ -238,19 +238,19 @@ static void* uplink_mainloop(void *data)
 	//
 	fdEpoll = epoll_create( 2 );
 	if ( fdEpoll == -1 ) {
-		memlogf( "[WARNING] epoll_create failed. Uplink unavailable." );
+		logadd( LOG_WARNING, "epoll_create failed. Uplink unavailable." );
 		goto cleanup;
 	}
 	link->signal = signal_new();
 	if ( link->signal < 0 ) {
-		memlogf( "[WARNING] error creating pipe. Uplink unavailable." );
+		logadd( LOG_WARNING, "error creating pipe. Uplink unavailable." );
 		goto cleanup;
 	}
 	memset( &ev, 0, sizeof(ev) );
 	ev.events = EPOLLIN;
 	ev.data.fd = link->signal;
 	if ( epoll_ctl( fdEpoll, EPOLL_CTL_ADD, link->signal, &ev ) < 0 ) {
-		memlogf( "[WARNING] adding eventfd to epoll set failed" );
+		logadd( LOG_WARNING, "adding eventfd to epoll set failed" );
 		goto cleanup;
 	}
 	while ( !_shutdown && !link->shutdown ) {
@@ -273,7 +273,7 @@ static void* uplink_mainloop(void *data)
 			link->image->working = true;
 			buffer[0] = '@';
 			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
-				printf( "[DEBUG] (Uplink %s) Now connected to %s\n", link->image->lower_name, buffer + 1 );
+				logadd( LOG_DEBUG1, "(Uplink %s) Now connected to %s\n", link->image->lower_name, buffer + 1 );
 				setThreadName( buffer );
 			}
 			// Re-send all pending requests
@@ -283,7 +283,7 @@ static void* uplink_mainloop(void *data)
 			ev.events = EPOLLIN | EPOLLRDHUP | EPOLLPRI;
 			ev.data.fd = link->fd;
 			if ( epoll_ctl( fdEpoll, EPOLL_CTL_ADD, link->fd, &ev ) < 0 ) {
-				memlogf( "[WARNING] adding uplink to epoll set failed" );
+				logadd( LOG_WARNING, "adding uplink to epoll set failed" );
 				goto cleanup;
 			}
 			nextAltCheck = time( NULL ) + altCheckInterval;
@@ -297,7 +297,7 @@ static void* uplink_mainloop(void *data)
 		numSocks = epoll_wait( fdEpoll, events, MAXEVENTS, waitTime );
 		if ( _shutdown || link->shutdown ) goto cleanup;
 		if ( numSocks < 0 ) { // Error?
-			memlogf( "[DEBUG] epoll_wait() error %d", (int)errno);
+			logadd( LOG_DEBUG1, "epoll_wait() error %d", (int)errno);
 			usleep( 10000 );
 			continue;
 		}
@@ -306,17 +306,17 @@ static void* uplink_mainloop(void *data)
 			// Check for errors....
 			if ( (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) || !(events[i].events & EPOLLIN) ) {
 				if ( events[i].data.fd == link->signal ) {
-					memlogf( "[WARNING] epoll error on signal in uplink_mainloop!" );
+					logadd( LOG_WARNING, "epoll error on signal in uplink_mainloop!" );
 					goto cleanup;
 				}
 				if ( events[i].data.fd == link->fd ) {
 					link->fd = -1;
 					close( events[i].data.fd );
-					printf( "[DEBUG] Uplink gone away, panic!\n" );
+					logadd( LOG_DEBUG1, "Uplink gone away, panic!\n" );
 				} else if ( events[i].data.fd == link->signal ) {
-					printf( "[DEBUG] Error on uplink signal fd!\n" );
+					logadd( LOG_DEBUG1, "Error on uplink signal fd!\n" );
 				} else {
-					printf( "[DEBUG] Error on unknown FD in uplink epoll\n" );
+					logadd( LOG_DEBUG1, "Error on unknown FD in uplink epoll\n" );
 					close( events[i].data.fd );
 				}
 				continue;
@@ -325,7 +325,7 @@ static void* uplink_mainloop(void *data)
 			if ( events[i].data.fd == link->signal ) {
 				// Event on the signal fd -> a client requests data
 				if ( signal_clear( link->signal ) == SIGNAL_ERROR ) {
-					memlogf( "[WARNING] Errno on eventfd on uplink for %s! Things will break!", link->image->lower_name );
+					logadd( LOG_WARNING, "Errno on eventfd on uplink for %s! Things will break!", link->image->lower_name );
 				}
 				if ( link->fd != -1 ) {
 					// Uplink seems fine, relay requests to it...
@@ -336,7 +336,7 @@ static void* uplink_mainloop(void *data)
 				if ( link->fd == -1 ) nextAltCheck = 0;
 				if ( _shutdown || link->shutdown ) goto cleanup;
 			} else {
-				printf( "[DEBUG] Sanity check: unknown FD ready on epoll! Closing...\n" );
+				logadd( LOG_DEBUG1, "Sanity check: unknown FD ready on epoll! Closing...\n" );
 				close( events[i].data.fd );
 			}
 		}
@@ -360,7 +360,7 @@ static void* uplink_mainloop(void *data)
 				// It seems it's time for a check
 				if ( image_isComplete( link->image ) ) {
 					// Quit work if image is complete
-					memlogf( "[INFO] Replication of %s complete.", link->image->lower_name );
+					logadd( LOG_INFO, "Replication of %s complete.", link->image->lower_name );
 					if ( spin_trylock( &link->image->lock ) == 0 ) {
 						image_markComplete( link->image );
 						spin_unlock( &link->image->lock );
@@ -437,7 +437,7 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 	spin_lock( &link->queueLock );
 	for (j = 0; j < link->queueLen; ++j) {
 		if ( link->queue[j].status != ULR_NEW && (newOnly || link->queue[j].status != ULR_PENDING) ) continue;
-		//printf( "[V %p] Sending slot %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, j, link->queue[j].status, link->queue[j].handle, link->queue[j].from, link->queue[j].to );
+		//logadd( LOG_DEBUG2 %p] Sending slot %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, j, link->queue[j].status, link->queue[j].handle, link->queue[j].from, link->queue[j, ".to );
 		link->queue[j].status = ULR_PENDING;
 		const uint64_t offset = link->queue[j].from;
 		const uint32_t size = link->queue[j].to - link->queue[j].from;
@@ -447,7 +447,7 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 			// Non-critical - if the connection dropped or the server was changed
 			// the thread will re-send this request as soon as the connection
 			// is reestablished.
-			printf( "[DEBUG] Error forwarding request to uplink server!\n" );
+			logadd( LOG_DEBUG1, "Error forwarding request to uplink server!\n" );
 			altservers_serverFailed( &link->currentServer );
 			return;
 		}
@@ -490,7 +490,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		const uint64_t offset = link->replicationHandle = (uint64_t)i * (uint64_t)requestBlockSize;
 		const uint32_t size = MIN( image->filesize - offset, requestBlockSize );
 		if ( !dnbd3_get_block( link->fd, offset, size, link->replicationHandle ) ) {
-			printf( "[DEBUG] Error sending background replication request to uplink server!\n" );
+			logadd( LOG_DEBUG1, "Error sending background replication request to uplink server!\n" );
 			return;
 		}
 		if ( i == len ) link->replicatedLastBlock = true; // Special treatment, last byte in map could represent less than 8 blocks
@@ -513,19 +513,19 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		if ( ret == REPLY_INTR && !_shutdown && !link->shutdown ) continue;
 		if ( ret == REPLY_AGAIN ) break;
 		if ( ret == REPLY_CLOSED ) {
-			memlogf( "[INFO] Uplink: Remote host hung up (%s)", link->image->path );
+			logadd( LOG_INFO, "Uplink: Remote host hung up (%s)", link->image->path );
 			goto error_cleanup;
 		}
 		if ( ret == REPLY_WRONGMAGIC ) {
-			memlogf( "[WARNING] Uplink server's packet did not start with dnbd3_packet_magic (%s)", link->image->path );
+			logadd( LOG_WARNING, "Uplink server's packet did not start with dnbd3_packet_magic (%s)", link->image->path );
 			goto error_cleanup;
 		}
 		if ( ret != REPLY_OK ) {
-			memlogf( "[INFO] Uplink: Connection error %d (%s)", ret, link->image->path );
+			logadd( LOG_INFO, "Uplink: Connection error %d (%s)", ret, link->image->path );
 			goto error_cleanup;
 		}
 		if ( inReply.size > 9000000 ) { // TODO: Configurable
-			memlogf( "[WARNING] Pure evil: Uplink server sent too much payload for %s", link->image->path );
+			logadd( LOG_WARNING, "Pure evil: Uplink server sent too much payload for %s", link->image->path );
 			goto error_cleanup;
 		}
 
@@ -537,7 +537,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		while ( done < inReply.size ) {
 			ret = recv( link->fd, link->recvBuffer + done, inReply.size - done, MSG_NOSIGNAL );
 			if ( ret <= 0 ) {
-				memlogf( "[INFO] Lost connection to uplink server of %s (payload)", link->image->path );
+				logadd( LOG_INFO, "Lost connection to uplink server of %s (payload)", link->image->path );
 				goto error_cleanup;
 			}
 			done += ret;
@@ -572,7 +572,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		for (i = link->queueLen - 1; i >= 0; --i) {
 			dnbd3_queued_request_t * const req = &link->queue[i];
 			if ( req->status == ULR_PROCESSING ) {
-				//printf( "[V %p] Reply slot %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, i, req->handle, req->from, req->to );
+				//logadd( LOG_DEBUG2 %p, "Reply slot %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, i, req->handle, req->from, req->to );
 				assert( req->from >= start && req->to <= end );
 				dnbd3_client_t * const client = req->client;
 				outReply.cmd = CMD_GET_BLOCK;
@@ -597,7 +597,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		spin_unlock( &link->queueLock );
 #ifdef _DEBUG
 		if ( !served && start != link->replicationHandle )
-			printf( "[DEBUG %p] %s -- Unmatched reply: %" PRIu64 " to %" PRIu64 "\n", (void*)link, link->image->lower_name, start, end );
+			logadd( LOG_DEBUG2, "%p, %s -- Unmatched reply: %" PRIu64 " to %" PRIu64, (void*)link, link->image->lower_name, start, end );
 #endif
 		if ( start == link->replicationHandle ) link->replicationHandle = 0;
 	}
@@ -641,7 +641,7 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
 	lists_crc = crc32( lists_crc, (Bytef*)buffer, bytes );
 	if ( lists_crc != masterCrc ) {
-		memlogf( "[WARNING] Received corrupted crc32 list from uplink server (%s)!", uplink->image->lower_name );
+		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s)!", uplink->image->lower_name );
 		free( buffer );
 		return;
 	}

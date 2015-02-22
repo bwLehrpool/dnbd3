@@ -2,14 +2,14 @@
 #define HELPER_H_
 
 #include "server.h"
+#include "log.h"
 #include <netinet/in.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
 #include "../types.h"
 
-#define ERROR_GOTO(jumplabel, errormsg) do { memlogf(errormsg); goto jumplabel; } while (0);
-#define ERROR_GOTO_VA(jumplabel, errormsg, ...) do { memlogf(errormsg, __VA_ARGS__); goto jumplabel; } while (0);
+#define ERROR_GOTO(jumplabel, ...) do { logadd(LOG_ERROR, __VA_ARGS__); goto jumplabel; } while (0);
 
 bool parse_address(char *string, dnbd3_host_t *host);
 bool host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen);
