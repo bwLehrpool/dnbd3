@@ -11,7 +11,7 @@ typedef struct _entry_t {
 	pthread_t thread;
 	int signalFd;
 	void *(*startRoutine)(void *);
-	void * volatile arg;
+	void * arg;
 } entry_t;
 
 static void *threadpool_worker(void *entryPtr);

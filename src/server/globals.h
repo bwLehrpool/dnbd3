@@ -26,11 +26,11 @@ typedef struct _dnbd3_client dnbd3_client_t;
 #define ULR_PROCESSING 3
 typedef struct
 {
-	uint64_t handle;          // Client defined handle to pass back in reply
-	uint64_t from;            // First byte offset of requested block (ie. 4096)
-	volatile uint64_t to;     // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
-	dnbd3_client_t * volatile client; // Client to send reply to
-	volatile int status;      // status of this entry: ULR_*
+	uint64_t handle;  // Client defined handle to pass back in reply
+	uint64_t from;    // First byte offset of requested block (ie. 4096)
+	uint64_t to;      // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
+	dnbd3_client_t * client; // Client to send reply to
+	int status;      // status of this entry: ULR_*
 	time_t entered;           // When this request entered the queue (for debugging)
 } dnbd3_queued_request_t;
 
@@ -41,15 +41,15 @@ typedef struct
 #define RTT_NOT_REACHABLE 4 // No uplink was reachable
 struct _dnbd3_connection
 {
-	volatile int fd;            // socket fd to remote server
+	int fd;                     // socket fd to remote server
 	int signal;                 // eventfd used to wake up the process
 	pthread_t thread;           // thread holding the connection
 	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
-	volatile int queueLen;      // length of queue
+	int queueLen;               // length of queue
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	dnbd3_host_t currentServer; // Current server we're connected to
-	volatile int rttTestResult; // RTT_*
+	int rttTestResult;          // RTT_*
 	dnbd3_host_t betterServer;  // The better server
 	int betterFd;               // Active connection to better server, ready to use
 	uint8_t *recvBuffer;        // Buffer for receiving payload
@@ -98,17 +98,17 @@ struct _dnbd3_image
 {
 	char *path;            // absolute path of the image
 	char *lower_name;      // relative path, all lowercase, minus revision ID
-	uint8_t * volatile cache_map;    // cache map telling which parts are locally cached, NULL if complete
+	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
-	dnbd3_connection_t * volatile uplink; // pointer to a server connection
+	dnbd3_connection_t *uplink; // pointer to a server connection
 	uint64_t filesize;     // size of image
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int rid;               // revision of image
 	int users;             // clients currently using this image
 	time_t atime;          // last access time
-	volatile bool working; // true if image exists and completeness is == 100% or a working upstream proxy is connected
+	bool working; // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;
 };
 

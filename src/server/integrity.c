@@ -20,15 +20,15 @@
 
 typedef struct
 {
-	dnbd3_image_t * volatile image;
-	int volatile block;
+	dnbd3_image_t *image;
+	int block;
 } queue_entry;
 
 static pthread_t thread;
 static queue_entry checkQueue[CHECK_QUEUE_SIZE];
 static pthread_mutex_t integrityQueueLock;
 static pthread_cond_t queueSignal;
-static volatile int queueLen = -1;
+static int queueLen = -1;
 static volatile bool bRunning = false;
 
 static void* integrity_main(void *data);

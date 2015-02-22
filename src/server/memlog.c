@@ -41,9 +41,9 @@ typedef struct
 } LogLine;
 
 // This will be used as a ring buffer
-static volatile LogLine *logBuffer = NULL;
+static LogLine *logBuffer = NULL;
 // bufferPos counts up, use modulo LINE_COUNT to get array index
-static volatile int bufferPos = 0;
+static int bufferPos = 0;
 
 void initmemlog()
 {

@@ -68,8 +68,8 @@ typedef struct
 	struct socket *better_sock;
 
 	// process
-	struct task_struct * volatile thread_send;
-	struct task_struct * volatile thread_receive;
+	struct task_struct * thread_send;
+	struct task_struct * thread_receive;
 	struct task_struct *thread_discover;
 	struct timer_list hb_timer;
 	wait_queue_head_t process_queue_send;

@@ -302,7 +302,7 @@ void *net_client_handler(void *dnbd3_client)
 						const ssize_t ret = sendfile( client->sock, image_file, &offset, request.size - done );
 						if ( ret <= 0 ) {
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-							if ( ret < 0 && errno != 32 )
+							if ( ret < 0 && errno != 32 && errno != 104 )
 								printf( "[DEBUG] sendfile failed (image to net. sent %d/%d, errno=%d)\n",
 										(int)done, (int)request.size, (int)errno );
 							if ( errno == EBADF || errno == EINVAL || errno == EIO ) image->working = false;

@@ -188,14 +188,25 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	// is currently traversing the request queue. As it is processing the queue from highest to lowest index, it might
 	// already have passed the index of the free slot we determined, but not reached the existing request we just found above.
 	if ( foundExisting != -1 && existingType != ULR_NEW && freeSlot > foundExisting ) foundExisting = -1;
+#ifdef _DEBUG
+	if ( foundExisting != -1 ) {
+		printf( "%p (%s) Found existing request of type %s at slot %d, attaching in slot %d.\n", (void*)uplink, uplink->image->lower_name, existingType == ULR_NEW ? "ULR_NEW" : "ULR_PENDING", foundExisting, freeSlot );
+		printf( "Original %" PRIu64 "-%" PRIu64 " (%p)\n"
+				  "New      %" PRIu64 "-%" PRIu64 " (%p)\n",
+				  uplink->queue[foundExisting].from, uplink->queue[foundExisting].to, (void*)uplink->queue[foundExisting].client,
+				  start, end, (void*)client );
+	}
+#endif
 	// Fill structure
 	uplink->queue[freeSlot].from = start;
 	uplink->queue[freeSlot].to = end;
 	uplink->queue[freeSlot].handle = handle;
 	uplink->queue[freeSlot].client = client;
+	//int old = uplink->queue[freeSlot].status;
 	uplink->queue[freeSlot].status = (foundExisting == -1 ? ULR_NEW : ULR_PENDING);
 #ifdef _DEBUG
 	uplink->queue[freeSlot].entered = time( NULL );
+	//printf( "[V %p] Inserting request at slot %d, was %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)uplink, freeSlot, old, uplink->queue[freeSlot].status, uplink->queue[freeSlot].handle, start, end );
 #endif
 	spin_unlock( &uplink->queueLock );
 
@@ -370,15 +381,15 @@ static void* uplink_mainloop(void *data)
 #ifdef _DEBUG
 		if ( link->fd != -1 && !link->shutdown ) {
 			bool resend = false;
-			const time_t deadline = now - 15;
+			const time_t deadline = now - 8;
 			spin_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
-					snprintf( buffer, sizeof(buffer), "[DEBUG WARNING] Starving request detected:\n"
-							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", link->queue[i].client->image->lower_name,
+					snprintf( buffer, sizeof(buffer), "[DEBUG %p] Starving request slot %d detected:\n"
+							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", (void*)link, i, link->queue[i].client->image->lower_name,
 							link->queue[i].from, link->queue[i].to, link->queue[i].status );
-					//link->queue[i].status = ULR_NEW;
-					//resend = true;
+					link->queue[i].status = ULR_NEW;
+					resend = true;
 					spin_unlock( &link->queueLock );
 					printf("%s", buffer);
 					spin_lock( &link->queueLock );
@@ -426,6 +437,7 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 	spin_lock( &link->queueLock );
 	for (j = 0; j < link->queueLen; ++j) {
 		if ( link->queue[j].status != ULR_NEW && (newOnly || link->queue[j].status != ULR_PENDING) ) continue;
+		//printf( "[V %p] Sending slot %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, j, link->queue[j].status, link->queue[j].handle, link->queue[j].from, link->queue[j].to );
 		link->queue[j].status = ULR_PENDING;
 		const uint64_t offset = link->queue[j].from;
 		const uint32_t size = link->queue[j].to - link->queue[j].from;
@@ -545,8 +557,9 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		spin_lock( &link->queueLock );
 		for (i = 0; i < link->queueLen; ++i) {
 			dnbd3_queued_request_t * const req = &link->queue[i];
-			assert( req->status != ULR_PROCESSING || req->status != ULR_NEW );
-			if ( req->status != ULR_PENDING ) continue;
+			assert( req->status != ULR_PROCESSING );
+			if ( req->status != ULR_PENDING && req->status != ULR_NEW ) continue;
+			assert( req->client != NULL );
 			if ( req->from >= start && req->to <= end ) { // Match :-)
 				req->status = ULR_PROCESSING;
 			}
@@ -555,9 +568,11 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		// so we can decrease queueLen on the fly while iterating. Should you ever change this to start
 		// from 0, you also need to change the "attach to existing request"-logic in uplink_request()
 		outReply.magic = dnbd3_packet_magic;
+		bool served = false;
 		for (i = link->queueLen - 1; i >= 0; --i) {
 			dnbd3_queued_request_t * const req = &link->queue[i];
 			if ( req->status == ULR_PROCESSING ) {
+				//printf( "[V %p] Reply slot %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, i, req->handle, req->from, req->to );
 				assert( req->from >= start && req->to <= end );
 				dnbd3_client_t * const client = req->client;
 				outReply.cmd = CMD_GET_BLOCK;
@@ -569,6 +584,8 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 				iov[1].iov_len = outReply.size;
 				fixup_reply( outReply );
 				req->status = ULR_FREE;
+				req->client = NULL;
+				served = true;
 				pthread_mutex_lock( &client->sendMutex );
 				spin_unlock( &link->queueLock );
 				if ( client->sock != -1 ) writev( client->sock, iov, 2 );
@@ -578,6 +595,10 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 			if ( req->status == ULR_FREE && i == link->queueLen - 1 ) link->queueLen--;
 		}
 		spin_unlock( &link->queueLock );
+#ifdef _DEBUG
+		if ( !served && start != link->replicationHandle )
+			printf( "[DEBUG %p] %s -- Unmatched reply: %" PRIu64 " to %" PRIu64 "\n", (void*)link, link->image->lower_name, start, end );
+#endif
 		if ( start == link->replicationHandle ) link->replicationHandle = 0;
 	}
 	if ( link->queueLen == 0 ) uplink_sendReplicationRequest( link );

@@ -25,8 +25,8 @@
 typedef struct
 {
 	void *lock;
-	volatile time_t locktime;
-	volatile char locked;
+	time_t locktime;
+	char locked;
 	pthread_t thread;
 	int lockId;
 	char name[LOCKLEN];
@@ -48,7 +48,7 @@ static debug_lock_t locks[MAXLOCKS];
 static debug_thread_t threads[MAXTHREADS];
 static int init_done = 0;
 static pthread_spinlock_t initdestory;
-static volatile int lockId = 0;
+static int lockId = 0;
 static pthread_t watchdog = 0;
 static int watchdogSignal = -1;
 
