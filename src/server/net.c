@@ -67,9 +67,6 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 		        (int)request->size );
 		return false;
 	}
-#ifdef _DEBUG
-	if ( _fake_delay ) usleep( _fake_delay );
-#endif
 	return true;
 }
 

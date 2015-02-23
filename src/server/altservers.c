@@ -7,6 +7,7 @@
 #include "globals.h"
 #include "image.h"
 #include "signal.h"
+#include "log.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/errno.h>
@@ -491,7 +492,7 @@ static void *altservers_main(void *data UNUSED)
 			// Done testing all servers. See if we should switch
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
-				printf( "DO CHANGE: best: %uµs, current: %uµs\n", bestRtt, currentRtt );
+				logadd( LOG_DEBUG1, "Change @ %s - best: %uµs, current: %uµs\n", image->lower_name, bestRtt, currentRtt );
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];
 				uplink->rttTestResult = RTT_DOCHANGE;

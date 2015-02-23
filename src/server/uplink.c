@@ -190,8 +190,8 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	if ( foundExisting != -1 && existingType != ULR_NEW && freeSlot > foundExisting ) foundExisting = -1;
 #ifdef _DEBUG
 	if ( foundExisting != -1 ) {
-		printf( "%p (%s) Found existing request of type %s at slot %d, attaching in slot %d.\n", (void*)uplink, uplink->image->lower_name, existingType == ULR_NEW ? "ULR_NEW" : "ULR_PENDING", foundExisting, freeSlot );
-		printf( "Original %" PRIu64 "-%" PRIu64 " (%p)\n"
+		logadd( LOG_DEBUG2, "%p (%s) Found existing request of type %s at slot %d, attaching in slot %d.\n", (void*)uplink, uplink->image->lower_name, existingType == ULR_NEW ? "ULR_NEW" : "ULR_PENDING", foundExisting, freeSlot );
+		logadd( LOG_DEBUG2, "Original %" PRIu64 "-%" PRIu64 " (%p)\n"
 				  "New      %" PRIu64 "-%" PRIu64 " (%p)\n",
 				  uplink->queue[foundExisting].from, uplink->queue[foundExisting].to, (void*)uplink->queue[foundExisting].client,
 				  start, end, (void*)client );
@@ -391,7 +391,7 @@ static void* uplink_mainloop(void *data)
 					link->queue[i].status = ULR_NEW;
 					resend = true;
 					spin_unlock( &link->queueLock );
-					printf("%s", buffer);
+					logadd( LOG_WARNING, "%s", buffer );
 					spin_lock( &link->queueLock );
 				}
 			}

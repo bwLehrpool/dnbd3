@@ -47,9 +47,6 @@
 #include "threadpool.h"
 
 poll_list_t *listeners = NULL;
-#ifdef _DEBUG
-int _fake_delay = 0;
-#endif
 
 dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 int _num_clients = 0;
@@ -59,7 +56,7 @@ pthread_spinlock_t _clients_lock;
  * Time the server was started
  */
 static time_t startupTime = 0;
-static bool sigReload = false, sigPrintStats = false;
+static bool sigReload = false, sigLogCycle = false;
 
 static bool dnbd3_addClient(dnbd3_client_t *client);
 static void dnbd3_handleSignal(int signum);
@@ -73,10 +70,7 @@ void dnbd3_printHelp(char *argv_0)
 	printf( "Version: %s\n\n", VERSION_STRING );
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
-	printf( "-c or --config      Configuration file (default /etc/dnbd3-server.conf)\n" );
-#ifdef _DEBUG
-	printf( "-d or --delay       Add a fake network delay of X µs\n" );
-#endif
+	printf( "-c or --config      Configuration directory (default /etc/dnbd3-server/)\n" );
 	printf( "-n or --nodaemon    Start server in foreground\n" );
 	printf( "-b or --bind        Local Address to bind to\n" );
 	//printf( "-r or --reload      Reload configuration file\n" );
@@ -84,7 +78,7 @@ void dnbd3_printHelp(char *argv_0)
 	//printf( "-i or --info        Print connected clients and used images\n" );
 	printf( "-h or --help        Show this help text and quit\n" );
 	printf( "-v or --version     Show version and quit\n" );
-	printf( "Management functions:\n" );
+	printf( "\nManagement functions:\n" );
 	printf( "--crc [image-file]  Generate crc block list for given image\n" );
 	printf( "--create [image-name] --revision [rid] --size [filesize]\n"
 			"\tCreate a local empty image file with a zeroed cache-map for the specified image\n" );
@@ -149,7 +143,7 @@ void dnbd3_cleanup()
 		}
 		spin_unlock( &_clients_lock );
 		if ( count != 0 ) {
-			printf( "%d clients still active...\n", count );
+			logadd( LOG_INFO, "%d clients still active...\n", count );
 			sleep( 1 );
 		}
 	} while ( count != 0 && --retries > 0 );
@@ -158,7 +152,7 @@ void dnbd3_cleanup()
 	// Clean up images
 	retries = 5;
 	while ( !image_tryFreeAll() && --retries > 0 ) {
-		printf( "Waiting for images to free...\n" );
+		logadd( LOG_INFO, "Waiting for images to free...\n" );
 		sleep( 1 );
 	}
 
@@ -180,7 +174,6 @@ int main(int argc, char *argv[])
 	static const char *optString = "c:d:b:nrsihv?";
 	static const struct option longOpts[] = {
 	        { "config", required_argument, NULL, 'c' },
-	        { "delay", required_argument, NULL, 'd' },
 	        { "nodaemon", no_argument, NULL, 'n' },
 	        { "reload", no_argument, NULL, 'r' },
 	        { "stop", no_argument, NULL, 's' },
@@ -203,31 +196,23 @@ int main(int argc, char *argv[])
 		case 'c':
 			_configDir = strdup( optarg );
 			break;
-		case 'd':
-			#ifdef _DEBUG
-			_fake_delay = atoi( optarg );
-			break;
-#else
-			printf( "This option is only available in debug builds.\n\n" );
-			return EXIT_FAILURE;
-#endif
 		case 'n':
 			demonize = 0;
 			break;
 		case 'r':
-			printf( "INFO: Reloading configuration file...\n\n" );
+			logadd( LOG_INFO, "Reloading configuration file..." );
 			//dnbd3_rpc_send(RPC_RELOAD);
 			return EXIT_SUCCESS;
 		case 's':
-			printf( "INFO: Stopping running server...\n\n" );
+			logadd( LOG_INFO, "Stopping running server..." );
 			//dnbd3_rpc_send(RPC_EXIT);
 			return EXIT_SUCCESS;
 		case 'i':
-			printf( "INFO: Requesting information...\n\n" );
+			logadd( LOG_INFO, "Requesting information..." );
 			//dnbd3_rpc_send(RPC_IMG_LIST);
 			return EXIT_SUCCESS;
 		case 'h':
-			case '?':
+		case '?':
 			dnbd3_printHelp( argv[0] );
 			break;
 		case 'v':
@@ -261,7 +246,7 @@ int main(int argc, char *argv[])
 	if ( _configDir == NULL ) _configDir = strdup( "/etc/dnbd3-server" );
 	globals_loadConfig();
 	if ( _basePath == NULL ) {
-		printf( "ERROR: basePath not set in %s/%s\n", _configDir, CONFIG_FILENAME );
+		logadd( LOG_ERROR, "basePath not set in %s/%s", _configDir, CONFIG_FILENAME );
 		exit( EXIT_FAILURE );
 	}
 
@@ -340,12 +325,13 @@ int main(int argc, char *argv[])
 			logadd( LOG_INFO, "SIGUSR1 received, re-scanning image directory" );
 			image_loadAll( NULL );
 		}
-		if ( sigPrintStats ) {
-			sigPrintStats = false;
-			logadd( LOG_WARNING, " ** Images **" );
-			image_printAll();
-			logadd( LOG_WARNING, " ** Clients **" );
-			dnbd3_printClients();
+		if ( sigLogCycle ) {
+			sigLogCycle = false;
+			logadd( LOG_INFO, "SIGUSR2 received, reopening log file..." );
+			if ( log_openLogFile( NULL ) )
+				logadd( LOG_INFO, "Log file has been reopened." );
+			else
+				logadd( LOG_WARNING, "Could not cycle log file." );
 		}
 		//
 		len = sizeof(client);
@@ -491,7 +477,7 @@ static void dnbd3_handleSignal(int signum)
 	} else if ( signum == SIGUSR1 || signum == SIGHUP ) {
 		sigReload = true;
 	} else if ( signum == SIGUSR2 ) {
-		sigPrintStats = true;
+		sigLogCycle = true;
 	}
 }
 
@@ -509,8 +495,8 @@ static void dnbd3_printClients()
 		if ( _clients[i] == NULL ) continue;
 		spin_lock( &_clients[i]->lock );
 		host_to_string( &_clients[i]->host, buffer, sizeof(buffer) );
-		printf( "Client %s\n", buffer );
-		if ( _clients[i]->image != NULL ) printf( "  Image: %s\n", _clients[i]->image->lower_name );
+		logadd( LOG_DEBUG1, "Client %s", buffer );
+		if ( _clients[i]->image != NULL ) logadd( LOG_DEBUG1, " `- Image: %s\n", _clients[i]->image->lower_name );
 		spin_unlock( &_clients[i]->lock );
 	}
 	spin_unlock( &_clients_lock );

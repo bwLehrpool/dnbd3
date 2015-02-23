@@ -1009,29 +1009,29 @@ bool image_generateCrcFile(char *image)
 {
 	int fdImage = open( image, O_RDONLY );
 	if ( fdImage < 0 ) {
-		printf( "Could not open %s.\n", image );
+		logadd( LOG_ERROR, "Could not open %s.", image );
 		return false;
 	}
-// force size to be multiple of DNBD3_BLOCK_SIZE
+	// force size to be multiple of DNBD3_BLOCK_SIZE
 	int64_t fileLen = lseek( fdImage, 0, SEEK_END );
 	if ( fileLen <= 0 ) {
-		printf( "Error seeking to end, or file is empty.\n" );
+		logadd( LOG_ERROR, "Error seeking to end, or file is empty." );
 		close( fdImage );
 		return false;
 	}
 	if ( fileLen % DNBD3_BLOCK_SIZE != 0 ) {
-		printf( "File length is not a multiple of DNBD3_BLOCK_SIZE\n" );
+		logadd( LOG_WARNING, "File length is not a multiple of DNBD3_BLOCK_SIZE" );
 		const int64_t ret = image_pad( image, fileLen );
 		if ( ret < fileLen ) {
-			printf( "Error appending to file in order to make it block aligned.\n" );
+			logadd( LOG_ERROR, "Error appending to file in order to make it block aligned." );
 			close( fdImage );
 			return false;
 		}
-		printf( "...fixed!\n" );
+		logadd( LOG_INFO, "...fixed!" );
 		fileLen = ret;
 	}
 	if ( lseek( fdImage, 0, SEEK_SET ) != 0 ) {
-		printf( "Seeking back to start failed.\n" );
+		logadd( LOG_ERROR, "Seeking back to start failed." );
 		close( fdImage );
 		return false;
 	}
@@ -1039,19 +1039,19 @@ bool image_generateCrcFile(char *image)
 	sprintf( crcFile, "%s.crc", image );
 	struct stat sst;
 	if ( stat( crcFile, &sst ) == 0 ) {
-		printf( "CRC File for %s already exists! Delete it first if you want to regen.\n", image );
+		logadd( LOG_ERROR, "CRC File for %s already exists! Delete it first if you want to regen.", image );
 		close( fdImage );
 		return false;
 	}
 	int fdCrc = open( crcFile, O_RDWR | O_CREAT, 0644 );
 	if ( fdCrc < 0 ) {
-		printf( "Could not open CRC File %s for writing..\n", crcFile );
+		logadd( LOG_ERROR, "Could not open CRC File %s for writing..", crcFile );
 		close( fdImage );
 		return false;
 	}
 	// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
 	if ( write( fdCrc, crcFile, 4 ) != 4 ) {
-		printf( "Write error\n" );
+		logadd( LOG_ERROR, "Write error" );
 		close( fdImage );
 		close( fdCrc );
 		return false;
@@ -1092,17 +1092,18 @@ bool image_generateCrcFile(char *image)
 				close( fdCrc );
 				return false;
 			}
-			printf( "." );
+			putchar( '.' );
 			fflush( stdout );
 			blocksToGo++;
 		}
 	} while ( !finished );
 	close( fdImage );
-	printf( "done!\nGenerating master-crc..." );
+	printf( "done!" );
+	logadd( LOG_INFO, "Generating master-crc..." );
 	fflush( stdout );
 	// File is written - read again to calc master crc
 	if ( lseek( fdCrc, 4, SEEK_SET ) != 4 ) {
-		printf( "Could not seek to beginning of crc list in file\n" );
+		logadd( LOG_ERROR, "Could not seek to beginning of crc list in file" );
 		close( fdCrc );
 		return false;
 	}
@@ -1110,7 +1111,7 @@ bool image_generateCrcFile(char *image)
 	while ( blocksToGo > 0 ) {
 		const int numBlocks = MIN(1000, blocksToGo);
 		if ( read( fdCrc, buffer, numBlocks * 4 ) != numBlocks * 4 ) {
-			printf( "Could not re-read from crc32 file\n" );
+			logadd( LOG_ERROR, "Could not re-read from crc32 file" );
 			close( fdCrc );
 			return false;
 		}
@@ -1118,16 +1119,16 @@ bool image_generateCrcFile(char *image)
 		blocksToGo -= numBlocks;
 	}
 	if ( lseek( fdCrc, 0, SEEK_SET ) != 0 ) {
-		printf( "Could not seek back to beginning of crc32 file\n" );
+		logadd( LOG_ERROR, "Could not seek back to beginning of crc32 file" );
 		close( fdCrc );
 		return false;
 	}
 	if ( write( fdCrc, &crc, 4 ) != 4 ) {
-		printf( "Could not write master crc to file\n" );
+		logadd( LOG_ERROR, "Could not write master crc to file" );
 		close( fdCrc );
 		return false;
 	}
-	printf( "..done!\nCRC-32 file successfully generated.\n" );
+	logadd( LOG_INFO, "CRC-32 file successfully generated." );
 	fflush( stdout );
 	return true;
 }
@@ -1140,9 +1141,9 @@ void image_printAll()
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
 		spin_lock( &_images[i]->lock );
-		printf( "Image: %s\n", _images[i]->lower_name );
+		logadd( LOG_DEBUG1, "Image: %s", _images[i]->lower_name );
 		percent = image_getCompletenessEstimate( _images[i] );
-		printf( "  Complete: %d%%\n", percent );
+		logadd( LOG_DEBUG1, " |- Complete: %d%%", percent );
 		if ( _images[i]->uplink != NULL ) {
 			host_to_string( &_images[i]->uplink->currentServer, buffer, sizeof(buffer) );
 			pending = 0;
@@ -1151,9 +1152,9 @@ void image_printAll()
 				if ( _images[i]->uplink->queue[j].status != ULR_FREE ) pending++;
 			}
 			spin_unlock( &_images[i]->uplink->queueLock );
-			printf( "  Uplink: %s -- %d pending requests\n", buffer, pending );
+			logadd( LOG_DEBUG1, " |- Uplink: %s -- %d pending requests", buffer, pending );
 		}
-		printf( "  Users: %d\n", _images[i]->users );
+		logadd( LOG_DEBUG1, " `- Users: %d\n", _images[i]->users );
 		spin_unlock( &_images[i]->lock );
 	}
 	spin_unlock( &_images_lock );
@@ -1207,7 +1208,7 @@ bool image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, cons
 			readPos += r;
 		}
 		if ( crc != crc32list[*blocks] ) {
-			printf( "Block %d is %x, should be %x\n", *blocks, crc, crc32list[*blocks] );
+			logadd( LOG_WARNING, "Block %d is %x, should be %x", *blocks, crc, crc32list[*blocks] );
 			return false;
 		}
 		blocks++;

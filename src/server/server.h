@@ -34,10 +34,6 @@ extern dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 extern int _num_clients;
 extern pthread_spinlock_t _clients_lock;
 
-#ifdef _DEBUG
-extern int _fake_delay;
-#endif
-
 void dnbd3_cleanup();
 void dnbd3_removeClient(dnbd3_client_t *client);
 dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client);

@@ -115,25 +115,24 @@ bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port)
 	for( ptr = res; ptr != NULL; ptr = ptr->ai_next ) {
 		char bla[100];
 		if ( !sock_printable( (struct sockaddr*)ptr->ai_addr, ptr->ai_addrlen, bla, 100 ) ) snprintf( bla, 100, "[invalid]" );
-		printf( "Trying to bind to %s ", bla );
+		logadd( LOG_DEBUG1, "Binding to %s...", bla );
 		int sock = socket( ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol );
 		if ( sock < 0 ) {
-			printf( "...cannot socket(), errno=%d\n", errno );
+			logadd( LOG_WARNING, "(Bind to %s): cannot socket(), errno=%d", bla, errno );
 			continue;
 		}
 		setsockopt( sock, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on) );
 		if ( ptr->ai_family == PF_INET6 ) setsockopt( sock, IPPROTO_IPV6, IPV6_V6ONLY, &on, sizeof(on) );
 		if ( bind( sock, ptr->ai_addr, ptr->ai_addrlen ) == -1 ) {
-			printf( "...cannot bind(), errno=%d\n", errno );
+			logadd( LOG_WARNING, "(Bind to %s): cannot bind(), errno=%d", bla, errno );
 			close( sock );
 			continue;
 		}
 		if ( listen( sock, 20 ) == -1 ) {
-			printf( "...cannot listen(), errno=%d\n", errno );
+			logadd( LOG_WARNING, "(Bind to %s): cannot listen(), errno=%d", errno );
 			close( sock );
 			continue;
 		}
-		printf( "...OK!\n" );
 		list->entry[list->count].fd = sock;
 		list->entry[list->count].events = POLLIN | POLLRDHUP;
 		list->count++;
@@ -153,14 +152,13 @@ int sock_accept(poll_list_t *list, struct sockaddr_storage *addr, socklen_t *len
 {
 	int ret = poll( list->entry, list->count, -1 );
 	if ( ret < 0 ) {
-		printf( "poll errno=%d\n", errno );
 		return -1;
 	}
 	for ( int i = list->count - 1; i >= 0; --i ) {
 		if ( list->entry[i].revents == 0 ) continue;
 		if ( list->entry[i].revents == POLLIN ) return accept( list->entry[i].fd, (struct sockaddr *)addr, length_ptr );
 		if ( list->entry[i].revents & ( POLLNVAL | POLLHUP | POLLERR | POLLRDHUP ) ) {
-			printf( "poll fd revents=%d for index=%d and fd=%d\n", (int)list->entry[i].revents, i, list->entry[i].fd );
+			logadd( LOG_DEBUG1, "poll fd revents=%d for index=%d and fd=%d", (int)list->entry[i].revents, i, list->entry[i].fd );
 			if ( ( list->entry[i].revents & POLLNVAL ) == 0 ) close( list->entry[i].fd );
 			if ( i != list->count ) list->entry[i] = list->entry[list->count];
 			list->count--;
