@@ -431,35 +431,35 @@ static void *altservers_main(void *data UNUSED)
 				}
 				if ( protocolVersion < MIN_SUPPORTED_SERVER ) goto server_failed;
 				if ( name == NULL || strcmp( name, image->lower_name ) != 0 ) {
-					ERROR_GOTO( server_failed, "[ERROR] Server offers image '%s', requested '%s'", name, image->lower_name );
+					ERROR_GOTO( server_failed, "[RTT] Server offers image '%s', requested '%s'", name, image->lower_name );
 				}
 				if ( rid != image->rid ) {
-					ERROR_GOTO( server_failed, "[ERROR] Server provides rid %d, requested was %d (%s)",
+					ERROR_GOTO( server_failed, "[RTT] Server provides rid %d, requested was %d (%s)",
 					        (int)rid, (int)image->rid, image->lower_name );
 				}
 				if ( imageSize != image->filesize ) {
-					ERROR_GOTO( server_failed, "[ERROR] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
+					ERROR_GOTO( server_failed, "[RTT] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
 					        imageSize, image->filesize, image->lower_name );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				fixup_request( request );
 				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0 ) ) {
-					ERROR_GOTO( server_failed, "[ERROR] Could not request random block for %s", image->lower_name );
+					ERROR_GOTO( server_failed, "[RTT] Could not request first block for %s", image->lower_name );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
 				if ( !dnbd3_get_reply( sock, &reply ) ) {
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
-					ERROR_GOTO( server_failed, "[ERROR] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
+					ERROR_GOTO( server_failed, "[RTT] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
 					        buf, image->lower_name );
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO( server_failed, "[ERROR] Reply to random block request is %d bytes for %s",
+					ERROR_GOTO( server_failed, "[RTT] Reply to first block request is %d bytes for %s",
 					        reply.size, image->lower_name );
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO( server_failed, "[ERROR] Could not read random block payload for %s", image->lower_name );
+					ERROR_GOTO( server_failed, "[RTT] Could not read first block payload for %s", image->lower_name );
 				}
 				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
 				// Measurement done - everything fine so far
