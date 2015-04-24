@@ -24,17 +24,27 @@ endif()
 #SET(CMAKE_CXX_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG")
 #SET(CMAKE_CXX_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG" )
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
+
 ADD_DEFINITIONS(-D_FILE_OFFSET_BITS=64)
 ADD_DEFINITIONS(-DWITH_IPV6)
 
-FIND_PACKAGE(Threads REQUIRED)
+FIND_PACKAGE(Threads)
+FIND_PACKAGE(Fuse)
 FIND_PACKAGE(PkgConfig REQUIRED)
 #FIND_PACKAGE(LibXml2 REQUIRED)
-FIND_PACKAGE(ZLIB REQUIRED)
+FIND_PACKAGE(ZLIB)
+
+if(NOT FUSE_FOUND)
+	message( " *** No fuse dev libs found, won't build dnbd3-fuse" )
+endif()
+if(NOT THREADS_FOUND OR NOT ZLIB_FOUND)
+	message( " *** No threads or no zlib found, won't build dnbd3-server" )
+endif()
 
 #PKG_CHECK_MODULES(GLIB glib-2.0 REQUIRED)
 
-INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR})
+INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR} ${FUSE_INCLUDE_DIR})
 
 ################################################################################
 # VERSION HEADER                                                               #
@@ -71,14 +81,27 @@ ADD_DEPENDENCIES(dnbd3-client version)
 # SERVER                                                                       #
 ################################################################################
 
-FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
-ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
-TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES})
-if(UNIX AND NOT APPLE)
-	target_link_libraries(dnbd3-server rt)
+if(THREADS_FOUND AND ZLIB_FOUND)
+	FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
+	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
+	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES})
+	if(UNIX AND NOT APPLE)
+		target_link_libraries(dnbd3-server rt)
+	endif()
+	ADD_DEPENDENCIES(dnbd3-server version)
 endif()
-ADD_DEPENDENCIES(dnbd3-server version)
 
+
+################################################################################
+# FUSE                                                                         #
+################################################################################
+
+if(FUSE_FOUND)
+	FILE(GLOB_RECURSE FUSE_SRCS src/fuse/*.c)
+	ADD_EXECUTABLE(dnbd3-fuse ${FUSE_SRCS})
+	TARGET_LINK_LIBRARIES(dnbd3-fuse ${FUSE_LIBRARIES})
+	ADD_DEPENDENCIES(dnbd3-fuse version)
+endif()
 
 
 ################################################################################

@@ -8,6 +8,7 @@
 #include "image.h"
 #include "signal.h"
 #include "log.h"
+#include "../protocol.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/errno.h>
@@ -16,7 +17,6 @@
 #include <inttypes.h>
 #include <time.h>
 #include <stdio.h>
-#include "protocol.h"
 
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLockProduce; // Lock for adding something to pending. (NULL -> nonNULL)

@@ -6,7 +6,7 @@
 #include "helper.h"
 #include "altservers.h"
 #include "helper.h"
-#include "protocol.h"
+#include "../protocol.h"
 #include "signal.h"
 
 #include <pthread.h>

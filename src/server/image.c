@@ -5,7 +5,7 @@
 #include "uplink.h"
 #include "locks.h"
 #include "integrity.h"
-#include "protocol.h"
+#include "../protocol.h"
 #include "sockhelper.h"
 #include "altservers.h"
 #include "server.h"
