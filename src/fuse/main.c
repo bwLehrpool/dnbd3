@@ -28,6 +28,8 @@
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 
+#define debugf(...) do { if (useDebug) printf(__VA_ARGS__); } while (0)
+
 /* variables for socket */
 int sock = -1;
 int n;
@@ -35,7 +37,7 @@ int n;
 char *server_address = NULL;
 int portno = -1;
 char *image_Name = NULL;
-const char *imagePathName = "/image";
+const char *imagePathName = "/img";
 uint16_t rid;
 static uint64_t imageSize;
 /* Debug/Benchmark variables */
@@ -59,11 +61,11 @@ static void dnbd3_connect()
 		sock = connect_to_server( server_address, portno );
 
 		if ( sock == -1 ) {
-			printf( "[ERROR] Connection Error!\n" );
+			debugf( "[ERROR] Connection Error!\n" );
 			goto fail;
 		}
 
-		printf( "Selecting image " );
+		debugf( "Selecting image " );
 
 		serialized_buffer_t sbuffer;
 		uint16_t protocol_version;
@@ -71,25 +73,25 @@ static void dnbd3_connect()
 		uint16_t rrid;
 
 		if ( dnbd3_select_image( sock, image_Name, rid, 0 ) != 1 ) {
-			printf( "- Error\n" );
+			debugf( "- Error\n" );
 			goto fail;
 		}
-		printf( "- Success\n" );
+		debugf( "- Success\n" );
 
 		if ( !dnbd3_select_image_reply( &sbuffer, sock, &protocol_version, &name, &rrid, &imageSize ) ) {
-			printf( "Error reading reply\n" );
+			debugf( "Error reading reply\n" );
 			goto fail;
 		}
-		printf( "Reply successful\n" );
+		debugf( "Reply successful\n" );
 
 		if ( rid != 0 && rid != rrid ) {
-			printf( "Got unexpected rid %d, wanted %d\n", (int)rrid, (int)rid );
+			debugf( "Got unexpected rid %d, wanted %d\n", (int)rrid, (int)rid );
 			sleep( 10 );
 			goto fail;
 		}
 		rid = rrid;
 
-		printf( "Protocol version: %i, Image: %s, RevisionID: %i, Size: %i MiB\n", (int)protocol_version, name, (int) rrid, (int)( imageSize/ ( 1024*1024 ) ) );
+		debugf( "Protocol version: %i, Image: %s, RevisionID: %i, Size: %i MiB\n", (int)protocol_version, name, (int) rrid, (int)( imageSize/ ( 1024*1024 ) ) );
 		return;
 
 fail: ;
@@ -102,10 +104,10 @@ static int image_getattr(const char *path, struct stat *stbuf)
 	int res = 0;
 	memset( stbuf, 0, sizeof( struct stat ) );
 	if ( strcmp( path, "/" ) == 0 ) {
-		stbuf->st_mode = S_IFDIR | 0755;
+		stbuf->st_mode = S_IFDIR | 0444;
 		stbuf->st_nlink = 2;
 	} else if ( strcmp( path, imagePathName ) == 0 ) {
-		stbuf->st_mode = S_IFREG | 0755;
+		stbuf->st_mode = S_IFREG | 0444;
 		stbuf->st_nlink = 1;
 		stbuf->st_size = imageSize;
 	} else {
@@ -141,11 +143,11 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	/* buffer for throwing away unwanted messages. */
 	char tBuf[100];
 
+	if ( (uint64_t)offset >= imageSize ) {
+		return 0;
+	}
 	if ( strcmp( path, imagePathName ) != 0 ) {
 		return -ENOENT;
-	}
-	if ( offset >= imageSize ) {
-		return 0;
 	}
 	if ( offset + size > imageSize ) {
 		size = imageSize - offset;
@@ -158,7 +160,7 @@ retry: ;
 
 	/* seek inside the image */
 	if ( !dnbd3_get_block( sock, offset, size, offset ) ) {
-		printf( "[ERROR] Get block error!\n" );
+		debugf( "[ERROR] Get block error!\n" );
 		goto retry;
 	}
 
@@ -166,8 +168,8 @@ retry: ;
 	uint64_t startBlock = offset / ( 4096 );
 	uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
 
-	printf( "StartBlockRequest: %"PRIu64"\n", startBlock );
-	printf( "EndBlockRequest: %"PRIu64"\n", endBlock );
+	debugf( "StartBlockRequest: %"PRIu64"\n", startBlock );
+	debugf( "EndBlockRequest: %"PRIu64"\n", endBlock );
 
 	if ( useDebug ) {
 		for ( ; startBlock <= endBlock; startBlock++ ) {
@@ -180,18 +182,18 @@ retry: ;
 	/*see if the received package is a requested block, throw away if not */
 	while ( true ) {
 		if ( !dnbd3_get_reply( sock, &reply ) ) {
-			printf( "[ERROR] Reply error\n" );
+			debugf( "[ERROR] Reply error\n" );
 			goto retry;
 		}
-		printf( "Reply success\n" );
+		debugf( "Reply success\n" );
 
 		if ( reply.cmd == CMD_ERROR ) {
-			printf( "Got a CMD_ERROR!\n" );
+			debugf( "Got a CMD_ERROR!\n" );
 			goto retry;
 		}
 		if ( reply.cmd != CMD_GET_BLOCK ) {
-			printf( "Received block isn't a wanted block, throwing it away...\n" );
-			int tDone = 0;
+			debugf( "Received block isn't a wanted block, throwing it away...\n" );
+			uint32_t tDone = 0;
 			int todo;
 			while ( tDone < reply.size ) {
 				todo = reply.size - tDone > 100 ? 100: reply.size - tDone;
@@ -201,7 +203,7 @@ retry: ;
 					if ( n < 0 && ( errno == EAGAIN || errno == EINTR ) ) {
 						continue;
 					}
-					printf( "[ERROR] Errno %i and %i\n",errno, n );
+					debugf( "[ERROR] Errno %i and %i\n",errno, n );
 					goto retry;
 				}
 				tDone += n;
@@ -211,30 +213,30 @@ retry: ;
 		break;
 	}
 
-	printf( "Payloadsize: %i\n", ( int ) reply.size );
-	printf( "Offset: %"PRIu64"\n", reply.handle );
+	debugf( "Payloadsize: %i\n", ( int ) reply.size );
+	debugf( "Offset: %"PRIu64"\n", reply.handle );
 
-	if ( size != reply.size || offset != reply.handle ) {
-		printf( "Size: %i, reply.size: %i!\n", ( int ) size, ( int ) reply.size );
-		printf( "Handle: %" PRIu64 ", reply.handle: %" PRIu64 "!\n", offset, reply.handle );
+	if ( size != reply.size || (uint64_t)offset != reply.handle ) {
+		debugf( "Size: %i, reply.size: %i!\n", ( int ) size, ( int ) reply.size );
+		debugf( "Handle: %" PRIu64 ", reply.handle: %" PRIu64 "!\n", offset, reply.handle );
 		goto retry;
 	}
 	/* read the data block data from received package */
-	int done = 0;
+	uint32_t done = 0;
 	while ( done < size ) {
 		n = read( sock, buf + done, size - done );
 		if ( n <= 0 ) {
 			if ( n < 0 && ( errno == EAGAIN || errno == EINTR ) ) {
 				continue;
 			}
-			printf( "[ERROR] Error: %i and %i\n",errno, n );
+			debugf( "[ERROR] Error: %i and %i\n",errno, n );
 			goto retry;
 		}
 		done += n;
 		/* for benchmarking */
 		logInfo.receivedBytes += n;
 	}
-	printf( "Received bytes: %i MiB\n", ( int )( logInfo.receivedBytes/ ( 1024*1024 ) ) );
+	debugf( "Received bytes: %i MiB\n", ( int )( logInfo.receivedBytes/ ( 1024*1024 ) ) );
 
 	/* logfile stuff */
 	if ( useLog ) {
@@ -247,7 +249,7 @@ retry: ;
 }
 
 /* close the connection */
-void image_destroy(void *private_data)
+void image_destroy(void *private_data UNUSED)
 {
 	if ( useLog ) {
 		printLog( &logInfo );
