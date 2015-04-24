@@ -37,9 +37,11 @@ FIND_PACKAGE(ZLIB)
 
 if(NOT FUSE_FOUND)
 	message( " *** No fuse dev libs found, won't build dnbd3-fuse" )
+	SET(FUSE_INCLUDE_DIR "")
 endif()
 if(NOT THREADS_FOUND OR NOT ZLIB_FOUND)
 	message( " *** No threads or no zlib found, won't build dnbd3-server" )
+	SET(ZLIB_INCLUDE_DIR "")
 endif()
 
 #PKG_CHECK_MODULES(GLIB glib-2.0 REQUIRED)
@@ -74,6 +76,7 @@ FILE(GLOB_RECURSE CLIENT_SRCS src/client/*.c)
 ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
 TARGET_LINK_LIBRARIES(dnbd3-client)
 ADD_DEPENDENCIES(dnbd3-client version)
+INSTALL(TARGETS dnbd3-client RUNTIME DESTINATION sbin)
 
 
 
@@ -89,7 +92,9 @@ if(THREADS_FOUND AND ZLIB_FOUND)
 		target_link_libraries(dnbd3-server rt)
 	endif()
 	ADD_DEPENDENCIES(dnbd3-server version)
+	INSTALL(TARGETS dnbd3-server RUNTIME DESTINATION sbin)
 endif()
+
 
 
 ################################################################################
@@ -101,13 +106,14 @@ if(FUSE_FOUND)
 	ADD_EXECUTABLE(dnbd3-fuse ${FUSE_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-fuse ${FUSE_LIBRARIES})
 	ADD_DEPENDENCIES(dnbd3-fuse version)
+	INSTALL(TARGETS dnbd3-fuse RUNTIME DESTINATION bin)
 endif()
+
 
 
 ################################################################################
 # MODULE                                                                       #
 ################################################################################
-
 
 SET(MODULE_NAME dnbd3)
 SET(MODULE_FILE ${MODULE_NAME}.ko)
@@ -140,19 +146,17 @@ ADD_CUSTOM_COMMAND(
 
 ADD_CUSTOM_TARGET(${MODULE_NAME} ALL DEPENDS ${CMAKE_BINARY_DIR}/${MODULE_FILE})
 
-
-
-################################################################################
-# INSTALL                                                                      #
-################################################################################
-
-INSTALL(TARGETS dnbd3-server dnbd3-client RUNTIME DESTINATION sbin)
-
-INSTALL(FILES server.conf.example client.conf.example DESTINATION /etc/dnbd3/)
-
 INSTALL(FILES ${CMAKE_BINARY_DIR}/${MODULE_NAME}.ko
         DESTINATION /lib/modules/${CMAKE_SYSTEM_VERSION}/kernel/drivers/block
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
 
 INSTALL(CODE "EXECUTE_PROCESS(COMMAND depmod -a)")
+
+
+#
+# Other install files
+#
+
+INSTALL(FILES server.conf.example client.conf.example DESTINATION /etc/dnbd3/)
+
