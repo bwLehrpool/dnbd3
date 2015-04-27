@@ -22,6 +22,10 @@
 #include <zlib.h>
 #include <fcntl.h>
 
+
+static uint64_t totalBytesReceived = 0;
+static pthread_spinlock_t statisticsReceivedLock;
+
 static void* uplink_mainloop(void *data);
 static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly);
 static void uplink_handleReceive(dnbd3_connection_t *link);
@@ -30,6 +34,11 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink);
 static void uplink_sendReplicationRequest(dnbd3_connection_t *link);
 
 // ############ uplink connection handling
+
+void uplink_globalsInit()
+{
+	spin_init( &statisticsReceivedLock, PTHREAD_PROCESS_PRIVATE );
+}
 
 /**
  * Create and initialize an uplink instance for the given
@@ -53,6 +62,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 	}
 	link = image->uplink = calloc( 1, sizeof(dnbd3_connection_t) );
 	link->image = image;
+	link->bytesReceived = 0;
 	link->queueLen = 0;
 	link->fd = -1;
 	link->signal = -1;
@@ -426,6 +436,9 @@ static void* uplink_mainloop(void *data)
 	spin_destroy( &link->queueLock );
 	free( link->recvBuffer );
 	link->recvBuffer = NULL;
+	spin_lock( &statisticsReceivedLock );
+	totalBytesReceived += link->bytesReceived;
+	spin_unlock( &statisticsReceivedLock );
 	free( link );
 	return NULL ;
 }
@@ -549,6 +562,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		struct iovec iov[2];
 		const uint64_t start = inReply.handle;
 		const uint64_t end = inReply.handle + inReply.size;
+		link->bytesReceived += inReply.size;
 		// 1) Write to cache file
 		assert( link->image->cacheFd != -1 );
 		ret = (int)pwrite( link->image->cacheFd, link->recvBuffer, inReply.size, start );
@@ -588,7 +602,10 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 				served = true;
 				pthread_mutex_lock( &client->sendMutex );
 				spin_unlock( &link->queueLock );
-				if ( client->sock != -1 ) writev( client->sock, iov, 2 );
+				if ( client->sock != -1 ) {
+					ssize_t sent = writev( client->sock, iov, 2 );
+					if ( sent > (ssize_t) sizeof outReply ) client->bytesSent += (uint64_t) sent - sizeof outReply;
+				}
 				pthread_mutex_unlock( &client->sendMutex );
 				spin_lock( &link->queueLock );
 			}

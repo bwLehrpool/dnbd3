@@ -21,6 +21,8 @@
 #ifndef NET_H_
 #define NET_H_
 
+void net_init();
+
 void *net_client_handler(void *client_socket);
 
 #endif /* NET_H_ */

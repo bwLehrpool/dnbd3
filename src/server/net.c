@@ -44,6 +44,9 @@
 #include "../types.h"
 #include "locks.h"
 
+static uint64_t totalBytesSent = 0;
+static pthread_spinlock_t statisticsSentLock;
+
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
 	int ret, fails = 0;
@@ -110,6 +113,11 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 		}
 	}
 	return true;
+}
+
+void net_init()
+{
+	spin_init( &statisticsSentLock, PTHREAD_PROCESS_PRIVATE );
 }
 
 void *net_client_handler(void *dnbd3_client)
@@ -307,6 +315,7 @@ void *net_client_handler(void *dnbd3_client)
 						}
 						done += ret;
 					}
+					client->bytesSent += request.size; // Increase counter for statistics.
 				}
 				if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 				break;
@@ -359,6 +368,9 @@ set_name: ;
 	}
 exit_client_cleanup: ;
 	dnbd3_removeClient( client );
+	spin_lock( &statisticsSentLock );
+	totalBytesSent += client->bytesSent; // Add the amount of bytes send to statistics of the server.
+	spin_unlock( &statisticsSentLock );
 	client = dnbd3_freeClient( client );
 	return NULL ;
 }

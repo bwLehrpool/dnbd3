@@ -29,7 +29,6 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <assert.h>
-
 #include "../types.h"
 #include "../version.h"
 
@@ -263,6 +262,8 @@ int main(int argc, char *argv[])
 	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
 	altservers_init();
 	integrity_init();
+	net_init();
+	uplink_globalsInit();
 	logadd( LOG_INFO, "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
 
 	if ( altservers_load() < 0 ) {
@@ -395,6 +396,7 @@ dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd)
 		return NULL ;
 	}
 	dnbd3_client->sock = fd;
+	dnbd3_client->bytesSent = 0;
 	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
 	pthread_mutex_init( &dnbd3_client->sendMutex, NULL );
 	return dnbd3_client;

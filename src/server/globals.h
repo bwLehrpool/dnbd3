@@ -57,6 +57,7 @@ struct _dnbd3_connection
 	volatile bool shutdown;     // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
 	int replicatedLastBlock;    // bool telling if the last block has been replicated yet
 	uint64_t replicationHandle; // Handle of pending replication request
+	uint64_t bytesReceived;     // Number of bytes received by the connection.
 };
 
 typedef struct
@@ -117,6 +118,7 @@ struct _dnbd3_client
 	int sock;
 	dnbd3_host_t host;
 	dnbd3_image_t *image;
+	uint64_t bytesSent;
 	pthread_spinlock_t lock;
 	pthread_mutex_t sendMutex;
 	bool isServer;         // true if a server in proxy mode, false if real client
