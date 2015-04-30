@@ -43,6 +43,8 @@
 #include "../config.h"
 #include "../types.h"
 #include "locks.h"
+#include "rpc.h"
+
 
 static uint64_t totalBytesSent = 0;
 static pthread_spinlock_t statisticsSentLock;
@@ -66,8 +68,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 	}
 	// Payload sanity check
 	if ( request->cmd != CMD_GET_BLOCK && request->size > MAX_PAYLOAD ) {
-		logadd( LOG_WARNING, "Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd,
-		        (int)request->size );
+		logadd( LOG_WARNING, "Client tries to send a packet of type %d with %d bytes payload. Dropping client.", (int)request->cmd, (int)request->size );
 		return false;
 	}
 	return true;
@@ -187,6 +188,9 @@ void *net_client_handler(void *dnbd3_client)
 				}
 			}
 		}
+	} else if ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) {
+		rpc_sendStatsJson( client->sock );
+		logadd( LOG_INFO, "Sending statistics." );
 	}
 
 	if ( bOk ) {

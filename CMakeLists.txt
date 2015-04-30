@@ -31,9 +31,10 @@ ADD_DEFINITIONS(-DWITH_IPV6)
 
 FIND_PACKAGE(Threads)
 FIND_PACKAGE(Fuse)
-FIND_PACKAGE(PkgConfig REQUIRED)
+#FIND_PACKAGE(PkgConfig REQUIRED)
 #FIND_PACKAGE(LibXml2 REQUIRED)
 FIND_PACKAGE(ZLIB)
+FIND_PACKAGE(Jansson)
 
 if(NOT FUSE_FOUND)
 	message( " *** No fuse dev libs found, won't build dnbd3-fuse" )
@@ -46,7 +47,7 @@ endif()
 
 #PKG_CHECK_MODULES(GLIB glib-2.0 REQUIRED)
 
-INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR} ${FUSE_INCLUDE_DIR})
+INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR} ${FUSE_INCLUDE_DIR} ${JANSSON_INCLUDE_DIR})
 
 ################################################################################
 # VERSION HEADER                                                               #
@@ -87,7 +88,7 @@ INSTALL(TARGETS dnbd3-client RUNTIME DESTINATION sbin)
 if(THREADS_FOUND AND ZLIB_FOUND)
 	FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
 	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
-	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES})
+	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES} ${JANSSON_LIBRARIES})
 	if(UNIX AND NOT APPLE)
 		target_link_libraries(dnbd3-server rt)
 	endif()
