@@ -116,6 +116,22 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 	return true;
 }
 
+uint64_t net_getTotalBytesSent()
+{
+	spin_lock( &statisticsSentLock );
+	uint64_t tmp = totalBytesSent;
+	spin_unlock( &statisticsSentLock );
+	return tmp;
+}
+
+void net_addTotalBytesSent(uint64_t sentBytes)
+{
+	spin_lock( &statisticsSentLock );
+	totalBytesSent += sentBytes;
+	spin_unlock( &statisticsSentLock );
+	return;
+}
+
 void net_init()
 {
 	spin_init( &statisticsSentLock, PTHREAD_PROCESS_PRIVATE );
@@ -372,9 +388,7 @@ set_name: ;
 	}
 exit_client_cleanup: ;
 	dnbd3_removeClient( client );
-	spin_lock( &statisticsSentLock );
-	totalBytesSent += client->bytesSent; // Add the amount of bytes send to statistics of the server.
-	spin_unlock( &statisticsSentLock );
+	net_addTotalBytesSent( client->bytesSent ); // Add the amount of bytes sent by the client to the statistics of the server.
 	client = dnbd3_freeClient( client );
 	return NULL ;
 }

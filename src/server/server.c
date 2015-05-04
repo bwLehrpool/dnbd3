@@ -488,18 +488,3 @@ int dnbd3_serverUptime()
 	return (int)(time( NULL ) - startupTime);
 }
 
-static void dnbd3_printClients()
-{
-	int i;
-	char buffer[100];
-	spin_lock( &_clients_lock );
-	for (i = 0; i < _num_clients; ++i) {
-		if ( _clients[i] == NULL ) continue;
-		spin_lock( &_clients[i]->lock );
-		host_to_string( &_clients[i]->host, buffer, sizeof(buffer) );
-		logadd( LOG_DEBUG1, "Client %s", buffer );
-		if ( _clients[i]->image != NULL ) logadd( LOG_DEBUG1, " `- Image: %s\n", _clients[i]->image->lower_name );
-		spin_unlock( &_clients[i]->lock );
-	}
-	spin_unlock( &_clients_lock );
-}

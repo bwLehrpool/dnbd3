@@ -40,6 +40,22 @@ void uplink_globalsInit()
 	spin_init( &statisticsReceivedLock, PTHREAD_PROCESS_PRIVATE );
 }
 
+uint64_t uplink_getTotalBytesReceived()
+{
+	spin_lock( &statisticsReceivedLock );
+	int tmp = totalBytesReceived;
+	spin_unlock( &statisticsReceivedLock );
+	return tmp;
+}
+
+void uplink_addTotalBytesReceived(int receivedBytes)
+{
+	spin_lock( &statisticsReceivedLock );
+	totalBytesReceived += receivedBytes;
+	spin_unlock( &statisticsReceivedLock );
+	return;
+}
+
 /**
  * Create and initialize an uplink instance for the given
  * image. Uplinks run in their own thread.
@@ -436,9 +452,7 @@ static void* uplink_mainloop(void *data)
 	spin_destroy( &link->queueLock );
 	free( link->recvBuffer );
 	link->recvBuffer = NULL;
-	spin_lock( &statisticsReceivedLock );
-	totalBytesReceived += link->bytesReceived;
-	spin_unlock( &statisticsReceivedLock );
+	uplink_addTotalBytesReceived( link->bytesReceived );
 	free( link );
 	return NULL ;
 }

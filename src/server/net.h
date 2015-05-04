@@ -23,6 +23,10 @@
 
 void net_init();
 
+uint64_t net_getTotalBytesSent();
+
+void net_addTotalBytesSent(uint64_t sentBytes);
+
 void *net_client_handler(void *client_socket);
 
 #endif /* NET_H_ */
