@@ -8,8 +8,6 @@ void uplink_globalsInit();
 
 uint64_t uplink_getTotalBytesReceived();
 
-void uplink_addTotalBytesReceived(int receivedBytes);
-
 bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host);
 
 void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client);

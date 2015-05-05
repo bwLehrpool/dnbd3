@@ -1,7 +1,3 @@
-#include <unistd.h>
-#include <string.h>
-#include <jansson.h>
-
 #include "rpc.h"
 #include "server.h"
 #include "net.h"
@@ -9,6 +5,12 @@
 #include "log.h"
 #include "locks.h"
 #include "helper.h"
+#include "image.h"
+
+#include <unistd.h>
+#include <string.h>
+#include <jansson.h>
+#include <inttypes.h>
 
 static void clientsToJson(json_t *jsonClients);
 
@@ -16,12 +18,16 @@ void rpc_sendStatsJson(int sock)
 {
 	uint64_t receivedBytes = uplink_getTotalBytesReceived();
 	uint64_t sentBytes = net_getTotalBytesSent();
+	int uptime = dnbd3_serverUptime();
 
 	json_t *jsonClients = json_array();
 	clientsToJson( jsonClients );
 
-	json_t *statisticsJson = json_pack( "{sisi}", "receivedBytes", (json_int_t) receivedBytes, "sentBytes", (json_int_t) sentBytes );
-	json_object_set( statisticsJson, "clients", jsonClients );
+
+	json_t *statisticsJson = json_pack( "{sIsI}", "receivedBytes", (json_int_t) receivedBytes, "sentBytes", (json_int_t) sentBytes );
+	json_object_set_new( statisticsJson, "clients", jsonClients );
+	json_object_set_new( statisticsJson, "images", image_fillJson() );
+	json_object_set_new( statisticsJson, "uptime", json_integer( uptime ) );
 	char *jsonString = json_dumps( statisticsJson, 0 );
 
 	char buffer[500];
@@ -30,7 +36,6 @@ void rpc_sendStatsJson(int sock)
 	write( sock, buffer, strlen( buffer ) );
 	write( sock, jsonString, strlen( jsonString ) );
 	json_decref( statisticsJson );
-	json_decref( jsonClients );
 	free( jsonString );
 }
 
@@ -46,9 +51,8 @@ static void clientsToJson(json_t *jsonClients)
 		spin_lock( &_clients[i]->lock );
 		host_to_string( &_clients[i]->host, clientName, sizeof(clientName) );
 		imageName =_clients[i]->image != NULL ? _clients[i]->image->lower_name : "NULL";
-		clientStats = json_pack( "{sssssi}", "client", clientName, "image", imageName , "bytesSent", (json_int_t) _clients[i]->bytesSent );
-		json_array_append( jsonClients, clientStats );
-		json_decref( clientStats );
+		clientStats = json_pack( "{sssssI}", "client", clientName, "image", imageName , "bytesSent", (json_int_t)_clients[i]->bytesSent );
+		json_array_append_new( jsonClients, clientStats );
 		spin_unlock( &_clients[i]->lock );
 	}
 	spin_unlock( &_clients_lock );

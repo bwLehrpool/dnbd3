@@ -124,14 +124,6 @@ uint64_t net_getTotalBytesSent()
 	return tmp;
 }
 
-void net_addTotalBytesSent(uint64_t sentBytes)
-{
-	spin_lock( &statisticsSentLock );
-	totalBytesSent += sentBytes;
-	spin_unlock( &statisticsSentLock );
-	return;
-}
-
 void net_init()
 {
 	spin_init( &statisticsSentLock, PTHREAD_PROCESS_PRIVATE );
@@ -206,7 +198,6 @@ void *net_client_handler(void *dnbd3_client)
 		}
 	} else if ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) {
 		rpc_sendStatsJson( client->sock );
-		logadd( LOG_INFO, "Sending statistics." );
 	}
 
 	if ( bOk ) {
@@ -388,7 +379,9 @@ set_name: ;
 	}
 exit_client_cleanup: ;
 	dnbd3_removeClient( client );
-	net_addTotalBytesSent( client->bytesSent ); // Add the amount of bytes sent by the client to the statistics of the server.
+	spin_lock( &statisticsSentLock );
+	totalBytesSent += client->bytesSent;// Add the amount of bytes sent by the client to the statistics of the server.
+	spin_unlock( &statisticsSentLock );
 	client = dnbd3_freeClient( client );
 	return NULL ;
 }

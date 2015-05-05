@@ -59,7 +59,6 @@ static bool sigReload = false, sigLogCycle = false;
 
 static bool dnbd3_addClient(dnbd3_client_t *client);
 static void dnbd3_handleSignal(int signum);
-static void dnbd3_printClients();
 
 /**
  * Print help text for usage instructions

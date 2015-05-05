@@ -1,6 +1,8 @@
 #ifndef _IMAGE_H_
 #define _IMAGE_H_
 
+#include <jansson.h>
+
 #include "../config.h"
 #include "globals.h"
 
@@ -38,7 +40,7 @@ bool image_create(char *image, int revision, uint64_t size);
 
 bool image_generateCrcFile(char *image);
 
-void image_printAll();
+json_t* image_fillJson();
 
 int image_getCompletenessEstimate(const dnbd3_image_t * const image);
 

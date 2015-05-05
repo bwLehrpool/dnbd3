@@ -1133,31 +1133,30 @@ bool image_generateCrcFile(char *image)
 	return true;
 }
 
-void image_printAll()
+json_t* image_fillJson()
 {
-	int i, percent, pending, j;
+	json_t *imagesJson = json_array();
+	json_t *image;
+
+	int i;
 	char buffer[100] = { 0 };
 	spin_lock( &_images_lock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
 		spin_lock( &_images[i]->lock );
-		logadd( LOG_DEBUG1, "Image: %s", _images[i]->lower_name );
-		percent = image_getCompletenessEstimate( _images[i] );
-		logadd( LOG_DEBUG1, " |- Complete: %d%%", percent );
+		image = json_pack( "{sssIsI}", "image", _images[i]->lower_name, "users", (json_int_t) _images[i]->users,
+				"complete",  (json_int_t) image_getCompletenessEstimate( _images[i] ) );
 		if ( _images[i]->uplink != NULL ) {
 			host_to_string( &_images[i]->uplink->currentServer, buffer, sizeof(buffer) );
-			pending = 0;
-			spin_lock( &_images[i]->uplink->queueLock );
-			for (j = 0; j < _images[i]->uplink->queueLen; ++j) {
-				if ( _images[i]->uplink->queue[j].status != ULR_FREE ) pending++;
-			}
-			spin_unlock( &_images[i]->uplink->queueLock );
-			logadd( LOG_DEBUG1, " |- Uplink: %s -- %d pending requests", buffer, pending );
+			json_object_set_new( image, "uplinkServer", json_string( buffer ) );
+			json_object_set_new( image, "receivedBytes", json_integer( (json_int_t) _images[i]->uplink->bytesReceived ) );
 		}
-		logadd( LOG_DEBUG1, " `- Users: %d\n", _images[i]->users );
+		json_array_append_new( imagesJson, image );
+
 		spin_unlock( &_images[i]->lock );
 	}
 	spin_unlock( &_images_lock );
+	return imagesJson;
 }
 
 /**
