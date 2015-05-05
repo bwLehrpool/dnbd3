@@ -76,4 +76,11 @@ void sock_set_block(int sock);
  */
 bool sock_append(poll_list_t *list, const int sock, bool wantRead, bool wantWrite);
 
+/**
+ * Send the whole buffer, calling write() multiple times if neccessary.
+ * Give up after calling write() maxtries times.
+ * Set maxtries < 0 to try infinitely.
+ */
+ssize_t sock_sendAll(int sock, void *buffer, size_t len, int maxtries);
+
 #endif /* SOCKHELPER_H_ */
