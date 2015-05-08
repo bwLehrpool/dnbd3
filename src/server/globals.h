@@ -108,6 +108,7 @@ struct _dnbd3_image
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int rid;               // revision of image
 	int users;             // clients currently using this image
+	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
 	time_t atime;          // last access time
 	bool working; // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;

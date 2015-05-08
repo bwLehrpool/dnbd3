@@ -500,6 +500,7 @@ static bool image_load_all_internal(char *base, char *path)
 
 static bool image_load(char *base, char *path, int withUplink)
 {
+	static int imgIdCounter = 0; // Used to assign unique numeric IDs to images
 	int i, revision;
 	struct stat st;
 	uint8_t *cache_map = NULL;
@@ -682,6 +683,8 @@ static bool image_load(char *base, char *path, int withUplink)
 	// ### Reaching this point means loading succeeded
 	// Add to images array
 	spin_lock( &_images_lock );
+	// Now we're locked, assign unique ID to image (unique for this running server instance!)
+	image->id = ++imgIdCounter;
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] != NULL ) continue;
 		_images[i] = image;
@@ -1144,8 +1147,8 @@ json_t* image_fillJson()
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
 		spin_lock( &_images[i]->lock );
-		image = json_pack( "{sssIsI}", "image", _images[i]->lower_name, "users", (json_int_t) _images[i]->users,
-				"complete",  (json_int_t) image_getCompletenessEstimate( _images[i] ) );
+		image = json_pack( "{sisssisIsi}", "id", _images[i]->id, "image", _images[i]->lower_name, "rid", (int) _images[i]->rid, "users", (json_int_t) _images[i]->users,
+				"complete",  image_getCompletenessEstimate( _images[i] ) );
 		if ( _images[i]->uplink != NULL ) {
 			host_to_string( &_images[i]->uplink->currentServer, buffer, sizeof(buffer) );
 			json_object_set_new( image, "uplinkServer", json_string( buffer ) );

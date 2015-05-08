@@ -63,7 +63,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 	// Make sure all bytes are in the right order (endianness)
 	fixup_request( *request );
 	if ( request->magic != dnbd3_packet_magic ) {
-		logadd( LOG_DEBUG1, "Magic in client request incorrect (cmd: %d, len: %d)\n", (int)request->cmd, (int)request->size );
+		logadd( LOG_DEBUG2, "Magic in client request incorrect (cmd: %d, len: %d)\n", (int)request->cmd, (int)request->size );
 		return false;
 	}
 	// Payload sanity check
