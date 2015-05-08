@@ -1147,7 +1147,7 @@ json_t* image_fillJson()
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
 		spin_lock( &_images[i]->lock );
-		image = json_pack( "{sisssisIsi}", "id", _images[i]->id, "image", _images[i]->lower_name, "rid", (int) _images[i]->rid, "users", (json_int_t) _images[i]->users,
+		image = json_pack( "{sisssisIsi}", "id", _images[i]->id, "name", _images[i]->lower_name, "rid", (int) _images[i]->rid, "users", (json_int_t) _images[i]->users,
 				"complete",  image_getCompletenessEstimate( _images[i] ) );
 		if ( _images[i]->uplink != NULL ) {
 			host_to_string( &_images[i]->uplink->currentServer, buffer, sizeof(buffer) );

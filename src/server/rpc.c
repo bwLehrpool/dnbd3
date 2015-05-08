@@ -55,7 +55,7 @@ static void clientsToJson(json_t *jsonClients)
 			if ( !host_to_string( &_clients[i]->host, clientName, sizeof(clientName) ) ) {
 				strcpy( clientName, "???" );
 			}
-			clientStats = json_pack( "{sssisI}", "client", clientName, "image", _clients[i]->image->id, "bytesSent", (json_int_t)_clients[i]->bytesSent );
+			clientStats = json_pack( "{sssisI}", "address", clientName, "imageId", _clients[i]->image->id, "bytesSent", (json_int_t)_clients[i]->bytesSent );
 			json_array_append_new( jsonClients, clientStats );
 		}
 		spin_unlock( &_clients[i]->lock );
