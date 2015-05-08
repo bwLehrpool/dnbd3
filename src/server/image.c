@@ -1136,7 +1136,7 @@ bool image_generateCrcFile(char *image)
 	return true;
 }
 
-json_t* image_fillJson()
+json_t* image_getListAsJson()
 {
 	json_t *imagesJson = json_array();
 	json_t *image;

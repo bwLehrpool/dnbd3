@@ -26,7 +26,7 @@ void rpc_sendStatsJson(int sock)
 
 	json_t *statisticsJson = json_pack( "{sIsI}", "bytesReceived", (json_int_t) bytesReceived, "bytesSent", (json_int_t) bytesSent );
 	json_object_set_new( statisticsJson, "clients", jsonClients );
-	json_object_set_new( statisticsJson, "images", image_fillJson() );
+	json_object_set_new( statisticsJson, "images", image_getListAsJson() );
 	json_object_set_new( statisticsJson, "uptime", json_integer( uptime ) );
 	char *jsonString = json_dumps( statisticsJson, 0 );
 

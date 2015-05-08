@@ -40,7 +40,7 @@ bool image_create(char *image, int revision, uint64_t size);
 
 bool image_generateCrcFile(char *image);
 
-json_t* image_fillJson();
+json_t* image_getListAsJson();
 
 int image_getCompletenessEstimate(const dnbd3_image_t * const image);
 
