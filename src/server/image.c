@@ -28,9 +28,10 @@
 
 dnbd3_image_t *_images[SERVER_MAX_IMAGES];
 int _num_images = 0;
-pthread_spinlock_t _images_lock;
 
+static pthread_spinlock_t imageListLock;
 static pthread_mutex_t remoteCloneLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t reloadLock = PTHREAD_MUTEX_INITIALIZER;
 #define NAMELEN  500
 #define CACHELEN 20
 typedef struct
@@ -57,6 +58,11 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list, uint8_t * const cache_map);
 
 // ##########################################
+
+void image_serverStartup()
+{
+	spin_init( &imageListLock, PTHREAD_PROCESS_PRIVATE );
+}
 
 /**
  * Returns true if the given image is complete
@@ -230,7 +236,7 @@ bool image_saveCacheMap(dnbd3_image_t *image)
  * Get an image by name+rid. This function increases a reference counter,
  * so you HAVE TO CALL image_release for every image_get() call at some
  * point...
- * Locks on: _images_lock, _images[].lock
+ * Locks on: imageListLock, _images[].lock
  */
 dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 {
@@ -242,7 +248,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	// Always use lowercase name
 	strtolower( name );
 	// Go through array
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t * const image = _images[i];
 		if ( image == NULL || strcmp( image->lower_name, name ) != 0 ) continue;
@@ -256,12 +262,12 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 
 	// Not found
 	if ( candidate == NULL ) {
-		spin_unlock( &_images_lock );
+		spin_unlock( &imageListLock );
 		return NULL ;
 	}
 
 	spin_lock( &candidate->lock );
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 	candidate->users++;
 	spin_unlock( &candidate->lock );
 
@@ -284,23 +290,23 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
  * Lock the image by increasing its users count
  * Returns the image on success, NULL if it is not found in the image list
  * Every call to image_lock() needs to be followed by a call to image_release() at some point.
- * Locks on: _images_lock, _images[].lock
+ * Locks on: imageListLock, _images[].lock
  */
 dnbd3_image_t* image_lock(dnbd3_image_t *image)
 {
 	if ( image == NULL ) return NULL ;
 	int i;
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) {
 			spin_lock( &image->lock );
-			spin_unlock( &_images_lock );
+			spin_unlock( &imageListLock );
 			image->users++;
 			spin_unlock( &image->lock );
 			return image;
 		}
 	}
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 	return NULL ;
 }
 
@@ -308,7 +314,7 @@ dnbd3_image_t* image_lock(dnbd3_image_t *image)
  * Release given image. This will decrease the reference counter of the image.
  * If the usage counter reaches 0 and the image is not in the images array
  * anymore, the image will be freed
- * Locks on: _images_lock, _images[].lock
+ * Locks on: imageListLock, _images[].lock
  */
 dnbd3_image_t* image_release(dnbd3_image_t *image)
 {
@@ -324,14 +330,14 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 	// Getting here means we decreased the usage counter to zero
 	// If the image is not in the images list anymore, we're
 	// responsible for freeing it
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	for (int i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) { // Found, do nothing
-			spin_unlock( &_images_lock );
+			spin_unlock( &imageListLock );
 			return NULL;
 		}
 	}
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 	// So it wasn't in the images list anymore either, get rid of it,
 	// but check usage count once again, since it might have been increased
 	// after we unlocked above
@@ -342,11 +348,11 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 /**
  * Remove image from images array. Only free it if it has
  * no active users
- * Locks on: _images_lock, image[].lock
+ * Locks on: imageListLock, image[].lock
  */
 void image_remove(dnbd3_image_t *image)
 {
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	spin_lock( &image->lock );
 	for (int i = _num_images - 1; i >= 0; --i) {
 		if ( _images[i] != image ) continue;
@@ -355,7 +361,7 @@ void image_remove(dnbd3_image_t *image)
 	}
 	spin_unlock( &image->lock );
 	if ( image->users <= 0 ) image = image_free( image );
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 }
 
 /**
@@ -364,7 +370,7 @@ void image_remove(dnbd3_image_t *image)
 void image_killUplinks()
 {
 	int i;
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
 		spin_lock( &_images[i]->lock );
@@ -374,36 +380,41 @@ void image_killUplinks()
 		}
 		spin_unlock( &_images[i]->lock );
 	}
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 }
 
 /**
  * Load all images in given path recursively.
  * Pass NULL to use path from config.
+ * NOT THREAD SAFE, make sure this is only running
+ * on one thread at a time!
  */
 bool image_loadAll(char *path)
 {
-	if ( path == NULL ) {
-		return image_load_all_internal( _basePath, _basePath );
-	}
-	return image_load_all_internal( path, path );
+	bool ret;
+	if ( path == NULL ) path = _basePath;
+	pthread_mutex_lock( &reloadLock );
+	ret = image_load_all_internal( path, path );
+	pthread_mutex_unlock( &reloadLock );
+	logadd( LOG_INFO, "Finished scanning %s", path );
+	return ret;
 }
 
 /**
  * Free all images we have, but only if they're not in use anymore.
- * Locks on _images_lock
+ * Locks on imageListLock
  * @return true if all images have been freed
  */
 bool image_tryFreeAll()
 {
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	for (int i = _num_images - 1; i >= 0; --i) {
 		if ( _images[i] != NULL && _images[i]->users == 0 ) {
 			_images[i] = image_free( _images[i] );
 		}
 		if ( i + 1 == _num_images && _images[i] == NULL ) _num_images--;
 	}
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 	return _num_images == 0;
 }
 
@@ -498,6 +509,12 @@ static bool image_load_all_internal(char *base, char *path)
 #undef SUBDIR_LEN
 }
 
+/**
+ * Load image from given path. This will check if the image is
+ * already loaded and updates its information in that case.
+ * Note that this is NOT THREAD SAFE so make sure its always
+ * called on one thread only.
+ */
 static bool image_load(char *base, char *path, int withUplink)
 {
 	static int imgIdCounter = 0; // Used to assign unique numeric IDs to images
@@ -682,7 +699,7 @@ static bool image_load(char *base, char *path, int withUplink)
 
 	// ### Reaching this point means loading succeeded
 	// Add to images array
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	// Now we're locked, assign unique ID to image (unique for this running server instance!)
 	image->id = ++imgIdCounter;
 	for (i = 0; i < _num_images; ++i) {
@@ -693,7 +710,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	if ( i >= _num_images ) {
 		if ( _num_images >= SERVER_MAX_IMAGES ) {
 			logadd( LOG_ERROR, "Cannot load image '%s': maximum number of images reached.", path );
-			spin_unlock( &_images_lock );
+			spin_unlock( &imageListLock );
 			image = image_free( image );
 			goto load_error;
 		}
@@ -703,7 +720,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	// Keep fd for reading
 	image->readFd = fdImage;
 	fdImage = -1;
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 
 	function_return = true;
 
@@ -877,7 +894,7 @@ bool image_create(char *image, int revision, uint64_t size)
  * it will try to clone it from an authoritative dnbd3 server and return the
  * image. If the return value is not NULL, image_release needs to be called
  * on the image at some point.
- * Locks on: remoteCloneLock, _images_lock, _images[].lock
+ * Locks on: remoteCloneLock, imageListLock, _images[].lock
  */
 dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 {
@@ -1143,7 +1160,7 @@ json_t* image_getListAsJson()
 
 	int i;
 	char buffer[100] = { 0 };
-	spin_lock( &_images_lock );
+	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
 		spin_lock( &_images[i]->lock );
@@ -1158,7 +1175,7 @@ json_t* image_getListAsJson()
 
 		spin_unlock( &_images[i]->lock );
 	}
-	spin_unlock( &_images_lock );
+	spin_unlock( &imageListLock );
 	return imagesJson;
 }
 

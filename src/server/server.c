@@ -60,6 +60,8 @@ static bool sigReload = false, sigLogCycle = false;
 static bool dnbd3_addClient(dnbd3_client_t *client);
 static void dnbd3_handleSignal(int signum);
 
+static void* server_asyncImageListLoad(void *data);
+
 /**
  * Print help text for usage instructions
  */
@@ -258,7 +260,7 @@ int main(int argc, char *argv[])
 
 	if ( demonize ) daemon( 1, 0 );
 	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
-	spin_init( &_images_lock, PTHREAD_PROCESS_PRIVATE );
+	image_serverStartup();
 	altservers_init();
 	integrity_init();
 	net_init();
@@ -306,9 +308,6 @@ int main(int argc, char *argv[])
 	socklen_t len;
 	int fd;
 
-	// setup rpc
-	//pthread_t thread_rpc;
-	//thread_create(&(thread_rpc), NULL, &dnbd3_rpc_mainloop, NULL);
 	// Initialize thread pool
 	if ( !threadpool_init( 8 ) ) {
 		logadd( LOG_ERROR, "Could not init thread pool!\n" );
@@ -323,7 +322,7 @@ int main(int argc, char *argv[])
 		if ( sigReload ) {
 			sigReload = false;
 			logadd( LOG_INFO, "SIGUSR1 received, re-scanning image directory" );
-			image_loadAll( NULL );
+			threadpool_run( &server_asyncImageListLoad, NULL );
 		}
 		if ( sigLogCycle ) {
 			sigLogCycle = false;
@@ -357,7 +356,7 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		if ( !threadpool_run( net_client_handler, (void *)dnbd3_client ) ) {
+		if ( !threadpool_run( &net_client_handler, (void *)dnbd3_client ) ) {
 			logadd( LOG_ERROR, "Could not start thread for new client." );
 			dnbd3_removeClient( dnbd3_client );
 			dnbd3_client = dnbd3_freeClient( dnbd3_client );
@@ -485,5 +484,12 @@ static void dnbd3_handleSignal(int signum)
 int dnbd3_serverUptime()
 {
 	return (int)(time( NULL ) - startupTime);
+}
+
+static void* server_asyncImageListLoad(void *data UNUSED)
+{
+	setThreadName( "img-list-loader" );
+	image_loadAll( NULL );
+	return NULL;
 }
 

@@ -13,7 +13,7 @@ have to be aquired if you must hold multiple locks:
 _clients_lock
 _clients[].lock
 integrityQueueLock
-remoteCloneLock
+remoteCloneLock | reloadLock
 _images_lock
 _images[].lock
 uplink.queueLock

@@ -8,7 +8,8 @@
 
 extern dnbd3_image_t *_images[SERVER_MAX_IMAGES];
 extern int _num_images;
-extern pthread_spinlock_t _images_lock;
+
+void image_serverStartup();
 
 bool image_isComplete(dnbd3_image_t *image);
 
