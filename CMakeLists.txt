@@ -31,21 +31,31 @@ ADD_DEFINITIONS(-DWITH_IPV6)
 
 FIND_PACKAGE(Threads)
 FIND_PACKAGE(Fuse)
-#FIND_PACKAGE(PkgConfig REQUIRED)
-#FIND_PACKAGE(LibXml2 REQUIRED)
 FIND_PACKAGE(ZLIB)
 FIND_PACKAGE(Jansson)
 
+SET(MAKE_SERVER True)
+
+message( " *************************************************" )
 if(NOT FUSE_FOUND)
 	message( " *** No fuse dev libs found, won't build dnbd3-fuse" )
 	SET(FUSE_INCLUDE_DIR "")
 endif()
-if(NOT THREADS_FOUND OR NOT ZLIB_FOUND)
-	message( " *** No threads or no zlib found, won't build dnbd3-server" )
-	SET(ZLIB_INCLUDE_DIR "")
+if(MAKE_SERVER AND NOT THREADS_FOUND)
+	message( " *** No threads found, won't build dnbd3-server" )
+	SET(MAKE_SERVER False)
 endif()
-
-#PKG_CHECK_MODULES(GLIB glib-2.0 REQUIRED)
+if(MAKE_SERVER AND NOT ZLIB_FOUND)
+	message( " *** No zlib found, won't build dnbd3-server" )
+	SET(ZLIB_INCLUDE_DIR "")
+	SET(MAKE_SERVER False)
+endif()
+if(MAKE_SERVER AND NOT JANSSON_FOUND)
+	message( " *** No jansson lib found, won't build dnbd3-server" )
+	SET(JANSSON_INCLUDE_DIR "")
+	SET(MAKE_SERVER False)
+endif()
+message( " *************************************************" )
 
 INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR} ${FUSE_INCLUDE_DIR} ${JANSSON_INCLUDE_DIR})
 
@@ -85,7 +95,7 @@ INSTALL(TARGETS dnbd3-client RUNTIME DESTINATION sbin)
 # SERVER                                                                       #
 ################################################################################
 
-if(THREADS_FOUND AND ZLIB_FOUND)
+if(MAKE_SERVER)
 	FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
 	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES} ${JANSSON_LIBRARIES})
