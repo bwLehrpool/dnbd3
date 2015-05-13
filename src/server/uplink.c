@@ -43,7 +43,7 @@ void uplink_globalsInit()
 uint64_t uplink_getTotalBytesReceived()
 {
 	spin_lock( &statisticsReceivedLock );
-	int tmp = totalBytesReceived;
+	uint64_t tmp = totalBytesReceived;
 	spin_unlock( &statisticsReceivedLock );
 	return tmp;
 }
