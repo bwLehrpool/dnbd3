@@ -30,6 +30,12 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+#define dnbd3_sock_create(af,type,proto,sock) sock_create_kern(&init_net, af, type, proto, sock)
+#else
+#define dnbd3_sock_create(af,type,proto,sock) sock_create_kern(af, type, proto, sock)
+#endif
+
 /**
  * Some macros for easier debug output. Location in source-code
  * as well as server IP:port info will be printed.
@@ -169,7 +175,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		int mlen;
 		init_msghdr(msg);
 
-		if (sock_create_kern(dev->cur_server.host.type, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
+		if (dnbd3_sock_create(dev->cur_server.host.type, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
 			error_dev("ERROR: Couldn't create socket (v6).");
 
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
@@ -543,7 +549,7 @@ int dnbd3_net_discover(void *data)
 				continue;
 
 			// Initialize socket and connect
-			if (sock_create_kern(dev->alt_servers[i].host.type, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
+			if (dnbd3_sock_create(dev->alt_servers[i].host.type, SOCK_STREAM, IPPROTO_TCP, &sock) < 0)
 			{
 				debug_alt("ERROR: Couldn't create socket (discover).");
 				sock = NULL;
