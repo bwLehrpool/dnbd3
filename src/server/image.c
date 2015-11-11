@@ -890,10 +890,10 @@ bool image_create(char *image, int revision, uint64_t size)
 }
 
 /**
- * Does the same as image_get, but if the image is not found locally,
- * it will try to clone it from an authoritative dnbd3 server and return the
- * image. If the return value is not NULL, image_release needs to be called
- * on the image at some point.
+ * Does the same as image_get, but if the image is not found locally, or if
+ * revision 0 is requested, it will try to clone it from an authoritative
+ * dnbd3 server and return the image. If the return value is not NULL,
+ * image_release needs to be called on the image at some point.
  * Locks on: remoteCloneLock, imageListLock, _images[].lock
  */
 dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
@@ -905,10 +905,10 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL ;
 	// Already existing locally?
 	dnbd3_image_t *image = image_get( name, revision, true );
-	if ( image != NULL ) return image;
-	// Doesn't exist, try remote if not already tried it recently
-	const time_t now = time( NULL );
+	if ( image != NULL && revision != 0 ) return image;
 
+	// Doesn't exist or is rid 0, try remote if not already tried it recently
+	const time_t now = time( NULL );
 	char *cmpname = name;
 	int useIndex = -1;
 	if ( len >= NAMELEN ) cmpname += 1 + len - NAMELEN;
@@ -918,14 +918,18 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 			useIndex = i;
 			if ( remoteCloneCache[i].deadline < now ) break;
 			pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
+			if ( image != NULL ) return image;
 			return image_get( name, revision, true );
 		}
 	}
-	// Re-check to prevent two clients at the same time triggering this
-	image = image_get( name, revision, true );
-	if ( image != NULL ) {
-		pthread_mutex_unlock( &remoteCloneLock );
-		return image;
+	// Re-check to prevent two clients at the same time triggering this,
+	// but only if rid != 0, since we would just get an old rid then
+	if ( revision != 0 ) {
+		if ( image == NULL ) image = image_get( name, revision, true );
+		if ( image != NULL ) {
+			pthread_mutex_unlock( &remoteCloneLock );
+			return image;
+		}
 	}
 	// Reaching this point means we should contact an authority server
 	serialized_buffer_t serialized;
@@ -949,12 +953,13 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 		if ( !dnbd3_select_image( sock, name, revision, FLAGS8_SERVER ) ) goto server_fail;
 		char *remoteName;
 		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
-		if ( remoteVersion < MIN_SUPPORTED_SERVER ) goto server_fail;
+		if ( remoteVersion < MIN_SUPPORTED_SERVER || remoteRid == 0 ) goto server_fail;
 		if ( revision != 0 && remoteRid != revision ) goto server_fail;
+		if ( revision == 0 && image != NULL && image->rid >= remoteRid ) goto server_fail; // Not actually a failure: Highest remote rid is <= highest local rid - don't clone!
 		if ( remoteImageSize < DNBD3_BLOCK_SIZE || remoteName == NULL || strcmp( name, remoteName ) != 0 ) goto server_fail;
 		if ( remoteImageSize > SERVER_MAX_PROXY_IMAGE_SIZE ) goto server_fail;
 		if ( !image_ensureDiskSpace( remoteImageSize ) ) goto server_fail;
-		if ( !image_clone( sock, name, remoteRid, remoteImageSize ) ) goto server_fail;
+		if ( !image_clone( sock, name, remoteRid, remoteImageSize ) ) goto server_fail; // This sets up the file+map+crc
 		// Cloning worked :-)
 		uplinkSock = sock;
 		uplinkServer = &servers[i];
@@ -963,6 +968,8 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 		close( sock );
 	}
 	pthread_mutex_unlock( &remoteCloneLock );
+	// If we still have a pointer to a local image, release the reference
+	if ( image != NULL ) image_release( image );
 	// If everything worked out, this call should now actually return the image
 	image = image_get( name, remoteRid, false );
 	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
@@ -970,7 +977,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 		if ( !uplink_init( image, uplinkSock, uplinkServer ) ) close( uplinkSock );
 		i = 0;
 		while ( !image->working && ++i < 100 )
-			usleep( 1000 );
+			usleep( 2000 );
 	} else if ( uplinkSock >= 0 ) {
 		close( uplinkSock );
 	}
