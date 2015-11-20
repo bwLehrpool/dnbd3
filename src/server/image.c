@@ -175,9 +175,15 @@ void image_markComplete(dnbd3_image_t *image)
  */
 void image_saveAllCacheMaps()
 {
+	spin_lock( &imageListLock );
 	for (int i = 0; i < _num_images; ++i) {
+		_images[i]->users++;
+		spin_unlock( &imageListLock );
 		image_saveCacheMap( _images[i] );
+		spin_lock( &imageListLock );
+		_images[i]->users--;
 	}
+	spin_unlock( &imageListLock );
 }
 
 /**
@@ -359,8 +365,8 @@ void image_remove(dnbd3_image_t *image)
 		_images[i] = NULL;
 		if ( i + 1 == _num_images ) _num_images--;
 	}
-	spin_unlock( &image->lock );
 	if ( image->users <= 0 ) image = image_free( image );
+	spin_unlock( &image->lock );
 	spin_unlock( &imageListLock );
 }
 
