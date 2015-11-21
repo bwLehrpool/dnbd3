@@ -35,6 +35,6 @@ void serializer_put_uint16(serialized_buffer_t *buffer, uint16_t value);
 
 void serializer_put_uint64(serialized_buffer_t *buffer, uint64_t value);
 
-void serializer_put_string(serialized_buffer_t *buffer, char *value);
+void serializer_put_string(serialized_buffer_t *buffer, const char *value);
 
 #endif

@@ -6,9 +6,9 @@
 #include "helper.h"
 #include "globals.h"
 #include "image.h"
-#include "signal.h"
+#include "../shared/signal.h"
 #include "log.h"
-#include "../protocol.h"
+#include "../shared/protocol.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/errno.h>

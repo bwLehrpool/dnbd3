@@ -5,11 +5,11 @@
 #include "uplink.h"
 #include "locks.h"
 #include "integrity.h"
-#include "../protocol.h"
+#include "../shared/protocol.h"
 #include "sockhelper.h"
 #include "altservers.h"
 #include "server.h"
-#include "signal.h"
+#include "../shared/signal.h"
 
 #include <assert.h>
 #include <stdio.h>

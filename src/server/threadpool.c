@@ -1,7 +1,7 @@
 #include "globals.h"
 #include "helper.h"
 #include "threadpool.h"
-#include "signal.h"
+#include "../shared/signal.h"
 #include "locks.h"
 #include <pthread.h>
 

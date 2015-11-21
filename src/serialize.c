@@ -71,7 +71,7 @@ void serializer_put_uint64(serialized_buffer_t *buffer, uint64_t value)
 	buffer->buffer_pointer += 8;
 }
 
-void serializer_put_string(serialized_buffer_t *buffer, char *value)
+void serializer_put_string(serialized_buffer_t *buffer, const char *value)
 {
 	const size_t len = strlen(value) + 1;
 	if (buffer->buffer_pointer + len > buffer->buffer_end) return;

@@ -4,8 +4,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <errno.h>
-#include "types.h"
-#include "serialize.h"
+#include "../types.h"
+#include "../serialize.h"
 
 #define FLAGS8_SERVER (1)
 
@@ -38,7 +38,7 @@ static inline bool dnbd3_get_reply(int sock, dnbd3_reply_t *reply)
 	return dnbd3_read_reply( sock, reply, true ) == REPLY_OK;
 }
 
-static inline bool dnbd3_select_image(int sock, char *lower_name, uint16_t rid, uint8_t flags8)
+static inline bool dnbd3_select_image(int sock, const char *lower_name, uint16_t rid, uint8_t flags8)
 {
 	serialized_buffer_t serialized;
 	dnbd3_request_t request;

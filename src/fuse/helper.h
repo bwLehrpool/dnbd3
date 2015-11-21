@@ -1,14 +1,9 @@
 #ifndef IMAGEHELPER_H
 #define IMAGEHELPER_H
 
-#include "../protocol.h"
 #include <netdb.h>
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <inttypes.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 
 typedef struct log_info {

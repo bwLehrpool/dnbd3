@@ -1,9 +1,13 @@
-/*
- * Helper functions for imageFuse
- * by Stephan Schwaer, January 2014
- */
-
 #include "helper.h"
+
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <inttypes.h>
+
+
 void printLog( log_info *info )
 {
 	FILE *logFile;

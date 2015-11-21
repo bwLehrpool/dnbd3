@@ -6,8 +6,8 @@
 #include "helper.h"
 #include "altservers.h"
 #include "helper.h"
-#include "../protocol.h"
-#include "signal.h"
+#include "../shared/protocol.h"
+#include "../shared/signal.h"
 
 #include <pthread.h>
 #include <sys/socket.h>

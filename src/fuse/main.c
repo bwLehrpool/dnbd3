@@ -7,7 +7,7 @@
  * Changed by Stephan Schwaer
  * */
 
-#include "../protocol.h"
+#include "../shared/protocol.h"
 #include "../serialize.h"
 #include "helper.h"
 

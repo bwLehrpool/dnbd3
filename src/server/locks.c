@@ -17,7 +17,7 @@
 #include "globals.h"
 #include "log.h"
 #include "helper.h"
-#include "signal.h"
+#include "../shared/signal.h"
 
 #define MAXLOCKS 2000
 #define MAXTHREADS 500

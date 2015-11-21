@@ -96,7 +96,7 @@ INSTALL(TARGETS dnbd3-client RUNTIME DESTINATION sbin)
 ################################################################################
 
 if(MAKE_SERVER)
-	FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c)
+	FILE(GLOB_RECURSE SERVER_SRCS src/server/*.c src/shared/*.c)
 	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES} ${JANSSON_LIBRARIES})
 	if(UNIX AND NOT APPLE)
@@ -113,9 +113,9 @@ endif()
 ################################################################################
 
 if(FUSE_FOUND)
-	FILE(GLOB_RECURSE FUSE_SRCS src/fuse/*.c)
+	FILE(GLOB_RECURSE FUSE_SRCS src/fuse/*.c src/shared/*.c)
 	ADD_EXECUTABLE(dnbd3-fuse ${FUSE_SRCS})
-	TARGET_LINK_LIBRARIES(dnbd3-fuse ${FUSE_LIBRARIES})
+	TARGET_LINK_LIBRARIES(dnbd3-fuse ${CMAKE_THREAD_LIBS_INIT} ${FUSE_LIBRARIES})
 	ADD_DEPENDENCIES(dnbd3-fuse version)
 	INSTALL(TARGETS dnbd3-fuse RUNTIME DESTINATION bin)
 endif()
