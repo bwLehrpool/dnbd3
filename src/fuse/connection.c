@@ -9,17 +9,24 @@
 #include <stdio.h>
 #include <unistd.h>
 
+/* Constants */
 static const size_t SHORTBUF = 100;
+#define MAX_ALTS (8)
 
+/* Module variables */
+
+// Init guard
 static bool initDone = false;
-pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
 
+// List of pending requests
 static struct {
 	dnbd3_async_t *head;
 	dnbd3_async_t *tail;
 	pthread_spinlock_t lock;
 } requests;
 
+// Connection for the image
 static struct {
 	char *name;
 	uint16_t rid;
@@ -29,11 +36,20 @@ static struct {
 	pthread_t receiveThread;
 } image;
 
+// Known alt servers
+static struct _alt_server {
+
+} altservers[MAX_ALTS];
+typedef struct _alt_server alt_server_t;
+
+/* Static methods */
+
+
+static void* connection_receiveThreadMain(void *sock);
+
 static bool throwDataAway(int sockFd, uint32_t amount);
 static void enqueueRequest(dnbd3_async_t *request);
 static dnbd3_async_t* removeRequest(dnbd3_async_t *request);
-
-static void* connection_receiveThreadMain(void *sock);
 
 bool connection_init(const char *hosts, const char *lowerImage, const uint16_t rid)
 {
@@ -114,6 +130,57 @@ void connection_close()
 	//
 }
 
+static void* connection_receiveThreadMain(void *sockPtr)
+{
+	int sockFd = (int)(size_t)sockPtr;
+	dnbd3_reply_t reply;
+	for ( ;; ) {
+		if ( !dnbd3_get_reply( image.sockFd, &reply ) )
+			goto fail;
+		// TODO: Ignoring anything but block replies for now; handle the others
+		if ( reply.cmd != CMD_GET_BLOCK ) {
+			if ( reply.size != 0 && !throwDataAway( sockFd, reply.size ) )
+				goto fail;
+		} else {
+			// get block reply. find matching request
+			dnbd3_async_t *request = removeRequest( (dnbd3_async_t*)reply.handle );
+			if ( request == NULL ) {
+				printf("WARNING BUG ALERT SOMETHING: Got block reply with no matching request\n");
+				if ( reply.size != 0 && !throwDataAway( sockFd, reply.size ) )
+					goto fail;
+			} else {
+				// Found a match
+				request->finished = true;
+				uint32_t done = 0;
+				while ( done < request->length ) {
+					if ( recv( sockFd, request->buffer + done, request->length - done, 0 ) <= 0 ) {
+						request->success = false;
+						signal_call( request->signalFd );
+						goto fail;
+					}
+				}
+				// Success, wake up caller
+				request->success = true;
+				signal_call( request->signalFd );
+			}
+		}
+	}
+fail:;
+	// Make sure noone is trying to use the socket for sending by locking,
+	pthread_mutex_lock( &image.sendMutex );
+	// then just set the fd to -1, but only if it's the same fd as ours,
+	// as someone could have established a new connection already
+	if ( image.sockFd == sockFd ) {
+		image.sockFd = -1;
+	}
+	pthread_mutex_unlock( &image.sendMutex );
+	// As we're the only reader, it's safe to close the socket now
+	close( sockFd );
+	return NULL;
+}
+
+// Private quick helpers
+
 static bool throwDataAway(int sockFd, uint32_t amount)
 {
 	uint32_t done = 0;
@@ -159,53 +226,4 @@ static dnbd3_async_t* removeRequest(dnbd3_async_t *request)
 	}
 	pthread_spin_unlock( &requests.lock );
 	return iterator;
-}
-
-static void* connection_receiveThreadMain(void *sockPtr)
-{
-	int sockFd = (int)(size_t)sockPtr;
-	dnbd3_reply_t reply;
-	for ( ;; ) {
-		if ( !dnbd3_get_reply( image.sockFd, &reply ) )
-			goto fail;
-		// TODO: Ignoring anything but get block replies for now; handle the others
-		if ( reply.cmd != CMD_GET_BLOCK ) {
-			if ( reply.size != 0 && !throwDataAway( sockFd, reply.size ) )
-				goto fail;
-		} else {
-			// get block reply. find matching request
-			dnbd3_async_t *request = removeRequest( (dnbd3_async_t*)reply.handle );
-			if ( request == NULL ) {
-				printf("WARNING BUG ALERT SOMETHING: Got block reply with no matching request\n");
-				if ( reply.size != 0 && !throwDataAway( sockFd, reply.size ) )
-					goto fail;
-			} else {
-				// Found a match
-				request->finished = true;
-				uint32_t done = 0;
-				while ( done < request->length ) {
-					if ( recv( sockFd, request->buffer + done, request->length - done, 0 ) <= 0 ) {
-						request->success = false;
-						signal_call( request->signalFd );
-						goto fail;
-					}
-				}
-				// Success, wake up caller
-				request->success = true;
-				signal_call( request->signalFd );
-			}
-		}
-	}
-fail:;
-	// Make sure noone is trying to use the socket for sending by locking,
-	pthread_mutex_lock( &image.sendMutex );
-	// then just set the fd to -1, but only if it's the same fd as ours,
-	// as someone could have established a new connection already
-	if ( image.sockFd == sockFd ) {
-		image.sockFd = -1;
-	}
-	pthread_mutex_unlock( &image.sendMutex );
-	// As we're the only reader, it's safe to close the socket now
-	close( sockFd );
-	return NULL;
 }
