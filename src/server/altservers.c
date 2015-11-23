@@ -379,9 +379,9 @@ static void *altservers_main(void *data UNUSED)
 		}
 		// Work your way through the queue
 		for (itLink = 0; itLink < SERVER_MAX_PENDING_ALT_CHECKS; ++itLink) {
-			dnbd3_connection_t * const uplink = pending[itLink];
-			if ( uplink == NULL ) continue; // Check once before locking, as a mutex is expensive
+			if ( pending[itLink] == NULL ) continue; // Check once before locking, as a mutex is expensive
 			pthread_mutex_lock( &pendingLockConsume );
+			dnbd3_connection_t * const uplink = pending[itLink];
 			if ( uplink == NULL ) { // Check again after locking
 				pthread_mutex_unlock( &pendingLockConsume );
 				continue;
