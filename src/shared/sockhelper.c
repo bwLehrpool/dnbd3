@@ -1,5 +1,5 @@
 #include "sockhelper.h"
-#include "log.h"
+//#include "log.h"
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h> // inet_ntop
@@ -63,6 +63,79 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	// Apply read/write timeout
 	sock_setTimeout( client_sock, rw_ms );
 	return client_sock;
+}
+
+// TODO: Pretty much same as in server/*
+int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const dest, const int count)
+{
+	if ( count <= 0 )
+		return 0;
+	const int on = 1;
+	int sock = -1;
+	struct addrinfo hints, *res, *ptr;
+	char bufferAddr[100], bufferPort[6];
+	char *addr = bufferAddr;
+	const char *portStr = NULL;
+	int addCount = 0;
+
+	// See if we have a port
+	snprintf( bufferAddr, sizeof bufferAddr, "%s", address );
+	const char *c1, *c2;
+	c1 = strchr( addr, ':' );
+	if ( c1 != NULL ) {
+		c2 = strchr( c1 + 1, ':' );
+		if ( c2 == NULL ) {
+			*c1 = '\0';
+			portStr = c1 + 1;
+		} else if ( *addr == '[' ) {
+			// IPv6 - support [1:2::3]:123
+			do {
+				c1 = strchr( c2 + 1, ':' );
+				if ( c1 != NULL ) c2 = c1;
+			} while ( c1 != NULL );
+			if ( c2[-1] == ']' ) {
+				c2[-1] = '\0';
+				*c2 = '\0';
+				addr += 1;
+				portStr = c2 + 1;
+			}
+		}
+	}
+	if ( portStr == NULL ) {
+		portStr = bufferPort;
+		snprintf( bufferPort, sizeof bufferPort, "%d", (int)PORT );
+	}
+
+	// Set hints for local addresses.
+	memset( &hints, 0, sizeof( hints ) );
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	if ( getaddrinfo( addr, portStr, &hints, &res ) != 0 || res == NULL ) {
+		return 0;
+	}
+	for ( ptr = res; ptr != NULL && count > 0; ptr = ptr->ai_next ) {
+		// TODO: AF->DNBD3
+		if ( ptr->ai_addr->sa_family == AF_INET ) {
+			// Set host (IPv4)
+			struct sockaddr_in *addr4 = (struct sockaddr_in*)ptr->ai_addr;
+			dest[addCount].type = AF_INET;
+			dest[addCount].port = addr4->sin_port;
+			memcpy( dest[addCount].addr, &addr4->sin_addr, 4 );
+			addCount += 1;
+#ifdef WITH_IPV6
+		} else if ( ptr->ai_addr->sa_family == AF_INET6 ) {
+			// Set host (IPv6)
+			struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)ptr->ai_addr;
+			dest[addCount].type = AF_INET6;
+			dest[addCount].port = addr6->sin6_port;
+			memcpy( dest[addCount].addr, &addr6->sin6_addr, 16 );
+			addCount += 1;
+#endif
+		}
+	}
+
+	freeaddrinfo( res );
+	return addCount;
 }
 
 void sock_setTimeout(const int sockfd, const int milliseconds)

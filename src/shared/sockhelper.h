@@ -22,6 +22,13 @@ typedef struct _poll_list poll_list_t;
  */
 int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const int rw_ms);
 
+/**
+ * Resolve/parse given address and put the result(s) into passed dnbd3_host_t array,
+ * but only up to count entries.
+ * @return Number of items added to array
+ */
+int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const dest, const int count);
+
 void sock_setTimeout(const int sockfd, const int milliseconds);
 
 /**

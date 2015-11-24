@@ -58,7 +58,7 @@ static void dnbd3_connect()
 		if ( sock != -1 ) {
 			close( sock );
 		}
-		sock = connect_to_server( server_address, portno );
+		sock = -1; // connect_to_server( server_address, portno );
 
 		if ( sock == -1 ) {
 			debugf( "[ERROR] Connection Error!\n" );

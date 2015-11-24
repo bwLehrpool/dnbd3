@@ -6,7 +6,7 @@
 #include "locks.h"
 #include "integrity.h"
 #include "../shared/protocol.h"
-#include "sockhelper.h"
+#include "../shared/sockhelper.h"
 #include "altservers.h"
 #include "server.h"
 #include "../shared/signal.h"

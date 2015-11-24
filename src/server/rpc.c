@@ -4,7 +4,7 @@
 #include "uplink.h"
 #include "log.h"
 #include "locks.h"
-#include "sockhelper.h"
+#include "../shared/sockhelper.h"
 #include "helper.h"
 #include "image.h"
 

@@ -46,4 +46,3 @@ int signal_clear(int signalFd);
 void signal_close(int signalFd);
 
 #endif
-

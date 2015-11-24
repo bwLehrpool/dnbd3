@@ -33,7 +33,7 @@
 #include "../version.h"
 
 #include "locks.h"
-#include "sockhelper.h"
+#include "../shared/sockhelper.h"
 #include "server.h"
 #include "image.h"
 #include "uplink.h"

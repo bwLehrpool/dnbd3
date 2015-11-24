@@ -31,7 +31,7 @@
 #include <inttypes.h>
 #include <signal.h>
 
-#include "sockhelper.h"
+#include "../shared/sockhelper.h"
 #include "helper.h"
 #include "server.h"
 #include "image.h"

@@ -1,7 +1,7 @@
 #include "altservers.h"
 #include "uplink.h"
 #include "locks.h"
-#include "sockhelper.h"
+#include "../shared/sockhelper.h"
 #include "log.h"
 #include "helper.h"
 #include "globals.h"
