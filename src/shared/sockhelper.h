@@ -31,6 +31,8 @@ int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const des
 
 void sock_setTimeout(const int sockfd, const int milliseconds);
 
+bool sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int len);
+
 /**
  * Create new poll list.
  */

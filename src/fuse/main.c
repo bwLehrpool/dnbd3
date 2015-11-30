@@ -8,95 +8,36 @@
  * */
 
 #include "../shared/protocol.h"
+#include "../shared/signal.h"
+#include "connection.h"
 #include "../serialize.h"
 #include "helper.h"
+#include "../shared/log.h"
 
 #define FUSE_USE_VERSION 30
 #include <fuse.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
-/* for socket */
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
 /* for printing uint */
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 
-#define debugf(...) do { if (useDebug) printf(__VA_ARGS__); } while (0)
+#define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
-/* variables for socket */
-int sock = -1;
-int n;
-
-char *server_address = NULL;
-int portno = -1;
-char *image_Name = NULL;
-const char *imagePathName = "/img";
-uint16_t rid;
+static const char *imagePathName = "/img";
 static uint64_t imageSize;
 /* Debug/Benchmark variables */
-bool useDebug = false;
-bool useLog = false;
-log_info logInfo;
-uint8_t printCount = 0;
+static bool useDebug = false;
+static bool useLog = false;
+static log_info logInfo;
 
 void error(const char *msg)
 {
 	perror( msg );
 	exit( 0 );
-}
-
-static void dnbd3_connect()
-{
-	while ( true ) {
-		if ( sock != -1 ) {
-			close( sock );
-		}
-		sock = -1; // connect_to_server( server_address, portno );
-
-		if ( sock == -1 ) {
-			debugf( "[ERROR] Connection Error!\n" );
-			goto fail;
-		}
-
-		debugf( "Selecting image " );
-
-		serialized_buffer_t sbuffer;
-		uint16_t protocol_version;
-		char *name;
-		uint16_t rrid;
-
-		if ( dnbd3_select_image( sock, image_Name, rid, 0 ) != 1 ) {
-			debugf( "- Error\n" );
-			goto fail;
-		}
-		debugf( "- Success\n" );
-
-		if ( !dnbd3_select_image_reply( &sbuffer, sock, &protocol_version, &name, &rrid, &imageSize ) ) {
-			debugf( "Error reading reply\n" );
-			goto fail;
-		}
-		debugf( "Reply successful\n" );
-
-		if ( rid != 0 && rid != rrid ) {
-			debugf( "Got unexpected rid %d, wanted %d\n", (int)rrid, (int)rid );
-			sleep( 10 );
-			goto fail;
-		}
-		rid = rrid;
-
-		debugf( "Protocol version: %i, Image: %s, RevisionID: %i, Size: %i MiB\n", (int)protocol_version, name, (int) rrid, (int)( imageSize/ ( 1024*1024 ) ) );
-		return;
-
-fail: ;
-		sleep( 2 );
-	}
 }
 
 static int image_getattr(const char *path, struct stat *stbuf)
@@ -140,36 +81,19 @@ static int image_open(const char *path, struct fuse_file_info *fi)
 
 static int image_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
 {
-	/* buffer for throwing away unwanted messages. */
-	char tBuf[100];
-
 	if ( (uint64_t)offset >= imageSize ) {
 		return 0;
 	}
-	if ( strcmp( path, imagePathName ) != 0 ) {
-		return -ENOENT;
-	}
+//	if ( strcmp( path, imagePathName ) != 0 ) {
+//		return -ENOENT;
+//	}
 	if ( offset + size > imageSize ) {
 		size = imageSize - offset;
 	}
 
-	if ( sock == -1 ) {
-retry: ;
-		 dnbd3_connect();
-	}
-
-	/* seek inside the image */
-	if ( !dnbd3_get_block( sock, offset, size, offset ) ) {
-		debugf( "[ERROR] Get block error!\n" );
-		goto retry;
-	}
-
 	/* count the requested blocks */
 	uint64_t startBlock = offset / ( 4096 );
-	uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
-
-	debugf( "StartBlockRequest: %"PRIu64"\n", startBlock );
-	debugf( "EndBlockRequest: %"PRIu64"\n", endBlock );
+	const uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
 
 	if ( useDebug ) {
 		for ( ; startBlock <= endBlock; startBlock++ ) {
@@ -177,75 +101,27 @@ retry: ;
 		}
 	}
 
-	dnbd3_reply_t reply;
+	dnbd3_async_t request;
+	request.buffer = buf;
+	request.length = (uint32_t)size;
+	request.offset = offset;
+	request.signalFd = signal_newBlocking();
 
-	/*see if the received package is a requested block, throw away if not */
-	while ( true ) {
-		if ( !dnbd3_get_reply( sock, &reply ) ) {
-			debugf( "[ERROR] Reply error\n" );
-			goto retry;
-		}
-		debugf( "Reply success\n" );
-
-		if ( reply.cmd == CMD_ERROR ) {
-			debugf( "Got a CMD_ERROR!\n" );
-			goto retry;
-		}
-		if ( reply.cmd != CMD_GET_BLOCK ) {
-			debugf( "Received block isn't a wanted block, throwing it away...\n" );
-			uint32_t tDone = 0;
-			int todo;
-			while ( tDone < reply.size ) {
-				todo = reply.size - tDone > 100 ? 100: reply.size - tDone;
-
-				n = read( sock, tBuf, todo );
-				if ( n <= 0 ) {
-					if ( n < 0 && ( errno == EAGAIN || errno == EINTR ) ) {
-						continue;
-					}
-					debugf( "[ERROR] Errno %i and %i\n",errno, n );
-					goto retry;
-				}
-				tDone += n;
-			}
-			continue;
-		}
-		break;
+	if ( !connection_read( &request ) ) {
+		return -EINVAL;
 	}
-
-	debugf( "Payloadsize: %i\n", ( int ) reply.size );
-	debugf( "Offset: %"PRIu64"\n", reply.handle );
-
-	if ( size != reply.size || (uint64_t)offset != reply.handle ) {
-		debugf( "Size: %i, reply.size: %i!\n", ( int ) size, ( int ) reply.size );
-		debugf( "Handle: %" PRIu64 ", reply.handle: %" PRIu64 "!\n", offset, reply.handle );
-		goto retry;
-	}
-	/* read the data block data from received package */
-	uint32_t done = 0;
-	while ( done < size ) {
-		n = read( sock, buf + done, size - done );
-		if ( n <= 0 ) {
-			if ( n < 0 && ( errno == EAGAIN || errno == EINTR ) ) {
-				continue;
-			}
-			debugf( "[ERROR] Error: %i and %i\n",errno, n );
-			goto retry;
+	while ( !request.finished ) {
+		int ret = signal_wait( request.signalFd, 10000 );
+		if ( ret != SIGNAL_OK ) {
+			debugf( "signal_wait returned %d", ret );
 		}
-		done += n;
-		/* for benchmarking */
-		logInfo.receivedBytes += n;
 	}
-	debugf( "Received bytes: %i MiB\n", ( int )( logInfo.receivedBytes/ ( 1024*1024 ) ) );
-
-	/* logfile stuff */
-	if ( useLog ) {
-		if ( printCount == 0 ) {
-			printLog( &logInfo );
-		}
-		printCount++;
+	signal_close( request.signalFd );
+	if ( request.success ) {
+		return request.length;
+	} else {
+		return -EIO;
 	}
-	return size;
 }
 
 /* close the connection */
@@ -254,10 +130,7 @@ void image_destroy(void *private_data UNUSED)
 	if ( useLog ) {
 		printLog( &logInfo );
 	}
-	if ( sock != -1 ) {
-		close( sock );
-		sock = -1;
-	}
+	connection_close();
 	return;
 }
 
@@ -272,18 +145,22 @@ static struct fuse_operations image_oper = {
 
 int main(int argc, char *argv[])
 {
+	char *server_address = NULL;
+	char *image_Name = NULL;
 	char *mountPoint = NULL;
 	int opt;
 	bool testOpt = false;
 
 	if ( argc == 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
 exit_usage:
-		printf( "Usage: %s [-l] [-d] [-t] -m <mountpoint> -s <serverAdress> -p <port> -i <imageName>\n", argv[0] );
+		printf( "Usage: %s [-l] [-d] [-t] -m <mountpoint> -s <serverAdress> -i <imageName>\n", argv[0] );
 		printf( "    -l: creates a logfile log.txt at program path\n" );
 		printf( "    -d: fuse debug mode\n" );
 		printf( "    -t: use hardcoded server, port and image for testing\n" );
 		exit( EXIT_FAILURE );
 	}
+
+	log_setConsoleMask( 65535 );
 
 	while ( ( opt = getopt( argc,argv,"m:s:p:i:tdl" ) ) != -1 ) {
 		switch ( opt ) {
@@ -292,9 +169,6 @@ exit_usage:
 			break;
 		case 's':
 			server_address = optarg;
-			break;
-		case 'p':
-			portno = atoi( optarg );
 			break;
 		case 'i':
 			image_Name = optarg;
@@ -317,12 +191,11 @@ exit_usage:
 	if ( testOpt ) {
 		/* values for testing. */
 		server_address = "132.230.4.1";
-		portno = 5003;
 		image_Name = "windows7-umwelt.vmdk";
 		useLog = true;
 	}
 
-	if ( server_address == NULL || portno == -1 || image_Name == NULL || mountPoint == NULL ) {
+	if ( server_address == NULL || image_Name == NULL || mountPoint == NULL ) {
 		goto exit_usage;
 	}
 
@@ -332,7 +205,11 @@ exit_usage:
 	}
 	char *args[6] = {"foo", "-o", "ro,allow_other", "-s", mountPoint, "-d"};
 
-	dnbd3_connect();
+	if ( !connection_init( server_address, image_Name, 0 ) ) {
+		printf( "Tschüss\n" );
+		return 1;
+	}
+	imageSize = connection_getImageSize();
 
 	/* initialize benchmark variables */
 	logInfo.receivedBytes = 0;

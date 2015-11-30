@@ -35,6 +35,8 @@ static inline int dnbd3_read_reply(int sock, dnbd3_reply_t *reply, bool wait)
 
 static inline bool dnbd3_get_reply(int sock, dnbd3_reply_t *reply)
 {
+	int ret = dnbd3_read_reply( sock, reply, true );
+	if ( ret != REPLY_INTR ) return ret == REPLY_OK;
 	return dnbd3_read_reply( sock, reply, true ) == REPLY_OK;
 }
 
@@ -61,7 +63,11 @@ static inline bool dnbd3_select_image(int sock, const char *lower_name, uint16_t
 	iov[0].iov_len = sizeof(request);
 	iov[1].iov_base = &serialized;
 	iov[1].iov_len = len;
-	return writev( sock, iov, 2 ) == len + (ssize_t)sizeof(request);
+	ssize_t ret = writev( sock, iov, 2 );
+	if ( ret == -1 && errno == EINTR ) {
+		ret = writev( sock, iov, 2 );
+	}
+	return ret == len + (ssize_t)sizeof(request);
 }
 
 static inline bool dnbd3_get_block(int sock, uint64_t offset, uint32_t size, uint64_t handle)
@@ -123,7 +129,11 @@ static inline bool dnbd3_select_image_reply(serialized_buffer_t *buffer, int soc
 		return false;
 	}
 // receive reply payload
-	if ( recv( sock, buffer, reply.size, MSG_WAITALL | MSG_NOSIGNAL ) != reply.size ) {
+	ssize_t ret = recv( sock, buffer, reply.size, MSG_WAITALL | MSG_NOSIGNAL );
+	if ( ret == -1 && errno == EINTR ) {
+		ret = recv( sock, buffer, reply.size, MSG_WAITALL | MSG_NOSIGNAL );
+	}
+	if ( ret != reply.size ) {
 		return false;
 	}
 // handle/check reply payload

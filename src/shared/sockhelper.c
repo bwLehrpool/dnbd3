@@ -56,7 +56,10 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	if ( client_sock == -1 ) return -1;
 	// Apply connect timeout
 	sock_setTimeout( client_sock, connect_ms );
-	if ( connect( client_sock, (struct sockaddr *)&ss, addrlen ) == -1 ) {
+	for ( int i = 0;; ++i ) {
+		int ret = connect( client_sock, (struct sockaddr *)&ss, addrlen );
+		if ( ret != -1 ) break;
+		if ( errno == EINTR && i < 5 ) continue;
 		close( client_sock );
 		return -1;
 	}
@@ -70,8 +73,6 @@ int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const des
 {
 	if ( count <= 0 )
 		return 0;
-	const int on = 1;
-	int sock = -1;
 	struct addrinfo hints, *res, *ptr;
 	char bufferAddr[100], bufferPort[6];
 	char *addr = bufferAddr;
