@@ -20,8 +20,6 @@ typedef struct log_info {
 
 void printLog(log_info *info);
 
-bool sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int len);
-
 int connect_to_server(char *server_adress, int port);
 
 static inline bool isSameAddressPort(const dnbd3_host_t * const a, const dnbd3_host_t * const b)

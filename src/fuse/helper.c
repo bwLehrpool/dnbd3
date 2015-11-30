@@ -37,13 +37,3 @@ void printLog( log_info *info )
 	fprintf( logFile, "\n" );
 	fclose( logFile );
 }
-
-bool sock_printable( struct sockaddr *addr, socklen_t addrLen, char *output, int len )
-{
-	char host[100], port[10];
-	int ret = getnameinfo( addr, addrLen, host, 100, port, 10, NI_NUMERICHOST | NI_NUMERICSERV );
-	if ( ret == 0 ) {
-		snprintf( output, len, "[%s]:%s", host, port );
-	}
-	return ret == 0;
-}

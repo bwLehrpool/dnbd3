@@ -1,5 +1,5 @@
 #include "sockhelper.h"
-//#include "log.h"
+#include "log.h"
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h> // inet_ntop
@@ -80,7 +80,7 @@ int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const des
 
 	// See if we have a port
 	snprintf( bufferAddr, sizeof bufferAddr, "%s", address );
-	const char *c1, *c2;
+	char *c1, *c2;
 	c1 = strchr( addr, ':' );
 	if ( c1 != NULL ) {
 		c2 = strchr( c1 + 1, ':' );
@@ -93,8 +93,8 @@ int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const des
 				c1 = strchr( c2 + 1, ':' );
 				if ( c1 != NULL ) c2 = c1;
 			} while ( c1 != NULL );
-			if ( c2[-1] == ']' ) {
-				c2[-1] = '\0';
+			if ( *(c2 - 1 ) == ']' ) {
+				*( c2 - 1 ) = '\0';
 				*c2 = '\0';
 				addr += 1;
 				portStr = c2 + 1;
