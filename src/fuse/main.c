@@ -112,8 +112,8 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	}
 	while ( !request.finished ) {
 		int ret = signal_wait( request.signalFd, 10000 );
-		if ( ret != SIGNAL_OK ) {
-			debugf( "signal_wait returned %d", ret );
+		if ( ret < 0 ) {
+			debugf( "fuse_read signal wait returned %d", ret );
 		}
 	}
 	signal_close( request.signalFd );
@@ -190,7 +190,7 @@ exit_usage:
 
 	if ( testOpt ) {
 		/* values for testing. */
-		server_address = "132.230.4.1";
+		server_address = "132.230.4.1 132.230.8.113 132.230.4.60";
 		image_Name = "windows7-umwelt.vmdk";
 		useLog = true;
 	}
@@ -199,11 +199,11 @@ exit_usage:
 		goto exit_usage;
 	}
 
-	int arg_count = 5;
+	int arg_count = 4;
 	if ( useDebug ) {
 		arg_count++;
 	}
-	char *args[6] = {"foo", "-o", "ro,allow_other", "-s", mountPoint, "-d"};
+	char *args[6] = { "foo", "-o", "ro,allow_other,kernel_cache,max_readahead=262144", mountPoint, "-d" };
 
 	if ( !connection_init( server_address, image_Name, 0 ) ) {
 		printf( "Tschüss\n" );
