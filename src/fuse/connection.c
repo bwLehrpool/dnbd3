@@ -403,7 +403,6 @@ static void probeAltServers()
 			srv->rtt += srv->rtts[i];
 		}
 		srv->rtt /= RTT_COUNT;
-		srv->rtt += rand() % 30000;
 		// Remember rtt if this server matches the current one
 		if ( isSameAddressPort( &srv->host, &connection.currentServer ) ) {
 			currentRtt = srv->rtt;
@@ -424,7 +423,7 @@ fail:;
 	}
 	// Switch if a better server was found
 	if ( bestIndex != -1
-			&& ( currentRtt > altservers[bestIndex].rtt || currentRtt > altservers[bestIndex].rtt + RTT_ABSOLUTE_THRESHOLD
+			&& ( currentRtt > altservers[bestIndex].rtt + RTT_ABSOLUTE_THRESHOLD
 					|| RTT_THRESHOLD_FACTOR(currentRtt) > altservers[bestIndex].rtt + 1500 ) ) {
 		logadd( LOG_INFO, "Current: %dµs, best: %dµs. Will switch!", currentRtt, altservers[bestIndex].rtt );
 		switchConnection( bestSock, &altservers[bestIndex] );
