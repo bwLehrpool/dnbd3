@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <errno.h>
+#include "sockhelper.h"
 #include "../types.h"
 #include "../serialize.h"
 
@@ -35,9 +36,11 @@ static inline int dnbd3_read_reply(int sock, dnbd3_reply_t *reply, bool wait)
 
 static inline bool dnbd3_get_reply(int sock, dnbd3_reply_t *reply)
 {
-	int ret = dnbd3_read_reply( sock, reply, true );
-	if ( ret != REPLY_INTR ) return ret == REPLY_OK;
-	return dnbd3_read_reply( sock, reply, true ) == REPLY_OK;
+	int ret;
+	do {
+		ret = dnbd3_read_reply( sock, reply, true );
+	} while ( ret == REPLY_INTR );
+	return ret == REPLY_OK;
 }
 
 static inline bool dnbd3_select_image(int sock, const char *lower_name, uint16_t rid, uint8_t flags8)
@@ -63,10 +66,10 @@ static inline bool dnbd3_select_image(int sock, const char *lower_name, uint16_t
 	iov[0].iov_len = sizeof(request);
 	iov[1].iov_base = &serialized;
 	iov[1].iov_len = len;
-	ssize_t ret = writev( sock, iov, 2 );
-	if ( ret == -1 && errno == EINTR ) {
+	ssize_t ret;
+	do {
 		ret = writev( sock, iov, 2 );
-	}
+	} while ( ret == -1 && errno == EINTR );
 	return ret == len + (ssize_t)sizeof(request);
 }
 
@@ -79,7 +82,7 @@ static inline bool dnbd3_get_block(int sock, uint64_t offset, uint32_t size, uin
 	request.offset = offset;
 	request.size = size;
 	fixup_request( request );
-	return send( sock, &request, sizeof(request), MSG_NOSIGNAL ) == sizeof(request);
+	return sock_sendAll( sock, &request, sizeof(request), 2 ) == (ssize_t)sizeof(request);
 }
 
 static inline bool dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, size_t *bufferLen)
@@ -92,7 +95,7 @@ static inline bool dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, siz
 	request.offset = 0;
 	request.size = 0;
 	fixup_request( request );
-	if ( send( sock, &request, sizeof(request), 0 ) != sizeof(request) ) return false;
+	if ( sock_sendAll( sock, &request, sizeof(request), 2 ) != (ssize_t)sizeof(request) ) return false;
 	if ( !dnbd3_get_reply( sock, &reply ) ) return false;
 	if ( reply.size == 0 ) {
 		*bufferLen = 0;
@@ -102,14 +105,8 @@ static inline bool dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, siz
 	reply.size -= 4;
 	if ( reply.cmd != CMD_GET_CRC32 || reply.size > *bufferLen ) return false;
 	*bufferLen = reply.size;
-	if ( recv( sock, master, sizeof(uint32_t), MSG_WAITALL | MSG_NOSIGNAL ) != sizeof(uint32_t) ) return false;
-	uint32_t done = 0;
-	while ( done < reply.size ) {
-		const ssize_t ret = recv( sock, (char*)buffer + done, reply.size - done, 0 );
-		if ( ret <= 0 ) return false;
-		done += ret;
-	}
-	return true;
+	if ( sock_recv( sock, master, sizeof(uint32_t) ) != (ssize_t)sizeof(uint32_t) ) return false;
+	return sock_recv( sock, buffer, reply.size ) == (ssize_t)reply.size;
 }
 
 /**
@@ -128,15 +125,12 @@ static inline bool dnbd3_select_image_reply(serialized_buffer_t *buffer, int soc
 	if ( reply.cmd != CMD_SELECT_IMAGE || reply.size < 3 || reply.size > MAX_PAYLOAD ) {
 		return false;
 	}
-// receive reply payload
-	ssize_t ret = recv( sock, buffer, reply.size, MSG_WAITALL | MSG_NOSIGNAL );
-	if ( ret == -1 && errno == EINTR ) {
-		ret = recv( sock, buffer, reply.size, MSG_WAITALL | MSG_NOSIGNAL );
-	}
-	if ( ret != reply.size ) {
+	// receive reply payload
+	ssize_t ret = sock_recv( sock, buffer, reply.size );
+	if ( ret != (ssize_t)reply.size ) {
 		return false;
 	}
-// handle/check reply payload
+	// handle/check reply payload
 	serializer_reset_read( buffer, reply.size );
 	*protocol_version = serializer_get_uint16( buffer );
 	*name = serializer_get_string( buffer );

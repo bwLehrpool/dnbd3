@@ -264,19 +264,36 @@ bool sock_append(poll_list_t *list, const int sock, bool wantRead, bool wantWrit
 	return true;
 }
 
-ssize_t sock_sendAll(int sock, void *buffer, size_t len, int maxtries)
+ssize_t sock_sendAll(const int sock, void *buffer, const size_t len, int maxtries)
 {
 	size_t done = 0;
 	ssize_t ret = 0;
 	while ( done < len ) {
 		if ( maxtries >= 0 && --maxtries == -1 ) break;
 		ret = write( sock, (char*)buffer + done, len - done );
-		if ( ret < 0 ) {
+		if ( ret == -1 ) {
 			if ( errno == EINTR ) continue;
 			if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
-				usleep( 1000 );
 				continue;
 			}
+			break;
+		}
+		if ( ret == 0 ) break;
+		done += ret;
+	}
+	if ( done == 0 ) return ret;
+	return done;
+}
+
+ssize_t sock_recv(const int sock, void *buffer, const size_t len)
+{
+	size_t done = 0;
+	ssize_t ret = 0;
+	int intrs = 0;
+	while ( done < len ) {
+		ret = recv( sock, (char*)buffer + done, len - done, MSG_NOSIGNAL );
+		if ( ret == -1 ) {
+			if ( errno == EINTR && ++intrs < 10 ) continue;
 			break;
 		}
 		if ( ret == 0 ) break;

@@ -90,6 +90,11 @@ bool sock_append(poll_list_t *list, const int sock, bool wantRead, bool wantWrit
  * Give up after calling write() maxtries times.
  * Set maxtries < 0 to try infinitely.
  */
-ssize_t sock_sendAll(int sock, void *buffer, size_t len, int maxtries);
+ssize_t sock_sendAll(const int sock, void *buffer, const size_t len, int maxtries);
+
+/**
+ * Send given buffer, repeatedly calling recv on partial send or EINTR.
+ */
+ssize_t sock_recv(const int sock, void *buffer, const size_t len);
 
 #endif /* SOCKHELPER_H_ */
