@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "globals.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "helper.h"
 #include "../shared/signal.h"
 

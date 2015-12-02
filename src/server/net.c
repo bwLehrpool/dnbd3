@@ -37,7 +37,7 @@
 #include "image.h"
 #include "uplink.h"
 #include "altservers.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "helper.h"
 #include "../serialize.h"
 #include "../config.h"

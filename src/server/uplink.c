@@ -1,6 +1,6 @@
 #include "uplink.h"
 #include "locks.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "../shared/sockhelper.h"
 #include "image.h"
 #include "helper.h"

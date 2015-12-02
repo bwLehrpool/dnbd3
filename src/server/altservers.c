@@ -2,12 +2,12 @@
 #include "uplink.h"
 #include "locks.h"
 #include "../shared/sockhelper.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "helper.h"
 #include "globals.h"
 #include "image.h"
 #include "../shared/signal.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "../shared/protocol.h"
 #include <stdlib.h>
 #include <unistd.h>

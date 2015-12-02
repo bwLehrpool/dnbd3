@@ -2,7 +2,7 @@
 #define HELPER_H_
 
 #include "server.h"
-#include "log.h"
+#include "../shared/log.h"
 #include <netinet/in.h>
 #include <string.h>
 #include <errno.h>

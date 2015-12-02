@@ -1,7 +1,7 @@
 #include "image.h"
 #include "helper.h"
 #include "fileutil.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "uplink.h"
 #include "locks.h"
 #include "integrity.h"

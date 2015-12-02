@@ -2,7 +2,7 @@
 #include "server.h"
 #include "net.h"
 #include "uplink.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "locks.h"
 #include "../shared/sockhelper.h"
 #include "helper.h"

@@ -1,6 +1,6 @@
 #include "globals.h"
 #include "ini.h"
-#include "log.h"
+#include "../shared/log.h"
 #include "../types.h"
 #include <stddef.h>
 #include <string.h>
