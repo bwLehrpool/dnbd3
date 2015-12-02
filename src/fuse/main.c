@@ -24,6 +24,7 @@
 /* for printing uint */
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
+#include <getopt.h>
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
@@ -31,7 +32,6 @@ static const char *imagePathName = "/img";
 static uint64_t imageSize;
 /* Debug/Benchmark variables */
 static bool useDebug = false;
-static bool useLog = false;
 static log_info logInfo;
 
 void error(const char *msg)
@@ -79,7 +79,7 @@ static int image_open(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int image_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
+static int image_read(const char *path UNUSED, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
 {
 	if ( (uint64_t)offset >= imageSize ) {
 		return 0;
@@ -127,7 +127,7 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 /* close the connection */
 void image_destroy(void *private_data UNUSED)
 {
-	if ( useLog ) {
+	if ( useDebug ) {
 		printLog( &logInfo );
 	}
 	connection_close();
@@ -143,71 +143,124 @@ static struct fuse_operations image_oper = {
 	.destroy = image_destroy,
 };
 
+static void printVersion()
+{
+	char *arg[] = { "foo", "-V" };
+	printf( "DNBD3-Fuse Version 1.2.3.4\n" );
+	fuse_main( 2, arg, NULL, NULL );
+	exit( 0 );
+}
+
+static void printUsage(char *argv0, int exitCode)
+{
+	char *arg[] = { argv0, "-h" };
+	printf( "Usage: %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
+	printf( "Or:    %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
+	printf( "   -h --host       List of space separated hosts to use\n" );
+	printf( "   -i --image      Remote image name to request\n" );
+	printf( "   -r --rid        Revision to use (omit or pass 0 for latest)\n" );
+	printf( "   -o --option     Mount options to pass to libfuse\n" );
+	printf( "   -d --debug      Don't fork and print debug output (fuse > stderr, dnbd3 > stdout)\n" );
+	fuse_main( 2, arg, NULL, NULL );
+	exit( exitCode );
+}
+
+static const char *optString = "h:i:r:o:HvVdtsf";
+static const struct option longOpts[] = {
+        { "host", required_argument, NULL, 'h' },
+        { "image", required_argument, NULL, 'i' },
+        { "rid", required_argument, NULL, 'r' },
+        { "option", required_argument, NULL, 'o' },
+        { "help", no_argument, NULL, 'H' },
+        { "version", no_argument, NULL, 'v' },
+        { "debug", no_argument, NULL, 'd' },
+        { 0, 0, 0, 0 }
+};
+
 int main(int argc, char *argv[])
 {
 	char *server_address = NULL;
 	char *image_Name = NULL;
-	char *mountPoint = NULL;
-	int opt;
+	uint16_t rid = 0;
+	char **newArgv;
+	int newArgc;
+	int opt, lidx;
 	bool testOpt = false;
 
-	if ( argc == 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
-exit_usage:
-		printf( "Usage: %s [-l] [-d] [-t] -m <mountpoint> -s <serverAdress> -i <imageName>\n", argv[0] );
-		printf( "    -l: creates a logfile log.txt at program path\n" );
-		printf( "    -d: fuse debug mode\n" );
-		printf( "    -t: use hardcoded server, port and image for testing\n" );
-		exit( EXIT_FAILURE );
+	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
+		printUsage( argv[0], 0 );
 	}
 
 	log_setConsoleMask( 65535 );
 
-	while ( ( opt = getopt( argc,argv,"m:s:p:i:tdl" ) ) != -1 ) {
+	newArgv = calloc( argc + 10, sizeof(char*) );
+	newArgv[0] = argv[0];
+	newArgc = 1;
+	while ( ( opt = getopt_long( argc, argv, optString, longOpts, &lidx ) ) != -1 ) {
 		switch ( opt ) {
-		case 'm':
-			mountPoint = optarg;
-			break;
-		case 's':
+		case 'h':
 			server_address = optarg;
 			break;
 		case 'i':
 			image_Name = optarg;
 			break;
-		case 't':
-			testOpt = true;
+		case 'r':
+			rid = (uint16_t)atoi(optarg);
+			break;
+		case 'o':
+			newArgv[newArgc++] = "-o";
+			newArgv[newArgc++] = optarg;
+			break;
+		case 'H':
+			printUsage( argv[0], 0 );
+			break;
+		case 'v':
+		case 'V':
+			printVersion();
 			break;
 		case 'd':
 			useDebug = true;
+			newArgv[newArgc++] = "-d";
 			break;
-		case 'l':
-			useLog = true;
+		case 's':
 			useDebug = true;
+			newArgv[newArgc++] = "-s";
+			break;
+		case 'f':
+			useDebug = true;
+			newArgv[newArgc++] = "-f";
+			break;
+		case 't':
+			testOpt = true;
 			break;
 		default:
-			goto exit_usage;
+			printUsage( argv[0], EXIT_FAILURE );
 		}
+	}
+
+	if ( optind >= argc ) { // Missing mount point
+		printUsage( argv[0], EXIT_FAILURE );
 	}
 
 	if ( testOpt ) {
 		/* values for testing. */
 		server_address = "132.230.4.1 132.230.8.113 132.230.4.60";
 		image_Name = "windows7-umwelt.vmdk";
-		useLog = true;
+		useDebug = true;
+	}
+	if ( server_address == NULL || image_Name == NULL ) {
+		printUsage( argv[0], EXIT_FAILURE );
 	}
 
-	if ( server_address == NULL || image_Name == NULL || mountPoint == NULL ) {
-		goto exit_usage;
-	}
+	// Since dnbd3 is always read only and the remote image will not change
+	newArgv[newArgc++] = "-o";
+	newArgv[newArgc++] = "kernel_cache";
+	// Mount point goes last
+	newArgv[newArgc++] = argv[optind];
 
-	int arg_count = 4;
-	if ( useDebug ) {
-		arg_count++;
-	}
-	char *args[6] = { "foo", "-o", "ro,allow_other,kernel_cache,max_readahead=262144", mountPoint, "-d" };
-
-	if ( !connection_init( server_address, image_Name, 0 ) ) {
-		printf( "Tschüss\n" );
-		return 1;
+	if ( !connection_init( server_address, image_Name, rid ) ) {
+		printf( "Could not connect to any server. Bye.\n" );
+		return EXIT_FAILURE;
 	}
 	imageSize = connection_getImageSize();
 
@@ -221,7 +274,10 @@ exit_usage:
 
 	logInfo.blockRequestCount = tmpShrt;
 
-	printf( "ImagePathName: %s\n",imagePathName );
-	return fuse_main( arg_count, args, &image_oper, NULL );
+	printf( "ImagePathName: %s\nFuseArgs:",imagePathName );
+	for ( int i = 0; i < newArgc; ++i ) {
+		printf( " '%s'", newArgv[i] );
+	}
+	putchar('\n');
+	return fuse_main( newArgc, newArgv, &image_oper, NULL );
 }
-
