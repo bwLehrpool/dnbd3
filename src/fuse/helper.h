@@ -27,4 +27,9 @@ static inline bool isSameAddressPort(const dnbd3_host_t * const a, const dnbd3_h
 	return (a->type == b->type) && (a->port == b->port) && (0 == memcmp( a->addr, b->addr, (a->type == AF_INET ? 4 : 16) ));
 }
 
+static inline bool isSameAddress(const dnbd3_host_t * const a, const dnbd3_host_t * const b)
+{
+	return (a->type == b->type) && (0 == memcmp( a->addr, b->addr, (a->type == AF_INET ? 4 : 16) ));
+}
+
 #endif
