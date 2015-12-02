@@ -163,12 +163,45 @@ void sock_destroyPollList(poll_list_t *list)
 	free( list );
 }
 
-bool sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int len)
+int sock_printHost(const dnbd3_host_t * const host, char * const buffer, const int len)
+{
+	// Worst case: Port 5 chars, ':' to separate ip and port 1 char, terminating null 1 char = 7, [] for IPv6
+	if ( len < 10 ) return 0;
+	char *output = buffer;
+	if ( host->type == AF_INET6 ) {
+		*output++ = '[';
+		inet_ntop( AF_INET6, host->addr, output, len - 10 );
+		output += strlen( output );
+		*output++ = ']';
+	} else if ( host->type == AF_INET ) {
+		inet_ntop( AF_INET, host->addr, output, len - 8 );
+		output += strlen( output );
+	} else {
+		int ret = snprintf( output, len, "<?addrtype=%d>", (int)host->type );
+		return MIN( ret, len-1 );
+	}
+	*output = '\0';
+	if ( host->port != 0 ) {
+		// There are still at least 7 bytes left in the buffer, port is at most 5 bytes + ':' + '\0' = 7
+		int ret = snprintf( output, 7, ":%d", (int)ntohs( host->port ) );
+		output += MIN( ret, 6 );
+	}
+	return output - buffer;
+}
+
+int sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int len)
 {
 	char host[100], port[10];
+	int outlen = 0;
 	int ret = getnameinfo( addr, addrLen, host, 100, port, 10, NI_NUMERICHOST | NI_NUMERICSERV );
-	if ( ret == 0 ) snprintf( output, len, "[%s]:%s", host, port );
-	return ret == 0;
+	if ( ret == 0 ) {
+		if ( addr->sa_family == AF_INET ) {
+			outlen = snprintf( output, len, "%s:%s", host, port );
+		} else {
+			outlen = snprintf( output, len, "[%s]:%s", host, port );
+		}
+	}
+	return MIN( outlen, len-1 );
 }
 
 bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port)

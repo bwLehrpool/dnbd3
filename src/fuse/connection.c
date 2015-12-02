@@ -213,6 +213,55 @@ void connection_close()
 	pthread_mutex_unlock( &connection.sendMutex );
 }
 
+int connection_printStats(char *buffer, const int len)
+{
+	int ret;
+	int remaining = len;
+	if ( remaining > 0 ) {
+		ret = snprintf( buffer, remaining, "Image:    %s\nRevision: %d\n\nCurrent connection time: %ds\n\n",
+				image.name, (int)image.rid, (int)( (nowMilli() - connection.startupTime) / 1000 ) );
+		if ( ret > 0 ) {
+			remaining -= ret;
+			buffer += ret;
+		}
+	}
+	int i = -1;
+	pthread_spin_lock( &altLock );
+	while ( remaining > 3 && ++i < MAX_ALTS ) {
+		if ( altservers[i].host.type == 0 )
+			continue;
+		if ( isSameAddressPort( &connection.currentServer, &altservers[i].host ) ) {
+			*buffer++ = '*';
+		} else {
+			*buffer++ = ' ';
+		}
+		ret = sock_printHost( &altservers[i].host, buffer, remaining );
+		remaining -= (ret + 1); // For space or * above
+		buffer += ret;
+		if ( remaining < 3 )
+			break;
+		int width = MAX( 35 - ret, 0 );
+		char *unit;
+		int value, failSpaces;
+		if ( altservers[i].rtt > 5000 ) {
+			unit = "ms";
+			value = altservers[i].rtt / 1000;
+			failSpaces = 6;
+		} else {
+			unit = "µs";
+			value = altservers[i].rtt;
+			width += 3;
+			failSpaces = 3;
+		}
+		ret = snprintf( buffer, remaining, "% *d %s   Unreachable: % *d\n",
+				width, value, unit, failSpaces, altservers[i].consecutiveFails );
+		remaining -= ret;
+		buffer += ret;
+	}
+	pthread_spin_unlock( &altLock );
+	return len - remaining;
+}
+
 static void* connection_receiveThreadMain(void *sockPtr)
 {
 	int sockFd = (int)(size_t)sockPtr;

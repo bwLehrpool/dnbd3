@@ -24,4 +24,6 @@ bool connection_read(dnbd3_async_t *request);
 
 void connection_close();
 
+int connection_printStats(char *buffer, const int len);
+
 #endif /* CONNECTION_H_ */

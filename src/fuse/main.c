@@ -25,14 +25,19 @@
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 #include <getopt.h>
+#include <time.h>
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
-static const char *imagePathName = "/img";
+static const char * const IMAGE_PATH = "/img";
+static const char * const STATS_PATH = "/status";
+
 static uint64_t imageSize;
 /* Debug/Benchmark variables */
 static bool useDebug = false;
 static log_info logInfo;
+static struct timespec startupTime;
+static uid_t owner;
 
 void error(const char *msg)
 {
@@ -44,13 +49,19 @@ static int image_getattr(const char *path, struct stat *stbuf)
 {
 	int res = 0;
 	memset( stbuf, 0, sizeof( struct stat ) );
+	stbuf->st_ctim = stbuf->st_atim = stbuf->st_mtim = startupTime;
+	stbuf->st_uid = owner;
 	if ( strcmp( path, "/" ) == 0 ) {
-		stbuf->st_mode = S_IFDIR | 0444;
+		stbuf->st_mode = S_IFDIR | 0550;
 		stbuf->st_nlink = 2;
-	} else if ( strcmp( path, imagePathName ) == 0 ) {
-		stbuf->st_mode = S_IFREG | 0444;
+	} else if ( strcmp( path, IMAGE_PATH ) == 0 ) {
+		stbuf->st_mode = S_IFREG | 0440;
 		stbuf->st_nlink = 1;
 		stbuf->st_size = imageSize;
+	} else if ( strcmp( path, STATS_PATH ) == 0 ) {
+		stbuf->st_mode = S_IFREG | 0440;
+		stbuf->st_nlink = 1;
+		stbuf->st_size = 4096;
 	} else {
 		res = -ENOENT;
 	}
@@ -64,13 +75,14 @@ static int image_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
 	}
 	filler( buf, ".", NULL, 0 );
 	filler( buf, "..", NULL, 0 );
-	filler( buf, imagePathName + 1, NULL, 0 );
+	filler( buf, IMAGE_PATH + 1, NULL, 0 );
+	filler( buf, STATS_PATH + 1, NULL, 0 );
 	return 0;
 }
 
 static int image_open(const char *path, struct fuse_file_info *fi)
 {
-	if ( strcmp( path, imagePathName ) != 0 ) {
+	if ( strcmp( path, IMAGE_PATH ) != 0 && strcmp( path, STATS_PATH ) != 0 ) {
 		return -ENOENT;
 	}
 	if ( ( fi->flags & 3 ) != O_RDONLY ) {
@@ -79,14 +91,33 @@ static int image_open(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
-static int image_read(const char *path UNUSED, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
+static int fillStatsFile(char *buf, size_t size, off_t offset) {
+	if ( offset == 0 ) {
+		return connection_printStats( buf, size );
+	}
+	char buffer[4096];
+	int ret = connection_printStats( buffer, sizeof buffer );
+	int len = MIN( ret - (int)offset, (int)size );
+	if ( len == 0 )
+		return 0;
+	if ( len < 0 ) {
+		return -EOF;
+	}
+	memcpy( buf, buffer + offset, len );
+	return len;
+}
+
+static int image_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
 {
 	if ( (uint64_t)offset >= imageSize ) {
 		return 0;
 	}
-//	if ( strcmp( path, imagePathName ) != 0 ) {
-//		return -ENOENT;
-//	}
+
+	if ( path[1] == STATS_PATH[1] ) {
+		return fillStatsFile(buf, size, offset);
+	}
+	//return -ENOENT;
+
 	if ( offset + size > imageSize ) {
 		size = imageSize - offset;
 	}
@@ -210,6 +241,11 @@ int main(int argc, char *argv[])
 		case 'o':
 			newArgv[newArgc++] = "-o";
 			newArgv[newArgc++] = optarg;
+			if ( strstr( optarg, "use_ino" ) != NULL ) {
+				printf( "************************\n"
+						"* WARNING: use_ino mount option is unsupported, use at your own risk!\n"
+						"************************\n" );
+			}
 			break;
 		case 'H':
 			printUsage( argv[0], 0 );
@@ -254,7 +290,7 @@ int main(int argc, char *argv[])
 
 	// Since dnbd3 is always read only and the remote image will not change
 	newArgv[newArgc++] = "-o";
-	newArgv[newArgc++] = "kernel_cache";
+	newArgv[newArgc++] = "kernel_cache,default_permissions";
 	// Mount point goes last
 	newArgv[newArgc++] = argv[optind];
 
@@ -274,10 +310,12 @@ int main(int argc, char *argv[])
 
 	logInfo.blockRequestCount = tmpShrt;
 
-	printf( "ImagePathName: %s\nFuseArgs:",imagePathName );
+	printf( "ImagePathName: %s\nFuseArgs:",IMAGE_PATH );
 	for ( int i = 0; i < newArgc; ++i ) {
 		printf( " '%s'", newArgv[i] );
 	}
 	putchar('\n');
+	clock_gettime( CLOCK_REALTIME, &startupTime );
+	owner = getuid();
 	return fuse_main( newArgc, newArgv, &image_oper, NULL );
 }
