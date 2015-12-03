@@ -191,17 +191,19 @@ static void printUsage(char *argv0, int exitCode)
 	printf( "   -h --host       List of space separated hosts to use\n" );
 	printf( "   -i --image      Remote image name to request\n" );
 	printf( "   -r --rid        Revision to use (omit or pass 0 for latest)\n" );
+	printf( "   -l --log        Write log to given location\n" );
 	printf( "   -o --option     Mount options to pass to libfuse\n" );
 	printf( "   -d --debug      Don't fork and print debug output (fuse > stderr, dnbd3 > stdout)\n" );
 	fuse_main( 2, arg, NULL, NULL );
 	exit( exitCode );
 }
 
-static const char *optString = "h:i:r:o:HvVdtsf";
+static const char *optString = "h:i:r:l:o:HvVdtsf";
 static const struct option longOpts[] = {
         { "host", required_argument, NULL, 'h' },
         { "image", required_argument, NULL, 'i' },
         { "rid", required_argument, NULL, 'r' },
+        { "log", required_argument, NULL, 'l' },
         { "option", required_argument, NULL, 'o' },
         { "help", no_argument, NULL, 'H' },
         { "version", no_argument, NULL, 'v' },
@@ -213,6 +215,7 @@ int main(int argc, char *argv[])
 {
 	char *server_address = NULL;
 	char *image_Name = NULL;
+	char *log_file = NULL;
 	uint16_t rid = 0;
 	char **newArgv;
 	int newArgc;
@@ -223,7 +226,9 @@ int main(int argc, char *argv[])
 		printUsage( argv[0], 0 );
 	}
 
+	// TODO Make log mask configurable
 	log_setConsoleMask( 65535 );
+	log_setFileMask( 65535 );
 
 	newArgv = calloc( argc + 10, sizeof(char*) );
 	newArgv[0] = argv[0];
@@ -243,10 +248,18 @@ int main(int argc, char *argv[])
 			newArgv[newArgc++] = "-o";
 			newArgv[newArgc++] = optarg;
 			if ( strstr( optarg, "use_ino" ) != NULL ) {
-				printf( "************************\n"
-						"* WARNING: use_ino mount option is unsupported, use at your own risk!\n"
-						"************************\n" );
+				logadd( LOG_WARNING, "************************" );
+				logadd( LOG_WARNING, "* WARNING: use_ino mount option is unsupported, use at your own risk!" );
+				logadd( LOG_WARNING, "************************" );
 			}
+			if ( strstr( optarg, "intr" ) != NULL ) {
+				logadd( LOG_WARNING, "************************" );
+				logadd( LOG_WARNING, "* WARNING: intr mount option is unsupported, use at your own risk!" );
+				logadd( LOG_WARNING, "************************" );
+			}
+			break;
+		case 'l':
+			log_file = optarg;
 			break;
 		case 'H':
 			printUsage( argv[0], 0 );
@@ -289,14 +302,14 @@ int main(int argc, char *argv[])
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 
-	// Since dnbd3 is always read only and the remote image will not change
-	newArgv[newArgc++] = "-o";
-	newArgv[newArgc++] = "ro,auto_cache,default_permissions";
-	// Mount point goes last
-	newArgv[newArgc++] = argv[optind];
+	if ( log_file != NULL ) {
+		if ( !log_openLogFile( log_file ) ) {
+			logadd( LOG_WARNING, "Could not open log file at '%s'", log_file );
+		}
+	}
 
 	if ( !connection_init( server_address, image_Name, rid ) ) {
-		printf( "Could not connect to any server. Bye.\n" );
+		logadd( LOG_ERROR, "Could not connect to any server. Bye.\n" );
 		return EXIT_FAILURE;
 	}
 	imageSize = connection_getImageSize();
@@ -305,11 +318,15 @@ int main(int argc, char *argv[])
 	logInfo.receivedBytes = 0;
 	logInfo.imageSize = imageSize;
 	logInfo.imageBlockCount = ( imageSize + 4095 ) / 4096;
-
 	uint8_t tmpShrt[logInfo.imageBlockCount];
 	memset( tmpShrt, 0, sizeof tmpShrt );
-
 	logInfo.blockRequestCount = tmpShrt;
+
+	// Since dnbd3 is always read only and the remote image will not change
+	newArgv[newArgc++] = "-o";
+	newArgv[newArgc++] = "ro,auto_cache,default_permissions";
+	// Mount point goes last
+	newArgv[newArgc++] = argv[optind];
 
 	printf( "ImagePathName: %s\nFuseArgs:",IMAGE_PATH );
 	for ( int i = 0; i < newArgc; ++i ) {
