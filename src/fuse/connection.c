@@ -59,7 +59,7 @@ typedef struct _alt_server {
 	int rttIndex;
 } alt_server_t;
 alt_server_t altservers[MAX_ALTS];
-alt_server_t newservers[MAX_ALTS];
+dnbd3_server_entry_t newservers[MAX_ALTS];
 pthread_spinlock_t altLock;
 
 /* Static methods */
@@ -311,7 +311,6 @@ static void* connection_receiveThreadMain(void *sockPtr)
 				logadd( LOG_DEBUG1, "Error receiving list of alt servers." );
 				goto fail;
 			}
-			logadd( LOG_DEBUG1, "Server sent %d alts", count );
 			pthread_spin_lock( &altLock );
 			memcpy( newservers, entries, relevantSize );
 			pthread_spin_unlock( &altLock );
@@ -399,8 +398,9 @@ static void addAltServers()
 			continue;
 		// Got a new alt server, see if it's already known
 		for ( int eIdx = 0; eIdx < MAX_ALTS; ++eIdx ) {
-			if ( isSameAddress( &newservers[nIdx].host, &altservers[eIdx].host ) )
+			if ( isSameAddress( &newservers[nIdx].host, &altservers[eIdx].host ) ) {
 				goto skip_server;
+			}
 		}
 		// Not known yet, add
 		int slot = -1;
@@ -415,6 +415,9 @@ static void addAltServers()
 			}
 		}
 		if ( slot != -1 ) {
+			char txt[200];
+			sock_printHost( &newservers[nIdx].host, txt, 200 );
+			logadd( LOG_DEBUG1, "new server %s in slot %d", txt, slot );
 			altservers[slot].consecutiveFails = 0;
 			altservers[slot].rtts[0] = RTT_UNREACHABLE;
 			altservers[slot].rttIndex = 1;
