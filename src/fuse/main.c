@@ -62,6 +62,7 @@ static int image_getattr(const char *path, struct stat *stbuf)
 		stbuf->st_mode = S_IFREG | 0440;
 		stbuf->st_nlink = 1;
 		stbuf->st_size = 4096;
+		clock_gettime( CLOCK_REALTIME, &stbuf->st_mtim );
 	} else {
 		res = -ENOENT;
 	}
@@ -177,7 +178,7 @@ static struct fuse_operations image_oper = {
 static void printVersion()
 {
 	char *arg[] = { "foo", "-V" };
-	printf( "DNBD3-Fuse Version 1.2.3.4\n" );
+	printf( "DNBD3-Fuse Version 1.2.3.4, protocol version %d\n", (int)PROTOCOL_VERSION );
 	fuse_main( 2, arg, NULL, NULL );
 	exit( 0 );
 }
@@ -290,7 +291,7 @@ int main(int argc, char *argv[])
 
 	// Since dnbd3 is always read only and the remote image will not change
 	newArgv[newArgc++] = "-o";
-	newArgv[newArgc++] = "kernel_cache,default_permissions";
+	newArgv[newArgc++] = "ro,auto_cache,default_permissions";
 	// Mount point goes last
 	newArgv[newArgc++] = argv[optind];
 
