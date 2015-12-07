@@ -242,19 +242,17 @@ int connection_printStats(char *buffer, const int len)
 			break;
 		int width = MAX( 35 - ret, 0 );
 		char *unit;
-		int value, failSpaces;
+		int value;
 		if ( altservers[i].rtt > 5000 ) {
-			unit = "ms";
+			unit = "ms   ";
 			value = altservers[i].rtt / 1000;
-			failSpaces = 6;
 		} else {
 			unit = "µs";
 			value = altservers[i].rtt;
 			width += 3;
-			failSpaces = 3;
 		}
-		ret = snprintf( buffer, remaining, "% *d %s   Unreachable: % *d\n",
-				width, value, unit, failSpaces, altservers[i].consecutiveFails );
+		ret = snprintf( buffer, remaining, "% *d %s   Unreachable: % 3d\n",
+				width, value, unit, altservers[i].consecutiveFails );
 		remaining -= ret;
 		buffer += ret;
 	}
