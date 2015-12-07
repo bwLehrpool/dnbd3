@@ -237,7 +237,6 @@ void *net_client_handler(void *dnbd3_client)
 					send_reply( client->sock, &reply, NULL );
 					break;
 				}
-				//printf( "Request - size: %" PRIu32 ", offset: %" PRIu64 "\n", request.size, request.offset );
 
 				if ( request.size != 0 && image->cache_map != NULL ) {
 					// This is a proxyed image, check if we need to relay the request...
@@ -317,11 +316,12 @@ void *net_client_handler(void *dnbd3_client)
 					while ( done < request.size ) {
 						const ssize_t ret = sendfile( client->sock, image_file, &offset, request.size - done );
 						if ( ret <= 0 ) {
+							const int err = errno;
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-							if ( ret < 0 && errno != 32 && errno != 104 )
+							if ( ret < 0 && err != EPIPE && err != ECONNRESET )
 								logadd( LOG_DEBUG1, "sendfile failed (image to net. sent %d/%d, errno=%d)\n",
-										(int)done, (int)request.size, (int)errno );
-							if ( errno == EBADF || errno == EINVAL || errno == EIO ) image->working = false;
+										(int)done, (int)request.size, err );
+							if ( err == EBADF || err == EINVAL || err == EIO ) image->working = false;
 							goto exit_client_cleanup;
 						}
 						done += ret;
