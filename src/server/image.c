@@ -177,6 +177,7 @@ void image_saveAllCacheMaps()
 {
 	spin_lock( &imageListLock );
 	for (int i = 0; i < _num_images; ++i) {
+		if ( _images[i] == NULL ) continue;
 		_images[i]->users++;
 		spin_unlock( &imageListLock );
 		image_saveCacheMap( _images[i] );
@@ -325,18 +326,19 @@ dnbd3_image_t* image_lock(dnbd3_image_t *image)
 dnbd3_image_t* image_release(dnbd3_image_t *image)
 {
 	if ( image == NULL ) return NULL;
+	spin_lock( &imageListLock );
 	spin_lock( &image->lock );
 	assert( image->users > 0 );
 	image->users--;
-	if ( image->users > 0 ) { // Still in use, do nothing
-		spin_unlock( &image->lock );
+	bool inUse = image->users != 0;
+	spin_unlock( &image->lock );
+	if ( inUse ) { // Still in use, do nothing
+		spin_unlock( &imageListLock );
 		return NULL;
 	}
-	spin_unlock( &image->lock );
 	// Getting here means we decreased the usage counter to zero
 	// If the image is not in the images list anymore, we're
 	// responsible for freeing it
-	spin_lock( &imageListLock );
 	for (int i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) { // Found, do nothing
 			spin_unlock( &imageListLock );
@@ -344,10 +346,8 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 		}
 	}
 	spin_unlock( &imageListLock );
-	// So it wasn't in the images list anymore either, get rid of it,
-	// but check usage count once again, since it might have been increased
-	// after we unlocked above
-	if ( image->users == 0 ) image_free( image );
+	// So it wasn't in the images list anymore either, get rid of it
+	if ( !inUse ) image = image_free( image );
 	return NULL;
 }
 
@@ -358,16 +358,18 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
  */
 void image_remove(dnbd3_image_t *image)
 {
+	bool wasInList = false;
 	spin_lock( &imageListLock );
 	spin_lock( &image->lock );
 	for (int i = _num_images - 1; i >= 0; --i) {
 		if ( _images[i] != image ) continue;
 		_images[i] = NULL;
+		wasInList = true;
 		if ( i + 1 == _num_images ) _num_images--;
 	}
-	if ( image->users <= 0 ) image = image_free( image );
 	spin_unlock( &image->lock );
 	spin_unlock( &imageListLock );
+	if ( wasInList && image->users == 0 ) image = image_free( image );
 }
 
 /**
