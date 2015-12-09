@@ -229,14 +229,6 @@ void *net_client_handler(void *dnbd3_client)
 					send_reply( client->sock, &reply, NULL );
 					break;
 				}
-				if ( request.size > image->filesize ) {
-					// Sanity check
-					logadd( LOG_WARNING, "Client requested data block that is bigger than the image size" );
-					reply.size = 0;
-					reply.cmd = CMD_ERROR;
-					send_reply( client->sock, &reply, NULL );
-					break;
-				}
 
 				if ( request.size != 0 && image->cache_map != NULL ) {
 					// This is a proxyed image, check if we need to relay the request...
