@@ -370,7 +370,7 @@ static void* connection_backgroundThread(void *something UNUSED)
 				dnbd3_request_t request;
 				request.magic = dnbd3_packet_magic;
 				request.cmd = CMD_KEEPALIVE;
-				request.size = 0;
+				request.handle = request.offset = request.size = 0;
 				fixup_request( request );
 				ssize_t ret = sock_sendAll( connection.sockFd, &request, sizeof request, 2 );
 				if ( (size_t)ret != sizeof request ) {
@@ -510,7 +510,9 @@ static void probeAltServers()
 		// Keep socket open if this is currently the best one
 		if ( bestIndex == -1 || altservers[bestIndex].rtt > srv->rtt ) {
 			bestIndex = altIndex;
-			close( bestSock );
+			if ( bestSock != -1 ) {
+				close( bestSock );
+			}
 			bestSock = sock;
 		} else {
 			close( sock );
