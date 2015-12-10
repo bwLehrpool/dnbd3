@@ -318,9 +318,11 @@ int main(int argc, char *argv[])
 	logInfo.receivedBytes = 0;
 	logInfo.imageSize = imageSize;
 	logInfo.imageBlockCount = ( imageSize + 4095 ) / 4096;
-	uint8_t tmpShrt[logInfo.imageBlockCount];
-	memset( tmpShrt, 0, sizeof tmpShrt );
-	logInfo.blockRequestCount = tmpShrt;
+	if ( useDebug ) {
+		logInfo.blockRequestCount = calloc( logInfo.imageBlockCount, sizeof(uint8_t) );
+	} else {
+		logInfo.blockRequestCount = NULL;
+	}
 
 	// Since dnbd3 is always read only and the remote image will not change
 	newArgv[newArgc++] = "-o";
