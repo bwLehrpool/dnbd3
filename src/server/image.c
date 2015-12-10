@@ -49,8 +49,8 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image);
 static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static bool image_load_all_internal(char *base, char *path);
 static bool image_load(char *base, char *path, int withUplink);
-static int64_t image_pad(const char *path, const int64_t currentSize);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
+static bool image_calcBlockCrc32(const int fd, const int block, const uint32_t realFilesize, uint32_t *crc);
 static bool image_ensureDiskSpace(uint64_t size);
 
 static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
@@ -65,7 +65,8 @@ void image_serverStartup()
 }
 
 /**
- * Returns true if the given image is complete
+ * Returns true if the given image is complete.
+ * DOES NOT LOCK
  */
 bool image_isComplete(dnbd3_image_t *image)
 {
@@ -73,12 +74,12 @@ bool image_isComplete(dnbd3_image_t *image)
 	if ( image->working && image->cache_map == NULL ) {
 		return true;
 	}
-	if ( image->filesize == 0 ) {
+	if ( image->virtualFilesize == 0 ) {
 		return false;
 	}
 	bool complete = true;
 	int j;
-	const int map_len_bytes = IMGSIZE_TO_MAPBYTES( image->filesize );
+	const int map_len_bytes = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
 	for (j = 0; j < map_len_bytes - 1; ++j) {
 		if ( image->cache_map[j] != 0xFF ) {
 			complete = false;
@@ -87,7 +88,7 @@ bool image_isComplete(dnbd3_image_t *image)
 	}
 	if ( complete ) // Every block except the last one is complete
 	{ // Last one might need extra treatment if it's not a full byte
-		const int blocks_in_last_byte = (image->filesize >> 12) & 7;
+		const int blocks_in_last_byte = (image->virtualFilesize >> 12) & 7;
 		uint8_t last_byte = 0;
 		if ( blocks_in_last_byte == 0 ) {
 			last_byte = 0xFF;
@@ -144,7 +145,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		while ( pos < end ) {
 			if ( image->cache_map == NULL ) break;
 			const int block = pos / HASH_BLOCK_SIZE;
-			if ( image_isHashBlockComplete( image->cache_map, block, image->filesize ) ) {
+			if ( image_isHashBlockComplete( image->cache_map, block, image->virtualFilesize ) ) {
 				spin_unlock( &image->lock );
 				integrity_check( image, block );
 				spin_lock( &image->lock );
@@ -198,16 +199,17 @@ bool image_saveCacheMap(dnbd3_image_t *image)
 	spin_lock( &image->lock );
 	// Lock and get a copy of the cache map, as it could be freed by another thread that is just about to
 	// figure out that this image's cache copy is complete
-	if ( image->cache_map == NULL || image->filesize < DNBD3_BLOCK_SIZE ) {
+	if ( image->cache_map == NULL || image->virtualFilesize < DNBD3_BLOCK_SIZE ) {
 		spin_unlock( &image->lock );
 		return true;
 	}
-	const size_t size = IMGSIZE_TO_MAPBYTES(image->filesize);
+	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
 	uint8_t *map = malloc( size );
 	memcpy( map, image->cache_map, size );
 	// Unlock. Use path and cacheFd without locking. path should never change after initialization of the image,
 	// cacheFd is written to and we don't hold a spinlock during I/O
 	// By increasing the user count we make sure the image is not freed in the meantime
+	// TODO: If the caller isn't a user of the image we still have a race condition when entering the function
 	image->users++;
 	spin_unlock( &image->lock );
 	assert( image->path != NULL );
@@ -451,18 +453,18 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	return NULL ;
 }
 
-static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize)
+static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
 {
 	if ( cacheMap == NULL ) return true;
 	const uint64_t end = (block + 1) * HASH_BLOCK_SIZE;
-	if ( end <= fileSize ) {
+	if ( end <= realFilesize ) {
 		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < end; mapPos += (DNBD3_BLOCK_SIZE * 8)) {
 			if ( cacheMap[mapPos / (DNBD3_BLOCK_SIZE * 8)] != 0xff ) {
 				return false;
 			}
 		}
 	} else {
-		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < fileSize; mapPos += DNBD3_BLOCK_SIZE ) {
+		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < realFilesize; mapPos += DNBD3_BLOCK_SIZE ) {
 			const int map_y = mapPos >> 15;
 			const int map_x = (mapPos >> 12) & 7; // mod 8
 			const int mask = 1 << map_x;
@@ -598,27 +600,25 @@ static bool image_load(char *base, char *path, int withUplink)
 		logadd( LOG_WARNING, "Empty image file '%s'", path );
 		goto load_error;
 	}
-	uint64_t fileSize = (uint64_t)seekret;
-	// Filesize must be multiple of 4096
-	if ( fileSize % DNBD3_BLOCK_SIZE != 0 ) {
-		logadd( LOG_INFO, "Image size of '%s' is not a multiple of %d, fixing...", path, (int)DNBD3_BLOCK_SIZE );
-		fileSize = image_pad( path, fileSize );
-		if ( fileSize == 0 ) goto load_error;
+	const uint64_t realFilesize = (uint64_t)seekret;
+	const uint64_t virtualFilesize = ( realFilesize + (DNBD3_BLOCK_SIZE - 1) ) & ~(DNBD3_BLOCK_SIZE - 1);
+	if ( realFilesize != virtualFilesize ) {
+		logadd( LOG_DEBUG1, "Image size of '%s' is %" PRIu64 ", virtual size: %" PRIu64, path, realFilesize, virtualFilesize );
 	}
 
 	// 1. Allocate memory for the cache map if the image is incomplete
-	cache_map = image_loadCacheMap( path, fileSize );
+	cache_map = image_loadCacheMap( path, virtualFilesize );
 
 	// TODO: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 
 	// 2. Load CRC-32 list of image
 	uint32_t masterCrc;
-	const int hashBlockCount = IMGSIZE_TO_HASHBLOCKS( fileSize );
-	crc32list = image_loadCrcList( path, fileSize, &masterCrc );
+	const int hashBlockCount = IMGSIZE_TO_HASHBLOCKS( virtualFilesize );
+	crc32list = image_loadCrcList( path, virtualFilesize, &masterCrc );
 
 	// Check CRC32
 	if ( crc32list != NULL ) {
-		if ( !image_checkRandomBlocks( 4, fdImage, fileSize, crc32list, cache_map ) ) {
+		if ( !image_checkRandomBlocks( 4, fdImage, realFilesize, crc32list, cache_map ) ) {
 			logadd( LOG_ERROR, "quick crc32 check of %s failed. Data corruption?", path );
 			goto load_error;
 		}
@@ -626,7 +626,7 @@ static bool image_load(char *base, char *path, int withUplink)
 
 	// Compare data just loaded to identical image we apparently already loaded
 	if ( existing != NULL ) {
-		if ( existing->filesize != fileSize ) {
+		if ( existing->realFilesize != realFilesize ) {
 			// Image will be replaced below
 			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", existing->lower_name, (int)existing->rid );
 		} else if ( existing->crc32 != NULL && crc32list != NULL
@@ -666,7 +666,8 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->crc32 = crc32list;
 	image->masterCrc32 = masterCrc;
 	image->uplink = NULL;
-	image->filesize = fileSize;
+	image->realFilesize = realFilesize;
+	image->virtualFilesize = virtualFilesize;
 	image->rid = revision;
 	image->users = 0;
 	image->readFd = -1;
@@ -804,18 +805,18 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 	return retval;
 }
 
-static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list, uint8_t * const cache_map)
+static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t realFilesize, uint32_t * const crc32list, uint8_t * const cache_map)
 {
 	// This checks the first block and (up to) count - 1 random blocks for corruption
 	// via the known crc32 list. This is very sloppy and is merely supposed to detect
 	// accidental corruption due to broken dnbd3-proxy functionality or file system
 	// corruption.
 	assert( count > 0 );
-	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( fileSize );
+	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( realFilesize );
 	int blocks[count + 1];
 	int index = 0, j;
 	int block;
-	if ( image_isHashBlockComplete( cache_map, 0, fileSize ) ) blocks[index++] = 0;
+	if ( image_isHashBlockComplete( cache_map, 0, realFilesize ) ) blocks[index++] = 0;
 	int tries = count * 5; // Try only so many times to find a non-duplicate complete block
 	while ( index + 1 < count && --tries > 0 ) {
 		block = rand() % hashBlocks; // Random block
@@ -823,11 +824,11 @@ static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t 
 			if ( blocks[j] == block ) goto while_end;
 		}
 		// Block complete? If yes, add to list
-		if ( image_isHashBlockComplete( cache_map, block, fileSize ) ) blocks[index++] = block;
+		if ( image_isHashBlockComplete( cache_map, block, realFilesize ) ) blocks[index++] = block;
 while_end: ;
 	}
 	blocks[MIN(index, count)] = -1; // End of array has to be marked by a -1
-	return image_checkBlocksCrc32( fdImage, crc32list, blocks, fileSize ); // Return result of check
+	return image_checkBlocksCrc32( fdImage, crc32list, blocks, realFilesize ); // Return result of check
 }
 
 /**
@@ -1042,130 +1043,89 @@ static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageS
  */
 bool image_generateCrcFile(char *image)
 {
+	int fdCrc = -1;
+	uint32_t crc;
+	char crcFile[strlen( image ) + 4 + 1];
 	int fdImage = open( image, O_RDONLY );
-	if ( fdImage < 0 ) {
+
+	if ( fdImage == -1 ) {
 		logadd( LOG_ERROR, "Could not open %s.", image );
 		return false;
 	}
-	// force size to be multiple of DNBD3_BLOCK_SIZE
-	int64_t fileLen = lseek( fdImage, 0, SEEK_END );
+
+	const int64_t fileLen = lseek( fdImage, 0, SEEK_END );
 	if ( fileLen <= 0 ) {
 		logadd( LOG_ERROR, "Error seeking to end, or file is empty." );
-		close( fdImage );
-		return false;
+		goto cleanup_fail;
 	}
-	if ( fileLen % DNBD3_BLOCK_SIZE != 0 ) {
-		logadd( LOG_WARNING, "File length is not a multiple of DNBD3_BLOCK_SIZE" );
-		const int64_t ret = image_pad( image, fileLen );
-		if ( ret < fileLen ) {
-			logadd( LOG_ERROR, "Error appending to file in order to make it block aligned." );
-			close( fdImage );
-			return false;
-		}
-		logadd( LOG_INFO, "...fixed!" );
-		fileLen = ret;
-	}
-	if ( lseek( fdImage, 0, SEEK_SET ) != 0 ) {
-		logadd( LOG_ERROR, "Seeking back to start failed." );
-		close( fdImage );
-		return false;
-	}
-	char crcFile[strlen( image ) + 4 + 1];
-	sprintf( crcFile, "%s.crc", image );
+
 	struct stat sst;
+	sprintf( crcFile, "%s.crc", image );
 	if ( stat( crcFile, &sst ) == 0 ) {
 		logadd( LOG_ERROR, "CRC File for %s already exists! Delete it first if you want to regen.", image );
-		close( fdImage );
-		return false;
+		goto cleanup_fail;
 	}
-	int fdCrc = open( crcFile, O_RDWR | O_CREAT, 0644 );
-	if ( fdCrc < 0 ) {
+
+	fdCrc = open( crcFile, O_RDWR | O_CREAT, 0644 );
+	if ( fdCrc == -1 ) {
 		logadd( LOG_ERROR, "Could not open CRC File %s for writing..", crcFile );
-		close( fdImage );
-		return false;
+		goto cleanup_fail;
 	}
 	// CRC of all CRCs goes first. Don't know it yet, write 4 bytes dummy data.
-	if ( write( fdCrc, crcFile, 4 ) != 4 ) {
+	if ( write( fdCrc, crcFile, sizeof(crc) ) != sizeof(crc) ) {
 		logadd( LOG_ERROR, "Write error" );
-		close( fdImage );
-		close( fdCrc );
-		return false;
+		goto cleanup_fail;
 	}
-	char buffer[80000]; // Read buffer from image
-	bool finished = false; // end of file reached
-	int hasSum; // unwritten (unfinished?) crc32 exists
-	int blocksToGo = 0; // Count number of checksums written
+
 	printf( "Generating CRC32" );
 	fflush( stdout );
-	do {
-		// Start of a block - init
-		uint32_t crc = crc32( 0L, Z_NULL, 0 );
-		int remaining = HASH_BLOCK_SIZE;
-		hasSum = false;
-		while ( remaining > 0 ) {
-			const int blockSize = MIN(remaining, (int)sizeof(buffer));
-			const int ret = read( fdImage, buffer, blockSize );
-			if ( ret < 0 ) { // Error
-				printf( "Read error\n" );
-				close( fdImage );
-				close( fdCrc );
-				return false;
-			} else if ( ret == 0 ) { // EOF
-				finished = true;
-				break;
-			} else { // Read something
-				hasSum = true;
-				crc = crc32( crc, (Bytef*)buffer, ret );
-				remaining -= ret;
-			}
+	const int blockCount = IMGSIZE_TO_HASHBLOCKS( fileLen );
+	for ( int i = 0; i < blockCount; ++i ) {
+		if ( !image_calcBlockCrc32( fdImage, i, fileLen, &crc ) ) {
+			goto cleanup_fail;
 		}
-		// Write to file
-		if ( hasSum ) {
-			if ( write( fdCrc, &crc, 4 ) != 4 ) {
-				printf( "Write error\n" );
-				close( fdImage );
-				close( fdCrc );
-				return false;
-			}
-			putchar( '.' );
-			fflush( stdout );
-			blocksToGo++;
+		if ( write( fdCrc, &crc, sizeof(crc) ) != sizeof(crc) ) {
+			printf( "\nWrite error writing crc file: %d\n", errno );
+			goto cleanup_fail;
 		}
-	} while ( !finished );
+		putchar( '.' );
+		fflush( stdout );
+	}
 	close( fdImage );
-	printf( "done!" );
+	fdImage = -1;
+	printf( "done!\n" );
+
 	logadd( LOG_INFO, "Generating master-crc..." );
 	fflush( stdout );
 	// File is written - read again to calc master crc
 	if ( lseek( fdCrc, 4, SEEK_SET ) != 4 ) {
 		logadd( LOG_ERROR, "Could not seek to beginning of crc list in file" );
-		close( fdCrc );
-		return false;
+		goto cleanup_fail;
 	}
-	uint32_t crc = crc32( 0L, Z_NULL, 0 );
+	char buffer[400];
+	int blocksToGo = blockCount;
+	crc = crc32( 0L, Z_NULL, 0 );
 	while ( blocksToGo > 0 ) {
-		const int numBlocks = MIN(1000, blocksToGo);
-		if ( read( fdCrc, buffer, numBlocks * 4 ) != numBlocks * 4 ) {
+		const int numBlocks = MIN( (int)( sizeof(buffer) / sizeof(crc) ), blocksToGo );
+		if ( read( fdCrc, buffer, numBlocks * sizeof(crc) ) != numBlocks * (int)sizeof(crc) ) {
 			logadd( LOG_ERROR, "Could not re-read from crc32 file" );
-			close( fdCrc );
-			return false;
+			goto cleanup_fail;
 		}
-		crc = crc32( crc, (Bytef*)buffer, numBlocks * 4 );
+		crc = crc32( crc, (Bytef*)buffer, numBlocks * sizeof(crc) );
 		blocksToGo -= numBlocks;
 	}
-	if ( lseek( fdCrc, 0, SEEK_SET ) != 0 ) {
-		logadd( LOG_ERROR, "Could not seek back to beginning of crc32 file" );
-		close( fdCrc );
-		return false;
-	}
-	if ( write( fdCrc, &crc, 4 ) != 4 ) {
+	if ( pwrite( fdCrc, &crc, sizeof(crc), 0 ) != sizeof(crc) ) {
 		logadd( LOG_ERROR, "Could not write master crc to file" );
-		close( fdCrc );
-		return false;
+		goto cleanup_fail;
 	}
 	logadd( LOG_INFO, "CRC-32 file successfully generated." );
 	fflush( stdout );
 	return true;
+
+cleanup_fail:;
+	if ( fdImage != -1 ) close( fdImage );
+	if ( fdCrc != -1 ) close( fdCrc );
+	return false;
 }
 
 json_t* image_getListAsJson()
@@ -1205,7 +1165,7 @@ int image_getCompletenessEstimate(const dnbd3_image_t * const image)
 	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
 	int i;
 	int percent = 0;
-	const int len = IMGSIZE_TO_MAPBYTES(image->filesize);
+	const int len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
 	if ( len == 0 ) return 0;
 	for ( i = 0; i < len; ++i ) {
 		if ( image->cache_map[i] == 0xff ) {
@@ -1222,24 +1182,12 @@ int image_getCompletenessEstimate(const dnbd3_image_t * const image)
  * !! pass -1 as the last block so the function knows when to stop !!
  * Returns true or false
  */
-bool image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, const uint64_t fileSize)
+bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks, const uint64_t realFilesize)
 {
-	char buffer[40000];
 	while ( *blocks != -1 ) {
-		uint32_t crc = crc32( 0L, Z_NULL, 0 );
-		int bytes = 0;
-		const int bytesToGo = MIN( HASH_BLOCK_SIZE, fileSize - ((int64_t)*blocks * HASH_BLOCK_SIZE) );
-		off_t readPos = (int64_t)*blocks * HASH_BLOCK_SIZE;
-		while ( bytes < bytesToGo ) {
-			const int n = MIN( (int)sizeof(buffer), bytesToGo - bytes );
-			const int r = pread( fd, buffer, n, readPos );
-			if ( r <= 0 ) {
-				logadd( LOG_WARNING, "CRC-Check: Read error (errno=%d)", errno );
-				return false;
-			}
-			crc = crc32( crc, (Bytef*)buffer, r );
-			bytes += r;
-			readPos += r;
+		uint32_t crc;
+		if ( !image_calcBlockCrc32( fd, *blocks, realFilesize, &crc ) ) {
+			return false;
 		}
 		if ( crc != crc32list[*blocks] ) {
 			logadd( LOG_WARNING, "Block %d is %x, should be %x", *blocks, crc, crc32list[*blocks] );
@@ -1250,28 +1198,41 @@ bool image_checkBlocksCrc32(int fd, uint32_t *crc32list, const int *blocks, cons
 	return true;
 }
 
-static int64_t image_pad(const char *path, const int64_t currentSize)
+static bool image_calcBlockCrc32(const int fd, const int block, const uint32_t realFilesize, uint32_t *crc)
 {
-	const int missing = DNBD3_BLOCK_SIZE - (currentSize % DNBD3_BLOCK_SIZE );
-	char buffer[missing];
-	memset( buffer, 0, missing );
-	int tmpFd = open( path, O_WRONLY | O_APPEND );
-	bool success = false;
-	if ( tmpFd < 0 ) {
-		logadd( LOG_WARNING, "Can't open image for writing, can't fix %s", path );
-	} else if ( lseek( tmpFd, currentSize, SEEK_SET ) != currentSize ) {
-		logadd( LOG_WARNING, "lseek() failed, can't fix %s", path );
-	} else if ( write( tmpFd, buffer, missing ) != missing ) {
-		logadd( LOG_WARNING, "write() failed, can't fix %s", path );
-	} else {
-		success = true;
+	char buffer[40000];
+	*crc = crc32( 0L, Z_NULL, 0 );
+	int bytes = 0;
+	// How many bytes to read from the input file
+	const int bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( (int64_t)block * HASH_BLOCK_SIZE) );
+	// Determine how many bytes we had to read if the file size were a multiple of 4k
+	// This might be the same value if the real file's size is a multiple of 4k
+	const uint64_t vbs = ( ( realFilesize + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) ) - ( (int64_t)block * HASH_BLOCK_SIZE);
+	const int virtualBytesFromFile = MIN( HASH_BLOCK_SIZE, vbs );
+	off_t readPos = (int64_t)block * HASH_BLOCK_SIZE;
+	// Calculate the crc32 by reading data from the file
+	while ( bytes < bytesFromFile ) {
+		const int n = MIN( (int)sizeof(buffer), bytesFromFile - bytes );
+		const int r = pread( fd, buffer, n, readPos );
+		if ( r <= 0 ) {
+			logadd( LOG_WARNING, "CRC: Read error (errno=%d)", errno );
+			return false;
+		}
+		*crc = crc32( *crc, (Bytef*)buffer, r );
+		bytes += r;
+		readPos += r;
 	}
-	if ( tmpFd >= 0 ) close( tmpFd );
-	if ( success ) {
-		return currentSize + missing;
-	} else {
-		return 0;
+	// If the virtual file size is different, keep going using nullbytes
+	if ( bytesFromFile < virtualBytesFromFile ) {
+		memset( buffer, 0, sizeof(buffer) );
+		bytes = virtualBytesFromFile - bytesFromFile;
+		while ( bytes != 0 ) {
+			const int len = MIN( (int)sizeof(buffer), bytes );
+			*crc = crc32( *crc, (Bytef*)buffer, len );
+			bytes -= len;
+		}
 	}
+	return true;
 }
 
 /**

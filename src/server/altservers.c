@@ -437,9 +437,9 @@ static void *altservers_main(void *data UNUSED)
 					ERROR_GOTO( server_failed, "[RTT] Server provides rid %d, requested was %d (%s)",
 					        (int)rid, (int)image->rid, image->lower_name );
 				}
-				if ( imageSize != image->filesize ) {
+				if ( imageSize != image->virtualFilesize ) {
 					ERROR_GOTO( server_failed, "[RTT] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
-					        imageSize, image->filesize, image->lower_name );
+					        imageSize, image->virtualFilesize, image->lower_name );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				fixup_request( request );

@@ -124,11 +124,11 @@ static void* integrity_main(void * data UNUSED)
 			if ( image == NULL ) continue;
 			// We have the image. Call image_release() some time
 			spin_lock( &image->lock );
-			if ( image->crc32 != NULL && image->filesize != 0 ) {
+			if ( image->crc32 != NULL && image->realFilesize != 0 ) {
 				int const blocks[2] = { checkQueue[i].block, -1 };
 				pthread_mutex_unlock( &integrityQueueLock );
-				const uint64_t fileSize = image->filesize;
-				const size_t required = IMGSIZE_TO_HASHBLOCKS(image->filesize) * sizeof(uint32_t);
+				const uint64_t fileSize = image->realFilesize;
+				const size_t required = IMGSIZE_TO_HASHBLOCKS(fileSize) * sizeof(uint32_t);
 				if ( required > bufferSize ) {
 					bufferSize = required;
 					if ( buffer != NULL ) free( buffer );
@@ -136,9 +136,7 @@ static void* integrity_main(void * data UNUSED)
 				}
 				memcpy( buffer, image->crc32, required );
 				spin_unlock( &image->lock );
-				if ( image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
-					//logadd( LOG_DEBUG] CRC check of block %d for %s succeeded :-)\n", blocks[0, ", image->lower_name );
-				} else {
+				if ( !image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
 					logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->lower_name );
 					image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
 				}

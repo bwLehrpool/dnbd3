@@ -103,7 +103,8 @@ struct _dnbd3_image
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	dnbd3_connection_t *uplink; // pointer to a server connection
-	uint64_t filesize;     // size of image
+	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
+	uint64_t realFilesize;      // actual file size on disk
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int rid;               // revision of image

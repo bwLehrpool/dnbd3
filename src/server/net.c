@@ -45,6 +45,7 @@
 #include "locks.h"
 #include "rpc.h"
 
+static char nullbytes[500];
 
 static uint64_t totalBytesSent = 0;
 static pthread_spinlock_t statisticsSentLock;
@@ -116,6 +117,18 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 	return true;
 }
 
+static inline bool sendPadding( const int fd, uint32_t bytes )
+{
+	ssize_t ret;
+	while ( bytes >= sizeof(nullbytes) ) {
+		ret = sock_sendAll( fd, nullbytes, sizeof(nullbytes), 1 );
+		if ( ret <= 0 )
+			return false;
+		bytes -= (uint32_t)ret;
+	}
+	return sock_sendAll( fd, nullbytes, bytes, 2 ) == bytes;
+}
+
 uint64_t net_getTotalBytesSent()
 {
 	spin_lock( &statisticsSentLock );
@@ -185,7 +198,7 @@ void *net_client_handler(void *dnbd3_client)
 						serializer_put_uint16( &payload, PROTOCOL_VERSION );
 						serializer_put_string( &payload, image->lower_name );
 						serializer_put_uint16( &payload, image->rid );
-						serializer_put_uint64( &payload, image->filesize );
+						serializer_put_uint64( &payload, image->virtualFilesize );
 						reply.cmd = CMD_SELECT_IMAGE;
 						reply.size = serializer_get_written_length( &payload );
 						if ( send_reply( client->sock, &reply, &payload ) ) {
@@ -213,7 +226,7 @@ void *net_client_handler(void *dnbd3_client)
 			switch ( request.cmd ) {
 
 			case CMD_GET_BLOCK:
-				if ( request.offset >= image->filesize ) {
+				if ( request.offset >= image->virtualFilesize ) {
 					// Sanity check
 					logadd( LOG_WARNING, "Client requested non-existent block" );
 					reply.size = 0;
@@ -221,7 +234,7 @@ void *net_client_handler(void *dnbd3_client)
 					send_reply( client->sock, &reply, NULL );
 					break;
 				}
-				if ( request.offset + request.size > image->filesize ) {
+				if ( request.offset + request.size > image->virtualFilesize ) {
 					// Sanity check
 					logadd( LOG_WARNING, "Client requested data block that extends beyond image size" );
 					reply.size = 0;
@@ -305,18 +318,30 @@ void *net_client_handler(void *dnbd3_client)
 					// Send payload if request length > 0
 					size_t done = 0;
 					off_t offset = (off_t)request.offset;
-					while ( done < request.size ) {
-						const ssize_t ret = sendfile( client->sock, image_file, &offset, request.size - done );
+					size_t realBytes;
+					if ( request.offset + request.size <= image->realFilesize ) {
+						realBytes = request.size;
+					} else {
+						realBytes = image->realFilesize - request.offset;
+					}
+					while ( done < realBytes ) {
+						const ssize_t ret = sendfile( client->sock, image_file, &offset, realBytes - done );
 						if ( ret <= 0 ) {
 							const int err = errno;
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 							if ( ret < 0 && err != EPIPE && err != ECONNRESET )
 								logadd( LOG_DEBUG1, "sendfile failed (image to net. sent %d/%d, errno=%d)\n",
-										(int)done, (int)request.size, err );
+										(int)done, (int)realBytes, err );
 							if ( err == EBADF || err == EINVAL || err == EIO ) image->working = false;
 							goto exit_client_cleanup;
 						}
 						done += ret;
+					}
+					if ( request.size > (uint32_t)realBytes ) {
+						if ( !sendPadding( client->sock, request.size - (uint32_t)realBytes ) ) {
+							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+							goto exit_client_cleanup;
+						}
 					}
 					client->bytesSent += request.size; // Increase counter for statistics.
 				}
@@ -355,7 +380,7 @@ set_name: ;
 					reply.size = 0;
 					send_reply( client->sock, &reply, NULL );
 				} else {
-					const int size = reply.size = (IMGSIZE_TO_HASHBLOCKS(image->filesize) + 1) * sizeof(uint32_t);
+					const int size = reply.size = (IMGSIZE_TO_HASHBLOCKS(image->realFilesize) + 1) * sizeof(uint32_t);
 					send_reply( client->sock, &reply, NULL );
 					send( client->sock, &image->masterCrc32, sizeof(uint32_t), 0 );
 					send( client->sock, image->crc32, size - sizeof(uint32_t), 0 );

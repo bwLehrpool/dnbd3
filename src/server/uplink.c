@@ -492,14 +492,14 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 	if ( !_backgroundReplication ) return; // Don't do background replication
 	if ( link == NULL || link->fd == -1 ) return;
 	dnbd3_image_t * const image = link->image;
-	if ( image->filesize < DNBD3_BLOCK_SIZE ) return;
+	if ( image->realFilesize < DNBD3_BLOCK_SIZE ) return;
 	spin_lock( &image->lock );
 	if ( image == NULL || image->cache_map == NULL || link->replicationHandle != 0 ) {
 		// No cache map (=image complete), or replication pending, do nothing
 		spin_unlock( &image->lock );
 		return;
 	}
-	const int len = IMGSIZE_TO_MAPBYTES( image->filesize ) - 1;
+	const int len = IMGSIZE_TO_MAPBYTES( image->realFilesize ) - 1;
 	// Needs to be 8 (bit->byte, bitmap)
 	const uint32_t requestBlockSize = DNBD3_BLOCK_SIZE * 8;
 	for (int i = 0; i <= len; ++i) {
@@ -509,7 +509,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
 		const uint64_t offset = link->replicationHandle = (uint64_t)i * (uint64_t)requestBlockSize;
-		const uint32_t size = MIN( image->filesize - offset, requestBlockSize );
+		const uint32_t size = MIN( image->realFilesize - offset, requestBlockSize );
 		if ( !dnbd3_get_block( link->fd, offset, size, link->replicationHandle ) ) {
 			logadd( LOG_DEBUG1, "Error sending background replication request to uplink server!\n" );
 			return;
@@ -655,8 +655,8 @@ static int uplink_sendKeepalive(const int fd)
 static void uplink_addCrc32(dnbd3_connection_t *uplink)
 {
 	dnbd3_image_t *image = uplink->image;
-	if ( image == NULL || image->filesize == 0 ) return;
-	size_t bytes = IMGSIZE_TO_HASHBLOCKS(image->filesize) * sizeof(uint32_t);
+	if ( image == NULL || image->realFilesize == 0 ) return;
+	size_t bytes = IMGSIZE_TO_HASHBLOCKS( image->realFilesize ) * sizeof(uint32_t);
 	uint32_t masterCrc;
 	uint32_t *buffer = malloc( bytes );
 	if ( !dnbd3_get_crc32( uplink->fd, &masterCrc, buffer, &bytes ) || bytes == 0 ) {
