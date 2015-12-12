@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdio.h>
 #include <sys/statvfs.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -27,7 +28,7 @@ bool file_isWritable(char *file)
 	fd = open( file, O_WRONLY | O_CREAT, 0600 );
 	if ( fd < 0 ) return false;
 	close( fd );
-	unlink( file );
+	remove( file );
 	return true;
 }
 

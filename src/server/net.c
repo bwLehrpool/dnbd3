@@ -187,7 +187,7 @@ void *net_client_handler(void *dnbd3_client)
 						logadd( LOG_DEBUG1, "Incomplete handshake received\n" );
 					}
 				} else {
-					client->image = image = image_getOrClone( image_name, rid );
+					client->image = image = image_getOrLoad( image_name, rid );
 					if ( image == NULL ) {
 						//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 					} else if ( !image->working ) {

@@ -281,10 +281,6 @@ static void* uplink_mainloop(void *data)
 			const int fd = link->fd;
 			link->fd = link->betterFd;
 			if ( fd != -1 ) close( fd );
-			// If we don't have a crc32 list yet, see if the new server has one
-			if ( link->image->crc32 == NULL ) {
-				uplink_addCrc32( link );
-			}
 			link->betterFd = -1;
 			link->currentServer = link->betterServer;
 			link->replicationHandle = 0;
@@ -293,6 +289,10 @@ static void* uplink_mainloop(void *data)
 			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
 				logadd( LOG_DEBUG1, "(Uplink %s) Now connected to %s\n", link->image->lower_name, buffer + 1 );
 				setThreadName( buffer );
+			}
+			// If we don't have a crc32 list yet, see if the new server has one
+			if ( link->image->crc32 == NULL ) {
+				uplink_addCrc32( link );
 			}
 			// Re-send all pending requests
 			uplink_sendRequests( link, false );

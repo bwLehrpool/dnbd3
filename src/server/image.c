@@ -23,6 +23,9 @@
 #include <inttypes.h>
 #include <pthread.h>
 #include <errno.h>
+#include <glob.h>
+
+#define PATHLEN (2000)
 
 // ##########################################
 
@@ -843,7 +846,6 @@ bool image_create(char *image, int revision, uint64_t size)
 		logadd( LOG_ERROR, "revision id invalid: %d", revision );
 		return false;
 	}
-	const int PATHLEN = 2000;
 	char path[PATHLEN], cache[PATHLEN];
 	char *lastSlash = strrchr( image, '/' );
 	if ( lastSlash == NULL ) {
@@ -854,10 +856,6 @@ bool image_create(char *image, int revision, uint64_t size)
 		mkdir_p( path );
 		*lastSlash = '/';
 		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
-	}
-	if ( file_isReadable( path ) ) {
-		logadd( LOG_ERROR, "Image %s with rid %d already exists!", image, revision );
-		return false;
 	}
 	snprintf( cache, PATHLEN, "%s.map", path );
 	size = (size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
@@ -898,22 +896,46 @@ bool image_create(char *image, int revision, uint64_t size)
 	return false;
 }
 
+static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision, const size_t len);
+static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requestedRid);
+
 /**
- * Does the same as image_get, but if the image is not found locally, or if
- * revision 0 is requested, it will try to clone it from an authoritative
- * dnbd3 server and return the image. If the return value is not NULL,
+ * Does the same as image_get, but if the image is not known locally, or if
+ * revision 0 is requested, it will:
+ * a) Try to clone it from an authoritative dnbd3 server, if
+ *    the server is running in proxy mode.
+ * b) Try to load it from disk by constructing the appropriate file name, if not
+ *    running in proxy mode.
+ *
+ *  If the return value is not NULL,
  * image_release needs to be called on the image at some point.
  * Locks on: remoteCloneLock, imageListLock, _images[].lock
  */
-dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
+dnbd3_image_t* image_getOrLoad(char * const name, const uint16_t revision)
 {
-	if ( !_isProxy ) return image_get( name, revision, true );
-	int i;
+	// not proxy, specific revision - nothing to do
+	if ( !_isProxy && revision != 0 ) return image_get( name, revision, true );
 	const size_t len = strlen( name );
 	// Sanity check
-	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL ;
+	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL;
+	// Call specific function depending on whether this is a proxy or not
+	if ( _isProxy ) {
+		return loadImageProxy( name, revision, len );
+	} else {
+		return loadImageServer( name, revision );
+	}
+}
+
+/**
+ * Called if specific rid is not loaded, or if rid is 0 (some version might be loaded locally,
+ * but we should check if there's a higher rid on a remote server).
+ */
+static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision, const size_t len)
+{
+	int i;
 	// Already existing locally?
 	dnbd3_image_t *image = image_get( name, revision, true );
+	// exists and specific revision - nothing to do
 	if ( image != NULL && revision != 0 ) return image;
 
 	// Doesn't exist or is rid 0, try remote if not already tried it recently
@@ -927,8 +949,7 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 			useIndex = i;
 			if ( remoteCloneCache[i].deadline < now ) break;
 			pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
-			if ( image != NULL ) return image;
-			return image_get( name, revision, true );
+			return image;
 		}
 	}
 	// Re-check to prevent two clients at the same time triggering this,
@@ -954,15 +975,16 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	int uplinkSock = -1;
 	dnbd3_host_t *uplinkServer = NULL;
 	const int count = altservers_get( servers, 4, false );
-	uint16_t remoteVersion, remoteRid;
+	uint16_t remoteProtocolVersion;
+	uint16_t remoteRid = revision;
 	uint64_t remoteImageSize;
 	for (i = 0; i < count; ++i) {
 		int sock = sock_connect( &servers[i], 750, _uplinkTimeout );
 		if ( sock < 0 ) continue;
 		if ( !dnbd3_select_image( sock, name, revision, FLAGS8_SERVER ) ) goto server_fail;
 		char *remoteName;
-		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
-		if ( remoteVersion < MIN_SUPPORTED_SERVER || remoteRid == 0 ) goto server_fail;
+		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteProtocolVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
+		if ( remoteProtocolVersion < MIN_SUPPORTED_SERVER || remoteRid == 0 ) goto server_fail;
 		if ( revision != 0 && remoteRid != revision ) goto server_fail;
 		if ( revision == 0 && image != NULL && image->rid >= remoteRid ) goto server_fail; // Not actually a failure: Highest remote rid is <= highest local rid - don't clone!
 		if ( remoteImageSize < DNBD3_BLOCK_SIZE || remoteName == NULL || strcmp( name, remoteName ) != 0 ) goto server_fail;
@@ -983,14 +1005,79 @@ dnbd3_image_t* image_getOrClone(char *name, uint16_t revision)
 	image = image_get( name, remoteRid, false );
 	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
 		// If so, init the uplink and pass it the socket
-		if ( !uplink_init( image, uplinkSock, uplinkServer ) ) close( uplinkSock );
-		i = 0;
-		while ( !image->working && ++i < 100 )
-			usleep( 2000 );
+		if ( !uplink_init( image, uplinkSock, uplinkServer ) ) {
+			close( uplinkSock );
+		} else {
+			// Clumsy busy wait, but this should only take as long as it takes to start a thread, so is it really worth using a signalling mechanism?
+			i = 0;
+			while ( !image->working && ++i < 100 )
+				usleep( 2000 );
+		}
 	} else if ( uplinkSock >= 0 ) {
 		close( uplinkSock );
 	}
 	return image;
+}
+
+/**
+ * Called if specific rid is not loaded, or if rid is 0, in which case we check on
+ * disk which revision is latest.
+ */
+static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requestedRid)
+{
+	char imageFile[PATHLEN] = "";
+	uint16_t detectedRid = 0;
+
+	if ( _vmdkLegacyMode ) {
+		// TODO
+		assert( 0 );
+		detectedRid = requestedRid;
+	} else if ( requestedRid != 0 ) {
+		snprintf( imageFile, PATHLEN, "%s/%s.r%d", _basePath, name, requestedRid );
+		detectedRid = requestedRid;
+	} else {
+		glob_t g = { 0 };
+		snprintf( imageFile, PATHLEN, "%s/%s.r*", _basePath, name );
+		const int ret = glob( imageFile, GLOB_NOSORT | GLOB_MARK, NULL, &g );
+		imageFile[0] = '\0';
+		if ( ret == 0 ) {
+			long int best = 0;
+			for ( size_t i = 0; i < g.gl_pathc; ++i ) {
+				char *rev = strrchr( g.gl_pathv[i], 'r' );
+				if ( rev == NULL ) continue;
+				rev++;
+				if ( *rev < '0' || *rev > '9' ) continue;
+				char *err = NULL;
+				long int val = strtol( rev, &err, 10 );
+				if ( err == NULL || *err != '\0' ) continue;
+				if ( val > best ) {
+					best = val;
+					snprintf( imageFile, PATHLEN, "%s", g.gl_pathv[i] );
+				}
+			}
+			if ( best > 0 && best < 65536 ) {
+				detectedRid = (uint16_t)best;
+			}
+		}
+		globfree( &g );
+	}
+	// No file was determined, or it doesn't seem to exist/be readable
+	if ( imageFile[0] == '\0' || !file_isReadable( imageFile ) ) { // XXX glob fallback to rid-1? Rework above
+		return image_get( name, detectedRid, true );
+	}
+	// Now lock on the loading mutex, then check again if the image exists (we're multi-threaded)
+	pthread_mutex_lock( &reloadLock );
+	dnbd3_image_t* image = image_get( name, detectedRid, true );
+	if ( image != NULL ) {
+		// The image magically appeared in the meantime
+		pthread_mutex_unlock( &reloadLock );
+		return image;
+	}
+	// Still not loaded, let's try to do so
+	image_load( _basePath, imageFile, false );
+	pthread_mutex_unlock( &reloadLock );
+	// If loading succeeded, this will return the image
+	return image_get( name, requestedRid, true );
 }
 
 /**
