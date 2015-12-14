@@ -917,7 +917,8 @@ dnbd3_image_t* image_getOrLoad(char * const name, const uint16_t revision)
 	if ( !_isProxy && revision != 0 ) return image_get( name, revision, true );
 	const size_t len = strlen( name );
 	// Sanity check
-	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL;
+	if ( len == 0 || name[len - 1] == '/' || name[0] == '/'
+			|| name[0] == '.' || strstr( name, "/." ) != NULL ) return NULL;
 	// Call specific function depending on whether this is a proxy or not
 	if ( _isProxy ) {
 		return loadImageProxy( name, revision, len );
