@@ -156,6 +156,8 @@ void dnbd3_cleanup()
 		sleep( 1 );
 	}
 
+	free( _basePath );
+	free( _configDir );
 	exit( EXIT_SUCCESS );
 }
 
@@ -321,7 +323,7 @@ int main(int argc, char *argv[])
 		// Handle signals
 		if ( sigReload ) {
 			sigReload = false;
-			logadd( LOG_INFO, "SIGUSR1 received, re-scanning image directory" );
+			logadd( LOG_INFO, "SIGHUP received, re-scanning image directory" );
 			threadpool_run( &server_asyncImageListLoad, NULL );
 		}
 		if ( sigLogCycle ) {
@@ -363,6 +365,7 @@ int main(int argc, char *argv[])
 			continue;
 		}
 	}
+	free( bindAddress );
 	dnbd3_cleanup();
 }
 
