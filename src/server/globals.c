@@ -15,6 +15,7 @@ int _clientPenalty = 0;
 bool _isProxy = false;
 bool _proxyPrivateOnly = false;
 bool _backgroundReplication = true;
+int _listenPort = PORT;
 int _uplinkTimeout = 1250;
 int _clientTimeout = 15000;
 
@@ -35,6 +36,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_INT( dnbd3, clientPenalty );
 	SAVE_TO_VAR_INT( dnbd3, uplinkTimeout );
 	SAVE_TO_VAR_INT( dnbd3, clientTimeout );
+	SAVE_TO_VAR_INT( dnbd3, listenPort );
 	if ( strcmp( section, "logging" ) == 0 && strcmp( key, "fileMask" ) == 0 ) handleMaskString( value, &log_setFileMask );
 	if ( strcmp( section, "logging" ) == 0 && strcmp( key, "consoleMask" ) == 0 ) handleMaskString( value, &log_setConsoleMask );
 	if ( strcmp( section, "logging" ) == 0 && strcmp( key, "file" ) == 0 ) {
@@ -55,6 +57,8 @@ void globals_loadConfig()
 	if ( name == NULL ) return;
 	ini_parse( name, &ini_handler, NULL );
 	free( name );
+	// Validate settings after loading:
+	// base path for images valid?
 	if ( _basePath == NULL || _basePath[0] == '\0' ) {
 		logadd( LOG_ERROR, "Need to specify basePath in " CONFIG_FILENAME );
 		exit( EXIT_FAILURE );
@@ -66,6 +70,12 @@ void globals_loadConfig()
 	char *end = _basePath + strlen( _basePath ) - 1;
 	while ( end >= _basePath && *end == '/' )
 		*end-- = '\0';
+	// listen port
+	if ( _listenPort < 1 || _listenPort > 65535 ) {
+		logadd( LOG_ERROR, "listenPort must be 1-65535, but is %d", _listenPort );
+		exit( EXIT_FAILURE );
+	}
+	// Silently "fix" invalid values
 	if ( _serverPenalty < 0 ) _serverPenalty = 0;
 	if ( _clientPenalty < 0 ) _clientPenalty = 0;
 }

@@ -302,7 +302,7 @@ int main(int argc, char *argv[])
 		logadd( LOG_ERROR, "Didnt get a poll list!" );
 		exit( EXIT_FAILURE );
 	}
-	if ( !sock_listen( listeners, bindAddress, PORT ) ) {
+	if ( !sock_listen( listeners, bindAddress, _listenPort ) ) {
 		logadd( LOG_ERROR, "Could not listen on any local interface." );
 		exit( EXIT_FAILURE );
 	}

@@ -91,7 +91,7 @@ typedef struct
 
 /**
  * Image struct. An image path could be something like
- * /mnt/images/rz/zfs/Windows7 ZfS.vmdk.1
+ * /mnt/images/rz/zfs/Windows7 ZfS.vmdk.r1
  * and the lower_name would then be
  * rz/zfs/windows7 zfs.vmdk
  */
@@ -175,7 +175,7 @@ extern bool _proxyPrivateOnly;
 extern int _uplinkTimeout;
 
 /**
- * Read timeout when waiting for or sending data fron/to client
+ * Read timeout when waiting for or sending data from/to client
  */
 extern int _clientTimeout;
 
@@ -184,6 +184,11 @@ extern int _clientTimeout;
  * Otherwise, only blocks that were explicitly requested will be cached.
  */
 extern bool _backgroundReplication;
+
+/**
+ * Port to listen on (default: #define PORT (5003))
+ */
+extern int _listenPort;
 
 /**
  * Load the server configuration.
