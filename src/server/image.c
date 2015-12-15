@@ -324,7 +324,9 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		const off_t len = lseek( candidate->readFd, 0, SEEK_END );
 		if ( len == -1 ) {
 			logadd( LOG_WARNING, "lseek() on %s failed (errno=%d), removing image", candidate->path, errno );
-			image_remove( candidate ); // No release here, the image is still returned and should be released by caller
+			if ( _removeMissingImages ) {
+				image_remove( candidate ); // No release here, the image is still returned and should be released by caller
+			}
 		} else if ( (uint64_t)len != candidate->realFilesize ) {
 			logadd( LOG_DEBUG1, "Size of %s changed at runtime, keeping disabled! Expected: %" PRIu64 ", found: %" PRIu64
 					". Try sending SIGHUP to server if you know what you're doing.",
@@ -335,7 +337,9 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			if ( pread( candidate->readFd, buffer, sizeof(buffer), 0 ) == -1 ) {
 				logadd( LOG_DEBUG2, "Reading first %d bytes from %s failed (errno=%d), removing image",
 						(int)sizeof(buffer), candidate->path, errno );
-				image_remove( candidate );
+				if ( _removeMissingImages ) {
+					image_remove( candidate );
+				}
 			} else {
 				// Seems everything is fine again \o/
 				candidate->working = true;
