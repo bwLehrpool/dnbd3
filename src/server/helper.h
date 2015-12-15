@@ -33,7 +33,7 @@ static inline bool isSameAddressPort(const dnbd3_host_t * const a, const dnbd3_h
  * Test whether string ends in suffix.
  * @return true if string =~ /suffix$/
  */
-static inline int strend(char *string, char *suffix)
+static inline bool strend(char *string, char *suffix)
 {
 	if ( string == NULL ) return false;
 	if ( suffix == NULL || *suffix == '\0' ) return true;

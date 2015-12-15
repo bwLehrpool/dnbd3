@@ -111,6 +111,7 @@ struct _dnbd3_image
 	int users;             // clients currently using this image
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
 	time_t atime;          // last access time
+	time_t lastWorkCheck;  // last time a non-working image has been checked
 	bool working; // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;
 };
@@ -168,6 +169,11 @@ extern bool _isProxy;
  * Only use servers as upstream proxy which are private?
  */
 extern bool _proxyPrivateOnly;
+
+/**
+ * Whether to remove missing images from image list on SIGHUP
+ */
+extern bool _removeMissingImages;
 
 /**
  * Read timeout when waiting for or sending data on an uplink

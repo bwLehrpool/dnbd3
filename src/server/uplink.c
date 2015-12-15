@@ -158,19 +158,19 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	spin_lock( &client->image->lock );
 	if ( client->image->uplink == NULL ) {
 		spin_unlock( &client->image->lock );
-		logadd( LOG_DEBUG1, "Uplink request for image with no uplink (%s)\n", client->image->lower_name );
+		logadd( LOG_DEBUG1, "Uplink request for image with no uplink" );
 		return false;
 	}
 	dnbd3_connection_t * const uplink = client->image->uplink;
 	if ( uplink->shutdown ) {
 		spin_unlock( &client->image->lock );
-		logadd( LOG_DEBUG1, "Uplink request for image with uplink shutting down (%s)\n", client->image->lower_name );
+		logadd( LOG_DEBUG1, "Uplink request for image with uplink shutting down" );
 		return false;
 	}
 	// Check if the client is the same host as the uplink. If so assume this is a circular proxy chain
 	if ( isSameAddress( &uplink->currentServer, &client->host ) ) {
 		spin_unlock( &client->image->lock );
-		logadd( LOG_DEBUG1, "Proxy cycle detected.\n" );
+		logadd( LOG_DEBUG1, "Proxy cycle detected" );
 		return false;
 	}
 
@@ -572,9 +572,15 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		const uint64_t end = inReply.handle + inReply.size;
 		link->bytesReceived += inReply.size;
 		// 1) Write to cache file
-		assert( link->image->cacheFd != -1 );
-		ret = (int)pwrite( link->image->cacheFd, link->recvBuffer, inReply.size, start );
-		if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, true );
+		if ( link->image->cacheFd != -1 ) {
+			ret = (int)pwrite( link->image->cacheFd, link->recvBuffer, inReply.size, start );
+			if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, true );
+			if ( ret == -1 && ( errno == EBADF || errno == EINVAL || errno == EIO ) ) {
+				const int fd = link->image->cacheFd;
+				link->image->cacheFd = -1;
+				close( fd );
+			}
+		}
 		// 2) Figure out which clients are interested in it
 		spin_lock( &link->queueLock );
 		for (i = 0; i < link->queueLen; ++i) {

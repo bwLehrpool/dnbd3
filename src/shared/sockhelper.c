@@ -303,7 +303,7 @@ ssize_t sock_sendAll(const int sock, void *buffer, const size_t len, int maxtrie
 	ssize_t ret = 0;
 	while ( done < len ) {
 		if ( maxtries >= 0 && --maxtries == -1 ) break;
-		ret = write( sock, (char*)buffer + done, len - done );
+		ret = send( sock, (char*)buffer + done, len - done, MSG_NOSIGNAL );
 		if ( ret == -1 ) {
 			if ( errno == EINTR ) continue;
 			if ( errno == EAGAIN || errno == EWOULDBLOCK ) {

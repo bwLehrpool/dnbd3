@@ -28,10 +28,10 @@
 #define SERVER_MAX_CLIENTS 400
 #define SERVER_MAX_IMAGES  5000
 #define SERVER_MAX_ALTS    250
-#define SERVER_MAX_UPLINK_QUEUE  1500
 #define SERVER_MAX_UPLINK_FAILS  8 // How many times may a server fail until it is considered bad
 #define SERVER_BAD_UPLINK_IGNORE 120 // How many seconds is a server considered bad?
-#define SERVER_UPLINK_QUEUELEN_THRES  900
+#define SERVER_MAX_UPLINK_QUEUE  1500 // Maximum number of queued requests per uplink
+#define SERVER_UPLINK_QUEUELEN_THRES  900 // Threshold where we start dropping incoming clients
 #define SERVER_MAX_PENDING_ALT_CHECKS 50
 #define SERVER_CACHE_MAP_SAVE_INTERVAL 90
 

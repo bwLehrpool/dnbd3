@@ -12,6 +12,7 @@ bool _vmdkLegacyMode = false;
 volatile bool _shutdown = false;
 int _serverPenalty = 0;
 int _clientPenalty = 0;
+bool _removeMissingImages = true;
 bool _isProxy = false;
 bool _proxyPrivateOnly = false;
 bool _backgroundReplication = true;
@@ -32,6 +33,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_BOOL( dnbd3, isProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_BOOL( dnbd3, backgroundReplication );
+	SAVE_TO_VAR_BOOL( dnbd3, removeMissingImages );
 	SAVE_TO_VAR_INT( dnbd3, serverPenalty );
 	SAVE_TO_VAR_INT( dnbd3, clientPenalty );
 	SAVE_TO_VAR_INT( dnbd3, uplinkTimeout );
