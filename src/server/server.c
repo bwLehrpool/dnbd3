@@ -286,9 +286,11 @@ int main(int argc, char *argv[])
 
 	logadd( LOG_INFO, "Loading images...." );
 	// Load all images in base path
-	if ( !image_loadAll( NULL ) ) {
+	if ( !image_loadAll( NULL ) || _shutdown ) {
 		logadd( LOG_ERROR, "Could not load images." );
-		return EXIT_FAILURE;
+		free( bindAddress );
+		dnbd3_cleanup();
+		return 0;
 	}
 
 	startupTime = time( NULL );

@@ -464,7 +464,8 @@ bool image_loadAll(char *path)
 		// Check if all loaded images still exist on disk
 		logadd( LOG_DEBUG1, "Checking for vanished images" );
 		spin_lock( &imageListLock );
-		for (int i = _num_images - 1; i >= 0; --i) {
+		for ( int i = _num_images - 1; i >= 0; --i ) {
+			if ( _shutdown ) break;
 			if ( _images[i] == NULL ) {
 				if ( i + 1 == _num_images ) _num_images--;
 				continue;
@@ -488,6 +489,7 @@ bool image_loadAll(char *path)
 			spin_lock( &imageListLock );
 		}
 		spin_unlock( &imageListLock );
+		if ( _shutdown ) return true;
 	}
 	// Now scan for new images
 	logadd( LOG_DEBUG1, "Scanning for new or modified images" );
@@ -584,7 +586,7 @@ static bool image_load_all_internal(char *base, char *path)
 	const int len = pathLen + SUBDIR_LEN + 1;
 	char subpath[len];
 	struct stat st;
-	while ( (entry = readdir( dir )) != NULL ) {
+	while ( !_shutdown && (entry = readdir( dir )) != NULL ) {
 		if ( strcmp( entry->d_name, "." ) == 0 || strcmp( entry->d_name, ".." ) == 0 ) continue;
 		if ( strlen( entry->d_name ) > SUBDIR_LEN ) {
 			logadd( LOG_WARNING, "Skipping entry %s: Too long (max %d bytes)", entry->d_name, (int)SUBDIR_LEN );
