@@ -21,6 +21,7 @@ pendingLockProduce
 pendingLockConsume
 altServersLock
 client.sendMutex
+client.statsLock
 statisticsSentLock
 statisticsReceivedLock
 

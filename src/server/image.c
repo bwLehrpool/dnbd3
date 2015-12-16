@@ -1173,7 +1173,7 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 		logadd( LOG_DEBUG2, "Not found, bailing out" );
 		return image_get( name, detectedRid, true );
 	}
-	if ( requestedRid == 0 ) {
+	if ( !_vmdkLegacyMode && requestedRid == 0 ) {
 		// rid 0 requested - check if detected rid is readable, decrease rid if not until we reach 0
 		while ( detectedRid != 0 ) {
 			dnbd3_image_t *image = image_get( name, detectedRid, true );
@@ -1347,24 +1347,45 @@ cleanup_fail:;
 json_t* image_getListAsJson()
 {
 	json_t *imagesJson = json_array();
-	json_t *image;
-
+	json_t *jsonImage;
 	int i;
 	char buffer[100] = { 0 };
-	spin_lock( &imageListLock );
-	for (i = 0; i < _num_images; ++i) {
-		if ( _images[i] == NULL ) continue;
-		spin_lock( &_images[i]->lock );
-		image = json_pack( "{sisssisIsi}", "id", _images[i]->id, "name", _images[i]->lower_name, "rid", (int) _images[i]->rid, "users", (json_int_t) _images[i]->users,
-				"complete",  image_getCompletenessEstimate( _images[i] ) );
-		if ( _images[i]->uplink != NULL ) {
-			host_to_string( &_images[i]->uplink->currentServer, buffer, sizeof(buffer) );
-			json_object_set_new( image, "uplinkServer", json_string( buffer ) );
-			json_object_set_new( image, "receivedBytes", json_integer( (json_int_t) _images[i]->uplink->bytesReceived ) );
-		}
-		json_array_append_new( imagesJson, image );
+	uint64_t bytesReceived;
+	int users, completeness;
 
-		spin_unlock( &_images[i]->lock );
+	spin_lock( &imageListLock );
+	for ( i = 0; i < _num_images; ++i ) {
+		if ( _images[i] == NULL ) continue;
+		dnbd3_image_t *image = _images[i];
+		spin_lock( &image->lock );
+		spin_unlock( &imageListLock );
+		users = image->users;
+		completeness = image_getCompletenessEstimate( image );
+		if ( image->uplink == NULL ) {
+			bytesReceived = 0;
+		} else {
+			bytesReceived = image->uplink->bytesReceived;
+			if ( !host_to_string( &image->uplink->currentServer, buffer, sizeof(buffer) ) ) {
+				buffer[0] = '\0';
+			}
+		}
+		image->users++; // Prevent freeing after we unlock
+		spin_unlock( &image->lock );
+
+		jsonImage = json_pack( "{sisssisisi}",
+				"id", image->id, // id, lower_name, rid never change, so access them without locking
+				"name", image->lower_name,
+				"rid", (int) image->rid,
+				"users", users,
+				"complete",  completeness );
+		if ( bytesReceived != 0 ) {
+			json_object_set_new( jsonImage, "uplinkServer", json_string( buffer ) );
+			json_object_set_new( jsonImage, "receivedBytes", json_integer( (json_int_t) bytesReceived ) );
+		}
+		json_array_append_new( imagesJson, jsonImage );
+
+		image = image_release( image ); // Since we did image->users++;
+		spin_lock( &imageListLock );
 	}
 	spin_unlock( &imageListLock );
 	return imagesJson;

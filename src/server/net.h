@@ -21,7 +21,11 @@
 #ifndef NET_H_
 #define NET_H_
 
+#include "globals.h"
+
 void net_init();
+
+void net_updateGlobalSentStatsFromClient(dnbd3_client_t * const client);
 
 uint64_t net_getTotalBytesSent();
 

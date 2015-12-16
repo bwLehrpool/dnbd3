@@ -118,13 +118,17 @@ struct _dnbd3_image
 
 struct _dnbd3_client
 {
-	int sock;
-	dnbd3_host_t host;
+#define HOSTNAMELEN (48)
+	uint64_t bytesSent;    // Byte counter for this client. Use statsLock when accessing
 	dnbd3_image_t *image;
-	uint64_t bytesSent;
-	pthread_spinlock_t lock;
-	pthread_mutex_t sendMutex;
+	uint32_t tmpBytesSent; // Temporary byte counter that gets added to the global counter periodically. Use statsLock when accessing
+	int sock;
 	bool isServer;         // true if a server in proxy mode, false if real client
+	dnbd3_host_t host;
+	char hostName[HOSTNAMELEN];
+	pthread_mutex_t sendMutex;
+	pthread_spinlock_t lock;
+	pthread_spinlock_t statsLock;
 };
 
 // #######################################################

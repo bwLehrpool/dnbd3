@@ -398,7 +398,9 @@ dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd)
 	}
 	dnbd3_client->sock = fd;
 	dnbd3_client->bytesSent = 0;
+	dnbd3_client->tmpBytesSent = 0;
 	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
+	spin_init( &dnbd3_client->statsLock, PTHREAD_PROCESS_PRIVATE );
 	pthread_mutex_init( &dnbd3_client->sendMutex, NULL );
 	return dnbd3_client;
 }
@@ -430,9 +432,11 @@ dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client)
 {
 	spin_lock( &client->lock );
 	pthread_mutex_lock( &client->sendMutex );
-	if ( client->sock >= 0 ) close( client->sock );
+	if ( client->sock != -1 ) close( client->sock );
 	client->sock = -1;
 	pthread_mutex_unlock( &client->sendMutex );
+	spin_lock( &client->statsLock );
+	spin_unlock( &client->statsLock );
 	if ( client->image != NULL ) {
 		spin_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
@@ -442,6 +446,7 @@ dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client)
 	client->image = NULL;
 	spin_unlock( &client->lock );
 	spin_destroy( &client->lock );
+	spin_destroy( &client->statsLock );
 	pthread_mutex_destroy( &client->sendMutex );
 	free( client );
 	return NULL ;

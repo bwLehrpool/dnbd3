@@ -50,6 +50,17 @@ static char nullbytes[500];
 static uint64_t totalBytesSent = 0;
 static pthread_spinlock_t statisticsSentLock;
 
+/**
+ * Update global sent stats. Hold client's statsLock when calling.
+ */
+void net_updateGlobalSentStatsFromClient(dnbd3_client_t * const client)
+{
+	spin_lock( &statisticsSentLock );
+	totalBytesSent += client->tmpBytesSent;
+	spin_unlock( &statisticsSentLock );
+	client->tmpBytesSent = 0;
+}
+
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
 	int ret, fails = 0;
@@ -160,8 +171,6 @@ void *net_client_handler(void *dnbd3_client)
 	serialized_buffer_t payload;
 	uint16_t rid, client_version;
 	uint64_t start, end;
-	uint32_t tempBytesSent = 0;
-	char hostPrintable[100];
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
 
@@ -171,11 +180,14 @@ void *net_client_handler(void *dnbd3_client)
 	reply.magic = dnbd3_packet_magic;
 
 	sock_setTimeout( client->sock, _clientTimeout );
+	if ( !host_to_string( &client->host, client->hostName, HOSTNAMELEN ) ) {
+		client->hostName[HOSTNAMELEN-1] = '\0';
+	}
 
 	// Receive first packet. This must be CMD_SELECT_IMAGE by protocol specification
 	if ( recv_request_header( client->sock, &request ) ) {
 		if ( request.cmd != CMD_SELECT_IMAGE ) {
-			logadd( LOG_DEBUG1, "Client sent invalid handshake (%d). Dropping Client\n", (int)request.cmd );
+			logadd( LOG_DEBUG1, "Client %s sent invalid handshake (%d). Dropping Client\n", client->hostName, (int)request.cmd );
 		} else if ( recv_request_payload( client->sock, request.size, &payload ) ) {
 			char *image_name;
 			client_version = serializer_get_uint16( &payload );
@@ -184,16 +196,17 @@ void *net_client_handler(void *dnbd3_client)
 			client->isServer = serializer_get_uint8( &payload );
 			if ( request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT ) {
 				if ( client_version < MIN_SUPPORTED_CLIENT ) {
-					logadd( LOG_DEBUG1, "Client too old\n" );
+					logadd( LOG_DEBUG1, "Client %s too old", client->hostName );
 				} else {
-					logadd( LOG_DEBUG1, "Incomplete handshake received\n" );
+					logadd( LOG_DEBUG1, "Incomplete handshake received from %s", client->hostName );
 				}
 			} else {
 				client->image = image = image_getOrLoad( image_name, rid );
 				if ( image == NULL ) {
 					//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 				} else if ( !image->working ) {
-					logadd( LOG_DEBUG1, "Client requested non-working image '%s' (rid:%d), rejected\n", image_name, (int)rid );
+					logadd( LOG_DEBUG1, "Client %s requested non-working image '%s' (rid:%d), rejected\n",
+							client->hostName, image_name, (int)rid );
 				} else {
 					// Image is fine so far, but occasionally drop a client if the uplink for the image is clogged or unavailable
 					bOk = true;
@@ -227,9 +240,7 @@ void *net_client_handler(void *dnbd3_client)
 		rpc_sendStatsJson( client->sock );
 	} else {
 		// Unknown request
-		if ( host_to_string( &client->host, hostPrintable, sizeof hostPrintable ) ) {
-			logadd( LOG_DEBUG1, "Client %s sent invalid handshake", hostPrintable );
-		}
+		logadd( LOG_DEBUG1, "Client %s sent invalid handshake", client->hostName );
 	}
 
 	if ( bOk ) {
@@ -247,7 +258,7 @@ void *net_client_handler(void *dnbd3_client)
 			case CMD_GET_BLOCK:
 				if ( request.offset >= image->virtualFilesize ) {
 					// Sanity check
-					logadd( LOG_WARNING, "Client requested non-existent block" );
+					logadd( LOG_WARNING, "Client %s requested non-existent block", client->hostName );
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
 					send_reply( client->sock, &reply, NULL );
@@ -255,7 +266,7 @@ void *net_client_handler(void *dnbd3_client)
 				}
 				if ( request.offset + request.size > image->virtualFilesize ) {
 					// Sanity check
-					logadd( LOG_WARNING, "Client requested data block that extends beyond image size" );
+					logadd( LOG_WARNING, "Client %s requested data block that extends beyond image size", client->hostName );
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
 					send_reply( client->sock, &reply, NULL );
@@ -315,8 +326,8 @@ void *net_client_handler(void *dnbd3_client)
 					spin_unlock( &image->lock );
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, request.offset, request.size ) ) {
-							logadd( LOG_DEBUG1, "Could not relay un-cached request to upstream proxy, disabling image %s:%d",
-									image->lower_name, (int)image->rid );
+							logadd( LOG_DEBUG1, "Could not relay un-cached request from %s to upstream proxy, disabling image %s:%d",
+									client->hostName, image->lower_name, (int)image->rid );
 							image->working = false;
 							goto exit_client_cleanup;
 						}
@@ -334,7 +345,7 @@ void *net_client_handler(void *dnbd3_client)
 				// Send reply header
 				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
 					if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-					logadd( LOG_DEBUG1, "Sending CMD_GET_BLOCK header failed\n" );
+					logadd( LOG_DEBUG1, "Sending CMD_GET_BLOCK reply header to %s failed", client->hostName );
 					goto exit_client_cleanup;
 				}
 
@@ -355,8 +366,8 @@ void *net_client_handler(void *dnbd3_client)
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 							if ( ret == -1 ) {
 								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN ) {
-									logadd( LOG_DEBUG1, "sendfile failed (image to net. sent %d/%d, errno=%d)\n",
-											(int)done, (int)realBytes, err );
+									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
+											client->hostName, (int)done, (int)realBytes, err );
 								}
 								if ( err != EAGAIN && err != EWOULDBLOCK ) image->working = false;
 							}
@@ -372,18 +383,15 @@ void *net_client_handler(void *dnbd3_client)
 					}
 				}
 				if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+				spin_lock( &client->statsLock );
 				// Global per-client counter
-				spin_lock( &client->lock );
 				client->bytesSent += request.size; // Increase counter for statistics.
-				spin_unlock( &client->lock );
 				// Local counter that gets added to the global total bytes sent counter periodically
-				tempBytesSent += request.size;
-				if (tempBytesSent > 1024 * 1024 ) {
-					spin_lock( &statisticsSentLock );
-					totalBytesSent += tempBytesSent;
-					spin_unlock( &statisticsSentLock );
-					tempBytesSent = 0;
+				client->tmpBytesSent += request.size;
+				if ( client->tmpBytesSent > 100000000 ) {
+					net_updateGlobalSentStatsFromClient( client );
 				}
+				spin_unlock( &client->statsLock );
 				break;
 
 			case CMD_GET_SERVERS:
@@ -407,9 +415,7 @@ void *net_client_handler(void *dnbd3_client)
 set_name: ;
 				if ( !hasName ) {
 					hasName = true;
-					if ( host_to_string( &client->host, hostPrintable, sizeof hostPrintable ) ) {
-						setThreadName( hostPrintable );
-					}
+					setThreadName( client->hostName );
 				}
 				break;
 
@@ -434,7 +440,7 @@ set_name: ;
 				break;
 
 			default:
-				logadd( LOG_ERROR, "Unknown command from client: %d", (int)request.cmd );
+				logadd( LOG_ERROR, "Unknown command from client %s: %d", client->hostName, (int)request.cmd );
 				break;
 
 			}
@@ -442,9 +448,7 @@ set_name: ;
 	}
 exit_client_cleanup: ;
 	dnbd3_removeClient( client );
-	spin_lock( &statisticsSentLock );
-	totalBytesSent += tempBytesSent; // Add the amount of bytes sent by the client to the statistics of the server.
-	spin_unlock( &statisticsSentLock );
+	net_updateGlobalSentStatsFromClient( client ); // Don't need client's lock here as it's not active anymore
 	client = dnbd3_freeClient( client ); // This will also call image_release on client->image
 	return NULL ;
 }

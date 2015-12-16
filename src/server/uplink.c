@@ -597,10 +597,10 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		// from 0, you also need to change the "attach to existing request"-logic in uplink_request()
 		outReply.magic = dnbd3_packet_magic;
 		bool served = false;
-		for (i = link->queueLen - 1; i >= 0; --i) {
+		for ( i = link->queueLen - 1; i >= 0; --i ) {
 			dnbd3_queued_request_t * const req = &link->queue[i];
 			if ( req->status == ULR_PROCESSING ) {
-				//logadd( LOG_DEBUG2 %p, "Reply slot %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, i, req->handle, req->from, req->to );
+				size_t bytesSent = 0;
 				assert( req->from >= start && req->to <= end );
 				dnbd3_client_t * const client = req->client;
 				outReply.cmd = CMD_GET_BLOCK;
@@ -618,9 +618,17 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 				spin_unlock( &link->queueLock );
 				if ( client->sock != -1 ) {
 					ssize_t sent = writev( client->sock, iov, 2 );
-					if ( sent > (ssize_t) sizeof outReply ) client->bytesSent += (uint64_t) sent - sizeof outReply;
+					if ( sent > (ssize_t)sizeof outReply ) {
+						bytesSent = (size_t)sent - sizeof outReply;
+					}
 				}
+				spin_lock( &client->statsLock );
 				pthread_mutex_unlock( &client->sendMutex );
+				if ( bytesSent != 0 ) {
+					client->bytesSent += bytesSent;
+					client->tmpBytesSent += bytesSent;
+				}
+				spin_unlock( &client->statsLock );
 				spin_lock( &link->queueLock );
 			}
 			if ( req->status == ULR_FREE && i == link->queueLen - 1 ) link->queueLen--;
