@@ -54,7 +54,7 @@ static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t b
 static bool image_load_all_internal(char *base, char *path);
 static bool image_load(char *base, char *path, int withUplink);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
-static bool image_calcBlockCrc32(const int fd, const int block, const uint32_t realFilesize, uint32_t *crc);
+static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t realFilesize, uint32_t *crc);
 static bool image_ensureDiskSpace(uint64_t size);
 
 static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
@@ -868,25 +868,31 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 		if ( fs < (hashBlocks + 1) * 4 ) {
 			logadd( LOG_WARNING, "Ignoring crc32 list for '%s' as it is too short", imagePath );
 		} else {
-			if ( 0 != lseek( fdHash, 0, SEEK_SET ) ) {
-				logadd( LOG_WARNING, "Could not seek back to beginning of '%s'", hashFile );
+			if ( pread( fdHash, masterCrc, sizeof(uint32_t), 0 ) != sizeof(uint32_t) ) {
+				logadd( LOG_WARNING, "Error reading first crc32 of '%s'", imagePath );
 			} else {
-				if ( read( fdHash, masterCrc, sizeof(uint32_t) ) != 4 ) {
-					logadd( LOG_WARNING, "Error reading first crc32 of '%s'", imagePath );
+				const off_t listEnd = hashBlocks * (off_t)sizeof(uint32_t);
+				off_t pos = 0;
+				retval = calloc( hashBlocks, sizeof(uint32_t) );
+				while ( pos < listEnd ) {
+					ssize_t ret = pread( fdHash, retval + pos, listEnd - pos, pos + sizeof(uint32_t) /* skip master-crc */ );
+					if ( ret == -1 ) {
+						if ( errno == EINTR || errno == EAGAIN ) continue;
+					}
+					if ( ret <= 0 ) break;
+					pos += ret;
+				}
+				if ( pos != listEnd ) {
+					free( retval );
+					retval = NULL;
+					logadd( LOG_WARNING, "Could not read crc32 list of '%s'", imagePath );
 				} else {
-					retval = calloc( hashBlocks, sizeof(uint32_t) );
-					if ( read( fdHash, retval, hashBlocks * sizeof(uint32_t) ) != hashBlocks * (ssize_t)sizeof(uint32_t) ) {
+					uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
+					lists_crc = crc32( lists_crc, (Bytef*)retval, hashBlocks * sizeof(uint32_t) );
+					if ( lists_crc != *masterCrc ) {
 						free( retval );
 						retval = NULL;
-						logadd( LOG_WARNING, "Could not read crc32 list of '%s'", imagePath );
-					} else {
-						uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
-						lists_crc = crc32( lists_crc, (Bytef*)retval, hashBlocks * sizeof(uint32_t) );
-						if ( lists_crc != *masterCrc ) {
-							free( retval );
-							retval = NULL;
-							logadd( LOG_WARNING, "CRC-32 of CRC-32 list mismatch. CRC-32 list of '%s' might be corrupted.", imagePath );
-						}
+						logadd( LOG_WARNING, "CRC-32 of CRC-32 list mismatch. CRC-32 list of '%s' might be corrupted.", imagePath );
 					}
 				}
 			}
@@ -1435,7 +1441,7 @@ bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks
 	return true;
 }
 
-static bool image_calcBlockCrc32(const int fd, const int block, const uint32_t realFilesize, uint32_t *crc)
+static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t realFilesize, uint32_t *crc)
 {
 	char buffer[40000];
 	*crc = crc32( 0L, Z_NULL, 0 );
@@ -1444,20 +1450,19 @@ static bool image_calcBlockCrc32(const int fd, const int block, const uint32_t r
 	const int bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( (int64_t)block * HASH_BLOCK_SIZE) );
 	// Determine how many bytes we had to read if the file size were a multiple of 4k
 	// This might be the same value if the real file's size is a multiple of 4k
-	const uint64_t vbs = ( ( realFilesize + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) ) - ( (int64_t)block * HASH_BLOCK_SIZE);
-	const int virtualBytesFromFile = MIN( HASH_BLOCK_SIZE, vbs );
-	off_t readPos = (int64_t)block * HASH_BLOCK_SIZE;
+	const int64_t vbs = ( ( realFilesize + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) ) - ( (int64_t)block * HASH_BLOCK_SIZE);
+	const int virtualBytesFromFile = (int)MIN( HASH_BLOCK_SIZE, vbs );
+	const off_t readPos = (int64_t)block * HASH_BLOCK_SIZE;
 	// Calculate the crc32 by reading data from the file
 	while ( bytes < bytesFromFile ) {
 		const int n = MIN( (int)sizeof(buffer), bytesFromFile - bytes );
-		const int r = pread( fd, buffer, n, readPos );
+		const int r = pread( fd, buffer, n, readPos + bytes );
 		if ( r <= 0 ) {
 			logadd( LOG_WARNING, "CRC: Read error (errno=%d)", errno );
 			return false;
 		}
 		*crc = crc32( *crc, (Bytef*)buffer, r );
 		bytes += r;
-		readPos += r;
 	}
 	// If the virtual file size is different, keep going using nullbytes
 	if ( bytesFromFile < virtualBytesFromFile ) {
