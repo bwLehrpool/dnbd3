@@ -39,11 +39,6 @@ static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
 
-void error(const char *msg)
-{
-	perror( msg );
-	exit( 0 );
-}
 
 static int image_getattr(const char *path, struct stat *stbuf)
 {
@@ -156,8 +151,17 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	}
 }
 
+static void* image_init(struct fuse_conn_info *conn UNUSED)
+{
+	if ( !connection_initThreads() ) {
+		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
+		exit( EXIT_FAILURE );
+	}
+	return NULL;
+}
+
 /* close the connection */
-void image_destroy(void *private_data UNUSED)
+static void image_destroy(void *private_data UNUSED)
 {
 	if ( useDebug ) {
 		printLog( &logInfo );
@@ -172,6 +176,7 @@ static struct fuse_operations image_oper = {
 	.readdir = image_readdir,
 	.open = image_open,
 	.read = image_read,
+	.init = image_init,
 	.destroy = image_destroy,
 };
 

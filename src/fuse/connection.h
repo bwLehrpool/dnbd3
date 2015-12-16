@@ -18,6 +18,8 @@ typedef struct _dnbd3_async {
 
 bool connection_init(const char *hosts, const char *image, const uint16_t rid);
 
+bool connection_initThreads();
+
 uint64_t connection_getImageSize();
 
 bool connection_read(dnbd3_async_t *request);

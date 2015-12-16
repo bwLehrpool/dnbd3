@@ -24,7 +24,8 @@ static const int MAX_CONSECUTIVE_FAILURES = 16;
 /* Module variables */
 
 // Init guard
-static bool initDone = false;
+static bool connectionInitDone = false;
+static bool threadInitDone = false;
 static pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
 static bool keepRunning = true;
 
@@ -90,11 +91,12 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 	uint64_t remoteSize;
 
 	pthread_mutex_lock( &mutexInit );
-	if ( !initDone && keepRunning ) {
+	if ( !connectionInitDone && keepRunning ) {
 		dnbd3_host_t tempHosts[MAX_HOSTS_PER_ADDRESS];
 		const char *current, *end;
 		int altIndex = 0;
 		memset( altservers, 0, sizeof altservers );
+		connection.sockFd = -1;
 		current = hosts;
 		do {
 			// Get next host from string
@@ -148,30 +150,44 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 			}
 		}
 		if ( sock != -1 ) {
-			pthread_t thread;
-			logadd( LOG_DEBUG1, "Initializing stuff" );
-			if ( pthread_mutex_init( &connection.sendMutex, NULL ) != 0
-					|| pthread_spin_init( &requests.lock, PTHREAD_PROCESS_PRIVATE ) != 0
-					|| pthread_spin_init( &altLock, PTHREAD_PROCESS_PRIVATE ) != 0 ) {
-				logadd( LOG_ERROR, "Mutex or spinlock init failure" );
-				close( sock );
-				sock = -1;
-			} else {
-				if ( pthread_create( &thread, NULL, &connection_receiveThreadMain, (void*)(size_t)sock ) != 0 ) {
-					logadd( LOG_ERROR, "Could not create receive thread" );
-					close( sock );
-					sock = -1;
-				} else if ( pthread_create( &thread, NULL, &connection_backgroundThread, NULL ) != 0 ) {
-					logadd( LOG_ERROR, "Could not create background thread" );
-					shutdown( sock, SHUT_RDWR );
-					sock = -1;
-				}
-			}
-			initDone = true;
+			connectionInitDone = true;
 		}
 	}
 	pthread_mutex_unlock( &mutexInit );
 	return sock != -1;
+}
+
+bool connection_initThreads()
+{
+	pthread_mutex_lock( &mutexInit );
+	if ( !keepRunning || !connectionInitDone || threadInitDone || connection.sockFd == -1 ) {
+		pthread_mutex_unlock( &mutexInit );
+		return false;
+	}
+	bool success = true;
+	pthread_t thread;
+	threadInitDone = true;
+	logadd( LOG_DEBUG1, "Initializing stuff" );
+	if ( pthread_mutex_init( &connection.sendMutex, NULL ) != 0
+			|| pthread_spin_init( &requests.lock, PTHREAD_PROCESS_PRIVATE ) != 0
+			|| pthread_spin_init( &altLock, PTHREAD_PROCESS_PRIVATE ) != 0 ) {
+		logadd( LOG_ERROR, "Mutex or spinlock init failure" );
+		success = false;
+	} else {
+		if ( pthread_create( &thread, NULL, &connection_receiveThreadMain, (void*)(size_t)connection.sockFd ) != 0 ) {
+			logadd( LOG_ERROR, "Could not create receive thread" );
+			success = false;
+		} else if ( pthread_create( &thread, NULL, &connection_backgroundThread, NULL ) != 0 ) {
+			logadd( LOG_ERROR, "Could not create background thread" );
+			success = false;
+		}
+	}
+	if ( !success ) {
+		close( connection.sockFd );
+		connection.sockFd = -1;
+	}
+	pthread_mutex_unlock( &mutexInit );
+	return success;
 }
 
 uint64_t connection_getImageSize()
@@ -181,7 +197,7 @@ uint64_t connection_getImageSize()
 
 bool connection_read(dnbd3_async_t *request)
 {
-	if (!initDone) return false;
+	if (!connectionInitDone) return false;
 	pthread_mutex_lock( &connection.sendMutex );
 	enqueueRequest( request );
 	if ( connection.sockFd != -1 ) {
@@ -201,7 +217,7 @@ void connection_close()
 {
 	pthread_mutex_lock( &mutexInit );
 	keepRunning = false;
-	if ( !initDone ) {
+	if ( !connectionInitDone ) {
 		pthread_mutex_unlock( &mutexInit );
 		return;
 	}
