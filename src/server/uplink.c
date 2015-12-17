@@ -314,13 +314,14 @@ static void* uplink_mainloop(void *data)
 		if ( waitTime > 5000 ) waitTime = 5000;
 		numSocks = epoll_wait( fdEpoll, events, MAXEVENTS, waitTime );
 		if ( _shutdown || link->shutdown ) goto cleanup;
-		if ( numSocks < 0 ) { // Error?
+		if ( numSocks == -1 ) { // Error?
+			if ( errno == EINTR ) continue;
 			logadd( LOG_DEBUG1, "epoll_wait() error %d", (int)errno);
 			usleep( 10000 );
 			continue;
 		}
 		// Check all events
-		for (i = 0; i < numSocks; ++i) {
+		for ( i = 0; i < numSocks; ++i ) {
 			// Check for errors....
 			if ( (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) || !(events[i].events & EPOLLIN) ) {
 				if ( events[i].data.fd == link->signal ) {
@@ -362,7 +363,7 @@ static void* uplink_mainloop(void *data)
 		const time_t now = time( NULL );
 		// Send keep alive if nothing is happening
 		if ( link->fd != -1 && link->replicationHandle == 0 && now > nextKeepalive ) {
-			nextKeepalive = now + 29;
+			nextKeepalive = now + 20;
 			if ( !uplink_sendKeepalive( link->fd ) ) {
 				const int fd = link->fd;
 				link->fd = -1;
@@ -379,11 +380,8 @@ static void* uplink_mainloop(void *data)
 				if ( image_isComplete( link->image ) ) {
 					// Quit work if image is complete
 					logadd( LOG_INFO, "Replication of %s complete.", link->image->lower_name );
-					if ( spin_trylock( &link->image->lock ) == 0 ) {
-						image_markComplete( link->image );
-						spin_unlock( &link->image->lock );
-						goto cleanup;
-					}
+					image_markComplete( link->image );
+					goto cleanup;
 				} else {
 					// Not complete - do measurement
 					altservers_findUplink( link ); // This will set RTT_INPROGRESS (synchronous)

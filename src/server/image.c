@@ -162,17 +162,22 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 
 /**
  * Mark image as complete by freeing the cache_map and deleting the map file on disk
- * DOES NOT LOCK ON THE IMAGE, DO SO BEFORE CALLING
+ * Locks on: image.lock
  */
 void image_markComplete(dnbd3_image_t *image)
 {
+	char mapfile[PATHLEN] = "";
 	assert( image != NULL );
-	if ( image->cache_map == NULL ) return;
-	free( image->cache_map );
-	image->cache_map = NULL;
-	char mapfile[strlen( image->path ) + 4 + 1];
-	sprintf( mapfile, "%s.map", image->path );
-	remove( mapfile );
+	spin_lock( &image->lock );
+	if ( image->cache_map != NULL ) {
+		free( image->cache_map );
+		image->cache_map = NULL;
+		snprintf( mapfile, PATHLEN, "%s.map", image->path );
+	}
+	spin_unlock( &image->lock );
+	if ( mapfile[0] != '\0' ) {
+		remove( mapfile );
+	}
 }
 
 /**
