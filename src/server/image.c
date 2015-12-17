@@ -50,7 +50,7 @@ static imagecache remoteCloneCache[CACHELEN];
 
 static void image_remove(dnbd3_image_t *image);
 static dnbd3_image_t* image_free(dnbd3_image_t *image);
-static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
+static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static bool image_load_all_internal(char *base, char *path);
 static bool image_load(char *base, char *path, int withUplink);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
@@ -551,17 +551,21 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	return NULL ;
 }
 
-static bool image_isHashBlockComplete(uint8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
+static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
 {
 	if ( cacheMap == NULL ) return true;
 	const uint64_t end = (block + 1) * HASH_BLOCK_SIZE;
 	if ( end <= realFilesize ) {
-		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < end; mapPos += (DNBD3_BLOCK_SIZE * 8)) {
-			if ( cacheMap[mapPos / (DNBD3_BLOCK_SIZE * 8)] != 0xff ) {
+		// Trivial case: block in question is not the last block (well, or image size is multiple of HASH_BLOCK_SIZE)
+		const int startCacheIndex = (int)( ( block * HASH_BLOCK_SIZE ) / ( DNBD3_BLOCK_SIZE * 8 ) );
+		const int endCacheIndex = startCacheIndex + ( HASH_BLOCK_SIZE / ( DNBD3_BLOCK_SIZE * 8 ) );
+		for ( int i = startCacheIndex; i < endCacheIndex; ++i ) {
+			if ( cacheMap[i] != 0xff ) {
 				return false;
 			}
 		}
 	} else {
+		// Special case: Checking last block, which is smaller than HASH_BLOCK_SIZE
 		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < realFilesize; mapPos += DNBD3_BLOCK_SIZE ) {
 			const int map_y = mapPos >> 15;
 			const int map_x = (mapPos >> 12) & 7; // mod 8
@@ -1409,10 +1413,15 @@ json_t* image_getListAsJson()
  * Returns: 0-100
  * DOES NOT LOCK, so make sure to do so before calling
  */
-int image_getCompletenessEstimate(const dnbd3_image_t * const image)
+int image_getCompletenessEstimate(dnbd3_image_t * const image)
 {
 	assert( image != NULL );
 	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
+	const time_t now = time( NULL );
+	if ( now < image->nextCompletenessEstimate ) {
+		// Since this operation is relatively expensive, we cache the result for a while
+		return image->completenessEstimate;
+	}
 	int i;
 	int percent = 0;
 	const int len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
@@ -1420,11 +1429,13 @@ int image_getCompletenessEstimate(const dnbd3_image_t * const image)
 	for ( i = 0; i < len; ++i ) {
 		if ( image->cache_map[i] == 0xff ) {
 			percent += 100;
-		} else if ( image->cache_map[i] > 0 ) {
+		} else if ( image->cache_map[i] != 0 ) {
 			percent += 50;
 		}
 	}
-	return percent / len;
+	image->completenessEstimate = percent / len;
+	image->nextCompletenessEstimate = now + 10 + rand() % 30;
+	return image->completenessEstimate;
 }
 
 /**

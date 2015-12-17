@@ -43,7 +43,7 @@ bool image_generateCrcFile(char *image);
 
 json_t* image_getListAsJson();
 
-int image_getCompletenessEstimate(const dnbd3_image_t * const image);
+int image_getCompletenessEstimate(dnbd3_image_t * const image);
 
 // one byte in the map covers 8 4kib blocks, so 32kib per byte
 // "+ (1 << 15) - 1" is required to account for the last bit of

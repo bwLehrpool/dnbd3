@@ -55,7 +55,8 @@ struct _dnbd3_connection
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	uint32_t recvBufferLen;     // Len of ^^
 	volatile bool shutdown;     // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
-	int replicatedLastBlock;    // bool telling if the last block has been replicated yet
+	bool replicatedLastBlock;   // bool telling if the last block has been replicated yet
+	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
 	uint64_t replicationHandle; // Handle of pending replication request
 	uint64_t bytesReceived;     // Number of bytes received by the connection.
 };
@@ -99,19 +100,21 @@ struct _dnbd3_image
 {
 	char *path;            // absolute path of the image
 	char *lower_name;      // relative path, all lowercase, minus revision ID
-	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
-	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
-	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	dnbd3_connection_t *uplink; // pointer to a server connection
+	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
 	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
 	uint64_t realFilesize;      // actual file size on disk
+	time_t atime;          // last access time
+	time_t lastWorkCheck;  // last time a non-working image has been checked
+	time_t nextCompletenessEstimate; // last time the completeness estimate was updated
+	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
+	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int rid;               // revision of image
+	int completenessEstimate; // Completeness estimate in percent
 	int users;             // clients currently using this image
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
-	time_t atime;          // last access time
-	time_t lastWorkCheck;  // last time a non-working image has been checked
 	bool working; // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	pthread_spinlock_t lock;
 };

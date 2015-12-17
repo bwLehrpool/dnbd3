@@ -285,6 +285,7 @@ static void* uplink_mainloop(void *data)
 			link->currentServer = link->betterServer;
 			link->replicationHandle = 0;
 			link->image->working = true;
+			link->replicatedLastBlock = false; // Reset this to be safe - request could've been sent but reply was never received
 			buffer[0] = '@';
 			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
 				logadd( LOG_DEBUG1, "(Uplink %s) Now connected to %s\n", link->image->lower_name, buffer + 1 );
@@ -500,7 +501,8 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 	const int len = IMGSIZE_TO_MAPBYTES( image->realFilesize ) - 1;
 	// Needs to be 8 (bit->byte, bitmap)
 	const uint32_t requestBlockSize = DNBD3_BLOCK_SIZE * 8;
-	for (int i = 0; i <= len; ++i) {
+	for ( int j = 0; j <= len; ++j ) {
+		const int i = ( j + link->nextReplicationIndex ) % ( len + 1 );
 		if ( image->cache_map == NULL || link->fd == -1 ) break;
 		if ( image->cache_map[i] == 0xff || (i == len && link->replicatedLastBlock) ) continue;
 		link->replicationHandle = 1; // Prevent race condition
@@ -512,6 +514,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 			logadd( LOG_DEBUG1, "Error sending background replication request to uplink server!\n" );
 			return;
 		}
+		link->nextReplicationIndex = i + 1; // Remember last incomplete offset for next time so we don't play Schlemiel the painter
 		if ( i == len ) link->replicatedLastBlock = true; // Special treatment, last byte in map could represent less than 8 blocks
 		return; // Request was sent, bail out, nothing is locked
 	}
@@ -552,14 +555,9 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 			link->recvBufferLen = MIN(9000000, inReply.size + 65536); // XXX dont miss occurrence
 			link->recvBuffer = realloc( link->recvBuffer, link->recvBufferLen );
 		}
-		uint32_t done = 0;
-		while ( done < inReply.size ) {
-			ret = recv( link->fd, link->recvBuffer + done, inReply.size - done, MSG_NOSIGNAL );
-			if ( ret <= 0 ) {
-				logadd( LOG_INFO, "Lost connection to uplink server of %s (payload)", link->image->path );
-				goto error_cleanup;
-			}
-			done += ret;
+		if ( (uint32_t)sock_recv( link->fd, link->recvBuffer, inReply.size ) != inReply.size ) {
+			logadd( LOG_INFO, "Lost connection to uplink server of %s (payload)", link->image->path );
+			goto error_cleanup;
 		}
 		// Payload read completely
 		// Bail out if we're not interested
@@ -571,9 +569,17 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		link->bytesReceived += inReply.size;
 		// 1) Write to cache file
 		if ( link->image->cacheFd != -1 ) {
-			ret = (int)pwrite( link->image->cacheFd, link->recvBuffer, inReply.size, start );
-			if ( ret > 0 ) image_updateCachemap( link->image, start, start + ret, true );
+			uint32_t done = 0;
+			while ( done < inReply.size ) {
+				ret = (int)pwrite( link->image->cacheFd, link->recvBuffer + done, inReply.size - done, start + done );
+				if ( ret == -1 && errno == EINTR ) continue;
+				if ( ret <= 0 ) break;
+				done += (uint32_t)ret;
+			}
+			if ( done > 0 ) image_updateCachemap( link->image, start, start + done, true );
 			if ( ret == -1 && ( errno == EBADF || errno == EINVAL || errno == EIO ) ) {
+				logadd( LOG_WARNING, "Error writing received data for %s:%d; disabling caching.",
+						link->image->lower_name, (int)link->image->rid );
 				const int fd = link->image->cacheFd;
 				link->image->cacheFd = -1;
 				close( fd );
