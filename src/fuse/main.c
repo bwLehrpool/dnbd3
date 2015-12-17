@@ -26,6 +26,7 @@
 #include <inttypes.h>
 #include <getopt.h>
 #include <time.h>
+#include <signal.h>
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
@@ -38,6 +39,9 @@ static bool useDebug = false;
 static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
+static bool keepRunning = true;
+static void (*fuse_sigIntHandler)(int) = NULL;
+static void (*fuse_sigTermHandler)(int) = NULL;
 
 
 static int image_getattr(const char *path, struct stat *stbuf)
@@ -138,7 +142,11 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 		return -EINVAL;
 	}
 	while ( !request.finished ) {
-		int ret = signal_wait( request.signalFd, 10000 );
+		int ret = signal_wait( request.signalFd, 5000 );
+		if ( !keepRunning ) {
+			connection_close();
+			break;
+		}
 		if ( ret < 0 ) {
 			debugf( "fuse_read signal wait returned %d", ret );
 		}
@@ -151,12 +159,35 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	}
 }
 
+static void image_sigHandler(int signum) {
+	keepRunning = false;
+	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
+		fuse_sigIntHandler(signum);
+	}
+	if ( signum == SIGTERM && fuse_sigTermHandler != NULL ) {
+		fuse_sigTermHandler(signum);
+	}
+}
+
 static void* image_init(struct fuse_conn_info *conn UNUSED)
 {
 	if ( !connection_initThreads() ) {
 		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
 		exit( EXIT_FAILURE );
 	}
+	// Prepare our handler
+	struct sigaction newHandler;
+	memset( &newHandler, 0, sizeof(newHandler) );
+	newHandler.sa_handler = &image_sigHandler;
+	sigemptyset( &newHandler.sa_mask );
+	struct sigaction oldHandler;
+	// Retrieve old handlers when setting
+	sigaction( SIGINT, &newHandler, &oldHandler );
+	fuse_sigIntHandler = oldHandler.sa_handler;
+	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", fuse_sigIntHandler );
+	sigaction( SIGTERM, &newHandler, &oldHandler );
+	fuse_sigTermHandler = oldHandler.sa_handler;
+	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", fuse_sigIntHandler );
 	return NULL;
 }
 

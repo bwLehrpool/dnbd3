@@ -215,6 +215,9 @@ bool connection_read(dnbd3_async_t *request)
 
 void connection_close()
 {
+	if ( keepRunning ) {
+		logadd( LOG_INFO, "Tearing down dnbd3 connections and workers" );
+	}
 	pthread_mutex_lock( &mutexInit );
 	keepRunning = false;
 	if ( !connectionInitDone ) {
