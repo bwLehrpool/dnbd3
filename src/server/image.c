@@ -188,11 +188,16 @@ void image_saveAllCacheMaps()
 	spin_lock( &imageListLock );
 	for (int i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
-		_images[i]->users++;
+		dnbd3_image_t * const image = _images[i];
+		spin_lock( &image->lock );
+		image->users++;
+		spin_unlock( &image->lock );
 		spin_unlock( &imageListLock );
-		image_saveCacheMap( _images[i] );
+		image_saveCacheMap( image );
 		spin_lock( &imageListLock );
-		_images[i]->users--;
+		spin_lock( &image->lock );
+		image->users--;
+		spin_unlock( &image->lock );
 	}
 	spin_unlock( &imageListLock );
 }
@@ -348,6 +353,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			} else {
 				// Seems everything is fine again \o/
 				candidate->working = true;
+				logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->lower_name, candidate->rid );
 			}
 		}
 	}
@@ -415,23 +421,24 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 
 /**
  * Remove image from images array. Only free it if it has
- * no active users
+ * no active users and was actually in the list.
  * Locks on: imageListLock, image[].lock
  */
 static void image_remove(dnbd3_image_t *image)
 {
-	bool wasInList = false;
+	bool mustFree = false;
 	spin_lock( &imageListLock );
 	spin_lock( &image->lock );
-	for (int i = _num_images - 1; i >= 0; --i) {
-		if ( _images[i] != image ) continue;
-		_images[i] = NULL;
-		wasInList = true;
-		if ( i + 1 == _num_images ) _num_images--;
+	for ( int i = _num_images - 1; i >= 0; --i ) {
+		if ( _images[i] == image ) {
+			_images[i] = NULL;
+			mustFree = ( image->users == 0 );
+		}
+		if ( _images[i] == NULL && i + 1 == _num_images ) _num_images--;
 	}
 	spin_unlock( &image->lock );
 	spin_unlock( &imageListLock );
-	if ( wasInList && image->users == 0 ) image = image_free( image );
+	if ( mustFree ) image = image_free( image );
 }
 
 /**
@@ -487,11 +494,15 @@ bool image_loadAll(char *path)
 			imgHandle = _images[i];
 			_images[i] = NULL;
 			if ( i + 1 == _num_images ) _num_images--;
-			if ( imgHandle->users != 0 ) continue; // Still in use, do not free (last releasing user will trigger)
-			// Image is not in use anymore, free the dangling entry immediately
-			spin_unlock( &imageListLock ); // image_free might do several fs operations; unlock
-			image_free( imgHandle );
-			spin_lock( &imageListLock );
+			spin_lock( &imgHandle->lock );
+			const bool freeImg = ( imgHandle->users == 0 );
+			spin_unlock( &imgHandle->lock );
+			if ( freeImg ) {
+				// Image is not in use anymore, free the dangling entry immediately
+				spin_unlock( &imageListLock ); // image_free might do several fs operations; unlock
+				image_free( imgHandle );
+				spin_lock( &imageListLock );
+			}
 		}
 		spin_unlock( &imageListLock );
 		if ( _shutdown ) return true;
@@ -514,7 +525,7 @@ bool image_tryFreeAll()
 {
 	spin_lock( &imageListLock );
 	for (int i = _num_images - 1; i >= 0; --i) {
-		if ( _images[i] != NULL && _images[i]->users == 0 ) {
+		if ( _images[i] != NULL && _images[i]->users == 0 ) { // XXX Data race...
 			_images[i] = image_free( _images[i] );
 		}
 		if ( i + 1 == _num_images && _images[i] == NULL ) _num_images--;
@@ -585,26 +596,28 @@ static bool image_load_all_internal(char *base, char *path)
 #define SUBDIR_LEN 120
 	assert( path != NULL );
 	assert( *path == '/' );
-	struct dirent *entry;
-	DIR *dir = opendir( path );
+	struct dirent entry, *entryPtr;
+	const int pathLen = strlen( path );
+	char subpath[PATHLEN];
+	struct stat st;
+	DIR * const dir = opendir( path );
+
 	if ( dir == NULL ) {
 		logadd( LOG_ERROR, "Could not opendir '%s' for loading", path );
 		return false;
 	}
-	const int pathLen = strlen( path );
-	const int len = pathLen + SUBDIR_LEN + 1;
-	char subpath[len];
-	struct stat st;
-	while ( !_shutdown && (entry = readdir( dir )) != NULL ) {
-		if ( strcmp( entry->d_name, "." ) == 0 || strcmp( entry->d_name, ".." ) == 0 ) continue;
-		if ( strlen( entry->d_name ) > SUBDIR_LEN ) {
-			logadd( LOG_WARNING, "Skipping entry %s: Too long (max %d bytes)", entry->d_name, (int)SUBDIR_LEN );
+
+	while ( !_shutdown && (entryPtr = readdir( dir )) != NULL ) {
+		entry = *entryPtr;
+		if ( strcmp( entry.d_name, "." ) == 0 || strcmp( entry.d_name, ".." ) == 0 ) continue;
+		if ( strlen( entry.d_name ) > SUBDIR_LEN ) {
+			logadd( LOG_WARNING, "Skipping entry %s: Too long (max %d bytes)", entry.d_name, (int)SUBDIR_LEN );
 			continue;
 		}
-		if ( entry->d_name[0] == '/' || path[pathLen - 1] == '/' ) {
-			snprintf( subpath, len, "%s%s", path, entry->d_name );
+		if ( entry.d_name[0] == '/' || path[pathLen - 1] == '/' ) {
+			snprintf( subpath, PATHLEN, "%s%s", path, entry.d_name );
 		} else {
-			snprintf( subpath, len, "%s/%s", path, entry->d_name );
+			snprintf( subpath, PATHLEN, "%s/%s", path, entry.d_name );
 		}
 		if ( stat( subpath, &st ) < 0 ) {
 			logadd( LOG_WARNING, "stat() for '%s' failed. Ignoring....", subpath );
@@ -820,18 +833,18 @@ static bool image_load(char *base, char *path, int withUplink)
 	}
 	if ( i >= _num_images ) {
 		if ( _num_images >= SERVER_MAX_IMAGES ) {
-			logadd( LOG_ERROR, "Cannot load image '%s': maximum number of images reached.", path );
 			spin_unlock( &imageListLock );
+			logadd( LOG_ERROR, "Cannot load image '%s': maximum number of images reached.", path );
 			image = image_free( image );
 			goto load_error;
 		}
 		_images[_num_images++] = image;
-		logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->lower_name, (int)image->rid );
 	}
 	// Keep fd for reading
 	image->readFd = fdImage;
 	fdImage = -1;
 	spin_unlock( &imageListLock );
+	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->lower_name, (int)image->rid );
 
 	function_return = true;
 
@@ -1522,7 +1535,7 @@ static bool image_ensureDiskSpace(uint64_t size)
 		        (int)(size / (1024 * 1024)) );
 		// Find least recently used image
 		dnbd3_image_t *oldest = NULL;
-		int i;
+		int i; // XXX improve locking
 		for (i = 0; i < _num_images; ++i) {
 			if ( _images[i] == NULL ) continue;
 			dnbd3_image_t *current = image_lock( _images[i] );

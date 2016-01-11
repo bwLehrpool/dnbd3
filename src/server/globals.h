@@ -49,6 +49,7 @@ struct _dnbd3_connection
 	int queueLen;               // length of queue
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	dnbd3_host_t currentServer; // Current server we're connected to
+	pthread_spinlock_t rttLock; // When accessing rttTestResult, betterFd or betterServer
 	int rttTestResult;          // RTT_*
 	dnbd3_host_t betterServer;  // The better server
 	int betterFd;               // Active connection to better server, ready to use

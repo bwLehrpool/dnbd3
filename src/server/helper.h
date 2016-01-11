@@ -16,7 +16,7 @@ bool host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen);
 void strtolower(char *string);
 void remove_trailing_slash(char *string);
 void trim_right(char * const string);
-void setThreadName(char *name);
+void setThreadName(const char *name);
 void blockNoncriticalSignals();
 
 static inline bool isSameAddress(const dnbd3_host_t * const a, const dnbd3_host_t * const b)

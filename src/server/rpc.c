@@ -61,25 +61,24 @@ static void clientsToJson(json_t *jsonClients)
 		if ( _clients[i] == NULL ) {
 			continue;
 		}
-		// Do not lock on client.lock here:
-		// 1) .image can only be set once, will never change (just like .image.id)
-		// 2) .hostName never changes as well
-		// 3) .bytesSent and .tmpBytesSent are guarded by .statsLock
-		// 4) the client cannot be freed, as it's still in the list and we hold the list's lock
-		if ( _clients[i]->image == NULL ) {
-			imgId = -1;
-		} else {
-			strncpy( host, _clients[i]->hostName, HOSTNAMELEN - 1 );
-			imgId = _clients[i]->image->id;
-			spin_lock( &_clients[i]->statsLock );
-			bytesSent = _clients[i]->bytesSent;
-			net_updateGlobalSentStatsFromClient( _clients[i] ); // Do this since we read the totalBytesSent counter later
-			spin_unlock( &_clients[i]->statsLock );
-		}
+		dnbd3_client_t * const client = _clients[i];
+		spin_lock( &client->lock );
 		spin_unlock( &_clients_lock );
 		// Unlock so we give other threads a chance to access the client list.
 		// We might not get an atomic snapshot of the currently connected clients,
 		// but that doesn't really make a difference anyways.
+		if ( client->image == NULL ) {
+			spin_unlock( &client->lock );
+			imgId = -1;
+		} else {
+			strncpy( host, client->hostName, HOSTNAMELEN - 1 );
+			imgId = client->image->id;
+			spin_lock( &client->statsLock );
+			spin_unlock( &client->lock );
+			bytesSent = client->bytesSent;
+			net_updateGlobalSentStatsFromClient( client ); // Do this since we read the totalBytesSent counter later
+			spin_unlock( &client->statsLock );
+		}
 		if ( imgId != -1 ) {
 			clientStats = json_pack( "{sssisI}",
 					"address", host,
@@ -91,3 +90,4 @@ static void clientsToJson(json_t *jsonClients)
 	}
 	spin_unlock( &_clients_lock );
 }
+

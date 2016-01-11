@@ -207,7 +207,7 @@ int sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int l
 bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port)
 {
 	if ( list->count >= MAXLISTEN ) return false;
-	struct addrinfo hints, *res, *ptr;
+	struct addrinfo hints, *res = NULL, *ptr;
 	char portStr[6];
 	const int on = 1;
 	int openCount = 0;

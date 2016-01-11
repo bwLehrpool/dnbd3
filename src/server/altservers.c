@@ -19,7 +19,7 @@
 #include <stdio.h>
 
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
-static pthread_spinlock_t pendingLockProduce; // Lock for adding something to pending. (NULL -> nonNULL)
+static pthread_spinlock_t pendingLockWrite; // Lock for adding something to pending. (NULL -> nonNULL)
 static pthread_mutex_t pendingLockConsume = PTHREAD_MUTEX_INITIALIZER; // Lock for removing something (nonNULL -> NULL)
 static int signalFd = -1;
 
@@ -40,6 +40,7 @@ int altservers_getCount()
 
 void altservers_init()
 {
+	spin_init( &pendingLockWrite, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &altServersLock, PTHREAD_PROCESS_PRIVATE );
 	memset( altServers, 0, SERVER_MAX_ALTS * sizeof(dnbd3_alt_server_t) );
 	if ( 0 != thread_create( &altThread, NULL, &altservers_main, (void *)NULL ) ) {
@@ -136,14 +137,14 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
 	// never be that the uplink is supposed to switch, but instead calls
 	// this function.
 	assert( uplink->betterFd == -1 );
-	spin_lock( &pendingLockProduce );
+	spin_lock( &pendingLockWrite );
 	// it is however possible that an RTT measurement is currently in progress,
 	// so check for that case and do nothing if one is in progress
 	if ( uplink->rttTestResult == RTT_INPROGRESS ) {
 		for (i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
 			if ( pending[i] != uplink ) continue;
 			// Yep, measuring right now
-			spin_unlock( &pendingLockProduce );
+			spin_unlock( &pendingLockWrite );
 			return;
 		}
 	}
@@ -152,12 +153,12 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
 		if ( pending[i] != NULL ) continue;
 		pending[i] = uplink;
 		uplink->rttTestResult = RTT_INPROGRESS;
-		spin_unlock( &pendingLockProduce );
+		spin_unlock( &pendingLockWrite );
 		signal_call( signalFd ); // Wake altservers thread up
 		return;
 	}
 	// End of loop - no free slot
-	spin_unlock( &pendingLockProduce );
+	spin_unlock( &pendingLockWrite );
 	logadd( LOG_WARNING, "No more free RTT measurement slots, ignoring a request..." );
 }
 
@@ -167,12 +168,14 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
 void altservers_removeUplink(dnbd3_connection_t *uplink)
 {
 	pthread_mutex_lock( &pendingLockConsume );
+	spin_lock( &pendingLockWrite );
 	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
 		if ( pending[i] == uplink ) {
 			uplink->rttTestResult = RTT_NOT_REACHABLE;
 			pending[i] = NULL;
 		}
 	}
+	spin_unlock( &pendingLockWrite );
 	pthread_mutex_unlock( &pendingLockConsume );
 }
 
@@ -357,10 +360,11 @@ static void *altservers_main(void *data UNUSED)
 	setThreadName( "altserver-check" );
 	blockNoncriticalSignals();
 	// Init spinlock
-	spin_init( &pendingLockProduce, PTHREAD_PROCESS_PRIVATE );
 	// Init waiting links queue
+	spin_lock( &pendingLockWrite );
 	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i)
 		pending[i] = NULL;
+	spin_unlock( &pendingLockWrite );
 	// Init signal-pipe
 	signalFd = signal_new();
 	if ( signalFd < 0 ) {
@@ -379,9 +383,16 @@ static void *altservers_main(void *data UNUSED)
 		}
 		// Work your way through the queue
 		for (itLink = 0; itLink < SERVER_MAX_PENDING_ALT_CHECKS; ++itLink) {
-			if ( pending[itLink] == NULL ) continue; // Check once before locking, as a mutex is expensive
+			spin_lock( &pendingLockWrite );
+			if ( pending[itLink] == NULL ) {
+				spin_unlock( &pendingLockWrite );
+				continue; // Check once before locking, as a mutex is expensive
+			}
+			spin_unlock( &pendingLockWrite );
 			pthread_mutex_lock( &pendingLockConsume );
+			spin_lock( &pendingLockWrite );
 			dnbd3_connection_t * const uplink = pending[itLink];
+			spin_unlock( &pendingLockWrite );
 			if ( uplink == NULL ) { // Check again after locking
 				pthread_mutex_unlock( &pendingLockConsume );
 				continue;
@@ -389,7 +400,9 @@ static void *altservers_main(void *data UNUSED)
 			dnbd3_image_t * const image = image_lock( uplink->image );
 			if ( image == NULL ) { // Check again after locking
 				uplink->rttTestResult = RTT_NOT_REACHABLE;
+				spin_lock( &pendingLockWrite );
 				pending[itLink] = NULL;
+				spin_unlock( &pendingLockWrite );
 				pthread_mutex_unlock( &pendingLockConsume );
 				logadd( LOG_DEBUG1, "Image has gone away that was queued for RTT measurement\n" );
 				continue;
@@ -493,21 +506,29 @@ static void *altservers_main(void *data UNUSED)
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
 				logadd( LOG_DEBUG1, "Change @ %s - best: %uµs, current: %uµs\n", image->lower_name, bestRtt, currentRtt );
+				spin_lock( &uplink->rttLock );
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];
 				uplink->rttTestResult = RTT_DOCHANGE;
+				spin_unlock( &uplink->rttLock );
 				static uint64_t counter = 1;
 				write( uplink->signal, &counter, sizeof(counter) );
 			} else if (bestSock == -1) {
 				// No server was reachable
+				spin_lock( &uplink->rttLock );
 				uplink->rttTestResult = RTT_NOT_REACHABLE;
+				spin_unlock( &uplink->rttLock );
 			} else {
 				// nope
 				if ( bestSock != -1 ) close( bestSock );
+				spin_lock( &uplink->rttLock );
 				uplink->rttTestResult = RTT_DONTCHANGE;
+				spin_unlock( &uplink->rttLock );
 			}
 			// end of loop over all pending uplinks
+			spin_lock( &pendingLockWrite );
 			pending[itLink] = NULL;
+			spin_unlock( &pendingLockWrite );
 			pthread_mutex_unlock( &pendingLockConsume );
 		}
 		// Save cache maps of all images if applicable

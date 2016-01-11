@@ -41,13 +41,15 @@ void integrity_init()
 	assert( queueLen == -1 );
 	pthread_mutex_init( &integrityQueueLock, NULL );
 	pthread_cond_init( &queueSignal, NULL );
+	pthread_mutex_lock( &integrityQueueLock );
+	queueLen = 0;
+	pthread_mutex_unlock( &integrityQueueLock );
 	bRunning = true;
 	if ( 0 != thread_create( &thread, NULL, &integrity_main, (void *)NULL ) ) {
 		bRunning = false;
 		logadd( LOG_WARNING, "Could not start integrity check thread. Corrupted images will not be detected." );
 		return;
 	}
-	queueLen = 0;
 }
 
 void integrity_shutdown()

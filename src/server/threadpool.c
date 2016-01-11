@@ -4,6 +4,7 @@
 #include "../shared/signal.h"
 #include "locks.h"
 #include <pthread.h>
+#include <stdlib.h>
 
 
 typedef struct _entry_t {
@@ -93,7 +94,7 @@ static void *threadpool_worker(void *entryPtr)
 		if ( _shutdown ) break;
 		if ( ret > 0 ) {
 			if ( entry->startRoutine == NULL ) {
-				logadd( LOG_DEBUG1, "Worker woke up but has no work to do!\n" );
+				logadd( LOG_DEBUG1, "Worker woke up but has no work to do!" );
 				continue;
 			}
 			// Start assigned work
@@ -119,7 +120,7 @@ static void *threadpool_worker(void *entryPtr)
 			spin_unlock( &poolLock );
 			setThreadName( "[pool]" );
 		} else {
-			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!\n", ret );
+			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!", ret );
 		}
 	}
 	signal_close( entry->signalFd );

@@ -157,7 +157,7 @@ void net_init()
 
 void *net_client_handler(void *dnbd3_client)
 {
-	dnbd3_client_t *client = (dnbd3_client_t *)dnbd3_client;
+	dnbd3_client_t * const client = (dnbd3_client_t *)dnbd3_client;
 	dnbd3_request_t request;
 	dnbd3_reply_t reply;
 
@@ -180,9 +180,10 @@ void *net_client_handler(void *dnbd3_client)
 	reply.magic = dnbd3_packet_magic;
 
 	sock_setTimeout( client->sock, _clientTimeout );
-	if ( !host_to_string( &client->host, client->hostName, HOSTNAMELEN ) ) {
-		client->hostName[HOSTNAMELEN-1] = '\0';
-	}
+	spin_lock( &client->lock );
+	host_to_string( &client->host, client->hostName, HOSTNAMELEN );
+	client->hostName[HOSTNAMELEN-1] = '\0';
+	spin_unlock( &client->lock );
 
 	// Receive first packet. This must be CMD_SELECT_IMAGE by protocol specification
 	if ( recv_request_header( client->sock, &request ) ) {
@@ -201,7 +202,10 @@ void *net_client_handler(void *dnbd3_client)
 					logadd( LOG_DEBUG1, "Incomplete handshake received from %s", client->hostName );
 				}
 			} else {
-				client->image = image = image_getOrLoad( image_name, rid );
+				image = image_getOrLoad( image_name, rid );
+				spin_lock( &client->lock );
+				client->image = image;
+				spin_unlock( &client->lock );
 				if ( image == NULL ) {
 					//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 				} else if ( !image->working ) {
@@ -225,7 +229,7 @@ void *net_client_handler(void *dnbd3_client)
 						serializer_reset_write( &payload );
 						serializer_put_uint16( &payload, PROTOCOL_VERSION );
 						serializer_put_string( &payload, image->lower_name );
-						serializer_put_uint16( &payload, image->rid );
+						serializer_put_uint16( &payload, (uint16_t)image->rid );
 						serializer_put_uint64( &payload, image->virtualFilesize );
 						reply.cmd = CMD_SELECT_IMAGE;
 						reply.size = serializer_get_written_length( &payload );
@@ -326,8 +330,8 @@ void *net_client_handler(void *dnbd3_client)
 					spin_unlock( &image->lock );
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, request.offset, request.size ) ) {
-							logadd( LOG_DEBUG1, "Could not relay un-cached request from %s to upstream proxy, disabling image %s:%d",
-									client->hostName, image->lower_name, (int)image->rid );
+							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy, disabling image %s:%d",
+									client->hostName, image->lower_name, image->rid );
 							image->working = false;
 							goto exit_client_cleanup;
 						}
@@ -365,11 +369,15 @@ void *net_client_handler(void *dnbd3_client)
 							const int err = errno;
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 							if ( ret == -1 ) {
-								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN ) {
+								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
+										&& err != EAGAIN && err != EWOULDBLOCK ) {
 									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
 											client->hostName, (int)done, (int)realBytes, err );
 								}
-								if ( err != EAGAIN && err != EWOULDBLOCK ) image->working = false;
+								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
+									logadd( LOG_INFO, "Disabling %s:%d", image->lower_name, image->rid );
+									image->working = false;
+								}
 							}
 							goto exit_client_cleanup;
 						}
@@ -411,7 +419,9 @@ void *net_client_handler(void *dnbd3_client)
 				pthread_mutex_lock( &client->sendMutex );
 				send_reply( client->sock, &reply, NULL );
 				pthread_mutex_unlock( &client->sendMutex );
+				spin_lock( &image->lock );
 				image->atime = time( NULL );
+				spin_unlock( &image->lock );
 set_name: ;
 				if ( !hasName ) {
 					hasName = true;
@@ -420,7 +430,6 @@ set_name: ;
 				break;
 
 			case CMD_SET_CLIENT_MODE:
-				image->atime = time( NULL );
 				client->isServer = false;
 				break;
 
@@ -449,7 +458,7 @@ set_name: ;
 exit_client_cleanup: ;
 	dnbd3_removeClient( client );
 	net_updateGlobalSentStatsFromClient( client ); // Don't need client's lock here as it's not active anymore
-	client = dnbd3_freeClient( client ); // This will also call image_release on client->image
+	dnbd3_freeClient( client ); // This will also call image_release on client->image
 	return NULL ;
 }
 

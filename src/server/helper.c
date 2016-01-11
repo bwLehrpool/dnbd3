@@ -125,9 +125,14 @@ void trim_right(char * const string)
 		*end-- = '\0';
 }
 
-void setThreadName(char *name)
+void setThreadName(const char *name)
 {
-	if ( strlen( name ) > 16 ) name[16] = '\0';
+	char newName[16];
+	if ( strlen( name ) > 15 ) {
+		snprintf( newName, sizeof(newName), "%s", name );
+		newName[15] = '\0';
+		name = newName;
+	}
 	prctl( PR_SET_NAME, (unsigned long)name, 0, 0, 0 );
 }
 

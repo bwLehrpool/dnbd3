@@ -16,14 +16,15 @@ integrityQueueLock
 remoteCloneLock | reloadLock
 _images_lock
 _images[].lock
-uplink.queueLock
-pendingLockProduce
 pendingLockConsume
+pendingLockProduce
+uplink.queueLock
 altServersLock
 client.sendMutex
 client.statsLock
 statisticsSentLock
 statisticsReceivedLock
+uplink.rttLock
 
 If you need to lock multiple clients/images/... at once,
 lock the client with the lowest array index first.

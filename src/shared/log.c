@@ -82,12 +82,12 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 	va_list ap;
 	int ret;
 	time_t rawtime;
-	struct tm *timeinfo;
+	struct tm timeinfo;
 	char buffer[LINE_LEN];
 
 	time( &rawtime );
-	timeinfo = localtime( &rawtime );
-	size_t offset = strftime( buffer, LINE_LEN, "[%d.%m. %H:%M:%S] ", timeinfo );
+	localtime_r( &rawtime, &timeinfo );
+	size_t offset = strftime( buffer, LINE_LEN, "[%d.%m. %H:%M:%S] ", &timeinfo );
 	offset += writeLevel( buffer + offset, mask );
 	va_start( ap, fmt );
 	ret = vsnprintf( buffer + offset, LINE_LEN - offset, fmt, ap );

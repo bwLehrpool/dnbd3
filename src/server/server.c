@@ -415,11 +415,11 @@ void dnbd3_removeClient(dnbd3_client_t *client)
 {
 	int i;
 	spin_lock( &_clients_lock );
-	const int cutoff = MAX(10, _num_clients / 2);
-	for (i = _num_clients - 1; i >= 0; --i) {
-		if ( _clients[i] != client ) continue;
-		_clients[i] = NULL;
-		if ( i > cutoff && i + 1 == _num_clients ) --_num_clients;
+	for ( i = _num_clients - 1; i >= 0; --i ) {
+		if ( _clients[i] == client ) {
+			_clients[i] = NULL;
+		}
+		if ( _clients[i] == NULL && i + 1 == _num_clients ) --_num_clients;
 	}
 	spin_unlock( &_clients_lock );
 }
@@ -443,9 +443,8 @@ dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client)
 		spin_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
 		spin_unlock( &client->image->lock );
-		image_release( client->image );
+		client->image = image_release( client->image );
 	}
-	client->image = NULL;
 	spin_unlock( &client->lock );
 	spin_destroy( &client->lock );
 	spin_destroy( &client->statsLock );
