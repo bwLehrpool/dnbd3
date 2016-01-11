@@ -169,7 +169,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
 			dev->imgname = imgname;
 			dev->rid = msg->rid;
-			dev->is_server = msg->is_server;
+			dev->use_server_provided_alts = msg->use_server_provided_alts;
 			// Forget all alt servers on explicit connect, set first al server to initial server
 			memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
 			memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
@@ -266,7 +266,7 @@ void dnbd3_blk_request(struct request_queue *q)
 			continue;
 		}
 
-		if (dev->panic_count >= PROBE_COUNT_TIMEOUT)
+		if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count >= PROBE_COUNT_TIMEOUT)
 		{
 			__blk_end_request_all(req, -EIO);
 			continue;

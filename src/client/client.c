@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
 	msg.host.port = htons( PORT );
 	msg.host.type = 0;
 	msg.imgname = NULL;
-	msg.is_server = false;
+	msg.use_server_provided_alts = true;
 
 	int opt = 0;
 	int longIndex = 0;
@@ -567,7 +567,7 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int re
 		msg.imgname = image;
 		msg.imgnamelen = strlen( image );
 		msg.rid = rid;
-		msg.is_server = false;
+		msg.use_server_provided_alts = true;
 		msg.read_ahead_kb = readAhead;
 		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) {
 			openDevices[i] = uid;

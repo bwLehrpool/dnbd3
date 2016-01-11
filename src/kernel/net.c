@@ -210,7 +210,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		serializer_put_uint16(&dev->payload_buffer, PROTOCOL_VERSION);
 		serializer_put_string(&dev->payload_buffer, dev->imgname);
 		serializer_put_uint16(&dev->payload_buffer, dev->rid);
-		serializer_put_uint8(&dev->payload_buffer, dev->is_server);
+		serializer_put_uint8(&dev->payload_buffer, 0); // is_server = false
 		iov[1].iov_base = &dev->payload_buffer;
 		dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
 		fixup_request(dnbd3_request);
@@ -731,7 +731,7 @@ int dnbd3_net_discover(void *data)
 		if (dev->panic)
 		{
 			// After 21 retries, bail out by reporting errors to block layer
-			if (dev->panic_count < 255 && ++dev->panic_count == PROBE_COUNT_TIMEOUT + 1)
+			if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count < 255 && ++dev->panic_count == PROBE_COUNT_TIMEOUT + 1)
 				dnbd3_blk_fail_all_requests(dev);
 		}
 
@@ -745,7 +745,7 @@ int dnbd3_net_discover(void *data)
 			continue;
 		}
 
-		do_change = !dev->is_server && ready && best_server != current_server && (start.tv_usec & 3) != 0
+		do_change = ready && best_server != current_server && (start.tv_usec & 3) != 0
 				   && RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt + 1500;
 
 		if (ready && !do_change) {
@@ -765,7 +765,7 @@ int dnbd3_net_discover(void *data)
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 		}
 
-		// take server with lowest rtt (only if in client mode)
+		// take server with lowest rtt
 		if (do_change)
 		{
 			printk("INFO: Server %d on %s is faster (%lluµs vs. %lluµs)\n", best_server, dev->disk->disk_name,
@@ -787,9 +787,9 @@ int dnbd3_net_discover(void *data)
 			best_sock = NULL;
 		}
 
-		if (!ready || (start.tv_usec & 7) != 0)
+		if (!ready || (start.tv_usec & 15) != 0)
 			turn = (turn + 1) % 4;
-		if (turn == 3)
+		if (turn == 2) // Set ready when we only have 2 of 4 measurements for quicker load balancing
 			ready = 1;
 
 	}
@@ -1002,11 +1002,10 @@ int dnbd3_net_receive(void *data)
 			continue;
 
 		case CMD_GET_SERVERS:
-			if (dev->is_server || !is_same_server(&dev->cur_server, &dev->initial_server))
+			if (!dev->use_server_provided_alts)
 			{
-				// If not connected to initial server, or device is in proxy mode, ignore this message
 				remaining = dnbd3_reply.size;
-				goto clear_remaining_payload;
+				goto consume_payload;
 			}
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			dev->new_servers_num = 0;
@@ -1026,7 +1025,7 @@ int dnbd3_net_receive(void *data)
 			}
 			// If there were more servers than accepted, remove the remaining data from the socket buffer
 			remaining = dnbd3_reply.size - (count * sizeof(dnbd3_server_entry_t));
-			clear_remaining_payload: while (remaining > 0)
+			consume_payload: while (remaining > 0)
 			{
 				count = MIN(sizeof(dnbd3_reply), remaining); // Abuse the reply struct as the receive buffer
 				iov.iov_base = &dnbd3_reply;

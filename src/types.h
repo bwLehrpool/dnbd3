@@ -86,6 +86,7 @@ typedef struct
 } dnbd3_host_t;
 #pragma pack(0)
 
+#pragma pack(1)
 typedef struct
 {
 	uint16_t len;
@@ -94,8 +95,9 @@ typedef struct
 	char *imgname;
 	int rid;
 	int read_ahead_kb;
-	uint8_t is_server;     // FALSE = automatic (real client), TRUE = manual control (proxy)
+	uint8_t use_server_provided_alts;
 } dnbd3_ioctl_t;
+#pragma pack(0)
 
 // network
 #define CMD_GET_BLOCK           1

@@ -86,7 +86,8 @@
 
 // Number of unsuccessful alt_server probes before read errors are reported to the block layer
 // (ALL servers will be probed this many times)
-#define PROBE_COUNT_TIMEOUT 20
+// Set to 0 to disable
+#define PROBE_COUNT_TIMEOUT 0
 
 // +++++ Block Device +++++
 #define KERNEL_SECTOR_SIZE 512
