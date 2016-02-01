@@ -43,14 +43,14 @@ static inline bool dnbd3_get_reply(int sock, dnbd3_reply_t *reply)
 	return ret == REPLY_OK;
 }
 
-static inline bool dnbd3_select_image(int sock, const char *lower_name, uint16_t rid, uint8_t flags8)
+static inline bool dnbd3_select_image(int sock, const char *name, uint16_t rid, uint8_t flags8)
 {
 	serialized_buffer_t serialized;
 	dnbd3_request_t request;
 	struct iovec iov[2];
 	serializer_reset_write( &serialized );
 	serializer_put_uint16( &serialized, PROTOCOL_VERSION );
-	serializer_put_string( &serialized, lower_name );
+	serializer_put_string( &serialized, name );
 	serializer_put_uint16( &serialized, rid );
 	serializer_put_uint8( &serialized, flags8 );
 	const ssize_t len = serializer_get_written_length( &serialized );

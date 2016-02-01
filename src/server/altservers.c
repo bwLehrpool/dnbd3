@@ -432,7 +432,7 @@ static void *altservers_main(void *data UNUSED)
 				int sock = sock_connect( &servers[itAlt], 750, _uplinkTimeout );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
-				if ( !dnbd3_select_image( sock, image->lower_name, image->rid, FLAGS8_SERVER ) ) {
+				if ( !dnbd3_select_image( sock, image->name, image->rid, FLAGS8_SERVER ) ) {
 					goto server_failed;
 				}
 				// See if selecting the image succeeded ++++++++++++++++++++++++++++++
@@ -443,36 +443,36 @@ static void *altservers_main(void *data UNUSED)
 					goto server_image_not_available;
 				}
 				if ( protocolVersion < MIN_SUPPORTED_SERVER ) goto server_failed;
-				if ( name == NULL || strcmp( name, image->lower_name ) != 0 ) {
-					ERROR_GOTO( server_failed, "[RTT] Server offers image '%s', requested '%s'", name, image->lower_name );
+				if ( name == NULL || strcmp( name, image->name ) != 0 ) {
+					ERROR_GOTO( server_failed, "[RTT] Server offers image '%s', requested '%s'", name, image->name );
 				}
 				if ( rid != image->rid ) {
 					ERROR_GOTO( server_failed, "[RTT] Server provides rid %d, requested was %d (%s)",
-					        (int)rid, (int)image->rid, image->lower_name );
+					        (int)rid, (int)image->rid, image->name );
 				}
 				if ( imageSize != image->virtualFilesize ) {
 					ERROR_GOTO( server_failed, "[RTT] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
-					        imageSize, image->virtualFilesize, image->lower_name );
+					        imageSize, image->virtualFilesize, image->name );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				fixup_request( request );
 				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0 ) ) {
-					ERROR_GOTO( server_failed, "[RTT] Could not request first block for %s", image->lower_name );
+					ERROR_GOTO( server_failed, "[RTT] Could not request first block for %s", image->name );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
 				if ( !dnbd3_get_reply( sock, &reply ) ) {
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
 					ERROR_GOTO( server_failed, "[RTT] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
-					        buf, image->lower_name );
+					        buf, image->name );
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO( server_failed, "[RTT] Reply to first block request is %d bytes for %s",
-					        reply.size, image->lower_name );
+					        reply.size, image->name );
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO( server_failed, "[RTT] Could not read first block payload for %s", image->lower_name );
+					ERROR_GOTO( server_failed, "[RTT] Could not read first block payload for %s", image->name );
 				}
 				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
 				// Measurement done - everything fine so far
@@ -505,7 +505,7 @@ static void *altservers_main(void *data UNUSED)
 			// Done testing all servers. See if we should switch
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
-				logadd( LOG_DEBUG1, "Change @ %s - best: %uµs, current: %uµs\n", image->lower_name, bestRtt, currentRtt );
+				logadd( LOG_DEBUG1, "Change @ %s - best: %uµs, current: %uµs\n", image->name, bestRtt, currentRtt );
 				spin_lock( &uplink->rttLock );
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];

@@ -228,7 +228,7 @@ void *net_client_handler(void *dnbd3_client)
 						image_file = image->readFd;
 						serializer_reset_write( &payload );
 						serializer_put_uint16( &payload, PROTOCOL_VERSION );
-						serializer_put_string( &payload, image->lower_name );
+						serializer_put_string( &payload, image->name );
 						serializer_put_uint16( &payload, (uint16_t)image->rid );
 						serializer_put_uint64( &payload, image->virtualFilesize );
 						reply.cmd = CMD_SELECT_IMAGE;
@@ -331,7 +331,7 @@ void *net_client_handler(void *dnbd3_client)
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, request.offset, request.size ) ) {
 							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy, disabling image %s:%d",
-									client->hostName, image->lower_name, image->rid );
+									client->hostName, image->name, image->rid );
 							image->working = false;
 							goto exit_client_cleanup;
 						}
@@ -375,7 +375,7 @@ void *net_client_handler(void *dnbd3_client)
 											client->hostName, (int)done, (int)realBytes, err );
 								}
 								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
-									logadd( LOG_INFO, "Disabling %s:%d", image->lower_name, image->rid );
+									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
 									image->working = false;
 								}
 							}

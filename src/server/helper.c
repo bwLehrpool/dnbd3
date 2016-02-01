@@ -103,14 +103,6 @@ bool host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen)
 	return true;
 }
 
-void strtolower(char *string)
-{
-	while ( *string ) {
-		if ( *string >= 'A' && *string <= 'Z' ) *string += 32;
-		++string;
-	}
-}
-
 void remove_trailing_slash(char *string)
 {
 	char *ptr = string + strlen( string ) - 1;

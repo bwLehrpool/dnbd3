@@ -13,7 +13,6 @@
 
 bool parse_address(char *string, dnbd3_host_t *host);
 bool host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen);
-void strtolower(char *string);
 void remove_trailing_slash(char *string);
 void trim_right(char * const string);
 void setThreadName(const char *name);

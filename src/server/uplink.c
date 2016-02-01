@@ -65,7 +65,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host)
 		return true; // There's already an uplink, so should we consider this success or failure?
 	}
 	if ( image->cache_map == NULL ) {
-		logadd( LOG_WARNING, "Uplink was requested for image %s, but it is already complete", image->lower_name );
+		logadd( LOG_WARNING, "Uplink was requested for image %s, but it is already complete", image->name );
 		goto failure;
 	}
 	link = image->uplink = calloc( 1, sizeof(dnbd3_connection_t) );
@@ -211,7 +211,7 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	if ( foundExisting != -1 && existingType != ULR_NEW && freeSlot > foundExisting ) foundExisting = -1;
 #ifdef _DEBUG
 	if ( foundExisting != -1 ) {
-		logadd( LOG_DEBUG2, "%p (%s) Found existing request of type %s at slot %d, attaching in slot %d.\n", (void*)uplink, uplink->image->lower_name, existingType == ULR_NEW ? "ULR_NEW" : "ULR_PENDING", foundExisting, freeSlot );
+		logadd( LOG_DEBUG2, "%p (%s) Found existing request of type %s at slot %d, attaching in slot %d.\n", (void*)uplink, uplink->image->name, existingType == ULR_NEW ? "ULR_NEW" : "ULR_PENDING", foundExisting, freeSlot );
 		logadd( LOG_DEBUG2, "Original %" PRIu64 "-%" PRIu64 " (%p)\n"
 				  "New      %" PRIu64 "-%" PRIu64 " (%p)\n",
 				  uplink->queue[foundExisting].from, uplink->queue[foundExisting].to, (void*)uplink->queue[foundExisting].client,
@@ -295,7 +295,7 @@ static void* uplink_mainloop(void *data)
 			link->replicatedLastBlock = false; // Reset this to be safe - request could've been sent but reply was never received
 			buffer[0] = '@';
 			if ( host_to_string( &link->currentServer, buffer + 1, sizeof(buffer) - 1 ) ) {
-				logadd( LOG_DEBUG1, "(Uplink %s) Now connected to %s\n", link->image->lower_name, buffer + 1 );
+				logadd( LOG_DEBUG1, "(Uplink %s) Now connected to %s\n", link->image->name, buffer + 1 );
 				setThreadName( buffer );
 			}
 			// If we don't have a crc32 list yet, see if the new server has one
@@ -352,7 +352,7 @@ static void* uplink_mainloop(void *data)
 			if ( events[i].data.fd == link->signal ) {
 				// Event on the signal fd -> a client requests data
 				if ( signal_clear( link->signal ) == SIGNAL_ERROR ) {
-					logadd( LOG_WARNING, "Errno on eventfd on uplink for %s! Things will break!", link->image->lower_name );
+					logadd( LOG_WARNING, "Errno on eventfd on uplink for %s! Things will break!", link->image->name );
 				}
 				if ( link->fd != -1 ) {
 					// Uplink seems fine, relay requests to it...
@@ -390,7 +390,7 @@ static void* uplink_mainloop(void *data)
 				// It seems it's time for a check
 				if ( image_isComplete( link->image ) ) {
 					// Quit work if image is complete
-					logadd( LOG_INFO, "Replication of %s complete.", link->image->lower_name );
+					logadd( LOG_INFO, "Replication of %s complete.", link->image->name );
 					image_markComplete( link->image );
 					goto cleanup;
 				} else {
@@ -415,7 +415,7 @@ static void* uplink_mainloop(void *data)
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
 					snprintf( buffer, sizeof(buffer), "[DEBUG %p] Starving request slot %d detected:\n"
-							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", (void*)link, i, link->queue[i].client->image->lower_name,
+							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", (void*)link, i, link->queue[i].client->image->name,
 							link->queue[i].from, link->queue[i].to, link->queue[i].status );
 					link->queue[i].status = ULR_NEW;
 					resend = true;
@@ -594,7 +594,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 			if ( done > 0 ) image_updateCachemap( link->image, start, start + done, true );
 			if ( ret == -1 && ( errno == EBADF || errno == EINVAL || errno == EIO ) ) {
 				logadd( LOG_WARNING, "Error writing received data for %s:%d; disabling caching.",
-						link->image->lower_name, (int)link->image->rid );
+						link->image->name, (int)link->image->rid );
 				const int fd = link->image->cacheFd;
 				link->image->cacheFd = -1;
 				close( fd );
@@ -655,7 +655,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		spin_unlock( &link->queueLock );
 #ifdef _DEBUG
 		if ( !served && start != link->replicationHandle )
-			logadd( LOG_DEBUG2, "%p, %s -- Unmatched reply: %" PRIu64 " to %" PRIu64, (void*)link, link->image->lower_name, start, end );
+			logadd( LOG_DEBUG2, "%p, %s -- Unmatched reply: %" PRIu64 " to %" PRIu64, (void*)link, link->image->name, start, end );
 #endif
 		if ( start == link->replicationHandle ) link->replicationHandle = 0;
 	}
@@ -702,7 +702,7 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
 	lists_crc = crc32( lists_crc, (Bytef*)buffer, bytes );
 	if ( lists_crc != masterCrc ) {
-		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s)!", uplink->image->lower_name );
+		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s)!", uplink->image->name );
 		free( buffer );
 		return;
 	}

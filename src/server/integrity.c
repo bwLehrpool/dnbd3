@@ -139,7 +139,7 @@ static void* integrity_main(void * data UNUSED)
 				memcpy( buffer, image->crc32, required );
 				spin_unlock( &image->lock );
 				if ( !image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
-					logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->lower_name );
+					logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->name );
 					image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
 				}
 				pthread_mutex_lock( &integrityQueueLock );

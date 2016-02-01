@@ -268,13 +268,11 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	// Simple sanity check
 	const int len = strlen( name );
 	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL ;
-	// Always use lowercase name
-	strtolower( name );
 	// Go through array
 	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t * const image = _images[i];
-		if ( image == NULL || strcmp( image->lower_name, name ) != 0 ) continue;
+		if ( image == NULL || strcmp( image->name, name ) != 0 ) continue;
 		if ( revision == image->rid ) {
 			candidate = image;
 			break;
@@ -353,7 +351,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			} else {
 				// Seems everything is fine again \o/
 				candidate->working = true;
-				logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->lower_name, candidate->rid );
+				logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->name, candidate->rid );
 			}
 		}
 	}
@@ -542,7 +540,7 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
 	assert( image != NULL );
 	if ( !_shutdown ) {
-		logadd( LOG_INFO, "Freeing image %s:%d", image->lower_name, (int)image->rid );
+		logadd( LOG_INFO, "Freeing image %s:%d", image->name, (int)image->rid );
 	}
 	//
 	image_saveCacheMap( image );
@@ -551,7 +549,7 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	free( image->cache_map );
 	free( image->crc32 );
 	free( image->path );
-	free( image->lower_name );
+	free( image->name );
 	spin_unlock( &image->lock );
 	if ( image->cacheFd != -1 ) close( image->cacheFd );
 	if ( image->readFd != -1 ) close( image->readFd );
@@ -695,8 +693,6 @@ static bool image_load(char *base, char *path, int withUplink)
 		goto load_error;
 	}
 
-	strtolower( imgName );
-
 	// Get pointer to already existing image if possible
 	existing = image_get( imgName, revision, true );
 
@@ -742,16 +738,16 @@ static bool image_load(char *base, char *path, int withUplink)
 	// Compare data just loaded to identical image we apparently already loaded
 	if ( existing != NULL ) {
 		if ( existing->realFilesize != realFilesize ) {
-			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", existing->lower_name, (int)existing->rid );
+			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", existing->name, (int)existing->rid );
 			// Image will be replaced below
 		} else if ( existing->crc32 != NULL && crc32list != NULL
 		        && memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlockCount ) != 0 ) {
-			logadd( LOG_WARNING, "CRC32 list of image '%s:%d' has changed.", existing->lower_name, (int)existing->rid );
+			logadd( LOG_WARNING, "CRC32 list of image '%s:%d' has changed.", existing->name, (int)existing->rid );
 			logadd( LOG_WARNING, "The image will be reloaded, but you should NOT replace existing images while the server is running." );
 			logadd( LOG_WARNING, "Actually even if it's not running this should never be done. Use a new RID instead!" );
 			// Image will be replaced below
 		} else if ( existing->crc32 == NULL && crc32list != NULL ) {
-			logadd( LOG_INFO, "Found CRC-32 list for already loaded image '%s:%d', adding...", existing->lower_name, (int)existing->rid );
+			logadd( LOG_INFO, "Found CRC-32 list for already loaded image '%s:%d', adding...", existing->name, (int)existing->rid );
 			existing->crc32 = crc32list;
 			existing->masterCrc32 = masterCrc;
 			crc32list = NULL;
@@ -759,7 +755,7 @@ static bool image_load(char *base, char *path, int withUplink)
 			goto load_error; // Keep existing
 		} else if ( existing->cache_map != NULL && cache_map == NULL ) {
 			// Just ignore that fact, if replication is really complete the cache map will be removed anyways
-			logadd( LOG_INFO, "Image '%s:%d' has no cache map on disk!", existing->lower_name, (int)existing->rid );
+			logadd( LOG_INFO, "Image '%s:%d' has no cache map on disk!", existing->name, (int)existing->rid );
 			function_return = true;
 			goto load_error; // Keep existing
 		} else {
@@ -776,7 +772,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	// Load fresh image
 	dnbd3_image_t *image = calloc( 1, sizeof(dnbd3_image_t) );
 	image->path = strdup( path );
-	image->lower_name = strdup( imgName );
+	image->name = strdup( imgName );
 	image->cache_map = cache_map;
 	image->crc32 = crc32list;
 	image->masterCrc32 = masterCrc;
@@ -844,7 +840,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->readFd = fdImage;
 	fdImage = -1;
 	spin_unlock( &imageListLock );
-	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->lower_name, (int)image->rid );
+	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->name, (int)image->rid );
 
 	function_return = true;
 
@@ -1403,8 +1399,8 @@ json_t* image_getListAsJson()
 		spin_unlock( &image->lock );
 
 		jsonImage = json_pack( "{sisssisisi}",
-				"id", image->id, // id, lower_name, rid never change, so access them without locking
-				"name", image->lower_name,
+				"id", image->id, // id, name, rid never change, so access them without locking
+				"name", image->name,
 				"rid", (int) image->rid,
 				"users", users,
 				"complete",  completeness );
@@ -1554,7 +1550,7 @@ static bool image_ensureDiskSpace(uint64_t size)
 		}
 		oldest = image_lock( oldest );
 		if ( oldest == NULL ) continue; // Image freed in the meantime? Try again
-		logadd( LOG_INFO, "'%s:%d' has to go!", oldest->lower_name, (int)oldest->rid );
+		logadd( LOG_INFO, "'%s:%d' has to go!", oldest->name, (int)oldest->rid );
 		unlink( oldest->path );
 		size_t len = strlen( oldest->path ) + 5 + 1;
 		char buffer[len];
