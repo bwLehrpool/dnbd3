@@ -46,7 +46,7 @@ static struct {
 static struct {
 	int sockFd;
 	pthread_mutex_t sendMutex;
-	int panicSignalFd;
+	dnbd3_signal_t* panicSignal;
 	dnbd3_host_t currentServer;
 	uint64_t startupTime;
 } connection;
@@ -134,7 +134,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 				image.rid = remoteRid;
 				image.size = remoteSize;
 				connection.currentServer = altservers[i].host;
-				connection.panicSignalFd = signal_new();
+				connection.panicSignal = signal_new();
 				connection.startupTime = nowMilli();
 				connection.sockFd = sock;
 				requests.head = NULL;
@@ -205,7 +205,7 @@ bool connection_read(dnbd3_async_t *request)
 			shutdown( connection.sockFd, SHUT_RDWR );
 			connection.sockFd = -1;
 			pthread_mutex_unlock( &connection.sendMutex );
-			signal_call( connection.panicSignalFd );
+			signal_call( connection.panicSignal );
 			return true;
 		}
 	}
@@ -316,7 +316,7 @@ static void* connection_receiveThreadMain(void *sockPtr)
 				// Success, wake up caller
 				request->success = true;
 				request->finished = true;
-				signal_call( request->signalFd );
+				signal_call( request->signal );
 			}
 		} else if ( reply.cmd == CMD_GET_SERVERS ) {
 			// List of known alt servers
@@ -348,7 +348,7 @@ fail:;
 	logadd( LOG_DEBUG1, "RT: Local sock: %d, global: %d", sockFd, connection.sockFd );
 	if ( connection.sockFd == sockFd ) {
 		connection.sockFd = -1;
-		signal_call( connection.panicSignalFd );
+		signal_call( connection.panicSignal );
 	}
 	pthread_mutex_unlock( &connection.sendMutex );
 	// As we're the only reader, it's safe to close the socket now
@@ -365,7 +365,7 @@ static void* connection_backgroundThread(void *something UNUSED)
 		const uint64_t now = nowMilli();
 		if ( now < nextKeepalive && now < nextRttCheck ) {
 			int waitTime = (int)( MIN( nextKeepalive, nextRttCheck ) - now );
-			int waitRes = signal_wait( connection.panicSignalFd, waitTime );
+			int waitRes = signal_wait( connection.panicSignal, waitTime );
 			if ( waitRes == SIGNAL_ERROR ) {
 				logadd( LOG_WARNING, "Error waiting on signal in background thread! Errno = %d", errno );
 			}
@@ -585,7 +585,7 @@ static void switchConnection(int sockFd, alt_server_t *srv)
 	if ( ret != 0 ) {
 		close( sockFd );
 		logadd( LOG_WARNING, "Could not getpeername after connection switch, assuming connection already dead again. (Errno=%d)", errno );
-		signal_call( connection.panicSignalFd );
+		signal_call( connection.panicSignal );
 		return;
 	}
 	connection.startupTime = nowMilli();
@@ -604,7 +604,7 @@ static void switchConnection(int sockFd, alt_server_t *srv)
 				logadd( LOG_WARNING, "Resending pending request failed, re-entering panic mode" );
 				shutdown( connection.sockFd, SHUT_RDWR );
 				connection.sockFd = -1;
-				signal_call( connection.panicSignalFd );
+				signal_call( connection.panicSignal );
 			}
 		}
 		pthread_mutex_unlock( &connection.sendMutex );

@@ -10,7 +10,7 @@
 typedef struct _entry_t {
 	struct _entry_t *next;
 	pthread_t thread;
-	int signalFd;
+	dnbd3_signal_t* signal;
 	void *(*startRoutine)(void *);
 	void * arg;
 } entry_t;
@@ -43,7 +43,7 @@ void threadpool_close()
 	while ( ptr != NULL ) {
 		entry_t *current = ptr;
 		ptr = ptr->next;
-		signal_call( current->signalFd );
+		signal_call( current->signal );
 	}
 	spin_unlock( &poolLock );
 	spin_destroy( &poolLock );
@@ -61,15 +61,15 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 			logadd( LOG_WARNING, "Could not alloc entry_t for new thread\n" );
 			return false;
 		}
-		entry->signalFd = signal_newBlocking();
-		if ( entry->signalFd < 0 ) {
-			logadd( LOG_WARNING, "Could not create signalFd for new thread pool thread\n" );
+		entry->signal = signal_newBlocking();
+		if ( entry->signal == NULL ) {
+			logadd( LOG_WARNING, "Could not create signal for new thread pool thread\n" );
 			free( entry );
 			return false;
 		}
 		if ( 0 != thread_create( &(entry->thread), &threadAttrs, threadpool_worker, (void*)entry ) ) {
 			logadd( LOG_WARNING, "Could not create new thread for thread pool\n" );
-			signal_close( entry->signalFd );
+			signal_close( entry->signal );
 			free( entry );
 			return false;
 		}
@@ -77,7 +77,7 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 	entry->next = NULL;
 	entry->startRoutine = startRoutine;
 	entry->arg = arg;
-	signal_call( entry->signalFd );
+	signal_call( entry->signal );
 	return true;
 }
 
@@ -90,7 +90,7 @@ static void *threadpool_worker(void *entryPtr)
 	entry_t *entry = (entry_t*)entryPtr;
 	for ( ;; ) {
 		// Wait for signal from outside that we have work to do
-		int ret = signal_clear( entry->signalFd );
+		int ret = signal_clear( entry->signal );
 		if ( _shutdown ) break;
 		if ( ret > 0 ) {
 			if ( entry->startRoutine == NULL ) {
@@ -123,7 +123,7 @@ static void *threadpool_worker(void *entryPtr)
 			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!", ret );
 		}
 	}
-	signal_close( entry->signalFd );
+	signal_close( entry->signal );
 	free( entry );
 	return NULL;
 }

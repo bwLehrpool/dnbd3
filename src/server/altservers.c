@@ -21,7 +21,7 @@
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLockWrite; // Lock for adding something to pending. (NULL -> nonNULL)
 static pthread_mutex_t pendingLockConsume = PTHREAD_MUTEX_INITIALIZER; // Lock for removing something (nonNULL -> NULL)
-static int signalFd = -1;
+static dnbd3_signal_t* runSignal = NULL;
 
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
 static int numAltServers = 0;
@@ -53,7 +53,7 @@ void altservers_init()
 void altservers_shutdown()
 {
 	if ( !initDone ) return;
-	signal_call( signalFd ); // Wake altservers thread up
+	signal_call( runSignal ); // Wake altservers thread up
 	thread_join( altThread, NULL );
 }
 
@@ -154,7 +154,7 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
 		pending[i] = uplink;
 		uplink->rttTestResult = RTT_INPROGRESS;
 		spin_unlock( &pendingLockWrite );
-		signal_call( signalFd ); // Wake altservers thread up
+		signal_call( runSignal ); // Wake altservers thread up
 		return;
 	}
 	// End of loop - no free slot
@@ -365,16 +365,16 @@ static void *altservers_main(void *data UNUSED)
 	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i)
 		pending[i] = NULL;
 	spin_unlock( &pendingLockWrite );
-	// Init signal-pipe
-	signalFd = signal_new();
-	if ( signalFd < 0 ) {
+	// Init signal
+	runSignal = signal_new();
+	if ( runSignal == NULL ) {
 		logadd( LOG_WARNING, "error creating signal object. Uplink feature unavailable." );
 		goto cleanup;
 	}
 	// LOOP
 	while ( !_shutdown ) {
 		// Wait 5 seconds max.
-		ret = signal_wait( signalFd, 5000 );
+		ret = signal_wait( runSignal, 5000 );
 		if ( _shutdown ) goto cleanup;
 		if ( ret == SIGNAL_ERROR ) {
 			if ( errno == EAGAIN || errno == EINTR ) continue;
@@ -511,8 +511,7 @@ static void *altservers_main(void *data UNUSED)
 				uplink->betterServer = servers[bestIndex];
 				uplink->rttTestResult = RTT_DOCHANGE;
 				spin_unlock( &uplink->rttLock );
-				static uint64_t counter = 1;
-				write( uplink->signal, &counter, sizeof(counter) );
+				signal_call( uplink->signal );
 			} else if (bestSock == -1) {
 				// No server was reachable
 				spin_lock( &uplink->rttLock );
@@ -540,8 +539,8 @@ static void *altservers_main(void *data UNUSED)
 		}
 	}
 	cleanup: ;
-	if ( signalFd != -1 ) signal_close( signalFd );
-	signalFd = -1;
+	if ( runSignal != NULL ) signal_close( runSignal );
+	runSignal = NULL;
 	return NULL ;
 }
 

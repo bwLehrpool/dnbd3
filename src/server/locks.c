@@ -50,7 +50,7 @@ static int init_done = 0;
 static pthread_spinlock_t initdestory;
 static int lockId = 0;
 static pthread_t watchdog = 0;
-static int watchdogSignal = -1;
+static dnbd3_signal_t* watchdogSignal = NULL;
 
 static void *debug_thread_watchdog(void *something);
 
@@ -278,7 +278,7 @@ static void *debug_thread_watchdog(void *something UNUSED)
 			}
 			pthread_spin_unlock( &initdestory );
 		}
-		if ( watchdogSignal == -1 || signal_wait( watchdogSignal, 5000 ) == SIGNAL_ERROR ) sleep( 5 );
+		if ( watchdogSignal == NULL || signal_wait( watchdogSignal, 5000 ) == SIGNAL_ERROR ) sleep( 5 );
 	}
 	return NULL ;
 }

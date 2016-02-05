@@ -1,6 +1,7 @@
 #ifndef _CONNECTION_H_
 #define _CONNECTION_H_
 
+#include "../shared/signal.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -11,7 +12,7 @@ typedef struct _dnbd3_async {
 	char* buffer;      // Caller-provided buffer to be filled
 	uint64_t offset;
 	uint32_t length;
-	int signalFd;      // Used to signal the caller
+	dnbd3_signal_t* signal; // Used to signal the caller
 	bool finished;     // Will be set to true if the request has been handled
 	bool success;      // Will be set to true if the request succeeded
 } dnbd3_async_t;

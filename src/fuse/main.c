@@ -136,13 +136,13 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	request.buffer = buf;
 	request.length = (uint32_t)size;
 	request.offset = offset;
-	request.signalFd = signal_newBlocking();
+	request.signal = signal_newBlocking();
 
 	if ( !connection_read( &request ) ) {
 		return -EINVAL;
 	}
 	while ( !request.finished ) {
-		int ret = signal_wait( request.signalFd, 5000 );
+		int ret = signal_wait( request.signal, 5000 );
 		if ( !keepRunning ) {
 			connection_close();
 			break;
@@ -151,7 +151,7 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 			debugf( "fuse_read signal wait returned %d", ret );
 		}
 	}
-	signal_close( request.signalFd );
+	signal_close( request.signal );
 	if ( request.success ) {
 		return request.length;
 	} else {

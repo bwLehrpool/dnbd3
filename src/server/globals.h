@@ -2,6 +2,7 @@
 #define _GLOBALS_H_
 
 #include "../types.h"
+#include "../shared/signal.h"
 #include <stdint.h>
 #include <time.h>
 #include <pthread.h>
@@ -42,7 +43,7 @@ typedef struct
 struct _dnbd3_connection
 {
 	int fd;                     // socket fd to remote server
-	int signal;                 // eventfd used to wake up the process
+	dnbd3_signal_t* signal;     // used to wake up the process
 	pthread_t thread;           // thread holding the connection
 	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
