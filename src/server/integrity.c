@@ -1,19 +1,11 @@
 #include "integrity.h"
 
+#include "helper.h"
 #include "locks.h"
 #include "image.h"
-#include "globals.h"
-#include "../shared/log.h"
-#include "helper.h"
 
-#include <pthread.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/syscall.h>
-#include <string.h>
 #include <assert.h>
+#include <sys/syscall.h>
 #include <sys/resource.h>
 
 #define CHECK_QUEUE_SIZE 100

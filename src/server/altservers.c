@@ -1,22 +1,10 @@
 #include "altservers.h"
-#include "uplink.h"
 #include "locks.h"
-#include "../shared/sockhelper.h"
-#include "../shared/log.h"
 #include "helper.h"
-#include "globals.h"
 #include "image.h"
-#include "../shared/fdsignal.h"
-#include "../shared/log.h"
 #include "../shared/protocol.h"
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/errno.h>
-#include <math.h>
 #include <assert.h>
 #include <inttypes.h>
-#include <time.h>
-#include <stdio.h>
 
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLockWrite; // Lock for adding something to pending. (NULL -> nonNULL)

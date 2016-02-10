@@ -1,17 +1,10 @@
 #include "rpc.h"
-#include "server.h"
+#include "helper.h"
 #include "net.h"
 #include "uplink.h"
-#include "../shared/log.h"
 #include "locks.h"
-#include "../shared/sockhelper.h"
-#include "helper.h"
 #include "image.h"
-
-#include <unistd.h>
-#include <string.h>
-#include <jansson.h>
-#include <inttypes.h>
+#include "../shared/sockhelper.h"
 
 static void clientsToJson(json_t *jsonClients);
 

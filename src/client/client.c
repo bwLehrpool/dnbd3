@@ -18,6 +18,9 @@
  *
  */
 
+#include "../types.h"
+#include "../version.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -28,13 +31,9 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/stat.h>
-#include <sys/socket.h>
 #include <sys/un.h>
 #include <errno.h>
-#include "../types.h"
-#include "../version.h"
 
 #define SOCK_PATH "/var/run/dnbd3.socket"
 #define SOCK_BUFFER 1000

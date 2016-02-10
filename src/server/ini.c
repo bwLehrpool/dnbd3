@@ -7,11 +7,10 @@
 
  */
 
-#include <stdio.h>
+#include "ini.h"
+
 #include <ctype.h>
 #include <string.h>
-
-#include "ini.h"
 
 #if !INI_USE_STACK
 #include <stdlib.h>

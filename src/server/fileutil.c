@@ -1,14 +1,14 @@
 #include "fileutil.h"
 
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <sys/statvfs.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
 
 bool file_isReadable(char *file)
 {

@@ -7,18 +7,14 @@
  * Changed by Stephan Schwaer
  * */
 
-#include "../shared/protocol.h"
-#include "../shared/fdsignal.h"
 #include "connection.h"
-#include "../serialize.h"
 #include "helper.h"
+#include "../shared/protocol.h"
 #include "../shared/log.h"
 
 #define FUSE_USE_VERSION 30
 #include <fuse.h>
 #include <stdio.h>
-#include <string.h>
-#include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
 /* for printing uint */

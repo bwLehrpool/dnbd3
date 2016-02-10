@@ -1,13 +1,12 @@
 #ifndef IMAGEHELPER_H
 #define IMAGEHELPER_H
 
+#include "../types.h"
+
 #include <netdb.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
-
-#include "../types.h"
-
 
 typedef struct log_info {
 	uint64_t imageSize;

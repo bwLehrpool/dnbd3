@@ -6,19 +6,9 @@
  */
 
 #include "locks.h"
+#include "helper.h"
 
 #ifdef _DEBUG
-
-#include <time.h>
-#include <unistd.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include "globals.h"
-#include "../shared/log.h"
-#include "helper.h"
-#include "../shared/fdsignal.h"
-
 #define MAXLOCKS 2000
 #define MAXTHREADS 500
 #define LOCKLEN 60

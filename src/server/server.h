@@ -21,12 +21,12 @@
 #ifndef SERVER_H_
 #define SERVER_H_
 
-#include <stdint.h>
-#include <stdio.h>
-
+#include "globals.h"
 #include "../config.h"
 #include "../types.h"
-#include "globals.h"
+
+#include <stdint.h>
+#include <stdio.h>
 
 struct sockaddr_storage;
 

@@ -1,12 +1,8 @@
 #include "helper.h"
 #include <arpa/inet.h>
-#include <string.h>
 #include <stdlib.h>
-#include <assert.h>
 #include <sys/prctl.h> // For thread names
 #include <signal.h>
-
-#include "../config.h"
 
 /**
  * Parse IPv4 or IPv6 address in string representation to a suitable format usable by the BSD socket library

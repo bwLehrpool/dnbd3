@@ -1,8 +1,8 @@
 #ifndef _UPLINK_H_
 #define _UPLINK_H_
 
-#include "../types.h"
 #include "globals.h"
+#include "../types.h"
 
 void uplink_globalsInit();
 

@@ -18,32 +18,18 @@
  *
  */
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/sendfile.h>
-#include <sys/types.h>
-#include <assert.h>
-#include <errno.h>
-#include <inttypes.h>
-#include <signal.h>
-
-#include "../shared/sockhelper.h"
 #include "helper.h"
-#include "server.h"
 #include "image.h"
 #include "uplink.h"
-#include "altservers.h"
-#include "../shared/log.h"
-#include "helper.h"
-#include "../serialize.h"
-#include "../config.h"
-#include "../types.h"
 #include "locks.h"
 #include "rpc.h"
+#include "altservers.h"
+
+#include "../shared/sockhelper.h"
+#include "../serialize.h"
+
+#include <sys/sendfile.h>
+#include <assert.h>
 
 static char nullbytes[500];
 

@@ -1,10 +1,7 @@
 #include "sockhelper.h"
 #include "log.h"
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <arpa/inet.h> // inet_ntop
 #include <netdb.h>
-#include <string.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>

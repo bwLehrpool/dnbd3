@@ -3,4 +3,4 @@ build/
 .project
 *.swp
 .autotools
-
+.idea

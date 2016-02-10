@@ -1,22 +1,12 @@
 #include "uplink.h"
+#include "helper.h"
 #include "locks.h"
-#include "../shared/log.h"
-#include "../shared/sockhelper.h"
 #include "image.h"
-#include "helper.h"
 #include "altservers.h"
-#include "helper.h"
+#include "../shared/sockhelper.h"
 #include "../shared/protocol.h"
-#include "../shared/fdsignal.h"
 
-#include <pthread.h>
-#include <sys/socket.h>
-#include <string.h>
-#include <sys/errno.h>
 #include <assert.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <inttypes.h>
 #include <zlib.h>
 #include <fcntl.h>

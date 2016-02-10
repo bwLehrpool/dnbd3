@@ -18,32 +18,24 @@
  *
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <signal.h>
-#include <getopt.h>
-#include <string.h>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <errno.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <assert.h>
-#include "../types.h"
-#include "../version.h"
+#include "server.h"
+#include "helper.h"
 
 #include "locks.h"
-#include "../shared/sockhelper.h"
-#include "server.h"
 #include "image.h"
 #include "uplink.h"
 #include "net.h"
 #include "altservers.h"
-#include "../shared/log.h"
-#include "globals.h"
 #include "integrity.h"
-#include "helper.h"
 #include "threadpool.h"
+
+#include "../version.h"
+#include "../shared/sockhelper.h"
+
+#include <signal.h>
+#include <getopt.h>
+#include <assert.h>
+
 
 poll_list_t *listeners = NULL;
 

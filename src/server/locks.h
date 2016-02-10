@@ -2,12 +2,11 @@
 #define _LOCKS_H_
 
 #include <pthread.h>
-
-#ifdef _DEBUG
-
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#ifdef _DEBUG
 
 #define spin_init( lock, type ) debug_spin_init( #lock, __FILE__, __LINE__, lock, type)
 #define spin_lock( lock ) debug_spin_lock( #lock, __FILE__, __LINE__, lock)

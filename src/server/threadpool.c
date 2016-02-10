@@ -1,11 +1,7 @@
+#include "threadpool.h"
 #include "globals.h"
 #include "helper.h"
-#include "threadpool.h"
-#include "../shared/fdsignal.h"
 #include "locks.h"
-#include <pthread.h>
-#include <stdlib.h>
-
 
 typedef struct _entry_t {
 	struct _entry_t *next;
