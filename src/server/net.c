@@ -28,8 +28,16 @@
 #include "../shared/sockhelper.h"
 #include "../serialize.h"
 
-#include <sys/sendfile.h>
 #include <assert.h>
+
+#ifdef __linux__
+#include <sys/sendfile.h>
+#endif
+#ifdef __FreeBSD__
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
+#endif
 
 static char nullbytes[500];
 
@@ -350,7 +358,12 @@ void *net_client_handler(void *dnbd3_client)
 						realBytes = image->realFilesize - request.offset;
 					}
 					while ( done < realBytes ) {
+#ifdef __linux__
 						const ssize_t ret = sendfile( client->sock, image_file, &offset, realBytes - done );
+#elif defined(__FreeBSD__)
+					   off_t sent;
+					   int ret = sendfile( image_file, client->sock, offset, realBytes - done, NULL, &sent, 0 );
+#endif
 						if ( ret <= 0 ) {
 							const int err = errno;
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );

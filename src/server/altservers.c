@@ -416,7 +416,7 @@ static void *altservers_main(void *data UNUSED)
 			for (itAlt = 0; itAlt < numAlts; ++itAlt) {
 				usleep( 1000 ); // Wait a very short moment for the network to recover (we might be doing lots of measurements...)
 				// Connect
-				clock_gettime( CLOCK_MONOTONIC_RAW, &start );
+				clock_gettime( CLOCK_MONOTONIC, &start );
 				int sock = sock_connect( &servers[itAlt], 750, _uplinkTimeout );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
@@ -462,7 +462,7 @@ static void *altservers_main(void *data UNUSED)
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO( server_failed, "[RTT] Could not read first block payload for %s", image->name );
 				}
-				clock_gettime( CLOCK_MONOTONIC_RAW, &end );
+				clock_gettime( CLOCK_MONOTONIC, &end );
 				// Measurement done - everything fine so far
 				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000; // µs
 				const unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );

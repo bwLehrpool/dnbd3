@@ -36,6 +36,11 @@
 #include <getopt.h>
 #include <assert.h>
 
+#define LONGOPT_CRC4		1000
+#define LONGOPT_ASSERT		1001
+#define LONGOPT_CREATE		1002
+#define LONGOPT_REVISION	1003
+#define LONGOPT_SIZE		1004
 
 poll_list_t *listeners = NULL;
 
@@ -175,11 +180,11 @@ int main(int argc, char *argv[])
 	        { "help", no_argument, NULL, 'h' },
 	        { "version", no_argument, NULL, 'v' },
 	        { "bind", required_argument, NULL, 'b' },
-	        { "crc", required_argument, NULL, 'crc4' },
-	        { "assert", no_argument, NULL, 'asrt' },
-	        { "create", required_argument, NULL, 'crat' },
-	        { "revision", required_argument, NULL, 'rvid' },
-	        { "size", required_argument, NULL, 'size' },
+	        { "crc", required_argument, NULL, LONGOPT_CRC4 },
+	        { "assert", no_argument, NULL, LONGOPT_ASSERT },
+	        { "create", required_argument, NULL, LONGOPT_CREATE },
+	        { "revision", required_argument, NULL, LONGOPT_REVISION },
+	        { "size", required_argument, NULL, LONGOPT_SIZE },
 	        { 0, 0, 0, 0 }
 	};
 
@@ -215,20 +220,20 @@ int main(int argc, char *argv[])
 		case 'b':
 			bindAddress = strdup( optarg );
 			break;
-		case 'crc4':
+		case LONGOPT_CRC4:
 			return image_generateCrcFile( optarg ) ? 0 : EXIT_FAILURE;
-		case 'asrt':
+		case LONGOPT_ASSERT:
 			printf( "Testing a failing assertion:\n" );
 			assert( 4 == 5 );
 			printf( "Assertion 4 == 5 seems to hold. ;-)\n" );
 			return EXIT_SUCCESS;
-		case 'crat':
+		case LONGOPT_CREATE:
 			paramCreate = strdup( optarg );
 			break;
-		case 'rvid':
+		case LONGOPT_REVISION:
 			paramRevision = atoi( optarg );
 			break;
-		case 'size':
+		case LONGOPT_SIZE:
 			paramSize = strtoll( optarg, NULL, 10 );
 			break;
 		}

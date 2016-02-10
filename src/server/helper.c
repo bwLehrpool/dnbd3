@@ -1,8 +1,11 @@
 #include "helper.h"
 #include <arpa/inet.h>
 #include <stdlib.h>
-#include <sys/prctl.h> // For thread names
 #include <signal.h>
+
+#ifdef HAVE_THREAD_NAMES
+#include <sys/prctl.h> // For thread names
+#endif
 
 /**
  * Parse IPv4 or IPv6 address in string representation to a suitable format usable by the BSD socket library
@@ -121,7 +124,10 @@ void setThreadName(const char *name)
 		newName[15] = '\0';
 		name = newName;
 	}
+#ifdef HAVE_THREAD_NAMES
 	prctl( PR_SET_NAME, (unsigned long)name, 0, 0, 0 );
+#endif
+	//TODO: On FreeBSD set threadname with pthread_setname_np
 }
 
 void blockNoncriticalSignals()

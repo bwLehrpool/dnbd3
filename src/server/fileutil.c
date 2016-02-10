@@ -52,11 +52,17 @@ bool mkdir_p(const char* path)
 
 bool file_alloc(int fd, uint64_t offset, uint64_t size)
 {
+#ifdef __linux__
 	if ( fallocate( fd, 0, offset, size ) == 0 ) return true; // fast way
+#elif defined(__FreeBSD__)
 	if ( posix_fallocate( fd, offset, size ) == 0 ) return true; // slow way
+#endif
+
+	/* This doesn't make any sense, AFAIK
 	if ( lseek( fd, offset + size - 1, SEEK_SET ) != (off_t)offset ) return false; // dumb way
 	if ( write( fd, "", 1 ) != 1 ) return false;
-	return true;
+	*/
+	return false;
 }
 
 int64_t file_freeDiskSpace(const char * const path)

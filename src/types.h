@@ -40,6 +40,21 @@
 #define UNUSED dfg dsfg dg
 #endif
 
+#ifdef __linux__
+#define HAVE_THREAD_NAMES
+#define HAVE_FDATASYNC
+#endif
+
+#ifdef __FreeBSD__
+#ifndef MSG_MORE
+#define MSG_MORE 0
+#endif
+#ifndef POLLRDHUP
+#define POLLRDHUP 0x2000
+#endif
+#include <netinet/in.h>
+#endif
+
 // ioctl
 #define DNBD3_MAGIC     'd'
 #define IOCTL_OPEN      _IO(0xab, 1)

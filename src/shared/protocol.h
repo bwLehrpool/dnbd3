@@ -1,12 +1,15 @@
 #ifndef _PROTOCOL_H_
 #define _PROTOCOL_H_
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <errno.h>
 #include "sockhelper.h"
+
 #include "../types.h"
 #include "../serialize.h"
+
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 
 #define FLAGS8_SERVER (1)
 

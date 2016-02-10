@@ -1,28 +1,18 @@
 #include "image.h"
 #include "helper.h"
 #include "fileutil.h"
-#include "../shared/log.h"
 #include "uplink.h"
 #include "locks.h"
 #include "integrity.h"
-#include "../shared/protocol.h"
-#include "../shared/sockhelper.h"
 #include "altservers.h"
-#include "server.h"
-#include "../shared/fdsignal.h"
+#include "../shared/protocol.h"
 
 #include <assert.h>
-#include <stdio.h>
 #include <fcntl.h>
-#include <unistd.h>
-#include <stdlib.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <dirent.h>
 #include <zlib.h>
 #include <inttypes.h>
-#include <pthread.h>
-#include <errno.h>
 #include <glob.h>
 
 #define PATHLEN (2000)
@@ -243,9 +233,17 @@ bool image_saveCacheMap(dnbd3_image_t *image)
 
 	write( fd, map, size );
 	if ( image->cacheFd != -1 ) {
+#ifdef HAVE_FDATASYNC
 		fdatasync( image->cacheFd );
+#else
+		fsync( image->cacheFd );
+#endif
 	}
+#ifdef HAVE_FDATASYNC
 	fdatasync( fd );
+#else
+	fsync( fd );
+#endif
 	close( fd );
 	free( map );
 
@@ -1167,7 +1165,7 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 		snprintf( imageFile, PATHLEN, "%s/%s.r%d", _basePath, name, requestedRid );
 		detectedRid = requestedRid;
 	} else {
-		glob_t g = { 0 };
+		glob_t g;
 		snprintf( imageFile, PATHLEN, "%s/%s.r*", _basePath, name );
 		const int ret = glob( imageFile, GLOB_NOSORT | GLOB_MARK, NULL, &g );
 		imageFile[0] = '\0';
