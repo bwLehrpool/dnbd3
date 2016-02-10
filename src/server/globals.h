@@ -2,7 +2,7 @@
 #define _GLOBALS_H_
 
 #include "../types.h"
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 #include <stdint.h>
 #include <time.h>
 #include <pthread.h>

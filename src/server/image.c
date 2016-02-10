@@ -9,7 +9,7 @@
 #include "../shared/sockhelper.h"
 #include "altservers.h"
 #include "server.h"
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 
 #include <assert.h>
 #include <stdio.h>

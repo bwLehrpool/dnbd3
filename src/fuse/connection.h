@@ -1,7 +1,7 @@
 #ifndef _CONNECTION_H_
 #define _CONNECTION_H_
 
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 #include <stdbool.h>
 #include <stdint.h>
 

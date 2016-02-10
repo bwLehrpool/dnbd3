@@ -6,7 +6,7 @@
 #include "helper.h"
 #include "globals.h"
 #include "image.h"
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 #include "../shared/log.h"
 #include "../shared/protocol.h"
 #include <stdlib.h>

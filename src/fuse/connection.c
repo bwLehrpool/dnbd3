@@ -2,7 +2,7 @@
 #include "helper.h"
 #include "../config.h"
 #include "../shared/protocol.h"
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 #include "../shared/sockhelper.h"
 #include "../shared/log.h"
 

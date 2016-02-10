@@ -8,7 +8,7 @@
  * */
 
 #include "../shared/protocol.h"
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 #include "connection.h"
 #include "../serialize.h"
 #include "helper.h"

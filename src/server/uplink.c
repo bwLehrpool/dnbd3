@@ -7,7 +7,7 @@
 #include "altservers.h"
 #include "helper.h"
 #include "../shared/protocol.h"
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 
 #include <pthread.h>
 #include <sys/socket.h>

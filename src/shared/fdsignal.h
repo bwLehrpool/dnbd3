@@ -1,5 +1,5 @@
-#ifndef _SIGNAL_H_
-#define _SIGNAL_H_
+#ifndef _FD_SIGNAL_H_
+#define _FD_SIGNAL_H_
 
 #define SIGNAL_OK (0)
 #define SIGNAL_TIMEOUT (-2)

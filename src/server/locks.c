@@ -17,7 +17,7 @@
 #include "globals.h"
 #include "../shared/log.h"
 #include "helper.h"
-#include "../shared/signal.h"
+#include "../shared/fdsignal.h"
 
 #define MAXLOCKS 2000
 #define MAXTHREADS 500
