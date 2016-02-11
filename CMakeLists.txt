@@ -86,6 +86,15 @@ ADD_CUSTOM_TARGET(
 						-P ${CMAKE_BINARY_DIR}/version.cmake
 )
 
+## This is required if you're not building the kernel module
+## TODO: Find a nicer way to avoid parent includes,
+## especially the ../version.h -> version.c -> version.h cycle
+FILE(GLOB COMMON_HEADER_FILES src/*.h)
+FOREACH(COMMON_HEADER_FILE ${COMMON_HEADER_FILES})
+	CONFIGURE_FILE(${COMMON_HEADER_FILE} ${CMAKE_BINARY_DIR} COPYONLY)
+ENDFOREACH( COMMON_HEADER_FILE )
+
+
 ################################################################################
 # CLIENT                                                                       #
 ################################################################################
@@ -138,7 +147,7 @@ IF(MAKE_KERNEL_MODULE)
 	SET(MODULE_NAME dnbd3)
 	SET(MODULE_FILE ${MODULE_NAME}.ko)
 	FILE(GLOB MODULE_SOURCE_FILES src/kernel/*.c src/serialize.c)
-	FILE(GLOB MODULE_HEADER_FILES src/kernel/*.h src/*.h)
+	FILE(GLOB MODULE_HEADER_FILES src/kernel/*.h)
 
 	SET(KERNEL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build")
 
