@@ -38,6 +38,7 @@ static uid_t owner;
 static bool keepRunning = true;
 static void (*fuse_sigIntHandler)(int) = NULL;
 static void (*fuse_sigTermHandler)(int) = NULL;
+static struct fuse_operations dnbd3_fuse_no_operations;
 
 
 static int image_getattr(const char *path, struct stat *stbuf)
@@ -211,7 +212,7 @@ static void printVersion()
 {
 	char *arg[] = { "foo", "-V" };
 	printf( "DNBD3-Fuse Version 1.2.3.4, protocol version %d\n", (int)PROTOCOL_VERSION );
-	fuse_main( 2, arg, NULL, NULL );
+	fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
 	exit( 0 );
 }
 
@@ -226,7 +227,7 @@ static void printUsage(char *argv0, int exitCode)
 	printf( "   -l --log        Write log to given location\n" );
 	printf( "   -o --option     Mount options to pass to libfuse\n" );
 	printf( "   -d --debug      Don't fork and print debug output (fuse > stderr, dnbd3 > stdout)\n" );
-	fuse_main( 2, arg, NULL, NULL );
+	fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
 	exit( exitCode );
 }
 

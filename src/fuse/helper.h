@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/socket.h>
 
 typedef struct log_info {
 	uint64_t imageSize;
