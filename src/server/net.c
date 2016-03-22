@@ -387,6 +387,7 @@ void *net_client_handler(void *dnbd3_client)
 								continue;
 							}
 							if ( ret == -1 ) {
+								if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
 									 	&& err != EAGAIN && err != EWOULDBLOCK ) {
 									 logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
