@@ -1,4 +1,4 @@
-/*
+		/*
  * This file is part of the Distributed Network Block Device 3
  *
  * Copyright(c) 2011-2012 Johann Latocha <johann@latocha.de>
@@ -172,20 +172,20 @@ int main(int argc, char *argv[])
 	int paramRevision = -1;
 	static const char *optString = "c:d:b:nrsihv?";
 	static const struct option longOpts[] = {
-	        { "config", required_argument, NULL, 'c' },
-	        { "nodaemon", no_argument, NULL, 'n' },
-	        { "reload", no_argument, NULL, 'r' },
-	        { "stop", no_argument, NULL, 's' },
-	        { "info", no_argument, NULL, 'i' },
-	        { "help", no_argument, NULL, 'h' },
-	        { "version", no_argument, NULL, 'v' },
-	        { "bind", required_argument, NULL, 'b' },
-	        { "crc", required_argument, NULL, LONGOPT_CRC4 },
-	        { "assert", no_argument, NULL, LONGOPT_ASSERT },
-	        { "create", required_argument, NULL, LONGOPT_CREATE },
-	        { "revision", required_argument, NULL, LONGOPT_REVISION },
-	        { "size", required_argument, NULL, LONGOPT_SIZE },
-	        { 0, 0, 0, 0 }
+			{ "config", required_argument, NULL, 'c' },
+			{ "nodaemon", no_argument, NULL, 'n' },
+			{ "reload", no_argument, NULL, 'r' },
+			{ "stop", no_argument, NULL, 's' },
+			{ "info", no_argument, NULL, 'i' },
+			{ "help", no_argument, NULL, 'h' },
+			{ "version", no_argument, NULL, 'v' },
+			{ "bind", required_argument, NULL, 'b' },
+			{ "crc", required_argument, NULL, LONGOPT_CRC4 },
+			{ "assert", no_argument, NULL, LONGOPT_ASSERT },
+			{ "create", required_argument, NULL, LONGOPT_CREATE },
+			{ "revision", required_argument, NULL, LONGOPT_REVISION },
+			{ "size", required_argument, NULL, LONGOPT_SIZE },
+			{ 0, 0, 0, 0 }
 	};
 
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );

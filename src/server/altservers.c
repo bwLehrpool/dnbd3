@@ -265,8 +265,8 @@ static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const 
 		if ( !isSameAddressPort( host, &altServers[i].host ) ) continue;
 		altServers[i].rtt[++altServers[i].rttIndex % SERVER_RTT_PROBES] = rtt;
 #if SERVER_RTT_PROBES == 5
-		avg = (altServers[i].rtt[0] + altServers[i].rtt[1] + altServers[i].rtt[2] + altServers[i].rtt[3] + altServers[i].rtt[4])
-		        / SERVER_RTT_PROBES;
+		avg = (altServers[i].rtt[0] + altServers[i].rtt[1] + altServers[i].rtt[2]
+				+ altServers[i].rtt[3] + altServers[i].rtt[4]) / SERVER_RTT_PROBES;
 #else
 #warning You might want to change the code in altservers_update_rtt if you changed SERVER_RTT_PROBES
 		avg = 0;
@@ -436,11 +436,11 @@ static void *altservers_main(void *data UNUSED)
 				}
 				if ( rid != image->rid ) {
 					ERROR_GOTO( server_failed, "[RTT] Server provides rid %d, requested was %d (%s)",
-					        (int)rid, (int)image->rid, image->name );
+							(int)rid, (int)image->rid, image->name );
 				}
 				if ( imageSize != image->virtualFilesize ) {
 					ERROR_GOTO( server_failed, "[RTT] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
-					        imageSize, image->virtualFilesize, image->name );
+							imageSize, image->virtualFilesize, image->name );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				fixup_request( request );
@@ -452,12 +452,12 @@ static void *altservers_main(void *data UNUSED)
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
 					ERROR_GOTO( server_failed, "[RTT] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
-					        buf, image->name );
+							buf, image->name );
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO( server_failed, "[RTT] Reply to first block request is %d bytes for %s",
-					        reply.size, image->name );
+							reply.size, image->name );
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO( server_failed, "[RTT] Could not read first block payload for %s", image->name );

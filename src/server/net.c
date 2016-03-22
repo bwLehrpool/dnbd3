@@ -59,7 +59,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
 	int ret, fails = 0;
 	// Read request header from socket
-	while ( (ret = recv( sock, request, sizeof(*request), MSG_WAITALL )) != sizeof(*request) ) {
+	while ( ( ret = recv( sock, request, sizeof(*request), MSG_WAITALL ) ) != sizeof(*request) ) {
 		if ( errno == EINTR && ++fails < 10 ) continue;
 		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_SERVER_RETRIES ) return false;
 		if ( errno == EAGAIN ) continue;
@@ -359,18 +359,18 @@ void *net_client_handler(void *dnbd3_client)
 					}
 					while ( done < realBytes ) {
 #ifdef __linux__
-						const ssize_t ret = sendfile(client->sock, image_file, &offset, realBytes - done);
-						if (ret <= 0) {
+						const ssize_t ret = sendfile( client->sock, image_file, &offset, realBytes - done );
+						if ( ret <= 0 ) {
 							const int err = errno;
-							if (lock) pthread_mutex_unlock(&client->sendMutex);
-							if (ret == -1) {
-								if (err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
-									&& err != EAGAIN && err != EWOULDBLOCK) {
-									logadd(LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
-										   client->hostName, (int) done, (int) realBytes, err);
+							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+							if ( ret == -1 ) {
+								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
+										&& err != EAGAIN && err != EWOULDBLOCK ) {
+									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
+											client->hostName, (int)done, (int)realBytes, err );
 								}
-								if (err == EBADF || err == EFAULT || err == EINVAL || err == EIO) {
-									logadd(LOG_INFO, "Disabling %s:%d", image->name, image->rid);
+								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
+									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
 									image->working = false;
 								}
 							}
@@ -382,30 +382,30 @@ void *net_client_handler(void *dnbd3_client)
 						int ret = sendfile( image_file, client->sock, offset, realBytes - done, NULL, &sent, 0 );
 						const int err = errno;
 						if ( ret < 0 ) {
-							if (err == EAGAIN) {
+							if ( err == EAGAIN ) {
 								done += sent;
 								continue;
 							}
 							if ( ret == -1 ) {
 								if ( lock ) pthread_mutex_unlock( &client->sendMutex );
 								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
-									 	&& err != EAGAIN && err != EWOULDBLOCK ) {
-									 logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
-										 client->hostName, (int)done, (int)realBytes, err );
+										&& err != EAGAIN && err != EWOULDBLOCK ) {
+									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
+											client->hostName, (int)done, (int)realBytes, err );
 								}
 								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
-									 logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
-									 image->working = false;
+									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
+									image->working = false;
 								}
 							}
 							goto exit_client_cleanup;
 						} else {
 							done += sent;
-							if (sent == 0) break;
+							if ( sent == 0 ) break;
 						}
 #endif
 					}
-					logadd(LOG_DEBUG2, "Send %i to %s", realBytes, client->hostName);
+					logadd( LOG_DEBUG2, "Send %i to %s", realBytes, client->hostName );
 					if ( request.size > (uint32_t)realBytes ) {
 						if ( !sendPadding( client->sock, request.size - (uint32_t)realBytes ) ) {
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );

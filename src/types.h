@@ -95,8 +95,8 @@ static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 #pragma pack(1)
 typedef struct
 {
-	uint8_t addr[16];	   // 16byte (network representation, so it can be directly passed to socket functions)
-	uint16_t port;		   // 2byte (network representation, so it can be directly passed to socket functions)
+	uint8_t addr[16];    // 16byte (network representation, so it can be directly passed to socket functions)
+	uint16_t port;       // 2byte (network representation, so it can be directly passed to socket functions)
 	uint8_t type;        // 1byte (ip version. AF_INET or AF_INET6. 0 means this struct is empty and should be ignored)
 } dnbd3_host_t;
 #pragma pack(0)

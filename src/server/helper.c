@@ -133,10 +133,11 @@ void setThreadName(const char *name)
 void blockNoncriticalSignals()
 {
 	sigset_t sigmask;
-    sigemptyset(&sigmask);
-    sigaddset(&sigmask, SIGUSR1);
-    sigaddset(&sigmask, SIGUSR2);
-    sigaddset(&sigmask, SIGHUP);
-    sigaddset(&sigmask, SIGPIPE);
-    pthread_sigmask(SIG_BLOCK, &sigmask, NULL);
+	sigemptyset( &sigmask );
+	sigaddset( &sigmask, SIGUSR1 );
+	sigaddset( &sigmask, SIGUSR2 );
+	sigaddset( &sigmask, SIGHUP );
+	sigaddset( &sigmask, SIGPIPE );
+	pthread_sigmask( SIG_BLOCK, &sigmask, NULL );
 }
+

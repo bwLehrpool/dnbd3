@@ -203,9 +203,9 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	if ( foundExisting != -1 ) {
 		logadd( LOG_DEBUG2, "%p (%s) Found existing request of type %s at slot %d, attaching in slot %d.\n", (void*)uplink, uplink->image->name, existingType == ULR_NEW ? "ULR_NEW" : "ULR_PENDING", foundExisting, freeSlot );
 		logadd( LOG_DEBUG2, "Original %" PRIu64 "-%" PRIu64 " (%p)\n"
-				  "New      %" PRIu64 "-%" PRIu64 " (%p)\n",
-				  uplink->queue[foundExisting].from, uplink->queue[foundExisting].to, (void*)uplink->queue[foundExisting].client,
-				  start, end, (void*)client );
+				"New      %" PRIu64 "-%" PRIu64 " (%p)\n",
+				uplink->queue[foundExisting].from, uplink->queue[foundExisting].to, (void*)uplink->queue[foundExisting].client,
+				start, end, (void*)client );
 	}
 #endif
 	// Fill structure

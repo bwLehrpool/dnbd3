@@ -119,7 +119,7 @@ static inline bool dnbd3_get_crc32(int sock, uint32_t *master, void *buffer, siz
  * where no unrequested messages could arrive inbetween.
  */
 static inline bool dnbd3_select_image_reply(serialized_buffer_t *buffer, int sock, uint16_t *protocol_version, char **name, uint16_t *rid,
-        uint64_t *imageSize)
+		uint64_t *imageSize)
 {
 	dnbd3_reply_t reply;
 	if ( !dnbd3_get_reply( sock, &reply ) ) {

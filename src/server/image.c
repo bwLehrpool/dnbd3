@@ -739,7 +739,7 @@ static bool image_load(char *base, char *path, int withUplink)
 			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", existing->name, (int)existing->rid );
 			// Image will be replaced below
 		} else if ( existing->crc32 != NULL && crc32list != NULL
-		        && memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlockCount ) != 0 ) {
+				&& memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlockCount ) != 0 ) {
 			logadd( LOG_WARNING, "CRC32 list of image '%s:%d' has changed.", existing->name, (int)existing->rid );
 			logadd( LOG_WARNING, "The image will be reloaded, but you should NOT replace existing images while the server is running." );
 			logadd( LOG_WARNING, "Actually even if it's not running this should never be done. Use a new RID instead!" );
@@ -1522,11 +1522,11 @@ static bool image_ensureDiskSpace(uint64_t size)
 		if ( (uint64_t)available > size ) return true;
 		if ( dnbd3_serverUptime() < 10 * 3600 ) {
 			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024ll * 1024ll)),
-			        (int)(size / (1024 * 1024)) );
+					(int)(size / (1024 * 1024)) );
 			return false;
 		}
 		logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, freeing an image...", (int)(available / (1024ll * 1024ll)),
-		        (int)(size / (1024 * 1024)) );
+				(int)(size / (1024 * 1024)) );
 		// Find least recently used image
 		dnbd3_image_t *oldest = NULL;
 		int i; // XXX improve locking

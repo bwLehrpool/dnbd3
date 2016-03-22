@@ -231,7 +231,7 @@ void debug_dump_lock_stats()
 					"* Locked: %d\n"
 					"* Serial: %d\n"
 					"* Thread: %d\n", locks[i].name, locks[i].where, (int)(now - locks[i].locktime), (int)locks[i].locked, locks[i].lockId,
-			        (int)locks[i].thread );
+					(int)locks[i].thread );
 		} else {
 			printf( "* *** %s ***\n"
 					"* Where: %s\n"
@@ -251,7 +251,7 @@ void debug_dump_lock_stats()
 
 static void *debug_thread_watchdog(void *something UNUSED)
 {
-	setThreadName("debug-watchdog");
+	setThreadName( "debug-watchdog" );
 	while ( !_shutdown ) {
 		if ( init_done ) {
 			time_t now = time( NULL );
