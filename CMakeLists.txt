@@ -188,6 +188,6 @@ ENDIF()
 # Other install files
 #
 
-FILE(GLOB conf_files "${CMAKE_CURRENT_SOURCE_DIR}/conf/*.sample" "${CMAKE_CURRENT_SOURCE_DIR}/conf/README.*")
-INSTALL(FILES ${conf_files} DESTINATION etc/dnbd3/)
+FILE(GLOB conf_files "${CMAKE_CURRENT_SOURCE_DIR}/conf/*")
+INSTALL(FILES ${conf_files} DESTINATION /etc/dnbd3/)
 
