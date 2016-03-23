@@ -18,7 +18,8 @@
 static const size_t SHORTBUF = 100;
 #define MAX_ALTS (8)
 #define MAX_HOSTS_PER_ADDRESS (2)
-static const int MAX_CONSECUTIVE_FAILURES = 16;
+// If a server wasn't reachable this many times, we slowly start skipping it on measurements
+static const int FAIL_BACKOFF_START_COUNT = 8;
 #define RTT_COUNT (4)
 
 /* Module variables */
@@ -346,7 +347,6 @@ fail:;
 	pthread_mutex_lock( &connection.sendMutex );
 	// then just set the fd to -1, but only if it's the same fd as ours,
 	// as someone could have established a new connection already
-	logadd( LOG_DEBUG1, "RT: Local sock: %d, global: %d", sockFd, connection.sockFd );
 	if ( connection.sockFd == sockFd ) {
 		connection.sockFd = -1;
 		signal_call( connection.panicSignal );
@@ -427,7 +427,7 @@ static void addAltServers()
 				slot = eIdx;
 				break;
 			}
-			if ( altservers[eIdx].consecutiveFails > MAX_CONSECUTIVE_FAILURES
+			if ( altservers[eIdx].consecutiveFails > FAIL_BACKOFF_START_COUNT
 					&& slot != -1 && altservers[slot].consecutiveFails < altservers[eIdx].consecutiveFails ) {
 				slot = eIdx;
 			}
@@ -466,8 +466,8 @@ static void probeAltServers()
 		alt_server_t * const srv = &altservers[altIndex];
 		if ( srv->host.type == 0 )
 			continue;
-		if ( !panic && srv->consecutiveFails > MAX_CONSECUTIVE_FAILURES
-				&& srv->consecutiveFails % ( srv->consecutiveFails / 8 ) != 0 ) {
+		if ( !panic && srv->consecutiveFails > FAIL_BACKOFF_START_COUNT
+				&& rand() % srv->consecutiveFails >= FAIL_BACKOFF_START_COUNT ) {
 			continue;
 		}
 		if ( srv->rttIndex >= RTT_COUNT ) {
@@ -556,11 +556,11 @@ fail:;
 		// we switch no matter how small the difference to the current server is
 		for ( int i = 0; i < MAX_ALTS; ++i ) {
 			if ( i == bestIndex ) {
-				if ( altservers[i].bestCount < 30 ) {
+				if ( altservers[i].bestCount < 50 ) {
 					altservers[i].bestCount += 2;
 				}
 				// Switch with increasing probability the higher the bestCount is
-				if ( altservers[i].bestCount > 5 && altservers[i].rtt < currentRtt && altservers[i].bestCount > rand() % 25 ) {
+				if ( altservers[i].bestCount > 12 && altservers[i].rtt < currentRtt && altservers[i].bestCount > rand() % 50 ) {
 					doSwitch = true;
 				}
 			} else if ( altservers[i].bestCount > 0 ) {
@@ -568,7 +568,7 @@ fail:;
 			}
 		}
 		// This takes care of the situation where two servers alternate being the best server all the time
-		if ( doSwitch && currentIndex != -1 && altservers[bestIndex].bestCount - altservers[currentIndex].bestCount < 6 ) {
+		if ( doSwitch && currentIndex != -1 && altservers[bestIndex].bestCount - altservers[currentIndex].bestCount < 8 ) {
 			doSwitch = false;
 		}
 		// Regular logic: Apply threshold when considering switch
