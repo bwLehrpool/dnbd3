@@ -643,7 +643,7 @@ static void dnbd3_print_help(char *argv_0)
 {
 	printf( "Version: %s\n\n", VERSION_STRING );
 	printf( "\nUsage: %s\n"
-			"\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c <device>\n\n", argv_0 );
+			"\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c -d <device>\n\n", argv_0 );
 	printf( "Start the DNBD3 client.\n" );
 	//printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
 	printf( "-h or --host \t\t Host running dnbd3-server.\n" );
