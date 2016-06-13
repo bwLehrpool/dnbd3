@@ -1,1 +1,4 @@
+192.168.100.10 Some alt server
++192.168.100.100 My first alt server that will not be used for replication
+-192.168.100.50 Super sectret alt server that will be used for replication, but clients don't know about it
 
