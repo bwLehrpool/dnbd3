@@ -9,8 +9,8 @@
 #include "helper.h"
 
 #ifdef _DEBUG
-#define MAXLOCKS 2000
-#define MAXTHREADS 500
+#define MAXLOCKS (SERVER_MAX_CLIENTS * 2 + SERVER_MAX_ALTS + 200 + SERVER_MAX_IMAGES)
+#define MAXTHREADS (SERVER_MAX_CLIENTS + 100)
 #define LOCKLEN 60
 typedef struct
 {
