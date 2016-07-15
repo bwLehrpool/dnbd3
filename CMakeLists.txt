@@ -138,6 +138,11 @@ if(FUSE_FOUND)
 endif()
 
 
+FILE(GLOB FUSE_SRCS src/bench/*.c src/shared/*.c)
+ADD_EXECUTABLE(dnbd3-bench ${FUSE_SRCS})
+TARGET_LINK_LIBRARIES(dnbd3-bench ${CMAKE_THREAD_LIBS_INIT} ${FUSE_LIBRARIES})
+ADD_DEPENDENCIES(dnbd3-bench version)
+INSTALL(TARGETS dnbd3-bench RUNTIME DESTINATION bin)
 
 ################################################################################
 # MODULE                                                                       #
