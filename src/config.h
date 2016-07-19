@@ -25,7 +25,7 @@
 // ########### SERVER ###########
 
 // +++++ Performance related
-#define SERVER_MAX_CLIENTS 400
+#define SERVER_MAX_CLIENTS 4000
 #define SERVER_MAX_IMAGES  5000
 #define SERVER_MAX_ALTS    250
 #define SERVER_MAX_UPLINK_FAILS  8 // How many times may a server fail until it is considered bad
