@@ -19,7 +19,7 @@ ENDIF()
 
 if(CMAKE_C_COMPILER MATCHES "clang")
 	message( "Using clang flags." )
-	SET(CMAKE_C_FLAGS_DEBUG "-std=c99 -fsanitize=address -O1 -fno-omit-frame-pointer -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG -Wno-multichar -fno-strict-aliasing")
+	SET(CMAKE_C_FLAGS_DEBUG "-std=c99 -O1 -fno-omit-frame-pointer -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG -Wno-multichar -fno-strict-aliasing")
 	SET(CMAKE_C_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG -Wno-multichar -fno-strict-aliasing")
 elseif (CMAKE_C_COMPILER MATCHES "(cc-)|(cc$)")
 	message( "Using (g)cc flags." )
