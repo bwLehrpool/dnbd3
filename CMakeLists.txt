@@ -8,12 +8,27 @@ IF (CMAKE_BUILD_TYPE STREQUAL "")
 	SET(CMAKE_BUILD_TYPE Debug)
 ENDIF()
 
+SET(CMAKE_INSTALL_PREFIX "/usr/local" CACHE FILEPATH "Path prefix for system installation")
+OPTION(BUILD_KERNEL_MODULE "Build the dnbd3 Linux kernel module" ON)
+OPTION(BUILD_FUSE_CLIENT "Build dnbd3 fuse client" ON)
+OPTION(BUILD_SERVER "Build dnbd3 server" ON)
+OPTION(BUILD_STRESSTEST "Build dnbd3 stress testing tool" OFF)
+
+# Is there a non-retarded way to check if build type is debug or release?
+# When specifying, it is case insensitive, so DeBuG would also enable debug builds,
+# but in cmake, we can only do case sensitive matches... :/
+string( TOLOWER "${CMAKE_BUILD_TYPE}" bt_lower )
+if (NOT bt_lower MATCHES "^(debug|release)$")
+	message( FATAL_ERROR "Build type needs to be either Debug or Release" )
+endif()
+
 message( "Build Type selected: ${CMAKE_BUILD_TYPE}" )
 
 SET(MAKE_KERNEL_MODULE True)
 IF(CMAKE_SYSTEM_NAME MATCHES "BSD")
 	message("Detected *BSD System: disable build of Kernel Module.")
-	SET(CMAKE_INSTALL_PREFIX "/usr/local")
+	SET(MAKE_KERNEL_MODULE False)
+ELSEIF(NOT BUILD_KERNEL_MODULE)
 	SET(MAKE_KERNEL_MODULE False)
 ENDIF()
 
@@ -37,34 +52,51 @@ ADD_DEFINITIONS(-D_FILE_OFFSET_BITS=64)
 ADD_DEFINITIONS(-DWITH_IPV6)
 
 FIND_PACKAGE(Threads)
-FIND_PACKAGE(Fuse)
-FIND_PACKAGE(ZLIB)
-FIND_PACKAGE(Jansson)
 
-SET(MAKE_SERVER True)
+SET(DO_ABORT False)
 
 message( " *************************************************" )
-if(NOT FUSE_FOUND)
-	message( " *** No fuse dev libs found, won't build dnbd3-fuse" )
-	SET(FUSE_INCLUDE_DIR "")
+if(BUILD_FUSE_CLIENT)
+	FIND_PACKAGE(Fuse)
+	if(NOT FUSE_FOUND)
+		message( " *** No fuse dev libs found, can't build dnbd3-fuse" )
+		SET(DO_ABORT True)
+	endif()
+	if(NOT THREADS_FOUND)
+		message( " *** No threads found, can't build dnbd3-fuse" )
+		SET(DO_ABORT True)
+	endif()
 endif()
-if(NOT THREADS_FOUND)
-	message( " *** No threads found, won't build dnbd3-server" )
-	SET(MAKE_SERVER False)
+if(BUILD_SERVER)
+	FIND_PACKAGE(ZLIB)
+	FIND_PACKAGE(Jansson)
+	if(NOT THREADS_FOUND)
+		message( " *** No threads found, can't build dnbd3-server" )
+		SET(DO_ABORT True)
+	endif()
+	if(NOT ZLIB_FOUND)
+		message( " *** No zlib found, can't build dnbd3-server" )
+		SET(DO_ABORT True)
+	endif()
+	if(NOT JANSSON_FOUND)
+		message( " *** No jansson lib found, can't build dnbd3-server" )
+		SET(DO_ABORT True)
+	endif()
 endif()
-if(NOT ZLIB_FOUND)
-	message( " *** No zlib found, won't build dnbd3-server" )
-	SET(ZLIB_INCLUDE_DIR "")
-	SET(MAKE_SERVER False)
-endif()
-if(NOT JANSSON_FOUND)
-	message( " *** No jansson lib found, won't build dnbd3-server" )
-	SET(JANSSON_INCLUDE_DIR "")
-	SET(MAKE_SERVER False)
+if(BUILD_STRESSTEST)
+	if(NOT THREADS_FOUND)
+		message( " *** No threads found, can't build dnbd3-bench" )
+		SET(DO_ABORT True)
+	endif()
 endif()
 message( " *************************************************" )
+if(DO_ABORT)
+	message( FATAL_ERROR "Aborting." )
+endif()
 
-INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR} ${FUSE_INCLUDE_DIR} ${JANSSON_INCLUDE_DIR})
+#SET(FUSE_INCLUDE_DIR "")
+#SET(ZLIB_INCLUDE_DIR "")
+#SET(JANSSON_INCLUDE_DIR "")
 
 ################################################################################
 # VERSION HEADER                                                               #
@@ -99,7 +131,8 @@ ENDFOREACH( COMMON_HEADER_FILE )
 # CLIENT                                                                       #
 ################################################################################
 
-if(MAKE_KERNEL_MODULE)
+if(BUILD_KERNEL_MODULE)
+	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR})
 	FILE(GLOB_RECURSE CLIENT_SRCS src/client/*.c)
 	ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-client)
@@ -112,7 +145,8 @@ ENDIF()
 # SERVER                                                                       #
 ################################################################################
 
-if(MAKE_SERVER)
+if(BUILD_SERVER)
+	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${ZLIB_INCLUDE_DIR} ${JANSSON_INCLUDE_DIR})
 	FILE(GLOB SERVER_SRCS src/server/*.c src/shared/*.c)
 	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${ZLIB_LIBRARIES} ${JANSSON_LIBRARIES})
@@ -129,7 +163,8 @@ endif()
 # FUSE                                                                         #
 ################################################################################
 
-if(FUSE_FOUND)
+if(BUILD_FUSE_CLIENT)
+	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${FUSE_INCLUDE_DIR})
 	FILE(GLOB FUSE_SRCS src/fuse/*.c src/shared/*.c)
 	ADD_EXECUTABLE(dnbd3-fuse ${FUSE_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-fuse ${CMAKE_THREAD_LIBS_INIT} ${FUSE_LIBRARIES})
@@ -137,18 +172,23 @@ if(FUSE_FOUND)
 	INSTALL(TARGETS dnbd3-fuse RUNTIME DESTINATION bin)
 endif()
 
+################################################################################
+# STRESSTEST                                                                   #
+################################################################################
 
-FILE(GLOB FUSE_SRCS src/bench/*.c src/shared/*.c)
-ADD_EXECUTABLE(dnbd3-bench ${FUSE_SRCS})
-TARGET_LINK_LIBRARIES(dnbd3-bench ${CMAKE_THREAD_LIBS_INIT} ${FUSE_LIBRARIES})
-ADD_DEPENDENCIES(dnbd3-bench version)
-INSTALL(TARGETS dnbd3-bench RUNTIME DESTINATION bin)
+if(BUILD_STRESSTEST)
+	FILE(GLOB BENCH_SRCS src/bench/*.c src/shared/*.c)
+	ADD_EXECUTABLE(dnbd3-bench ${BENCH_SRCS})
+	TARGET_LINK_LIBRARIES(dnbd3-bench ${CMAKE_THREAD_LIBS_INIT})
+	ADD_DEPENDENCIES(dnbd3-bench version)
+	INSTALL(TARGETS dnbd3-bench RUNTIME DESTINATION bin)
+endif()
 
 ################################################################################
 # MODULE                                                                       #
 ################################################################################
 
-IF(MAKE_KERNEL_MODULE)
+IF(BUILD_KERNEL_MODULE)
 	SET(MODULE_NAME dnbd3)
 	SET(MODULE_FILE ${MODULE_NAME}.ko)
 	FILE(GLOB MODULE_SOURCE_FILES src/kernel/*.c src/serialize.c)
