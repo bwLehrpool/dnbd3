@@ -173,7 +173,7 @@ int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, u
 			// Forget all alt servers on explicit connect, set first al server to initial server
 			memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
 			memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
-			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_CACHE_SIZE;
+			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
 			if (dnbd3_net_connect(dev) == 0)
 			{
 				result = 0;
