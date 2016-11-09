@@ -130,7 +130,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 			} else if ( !dnbd3_select_image_reply( &buffer, sock, &remoteVersion, &remoteName, &remoteRid, &remoteSize ) ) {
 				logadd( LOG_ERROR, "Could not read select image reply (%d)", errno );
 			} else if ( rid != 0 && rid != remoteRid ) {
-				logadd( LOG_ERROR, "rid mismatch" );
+				logadd( LOG_ERROR, "rid mismatch (want: %d, got: %d)", (int)rid, (int)remoteRid );
 			} else {
 				image.name = strdup( remoteName );
 				image.rid = remoteRid;
