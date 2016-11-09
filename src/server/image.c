@@ -667,18 +667,11 @@ static bool image_load(char *base, char *path, int withUplink)
 	*dst = '\0';
 
 	// Parse file name for revision
-	if ( _vmdkLegacyMode && strend( fileName, ".vmdk" ) ) {
-		// Easy - legacy mode, simply append full file name and set rid to 1
-		strcat( dst, fileName );
-		revision = 1;
-	} else if ( !_vmdkLegacyMode ) {
-		// Try to parse *.r<ID> syntax
-		for (i = fileNameLen - 1; i > 1; --i) {
-			if ( fileName[i] < '0' || fileName[i] > '9' ) break;
-		}
-		if ( i == fileNameLen - 1 ) return false;
-		if ( fileName[i] != 'r' ) return false;
-		if ( fileName[i - 1] != '.' ) return false;
+	// Try to parse *.r<ID> syntax
+	for (i = fileNameLen - 1; i > 1; --i) {
+		if ( fileName[i] < '0' || fileName[i] > '9' ) break;
+	}
+	if ( i != fileNameLen - 1 && fileName[i] == 'r' && fileName[i - 1] == '.' ) {
 		revision = atoi( fileName + i + 1 );
 		src = fileName;
 		while ( src < fileName + i - 1 ) {
@@ -686,6 +679,13 @@ static bool image_load(char *base, char *path, int withUplink)
 		}
 		*dst = '\0';
 	}
+	// Legacy mode enabled and no rid extracted from filename?
+	if ( _vmdkLegacyMode && revision == -1 ) {
+		// Yes, simply append full file name and set rid to 1
+		strcat( dst, fileName );
+		revision = 1;
+	}
+	// Did we get anything?
 	if ( revision <= 0 || revision >= 65536 ) {
 		logadd( LOG_WARNING, "Image '%s' has invalid revision ID %d", path, revision );
 		goto load_error;
