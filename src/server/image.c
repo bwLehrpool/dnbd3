@@ -1156,13 +1156,8 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 	char imageFile[PATHLEN] = "";
 	uint16_t detectedRid = 0;
 
-	if ( _vmdkLegacyMode ) {
-		if ( strend( name, ".vmdk" ) ) {
-			snprintf( imageFile, PATHLEN, "%s/%s", _basePath, name );
-			detectedRid = MAX( 1, requestedRid );
-		}
-	} else if ( requestedRid != 0 ) {
-		snprintf( imageFile, PATHLEN, "%s/%s.r%d", _basePath, name, requestedRid );
+	if ( requestedRid != 0 ) {
+		snprintf( imageFile, PATHLEN, "%s/%s.r%d", _basePath, name, (int)requestedRid );
 		detectedRid = requestedRid;
 	} else {
 		glob_t g;
@@ -1191,11 +1186,15 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 		}
 		globfree( &g );
 	}
+	if ( _vmdkLegacyMode && requestedRid <= 1 && ( detectedRid == 0 || !file_isReadable( imageFile ) ) ) {
+		snprintf( imageFile, PATHLEN, "%s/%s", _basePath, name );
+		detectedRid = 1;
+	}
 	logadd( LOG_DEBUG2, "Trying to load %s:%d ( -> %d) as %s", name, (int)requestedRid, (int)detectedRid, imageFile );
 	// No file was determined, or it doesn't seem to exist/be readable
-	if ( imageFile[0] == '\0' ) {
+	if ( detectedRid == 0 ) {
 		logadd( LOG_DEBUG2, "Not found, bailing out" );
-		return image_get( name, detectedRid, true );
+		return image_get( name, requestedRid, true );
 	}
 	if ( !_vmdkLegacyMode && requestedRid == 0 ) {
 		// rid 0 requested - check if detected rid is readable, decrease rid if not until we reach 0
