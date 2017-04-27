@@ -666,6 +666,7 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	}
 	uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
 	lists_crc = crc32( lists_crc, (Bytef*)buffer, bytes );
+	lists_crc = net_order_32( lists_crc );
 	if ( lists_crc != masterCrc ) {
 		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s)!", uplink->image->name );
 		free( buffer );

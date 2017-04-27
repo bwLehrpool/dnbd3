@@ -907,6 +907,7 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 				} else {
 					uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
 					lists_crc = crc32( lists_crc, (Bytef*)retval, hashBlocks * sizeof(uint32_t) );
+					lists_crc = net_order_32( lists_crc );
 					if ( lists_crc != *masterCrc ) {
 						free( retval );
 						retval = NULL;
@@ -1259,11 +1260,12 @@ static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageS
 		if ( crc32len != 0 ) {
 			uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
 			lists_crc = crc32( lists_crc, (Bytef*)crc32list, crc32len );
+			lists_crc = net_order_32( lists_crc );
 			if ( lists_crc != masterCrc ) {
 				logadd( LOG_WARNING, "OTF-Clone: Corrupted CRC-32 list. ignored. (%s)", name );
 			} else {
 				int fd = open( crcFile, O_WRONLY | O_CREAT, 0644 );
-				write( fd, &lists_crc, sizeof(uint32_t) );
+				write( fd, &masterCrc, sizeof(uint32_t) );
 				write( fd, crc32list, crc32len );
 				close( fd );
 			}
@@ -1353,6 +1355,7 @@ bool image_generateCrcFile(char *image)
 		crc = crc32( crc, (Bytef*)buffer, numBlocks * sizeof(crc) );
 		blocksToGo -= numBlocks;
 	}
+	crc = net_order_32( crc );
 	if ( pwrite( fdCrc, &crc, sizeof(crc), 0 ) != sizeof(crc) ) {
 		logadd( LOG_ERROR, "Could not write master crc to file" );
 		goto cleanup_fail;
@@ -1465,6 +1468,9 @@ bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks
 	return true;
 }
 
+/**
+ * Calc CRC-32 of block. Value is returned as little endian.
+ */
 static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t realFilesize, uint32_t *crc)
 {
 	char buffer[40000];
@@ -1498,6 +1504,7 @@ static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t r
 			bytes -= len;
 		}
 	}
+	*crc = net_order_32( *crc );
 	return true;
 }
 
