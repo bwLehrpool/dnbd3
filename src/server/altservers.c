@@ -443,7 +443,6 @@ static void *altservers_main(void *data UNUSED)
 							imageSize, image->virtualFilesize, image->name );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
-				fixup_request( request );
 				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0 ) ) {
 					ERROR_GOTO( server_failed, "[RTT] Could not request first block for %s", image->name );
 				}
