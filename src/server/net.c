@@ -234,11 +234,14 @@ void *net_client_handler(void *dnbd3_client)
 				}
 			}
 		}
-	} else if ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) {
-		rpc_sendStatsJson( client->sock );
 	} else {
-		// Unknown request
-		logadd( LOG_DEBUG1, "Client %s sent invalid handshake", client->hostName );
+		fixup_request( request );
+		if ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) {
+			rpc_sendStatsJson( client->sock );
+		} else {
+			// Unknown request
+			logadd( LOG_DEBUG1, "Client %s sent invalid handshake", client->hostName );
+		}
 	}
 
 	if ( bOk ) {
