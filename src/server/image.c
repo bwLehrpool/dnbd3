@@ -42,6 +42,7 @@ static void image_remove(dnbd3_image_t *image);
 static dnbd3_image_t* image_free(dnbd3_image_t *image);
 static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static bool image_load_all_internal(char *base, char *path);
+static bool image_addToList(dnbd3_image_t *image);
 static bool image_load(char *base, char *path, int withUplink);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
 static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t realFilesize, uint32_t *crc);
@@ -262,10 +263,11 @@ bool image_saveCacheMap(dnbd3_image_t *image)
 dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 {
 	int i;
+	const char *removingText = _removeMissingImages ? ", removing from list" : "";
 	dnbd3_image_t *candidate = NULL;
 	// Simple sanity check
-	const int len = strlen( name );
-	if ( len == 0 || name[len - 1] == '/' || name[0] == '/' ) return NULL ;
+	const int slen = strlen( name );
+	if ( slen == 0 || name[slen - 1] == '/' || name[0] == '/' ) return NULL ;
 	// Go through array
 	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
@@ -290,71 +292,148 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	candidate->users++;
 	spin_unlock( &candidate->lock );
 
-	if ( !checkIfWorking ) return candidate; // Found, but not interested in working state
-
 	// Found, see if it works
-
-	if ( candidate->working ) {
-		// Last known state was "working", see if that should change
+// TODO: Also make sure a non-working image still has old fd open but created a new one and removed itself from the list
+// TODO: But remember size-changed images forever
+	if ( candidate->working || checkIfWorking ) {
+		// Is marked working, but might not have an fd open
 		if ( candidate->readFd == -1 ) {
-			candidate->working = false;
-		}
-	} else { // ...not working...
-		// Don't re-check too often
-		spin_lock( &candidate->lock );
-		bool check;
-		const time_t now = time( NULL );
-		check = ( now - candidate->lastWorkCheck ) > NONWORKING_RECHECK_INTERVAL_SECONDS;
-		if ( check ) {
-			candidate->lastWorkCheck = now;
-		}
-		spin_unlock( &candidate->lock );
-		if ( !check ) {
-			return candidate;
-		}
-		// Check if the local file exists, has the right size, and is readable (writable for incomplete image)
-		if ( candidate->cache_map != NULL ) {
-			// -- Incomplete - rw check
-			if ( candidate->cacheFd == -1 ) { // Make sure file is open for writing
-				candidate->cacheFd = open( candidate->path, O_RDWR );
-				// It might have failed - still offer proxy mode, we just can't cache
-				if ( candidate->cacheFd == -1 ) {
-					logadd( LOG_WARNING, "Cannot re-open %s for writing - replication disabled", candidate->path );
+			int newFd = open( candidate->path, O_RDONLY );
+			if ( newFd != -1 ) {
+				// Check size
+				const off_t flen = lseek( newFd, 0, SEEK_END );
+				if ( flen == -1 || (uint64_t)flen != candidate->realFilesize ) {
+					logadd( LOG_WARNING, "Size of active image with closed fd changed from %" PRIu64 " to %" PRIu64, candidate->realFilesize, (uint64_t)flen );
+					close( newFd );
+					newFd = -1;
 				}
 			}
-			if ( candidate->uplink == NULL && candidate->cacheFd != -1 ) {
-				uplink_init( candidate, -1, NULL );
-			}
-		}
-		// Common for ro and rw images
-		const off_t len = lseek( candidate->readFd, 0, SEEK_END );
-		if ( len == -1 ) {
-			logadd( LOG_WARNING, "lseek() on %s failed (errno=%d), removing image", candidate->path, errno );
-			if ( _removeMissingImages ) {
-				image_remove( candidate ); // No release here, the image is still returned and should be released by caller
-			}
-		} else if ( (uint64_t)len != candidate->realFilesize ) {
-			logadd( LOG_DEBUG1, "Size of %s changed at runtime, keeping disabled! Expected: %" PRIu64 ", found: %" PRIu64
-					". Try sending SIGHUP to server if you know what you're doing.",
-					candidate->path, candidate->realFilesize, (uint64_t)len );
-		} else {
-			// Seek worked, file size is same, now see if we can read from file
-			char buffer[100];
-			if ( pread( candidate->readFd, buffer, sizeof(buffer), 0 ) == -1 ) {
-				logadd( LOG_DEBUG2, "Reading first %d bytes from %s failed (errno=%d), removing image",
-						(int)sizeof(buffer), candidate->path, errno );
+			if ( newFd == -1 ) {
+				spin_lock( &candidate->lock );
+				candidate->working = false;
+				candidate->lastWorkCheck = time( NULL );
+				spin_unlock( &candidate->lock );
 				if ( _removeMissingImages ) {
-					image_remove( candidate );
+					image_remove( candidate ); // No release here, the image is still returned and should be released by caller
 				}
+				return candidate;
+			}
+			spin_lock( &candidate->lock );
+			if ( candidate->readFd == -1 ) {
+				candidate->readFd = newFd;
+				spin_unlock( &candidate->lock );
 			} else {
-				// Seems everything is fine again \o/
-				candidate->working = true;
-				logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->name, candidate->rid );
+				// There was a race while opening the file (happens while not locked cause blocking), we lost the race to close new fd and proceed
+				spin_unlock( &candidate->lock );
+				close( newFd );
 			}
 		}
 	}
 
-	return candidate; // Success :-)
+	if ( !checkIfWorking ) return candidate; // Not interested in re-cechking working state
+
+	// ...not working...
+
+	// Don't re-check too often
+	spin_lock( &candidate->lock );
+	bool check;
+	const time_t now = time( NULL );
+	check = ( now - candidate->lastWorkCheck ) > NONWORKING_RECHECK_INTERVAL_SECONDS;
+	if ( check ) {
+		candidate->lastWorkCheck = now;
+	}
+	spin_unlock( &candidate->lock );
+	if ( !check ) {
+		return candidate;
+	}
+
+	// reaching this point means:
+	// 1) We should check if the image is working, it might or might not be in working state right now
+	// 2) The image is open for reading (or at least was at some point, the fd might be stale if images lie on an NFS share etc.)
+	// 3) We made sure not to re-check this image too often
+
+	// Common for ro and rw images: Size check, read check
+	const off_t len = lseek( candidate->readFd, 0, SEEK_END );
+	bool reload = false;
+	if ( len == -1 ) {
+		logadd( LOG_WARNING, "lseek() on %s failed (errno=%d)%s.", candidate->path, errno, removingText );
+		reload = true;
+	} else if ( (uint64_t)len != candidate->realFilesize ) {
+		logadd( LOG_DEBUG1, "Size of %s changed at runtime, keeping disabled! Expected: %" PRIu64 ", found: %" PRIu64
+				". Try sending SIGHUP to server if you know what you're doing.",
+				candidate->path, candidate->realFilesize, (uint64_t)len );
+	} else {
+		// Seek worked, file size is same, now see if we can read from file
+		char buffer[100];
+		if ( pread( candidate->readFd, buffer, sizeof(buffer), 0 ) == -1 ) {
+			logadd( LOG_DEBUG2, "Reading first %d bytes from %s failed (errno=%d)%s.",
+					(int)sizeof(buffer), candidate->path, errno, removingText );
+			reload = true;
+		} else {
+			// Seems everything is fine again \o/
+			candidate->working = true;
+			logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->name, candidate->rid );
+		}
+	}
+
+	if ( reload ) {
+		// Could not access the image with exising fd - mark for reload which will re-open the file.
+		// make a copy of the image struct but keep the old one around. If/When it's not being used
+		// anymore, it will be freed automatically.
+		dnbd3_image_t *img = calloc( sizeof(dnbd3_image_t), 1 );
+		img->path = strdup( candidate->path );
+		img->name = strdup( candidate->name );
+		img->virtualFilesize = candidate->virtualFilesize;
+		img->realFilesize = candidate->realFilesize;
+		img->atime = now;
+		img->masterCrc32 = candidate->masterCrc32;
+		img->readFd = -1;
+		img->cacheFd = -1;
+		img->rid = candidate->rid;
+		img->users = 1;
+		img->working = false;
+		spin_init( &img->lock, PTHREAD_PROCESS_PRIVATE );
+		if ( candidate->crc32 != NULL ) {
+			const size_t mb = IMGSIZE_TO_HASHBLOCKS( candidate->virtualFilesize ) * sizeof(uint32_t);
+			img->crc32 = malloc( mb );
+			memcpy( img->crc32, candidate->crc32, mb );
+		}
+		spin_lock( &candidate->lock );
+		if ( candidate->cache_map != NULL ) {
+			const size_t mb = IMGSIZE_TO_MAPBYTES( candidate->virtualFilesize );
+			img->cache_map = malloc( mb );
+			memcpy( img->cache_map, candidate->cache_map, mb );
+		}
+		spin_unlock( &candidate->lock );
+		if ( image_addToList( img ) ) {
+			image_release( candidate );
+			candidate = img;
+		} else {
+			img->users = 0;
+			image_free( img );
+		}
+		// readFd == -1 and working == FALSE at this point,
+		// this function needs some splitting up for handling as we need to run most
+		// of the above code again. for now we know that the next call for this
+		// name:rid will get ne newly inserted "img" and try to re-open the file.
+	}
+
+	// Check if image is incomplete, handle
+	if ( candidate->cache_map != NULL ) {
+		// -- Incomplete - rw check
+		if ( candidate->cacheFd == -1 ) { // Make sure file is open for writing
+			candidate->cacheFd = open( candidate->path, O_RDWR );
+			// It might have failed - still offer proxy mode, we just can't cache
+			if ( candidate->cacheFd == -1 ) {
+				logadd( LOG_WARNING, "Cannot re-open %s for writing - replication disabled", candidate->path );
+			}
+		}
+		if ( candidate->uplink == NULL && candidate->cacheFd != -1 ) {
+			uplink_init( candidate, -1, NULL );
+		}
+	}
+
+	return candidate; // We did all we can, hopefully it's working
 }
 
 /**
@@ -631,6 +710,31 @@ static bool image_load_all_internal(char *base, char *path)
 }
 
 /**
+ */
+static bool image_addToList(dnbd3_image_t *image)
+{
+	int i;
+	static int imgIdCounter = 0; // Used to assign unique numeric IDs to images
+	spin_lock( &imageListLock );
+	// Now we're locked, assign unique ID to image (unique for this running server instance!)
+	image->id = ++imgIdCounter;
+	for ( i = 0; i < _num_images; ++i ) {
+		if ( _images[i] != NULL ) continue;
+		_images[i] = image;
+		break;
+	}
+	if ( i >= _num_images ) {
+		if ( _num_images >= SERVER_MAX_IMAGES ) {
+			spin_unlock( &imageListLock );
+			return false;
+		}
+		_images[_num_images++] = image;
+	}
+	spin_unlock( &imageListLock );
+	return true;
+}
+
+/**
  * Load image from given path. This will check if the image is
  * already loaded and updates its information in that case.
  * Note that this is NOT THREAD SAFE so make sure its always
@@ -638,7 +742,6 @@ static bool image_load_all_internal(char *base, char *path)
  */
 static bool image_load(char *base, char *path, int withUplink)
 {
-	static int imgIdCounter = 0; // Used to assign unique numeric IDs to images
 	int i, revision = -1;
 	struct stat st;
 	uint8_t *cache_map = NULL;
@@ -758,6 +861,7 @@ static bool image_load(char *base, char *path, int withUplink)
 			goto load_error; // Keep existing
 		} else {
 			// Nothing changed about the existing image, so do nothing
+			logadd( LOG_DEBUG1, "Did not change" );
 			function_return = true;
 			goto load_error; // Keep existing
 		}
@@ -816,28 +920,16 @@ static bool image_load(char *base, char *path, int withUplink)
 	}
 
 	// ### Reaching this point means loading succeeded
-	// Add to images array
-	spin_lock( &imageListLock );
-	// Now we're locked, assign unique ID to image (unique for this running server instance!)
-	image->id = ++imgIdCounter;
-	for ( i = 0; i < _num_images; ++i ) {
-		if ( _images[i] != NULL ) continue;
-		_images[i] = image;
-		break;
-	}
-	if ( i >= _num_images ) {
-		if ( _num_images >= SERVER_MAX_IMAGES ) {
-			spin_unlock( &imageListLock );
-			logadd( LOG_ERROR, "Cannot load image '%s': maximum number of images reached.", path );
-			image = image_free( image );
-			goto load_error;
-		}
-		_images[_num_images++] = image;
-	}
-	// Keep fd for reading
 	image->readFd = fdImage;
-	fdImage = -1;
-	spin_unlock( &imageListLock );
+	if ( image_addToList( image ) ) {
+		// Keep fd for reading
+		fdImage = -1;
+	} else {
+		logadd( LOG_ERROR, "Image list full: Could not add image %s", path );
+		image->readFd = -1;
+		image = image_free( image );
+		goto load_error;
+	}
 	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->name, (int)image->rid );
 
 	function_return = true;
