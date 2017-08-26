@@ -61,7 +61,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 	// Read request header from socket
 	while ( ( ret = recv( sock, request, sizeof(*request), MSG_WAITALL ) ) != sizeof(*request) ) {
 		if ( errno == EINTR && ++fails < 10 ) continue;
-		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_SERVER_RETRIES ) return false;
+		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_CLIENT_RETRIES ) return false;
 		if ( errno == EAGAIN ) continue;
 		logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), errno );
 		return false;

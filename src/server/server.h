@@ -22,7 +22,6 @@
 #define SERVER_H_
 
 #include "globals.h"
-#include "../config.h"
 #include "../types.h"
 
 #include <stdint.h>
@@ -30,7 +29,7 @@
 
 struct sockaddr_storage;
 
-extern dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
+extern dnbd3_client_t *_clients[];
 extern int _num_clients;
 extern pthread_spinlock_t _clients_lock;
 

@@ -3,6 +3,7 @@
 
 #include "../types.h"
 #include "../shared/fdsignal.h"
+#include "serverconfig.h"
 #include <stdint.h>
 #include <time.h>
 #include <pthread.h>
@@ -193,6 +194,12 @@ extern int _uplinkTimeout;
  * Read timeout when waiting for or sending data from/to client
  */
 extern int _clientTimeout;
+
+/**
+ * If true, images with no active client will have their fd closed after some
+ * idle time.
+ */
+extern bool _closeUnusedFd;
 
 /**
  * Should we replicate incomplete images in the background?

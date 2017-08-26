@@ -2,10 +2,9 @@
 #define _IMAGE_H_
 
 #include "globals.h"
-#include "../config.h"
 #include <jansson.h>
 
-extern dnbd3_image_t *_images[SERVER_MAX_IMAGES];
+extern dnbd3_image_t *_images[];
 extern int _num_images;
 
 void image_serverStartup();
