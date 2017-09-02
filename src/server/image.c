@@ -1662,6 +1662,32 @@ static bool image_ensureDiskSpace(uint64_t size)
 	return false;
 }
 
+void image_closeUnusedFd()
+{
+	int fd, i;
+	time_t deadline = time( NULL ) - UNUSED_FD_TIMEOUT;
+	spin_lock( &imageListLock );
+	for (i = 0; i < _num_images; ++i) {
+		dnbd3_image_t * const image = _images[i];
+		if ( image == NULL )
+			continue;
+		spin_lock( &image->lock );
+		spin_unlock( &imageListLock );
+		if ( image->users == 0 && image->atime < deadline ) {
+			fd = image->readFd;
+			image->readFd = -1;
+		} else {
+			fd = -1;
+		}
+		spin_unlock( &image->lock );
+		if ( fd != -1 ) {
+			close( fd );
+		}
+		spin_lock( &imageListLock );
+	}
+	spin_unlock( &imageListLock );
+}
+
 /*
  void image_find_latest()
  {

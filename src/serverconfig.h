@@ -42,5 +42,8 @@
 
 #define RTT_THRESHOLD_FACTOR(us) (((us) * 2) / 3) // 2/3 = current to best must be 33% worse
 
+// How many seconds have to pass after the last client disconnected until the imagefd is closed
+#define UNUSED_FD_TIMEOUT 3600
+
 #endif
 

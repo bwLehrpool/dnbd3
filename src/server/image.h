@@ -43,6 +43,8 @@ json_t* image_getListAsJson();
 
 int image_getCompletenessEstimate(dnbd3_image_t * const image);
 
+void image_closeUnusedFd();
+
 // one byte in the map covers 8 4kib blocks, so 32kib per byte
 // "+ (1 << 15) - 1" is required to account for the last bit of
 // the image that is smaller than 32kib

@@ -345,6 +345,7 @@ static void *altservers_main(void *data UNUSED)
 	serialized_buffer_t serialized;
 	struct timespec start, end;
 	time_t nextCacheMapSave = time( NULL ) + 90;
+	time_t nextCloseUnusedFd = time( NULL ) + 900;
 
 	setThreadName( "altserver-check" );
 	blockNoncriticalSignals();
@@ -524,6 +525,10 @@ static void *altservers_main(void *data UNUSED)
 		if ( now > nextCacheMapSave ) {
 			nextCacheMapSave = now + SERVER_CACHE_MAP_SAVE_INTERVAL;
 			image_saveAllCacheMaps();
+		}
+		// TODO: More random crap
+		if ( _closeUnusedFd && now > nextCloseUnusedFd ) {
+			image_closeUnusedFd();
 		}
 	}
 	cleanup: ;
