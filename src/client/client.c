@@ -18,6 +18,7 @@
  *
  */
 
+#include "../clientconfig.h"
 #include "../types.h"
 #include "../version.h"
 

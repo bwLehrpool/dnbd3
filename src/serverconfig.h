@@ -1,7 +1,7 @@
 #ifndef _SERVERCONFIG_H_
 #define _SERVERCONFIG_H_
 
-#include "../config.h"
+#include "config.h"
 
 // +++++ Performance related
 #define SERVER_MAX_CLIENTS 4000
@@ -34,6 +34,13 @@
 
 // Which is the minimum protocol version the server expects from the client
 #define MIN_SUPPORTED_CLIENT 2
+// Same for when we're a proxy talking to another server
+#define MIN_SUPPORTED_SERVER 2
+
+// Length of comment fields (for alt server etc.)
+#define COMMENT_LENGTH 120
+
+#define RTT_THRESHOLD_FACTOR(us) (((us) * 2) / 3) // 2/3 = current to best must be 33% worse
 
 #endif
 

@@ -18,6 +18,7 @@
  *
  */
 
+#include "clientconfig.h"
 #include "dnbd3.h"
 #include "blk.h"
 

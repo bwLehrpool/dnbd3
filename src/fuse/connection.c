@@ -1,6 +1,6 @@
 #include "connection.h"
 #include "helper.h"
-#include "../config.h"
+#include "../clientconfig.h"
 #include "../shared/protocol.h"
 #include "../shared/fdsignal.h"
 #include "../shared/sockhelper.h"

@@ -3,7 +3,7 @@
 
 #include "../types.h"
 #include "../shared/fdsignal.h"
-#include "serverconfig.h"
+#include "../serverconfig.h"
 #include <stdint.h>
 #include <time.h>
 #include <pthread.h>

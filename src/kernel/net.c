@@ -18,6 +18,7 @@
  *
  */
 
+#include "clientconfig.h"
 #include "net.h"
 #include "blk.h"
 #include "utils.h"

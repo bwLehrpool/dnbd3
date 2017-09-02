@@ -3,7 +3,7 @@
 #include "helper.h"
 #include "image.h"
 #include "../shared/protocol.h"
-#include "serverconfig.h"
+#include "../serverconfig.h"
 #include <assert.h>
 #include <inttypes.h>
 

@@ -18,6 +18,7 @@
  *
  */
 
+#include "clientconfig.h"
 #include "blk.h"
 #include "net.h"
 #include "sysfs.h"
