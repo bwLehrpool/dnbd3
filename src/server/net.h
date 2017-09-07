@@ -23,12 +23,22 @@
 
 #include "globals.h"
 
+struct json_t;
+
 void net_init();
+
+void* net_handleNewConnection(void *clientPtr);
 
 void net_updateGlobalSentStatsFromClient(dnbd3_client_t * const client);
 
 uint64_t net_getTotalBytesSent();
 
-void *net_client_handler(void *client_socket);
+void* net_client_handler(void *client_socket);
+
+struct json_t* net_clientsToJson();
+
+void net_disconnectAll();
+
+void net_waitForAllDisconnected();
 
 #endif /* NET_H_ */

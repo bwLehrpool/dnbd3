@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <stdio.h>
 
 #ifdef HAVE_THREAD_NAMES
 #include <sys/prctl.h> // For thread names

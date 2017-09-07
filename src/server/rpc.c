@@ -6,12 +6,12 @@
 #include "image.h"
 #include "../shared/sockhelper.h"
 
-static void clientsToJson(json_t *jsonClients);
+#include <jansson.h>
 
 void rpc_sendStatsJson(int sock)
 {
-	json_t *jsonClients = json_array();
-	clientsToJson( jsonClients );
+	// Call this first because it will update the total bytes sent counter
+	json_t *jsonClients = net_clientsToJson();
 	const uint64_t bytesReceived = uplink_getTotalBytesReceived();
 	const uint64_t bytesSent = net_getTotalBytesSent();
 	const int uptime = dnbd3_serverUptime();
@@ -38,49 +38,5 @@ void rpc_sendStatsJson(int sock)
 	shutdown( sock, SHUT_WR );
 	while ( read( sock, buffer, sizeof buffer ) > 0 );
 	free( jsonString );
-}
-
-static void clientsToJson(json_t *jsonClients)
-{
-	json_t *clientStats;
-	int i;
-	int imgId;
-	uint64_t bytesSent;
-	char host[HOSTNAMELEN];
-	host[HOSTNAMELEN-1] = '\0';
-
-	spin_lock( &_clients_lock );
-	for ( i = 0; i < _num_clients; ++i ) {
-		if ( _clients[i] == NULL ) {
-			continue;
-		}
-		dnbd3_client_t * const client = _clients[i];
-		spin_lock( &client->lock );
-		spin_unlock( &_clients_lock );
-		// Unlock so we give other threads a chance to access the client list.
-		// We might not get an atomic snapshot of the currently connected clients,
-		// but that doesn't really make a difference anyways.
-		if ( client->image == NULL ) {
-			spin_unlock( &client->lock );
-			imgId = -1;
-		} else {
-			strncpy( host, client->hostName, HOSTNAMELEN - 1 );
-			imgId = client->image->id;
-			spin_lock( &client->statsLock );
-			spin_unlock( &client->lock );
-			bytesSent = client->bytesSent;
-			net_updateGlobalSentStatsFromClient( client ); // Do this since we read the totalBytesSent counter later
-			spin_unlock( &client->statsLock );
-		}
-		if ( imgId != -1 ) {
-			clientStats = json_pack( "{sssisI}",
-					"address", host,
-					"imageId", imgId,
-					"bytesSent", (json_int_t)bytesSent );
-			json_array_append_new( jsonClients, clientStats );
-		}
-		spin_lock( &_clients_lock );
-	}
-	spin_unlock( &_clients_lock );
 }
 

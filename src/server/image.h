@@ -2,7 +2,8 @@
 #define _IMAGE_H_
 
 #include "globals.h"
-#include <jansson.h>
+
+struct json_t;
 
 extern dnbd3_image_t *_images[];
 extern int _num_images;
@@ -39,7 +40,7 @@ bool image_create(char *image, int revision, uint64_t size);
 
 bool image_generateCrcFile(char *image);
 
-json_t* image_getListAsJson();
+struct json_t* image_getListAsJson();
 
 int image_getCompletenessEstimate(dnbd3_image_t * const image);
 

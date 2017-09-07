@@ -14,6 +14,7 @@
 #include <zlib.h>
 #include <inttypes.h>
 #include <glob.h>
+#include <jansson.h>
 
 #define PATHLEN (2000)
 #define NONWORKING_RECHECK_INTERVAL_SECONDS (60)

@@ -44,17 +44,14 @@
 
 poll_list_t *listeners = NULL;
 
-dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
-int _num_clients = 0;
-pthread_spinlock_t _clients_lock;
-
 /**
  * Time the server was started
  */
 static time_t startupTime = 0;
 static bool sigReload = false, sigLogCycle = false;
 
-static bool dnbd3_addClient(dnbd3_client_t *client);
+static dnbd3_client_t* dnbd3_prepareClient(struct sockaddr_storage *client, int fd);
+
 static void dnbd3_handleSignal(int signum);
 
 static void* server_asyncImageListLoad(void *data);
@@ -97,7 +94,7 @@ void dnbd3_printVersion()
  */
 void dnbd3_cleanup()
 {
-	int i, count, retries;
+	int retries;
 
 	_shutdown = true;
 	debug_locks_stop_watchdog();
@@ -107,15 +104,7 @@ void dnbd3_cleanup()
 	listeners = NULL;
 
 	// Kill connection to all clients
-	spin_lock( &_clients_lock );
-	for (i = 0; i < _num_clients; ++i) {
-		if ( _clients[i] == NULL ) continue;
-		dnbd3_client_t * const client = _clients[i];
-		spin_lock( &client->lock );
-		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
-		spin_unlock( &client->lock );
-	}
-	spin_unlock( &_clients_lock );
+	net_disconnectAll();
 
 	// Disable threadpool
 	threadpool_close();
@@ -130,21 +119,7 @@ void dnbd3_cleanup()
 	integrity_shutdown();
 
 	// Wait for clients to disconnect
-	retries = 10;
-	do {
-		count = 0;
-		spin_lock( &_clients_lock );
-		for (i = 0; i < _num_clients; ++i) {
-			if ( _clients[i] == NULL ) continue;
-			count++;
-		}
-		spin_unlock( &_clients_lock );
-		if ( count != 0 ) {
-			logadd( LOG_INFO, "%d clients still active...\n", count );
-			sleep( 1 );
-		}
-	} while ( count != 0 && --retries > 0 );
-	_num_clients = 0;
+	net_waitForAllDisconnected();
 
 	// Clean up images
 	retries = 5;
@@ -258,7 +233,6 @@ int main(int argc, char *argv[])
 	// No one-shot detected, normal server operation
 
 	if ( demonize ) daemon( 1, 0 );
-	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
 	image_serverStartup();
 	altservers_init();
 	integrity_init();
@@ -344,23 +318,15 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		dnbd3_client_t *dnbd3_client = dnbd3_initClient( &client, fd );
+		dnbd3_client_t *dnbd3_client = dnbd3_prepareClient( &client, fd );
 		if ( dnbd3_client == NULL ) {
 			close( fd );
 			continue;
 		}
 
-		// This has to be done before creating the thread, otherwise a race condition might occur when the new thread
-		// dies faster than this thread adds the client to the list after creating the thread
-		if ( !dnbd3_addClient( dnbd3_client ) ) {
-			dnbd3_client = dnbd3_freeClient( dnbd3_client );
-			continue;
-		}
-
-		if ( !threadpool_run( &net_client_handler, (void *)dnbd3_client ) ) {
-			logadd( LOG_ERROR, "Could not start thread for new client." );
-			dnbd3_removeClient( dnbd3_client );
-			dnbd3_client = dnbd3_freeClient( dnbd3_client );
+		if ( !threadpool_run( &net_handleNewConnection, (void *)dnbd3_client ) ) {
+			logadd( LOG_ERROR, "Could not start thread for new connection." );
+			free( dnbd3_client );
 			continue;
 		}
 	}
@@ -369,15 +335,16 @@ int main(int argc, char *argv[])
 }
 
 /**
- * Initialize and populate the client struct - called when an incoming
- * connection is accepted
+ * Initialize and partially populate the client struct - called when an incoming
+ * connection is accepted. As this might be an HTTP request we don't initialize the
+ * locks, that would happen later once we know.
  */
-dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd)
+static dnbd3_client_t* dnbd3_prepareClient(struct sockaddr_storage *client, int fd)
 {
 	dnbd3_client_t *dnbd3_client = calloc( 1, sizeof(dnbd3_client_t) );
 	if ( dnbd3_client == NULL ) { // This will never happen thanks to memory overcommit
 		logadd( LOG_ERROR, "Could not alloc dnbd3_client_t for new client." );
-		return NULL ;
+		return NULL;
 	}
 
 	if ( client->ss_family == AF_INET ) {
@@ -393,87 +360,10 @@ dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd)
 	} else {
 		logadd( LOG_ERROR, "New client has unknown address family %d, disconnecting...", (int)client->ss_family );
 		free( dnbd3_client );
-		return NULL ;
+		return NULL;
 	}
 	dnbd3_client->sock = fd;
-	dnbd3_client->bytesSent = 0;
-	dnbd3_client->tmpBytesSent = 0;
-	spin_init( &dnbd3_client->lock, PTHREAD_PROCESS_PRIVATE );
-	spin_init( &dnbd3_client->statsLock, PTHREAD_PROCESS_PRIVATE );
-	pthread_mutex_init( &dnbd3_client->sendMutex, NULL );
 	return dnbd3_client;
-}
-
-/**
- * Remove a client from the clients array
- * Locks on: _clients_lock
- */
-void dnbd3_removeClient(dnbd3_client_t *client)
-{
-	int i;
-	spin_lock( &_clients_lock );
-	for ( i = _num_clients - 1; i >= 0; --i ) {
-		if ( _clients[i] == client ) {
-			_clients[i] = NULL;
-		}
-		if ( _clients[i] == NULL && i + 1 == _num_clients ) --_num_clients;
-	}
-	spin_unlock( &_clients_lock );
-}
-
-/**
- * Free the client struct recursively.
- * !! Make sure to call this function after removing the client from _dnbd3_clients !!
- * Locks on: _clients[].lock, _images[].lock
- * might call functions that lock on _images, _image[], uplink.queueLock, client.sendMutex
- */
-dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client)
-{
-	spin_lock( &client->lock );
-	pthread_mutex_lock( &client->sendMutex );
-	if ( client->sock != -1 ) close( client->sock );
-	client->sock = -1;
-	pthread_mutex_unlock( &client->sendMutex );
-	spin_lock( &client->statsLock );
-	spin_unlock( &client->statsLock );
-	if ( client->image != NULL ) {
-		spin_lock( &client->image->lock );
-		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
-		spin_unlock( &client->image->lock );
-		client->image = image_release( client->image );
-	}
-	spin_unlock( &client->lock );
-	spin_destroy( &client->lock );
-	spin_destroy( &client->statsLock );
-	pthread_mutex_destroy( &client->sendMutex );
-	free( client );
-	return NULL ;
-}
-
-//###//
-
-/**
- * Add client to the clients array.
- * Locks on: _clients_lock
- */
-static bool dnbd3_addClient(dnbd3_client_t *client)
-{
-	int i;
-	spin_lock( &_clients_lock );
-	for (i = 0; i < _num_clients; ++i) {
-		if ( _clients[i] != NULL ) continue;
-		_clients[i] = client;
-		spin_unlock( &_clients_lock );
-		return true;
-	}
-	if ( _num_clients >= SERVER_MAX_CLIENTS ) {
-		spin_unlock( &_clients_lock );
-		logadd( LOG_ERROR, "Maximum number of clients reached!" );
-		return false;
-	}
-	_clients[_num_clients++] = client;
-	spin_unlock( &_clients_lock );
-	return true;
 }
 
 static void dnbd3_handleSignal(int signum)

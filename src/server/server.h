@@ -24,19 +24,7 @@
 #include "globals.h"
 #include "../types.h"
 
-#include <stdint.h>
-#include <stdio.h>
-
-struct sockaddr_storage;
-
-extern dnbd3_client_t *_clients[];
-extern int _num_clients;
-extern pthread_spinlock_t _clients_lock;
-
 void dnbd3_cleanup();
-void dnbd3_removeClient(dnbd3_client_t *client);
-dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client);
-dnbd3_client_t* dnbd3_initClient(struct sockaddr_storage *client, int fd);
 int dnbd3_serverUptime();
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
