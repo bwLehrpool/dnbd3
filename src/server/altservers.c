@@ -528,6 +528,7 @@ static void *altservers_main(void *data UNUSED)
 		}
 		// TODO: More random crap
 		if ( _closeUnusedFd && now > nextCloseUnusedFd ) {
+			nextCloseUnusedFd = now + 900;
 			image_closeUnusedFd();
 		}
 	}

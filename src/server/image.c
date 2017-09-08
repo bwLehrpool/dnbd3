@@ -370,7 +370,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			logadd( LOG_DEBUG2, "Reading first %d bytes from %s failed (errno=%d)%s.",
 					(int)sizeof(buffer), candidate->path, errno, removingText );
 			reload = true;
-		} else {
+		} else if ( !candidate->working ) {
 			// Seems everything is fine again \o/
 			candidate->working = true;
 			logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->name, candidate->rid );
@@ -1667,6 +1667,7 @@ void image_closeUnusedFd()
 {
 	int fd, i;
 	time_t deadline = time( NULL ) - UNUSED_FD_TIMEOUT;
+	char imgstr[300];
 	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t * const image = _images[i];
@@ -1675,6 +1676,7 @@ void image_closeUnusedFd()
 		spin_lock( &image->lock );
 		spin_unlock( &imageListLock );
 		if ( image->users == 0 && image->atime < deadline ) {
+			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
 			fd = image->readFd;
 			image->readFd = -1;
 		} else {
@@ -1683,6 +1685,7 @@ void image_closeUnusedFd()
 		spin_unlock( &image->lock );
 		if ( fd != -1 ) {
 			close( fd );
+			logadd( LOG_DEBUG1, "Inactive fd closed for %s", imgstr );
 		}
 		spin_lock( &imageListLock );
 	}
