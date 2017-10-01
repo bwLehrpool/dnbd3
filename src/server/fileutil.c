@@ -1,4 +1,5 @@
 #include "fileutil.h"
+#include "helper.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -80,3 +81,35 @@ time_t file_lastModification(const char * const file)
 	if ( stat( file, &st ) != 0 ) return 0;
 	return st.st_mtime;
 }
+
+int file_loadLineBased(const char * const file, int minFields, int maxFields, void (*cb)(int argc, char **argv, void *data), void *data)
+{
+	char buffer[1000], *line;
+	char *items[20];
+	int count = 0, itemCount;
+
+	if ( file == NULL || cb == NULL ) return -1;
+	FILE *fp = fopen( file, "r" );
+	if ( fp == NULL ) return -1;
+	while ( fgets( buffer, sizeof(buffer), fp ) != NULL ) {
+		itemCount = 0;
+		for (line = buffer; *line != '\0' && itemCount < 20; ) { // Trim left and scan for "-" prefix
+			while ( *line == ' ' || *line == '\t' ) ++line;
+			if ( *line == '\r' || *line == '\n' || *line == '\0' ) break; // Ignore empty lines
+			items[itemCount++] = line;
+			if ( itemCount >= maxFields ) {
+				trim_right( line );
+				break;
+			}
+			while ( *line != '\0' && *line != ' ' && *line != '\t' && *line != '\r' && *line != '\n' ) ++line;
+			if ( *line != '\0' ) *line++ = '\0';
+		}
+		if ( itemCount >= minFields ) {
+			cb( itemCount, items, data );
+			count++;
+		}
+	}
+	fclose( fp );
+	return count;
+}
+

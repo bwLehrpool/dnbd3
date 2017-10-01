@@ -2,6 +2,7 @@
 #include "locks.h"
 #include "helper.h"
 #include "image.h"
+#include "fileutil.h"
 #include "../shared/protocol.h"
 #include "../serverconfig.h"
 #include <assert.h>
@@ -46,43 +47,36 @@ void altservers_shutdown()
 	thread_join( altThread, NULL );
 }
 
+static void addalt(int argc, char **argv, void *data)
+{
+	char *shost;
+	dnbd3_host_t host;
+	bool isPrivate = false;
+	bool isClientOnly = false;
+	if ( argv[0][0] == '#' ) return;
+	for (shost = argv[0]; *shost != '\0'; ) { // Trim left and scan for "-" prefix
+		if ( *shost == '-' ) isPrivate = true;
+		else if ( *shost == '+' ) isClientOnly = true;
+		else if ( *shost != ' ' && *shost != '\t' ) break;
+		shost++;
+	}
+	if ( !parse_address( shost, &host ) ) {
+		logadd( LOG_WARNING, "Invalid entry in alt-servers file ignored: '%s'", shost );
+		return;
+	}
+	if ( argc == 1 ) argv[1] = "";
+	if ( altservers_add( &host, argv[1], isPrivate, isClientOnly ) ) {
+		(*(int*)data)++;
+	}
+}
+
 int altservers_load()
 {
 	int count = 0;
-	char *name = NULL, *space;
-	char buffer[1000], *line;
-	dnbd3_host_t host;
-	asprintf( &name, "%s/%s", _configDir, "alt-servers" );
-	if ( name == NULL ) return -1;
-	FILE *fp = fopen( name, "r" );
+	char *name;
+	if ( asprintf( &name, "%s/%s", _configDir, "alt-servers" ) == -1 ) return -1;
+	file_loadLineBased( name, 1, 2, &addalt, (void*)&count );
 	free( name );
-	if ( fp == NULL ) return -1;
-	while ( fgets( buffer, 1000, fp ) != NULL ) {
-		bool isPrivate = false;
-		bool isClientOnly = false;
-		for (line = buffer; *line != '\0'; ) { // Trim left and scan for "-" prefix
-			if ( *line == '-' ) isPrivate = true;
-			else if ( *line == '+' ) isClientOnly = true;
-			else if ( *line != ' ' && *line != '\t' ) break;
-			line++;
-		}
-		if ( *line == '\r' || *line == '\n' || *line == '\0' ) continue; // Ignore empty lines
-		trim_right( line );
-		space = line;
-		while ( *space != '\0' ) {
-			if ( *space == ' ' || *space == '\t' ) break;
-			space++;
-		}
-		if ( *space == '\0' ) space = NULL;
-		else *space++ = '\0';
-		if ( !parse_address( line, &host ) ) {
-			if ( space != NULL ) *--space = ' ';
-			logadd( LOG_WARNING, "Invalid entry in alt-servers file ignored: '%s'", line );
-			continue;
-		}
-		if ( altservers_add( &host, space, isPrivate, isClientOnly ) ) ++count;
-	}
-	fclose( fp );
 	logadd( LOG_DEBUG1, "Added %d alt servers\n", count );
 	return count;
 }
