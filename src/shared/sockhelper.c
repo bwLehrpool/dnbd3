@@ -294,13 +294,13 @@ bool sock_append(poll_list_t *list, const int sock, bool wantRead, bool wantWrit
 	return true;
 }
 
-ssize_t sock_sendAll(const int sock, void *buffer, const size_t len, int maxtries)
+ssize_t sock_sendAll(const int sock, const void *buffer, const size_t len, int maxtries)
 {
 	size_t done = 0;
 	ssize_t ret = 0;
 	while ( done < len ) {
 		if ( maxtries >= 0 && --maxtries == -1 ) break;
-		ret = send( sock, (char*)buffer + done, len - done, MSG_NOSIGNAL );
+		ret = send( sock, (const uint8_t*)buffer + done, len - done, MSG_NOSIGNAL );
 		if ( ret == -1 ) {
 			if ( errno == EINTR ) continue;
 			if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
