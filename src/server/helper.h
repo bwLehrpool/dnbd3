@@ -6,9 +6,7 @@
 #include "../types.h"
 #include <netinet/in.h>
 #include <string.h>
-#include <errno.h>
 #include <unistd.h>
-#include <sys/socket.h>
 
 #define ERROR_GOTO(jumplabel, ...) do { logadd(LOG_ERROR, __VA_ARGS__); goto jumplabel; } while (0);
 

@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <stdio.h>
+#include <errno.h>
+#include <sys/socket.h>
 
 #ifdef HAVE_THREAD_NAMES
 #include <sys/prctl.h> // For thread names
