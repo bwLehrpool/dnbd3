@@ -172,7 +172,7 @@ void* net_handleNewConnection(void *clientPtr)
 	// Let's see if this looks like an HTTP request
 	if ( ret > 5 && request.magic != dnbd3_packet_magic
 			&& ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) ) {
-		rpc_sendStatsJson( client->sock );
+		rpc_sendStatsJson( client->sock, &client->host, &request, (size_t)ret );
 		goto fail_preadd;
 	}
 
@@ -527,9 +527,15 @@ fail_preadd: ;
 	return NULL;
 }
 
-json_t* net_clientsToJson()
+/**
+ * Get list of all clients and update the global stats counter while we're at it.
+ * This method sucks since it has a param that tells it not to generate the list
+ * but only update the global counter, which is a horrible relic from refactoring.
+ * Hopfully I'll fix it soon by splitting this up or something.
+ */
+json_t* net_clientsToJson(const bool fullList)
 {
-	json_t *jsonClients = json_array();
+	json_t *jsonClients = fullList ? json_array() : NULL;
 	json_t *clientStats;
 	int i;
 	int imgId;
@@ -552,15 +558,17 @@ json_t* net_clientsToJson()
 			spin_unlock( &client->lock );
 			imgId = -1;
 		} else {
-			strncpy( host, client->hostName, HOSTNAMELEN - 1 );
-			imgId = client->image->id;
+			if ( fullList ) {
+				strncpy( host, client->hostName, HOSTNAMELEN - 1 );
+				imgId = client->image->id;
+			}
 			spin_lock( &client->statsLock );
 			spin_unlock( &client->lock );
 			bytesSent = client->bytesSent;
 			net_updateGlobalSentStatsFromClient( client ); // Do this since we read the totalBytesSent counter later
 			spin_unlock( &client->statsLock );
 		}
-		if ( imgId != -1 ) {
+		if ( fullList && imgId != -1 ) {
 			clientStats = json_pack( "{sssisI}",
 					"address", host,
 					"imageId", imgId,

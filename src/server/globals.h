@@ -66,17 +66,6 @@ struct _dnbd3_connection
 
 typedef struct
 {
-	uint16_t len;
-	uint8_t data[65535];
-} dnbd3_binstring_t;
-// Do not always allocate as much memory as required to hold the entire binstring struct,
-// but only as much as is required to hold the actual data (relevant for kernel module)
-#define NEW_BINSTRING(_name, _len) \
-	dnbd3_binstring_t *_name = malloc(sizeof(uint16_t) + _len); \
-	_name->len = _len
-
-typedef struct
-{
 	char comment[COMMENT_LENGTH];
 	dnbd3_host_t host;
 	int rtt[SERVER_RTT_PROBES];
@@ -88,10 +77,11 @@ typedef struct
 
 typedef struct
 {
-	char comment[COMMENT_LENGTH];
-	dnbd3_host_t host;
-	dnbd3_host_t mask;
-} dnbd3_acess_rules_t;
+	uint8_t host[16];
+	int bytes;
+	int bitMask;
+	int permissions;
+} dnbd3_access_rule_t;
 
 /**
  * Image struct. An image path could be something like

@@ -93,7 +93,7 @@ static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 #endif
 
 #pragma pack(1)
-typedef struct
+typedef struct dnbd3_host_t
 {
 	uint8_t addr[16];    // 16byte (network representation, so it can be directly passed to socket functions)
 	uint16_t port;       // 2byte (network representation, so it can be directly passed to socket functions)
