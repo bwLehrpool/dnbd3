@@ -263,7 +263,10 @@ void* net_handleNewConnection(void *clientPtr)
 					}
 				}
 				if ( bOk ) {
+					spin_lock( &image->lock );
 					image_file = image->readFd;
+					image->atime = time( NULL );
+					spin_unlock( &image->lock );
 					serializer_reset_write( &payload );
 					serializer_put_uint16( &payload, PROTOCOL_VERSION );
 					serializer_put_string( &payload, image->name );
