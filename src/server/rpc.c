@@ -235,7 +235,7 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 	bits %= 8;
 	if ( bits != 0 ) {
 		for (long int i = 0; i < bits; ++i) {
-			aclRules[aclCount].bitMask = ( aclRules[aclCount].bitMask >> 1 ) | 0xff;
+			aclRules[aclCount].bitMask = ( aclRules[aclCount].bitMask >> 1 ) | 0x80;
 		}
 		aclRules[aclCount].host[aclRules[aclCount].bytes] &= aclRules[aclCount].bitMask;
 	}
