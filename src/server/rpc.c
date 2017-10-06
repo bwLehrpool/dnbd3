@@ -122,7 +122,7 @@ static bool handleStatus(int sock, const char *request, int permissions)
 	// Call this first because it will update the total bytes sent counter
 	json_t *jsonClients = NULL;
 	if ( stats || clients ) {
-		jsonClients = net_clientsToJson( permissions & ACL_CLIENT_LIST );
+		jsonClients = net_clientsToJson( clients );
 	}
 	const int uptime = dnbd3_serverUptime();
 	json_t *statisticsJson;
@@ -137,8 +137,12 @@ static bool handleStatus(int sock, const char *request, int permissions)
 		statisticsJson = json_pack( "{sI}",
 				"uptime", (json_int_t) uptime );
 	}
-	if ( clients ) {
-		json_object_set_new( statisticsJson, "clients", jsonClients );
+	if ( jsonClients != NULL ) {
+		if ( clients ) {
+			json_object_set_new( statisticsJson, "clients", jsonClients );
+		} else if ( stats ) {
+			json_object_set_new( statisticsJson, "clientCount", jsonClients );
+		}
 	}
 	if ( images ) {
 		json_object_set_new( statisticsJson, "images", image_getListAsJson() );

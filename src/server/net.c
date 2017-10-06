@@ -545,6 +545,7 @@ json_t* net_clientsToJson(const bool fullList)
 	uint64_t bytesSent;
 	char host[HOSTNAMELEN];
 	host[HOSTNAMELEN-1] = '\0';
+	json_int_t counter = 0;
 
 	spin_lock( &_clients_lock );
 	for ( i = 0; i < _num_clients; ++i ) {
@@ -564,6 +565,8 @@ json_t* net_clientsToJson(const bool fullList)
 			if ( fullList ) {
 				strncpy( host, client->hostName, HOSTNAMELEN - 1 );
 				imgId = client->image->id;
+			} else {
+				counter++;
 			}
 			spin_lock( &client->statsLock );
 			spin_unlock( &client->lock );
@@ -581,7 +584,10 @@ json_t* net_clientsToJson(const bool fullList)
 		spin_lock( &_clients_lock );
 	}
 	spin_unlock( &_clients_lock );
-	return jsonClients;
+	if ( fullList ) {
+		return jsonClients;
+	}
+	return json_integer( counter );
 }
 
 void net_disconnectAll()
