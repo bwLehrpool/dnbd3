@@ -8,6 +8,10 @@
 #include "fileutil.h"
 
 #include <jansson.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #define ACL_ALL        0x7fffffff
 #define ACL_STATS               1
@@ -21,6 +25,7 @@
 static bool aclLoaded = false;
 static int aclCount = 0;
 static dnbd3_access_rule_t aclRules[MAX_ACLS];
+static json_int_t randomRunId;
 
 static bool handleStatus(int sock, const char *request, int permissions);
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive);
@@ -124,18 +129,18 @@ static bool handleStatus(int sock, const char *request, int permissions)
 	if ( stats || clients ) {
 		jsonClients = net_clientsToJson( clients );
 	}
-	const int uptime = dnbd3_serverUptime();
 	json_t *statisticsJson;
 	if ( stats ) {
 		const uint64_t bytesReceived = uplink_getTotalBytesReceived();
 		const uint64_t bytesSent = net_getTotalBytesSent();
-		statisticsJson = json_pack( "{sIsIsI}",
+		statisticsJson = json_pack( "{sIsIsIsI}",
 				"bytesReceived", (json_int_t) bytesReceived,
 				"bytesSent", (json_int_t) bytesSent,
-				"uptime", (json_int_t) uptime );
+				"uptime", (json_int_t) dnbd3_serverUptime(),
+				"runId", randomRunId );
 	} else {
 		statisticsJson = json_pack( "{sI}",
-				"uptime", (json_int_t) uptime );
+				"runId", randomRunId );
 	}
 	if ( jsonClients != NULL ) {
 		if ( clients ) {
@@ -256,7 +261,17 @@ static void loadAcl()
 	// TODO <guard>
 	if ( aclLoaded ) return;
 	aclLoaded = true;
+	randomRunId = (((json_int_t)getpid()) << 16) | (json_int_t)time(NULL);
 	// </guard>
+	if ( sizeof(randomRunId) > 4 ) {
+		int fd = open( "/dev/urandom", O_RDONLY );
+		if ( fd != -1 ) {
+			uint32_t bla = 1;
+			read( fd, &bla, 4 );
+			randomRunId = (randomRunId << 32) | bla;
+		}
+		close( fd );
+	}
 	if ( asprintf( &fn, "%s/%s", _configDir, "rpc.acl" ) == -1 ) return;
 	file_loadLineBased( fn, 1, 20, &addacl, NULL );
 	free( fn );
