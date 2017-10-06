@@ -186,7 +186,7 @@ void* net_handleNewConnection(void *clientPtr)
 		logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
 		goto fail_preadd;
 	}
-	fixup_request( *request );
+	fixup_request( request );
 	if ( request.cmd != CMD_SELECT_IMAGE ) {
 		logadd( LOG_WARNING, "Client sent != CMD_SELECT_IMAGE in handshake (got cmd=%d, size=%d), dropping client.", (int)request.cmd, (int)request.size );
 		goto fail_preadd;
