@@ -1612,13 +1612,13 @@ static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t r
 static bool image_ensureDiskSpace(uint64_t size)
 {
 	for ( int maxtries = 0; maxtries < 20; ++maxtries ) {
-		const int64_t available = file_freeDiskSpace( _basePath );
-		if ( available == -1 ) {
+		uint64_t available;
+		if ( !file_freeDiskSpace( _basePath, NULL, &available ) ) {
 			const int e = errno;
 			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", e );
 			return true;
 		}
-		if ( (uint64_t)available > size ) return true;
+		if ( available > size ) return true;
 		if ( dnbd3_serverUptime() < 10 * 3600 ) {
 			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024ll * 1024ll)),
 					(int)(size / (1024 * 1024)) );

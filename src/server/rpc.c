@@ -105,12 +105,18 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 static bool handleStatus(int sock, const char *request, int permissions)
 {
 	bool ok;
-	bool stats = false, images = false, clients = false;
+	bool stats = false, images = false, clients = false, space = false;
 	if ( strstr( request, "stats" ) != NULL ) {
 		if ( !(permissions & ACL_STATS) ) {
 			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
 		}
 		stats = true;
+	}
+	if ( strstr( request, "space" ) != NULL ) {
+		if ( !(permissions & ACL_STATS) ) {
+			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
+		}
+		space = true;
 	}
 	if ( strstr( request, "images" ) != NULL ) {
 		if ( !(permissions & ACL_IMAGE_LIST) ) {
@@ -141,6 +147,12 @@ static bool handleStatus(int sock, const char *request, int permissions)
 	} else {
 		statisticsJson = json_pack( "{sI}",
 				"runId", randomRunId );
+	}
+	if ( space ) {
+		uint64_t spaceTotal = 0, spaceAvail = 0;
+		file_freeDiskSpace( _basePath, &spaceTotal, &spaceAvail );
+		json_object_set_new( statisticsJson, "spaceTotal", json_integer( spaceTotal ) );
+		json_object_set_new( statisticsJson, "spaceFree", json_integer( spaceAvail ) );
 	}
 	if ( jsonClients != NULL ) {
 		if ( clients ) {

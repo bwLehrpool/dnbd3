@@ -66,13 +66,19 @@ bool file_alloc(int fd, uint64_t offset, uint64_t size)
 	return false;
 }
 
-int64_t file_freeDiskSpace(const char * const path)
+bool file_freeDiskSpace(const char * const path, uint64_t *total, uint64_t *avail)
 {
 	struct statvfs fiData;
-	if ( (statvfs( path, &fiData )) < 0 ) {
-		return -1;
+	if ( statvfs( path, &fiData ) < 0 ) {
+		return false;
 	}
-	return ((int64_t)fiData.f_bavail * (int64_t)fiData.f_bsize);
+	if ( avail != NULL ) {
+		*avail = ((uint64_t)fiData.f_bavail * (uint64_t)fiData.f_frsize);
+	}
+	if ( total != NULL ) {
+		*total = ((uint64_t)fiData.f_blocks * (uint64_t)fiData.f_frsize);
+	}
+	return true;
 }
 
 time_t file_lastModification(const char * const file)
