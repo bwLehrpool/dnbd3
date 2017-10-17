@@ -41,6 +41,7 @@
 #define COMMENT_LENGTH 120
 
 #define RTT_THRESHOLD_FACTOR(us) (((us) * 2) / 3) // 2/3 = current to best must be 33% worse
+#define RTT_UNREACHABLE 0x7FFFFFFu // Use this value for timeout/unreachable as RTT. Don't set too high or you might get overflows. 0x7FFFFFF = 134 seconds
 
 // How many seconds have to pass after the last client disconnected until the imagefd is closed
 #define UNUSED_FD_TIMEOUT 3600

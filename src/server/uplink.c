@@ -68,6 +68,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	link->signal = NULL;
 	link->replicationHandle = 0;
 	spin_lock( &link->rttLock );
+	link->cycleDetected = false;
 	if ( sock >= 0 ) {
 		link->betterFd = sock;
 		link->betterServer = *host;
@@ -166,6 +167,10 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	if ( hops != 0 && isSameAddress( &uplink->currentServer, &client->host ) ) {
 		spin_unlock( &client->image->lock );
 		logadd( LOG_WARNING, "Proxy cycle detected (same host)." );
+		spin_lock( &uplink->rttLock );
+		uplink->cycleDetected = true;
+		spin_unlock( &uplink->rttLock );
+		signal_call( uplink->signal );
 		return false;
 	}
 
@@ -199,6 +204,10 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	if ( requestLoop ) {
 		spin_unlock( &uplink->queueLock );
 		logadd( LOG_WARNING, "Rejecting relay of request to upstream proxy because of possible cyclic proxy chain. Incoming hop-count is %" PRIu8 ".", hops );
+		spin_lock( &uplink->rttLock );
+		uplink->cycleDetected = true;
+		spin_unlock( &uplink->rttLock );
+		signal_call( uplink->signal );
 		return false;
 	}
 	if ( freeSlot == -1 ) {
@@ -291,6 +300,7 @@ static void* uplink_mainloop(void *data)
 			link->betterFd = -1;
 			link->currentServer = link->betterServer;
 			link->version = link->betterVersion;
+			link->cycleDetected = false;
 			spin_unlock( &link->rttLock );
 			discoverFailCount = 0;
 			if ( fd != -1 ) close( fd );
@@ -371,7 +381,7 @@ static void* uplink_mainloop(void *data)
 			if ( now + SERVER_RTT_DELAY_FAILED < nextAltCheck ) {
 				// This probably means the system time was changed - handle this case properly by capping the timeout
 				nextAltCheck = now + SERVER_RTT_DELAY_FAILED / 2;
-			} else if ( now >= nextAltCheck || link->fd == -1 ) {
+			} else if ( now >= nextAltCheck || link->fd == -1 || link->cycleDetected ) {
 				// It seems it's time for a check
 				if ( image_isComplete( link->image ) ) {
 					// Quit work if image is complete
@@ -395,15 +405,18 @@ static void* uplink_mainloop(void *data)
 #ifdef _DEBUG
 		if ( link->fd != -1 && !link->shutdown ) {
 			bool resend = false;
-			const time_t deadline = now - 8;
+			const time_t deadline = now - 10;
 			spin_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
 					snprintf( buffer, sizeof(buffer), "[DEBUG %p] Starving request slot %d detected:\n"
 							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", (void*)link, i, link->queue[i].client->image->name,
 							link->queue[i].from, link->queue[i].to, link->queue[i].status );
+					link->queue[i].entered = now;
+#ifdef _DEBUG_RESEND_STARVING
 					link->queue[i].status = ULR_NEW;
 					resend = true;
+#endif
 					spin_unlock( &link->queueLock );
 					logadd( LOG_WARNING, "%s", buffer );
 					spin_lock( &link->queueLock );

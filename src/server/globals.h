@@ -60,6 +60,7 @@ struct _dnbd3_connection
 	uint32_t recvBufferLen;     // Len of ^^
 	volatile bool shutdown;     // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
 	bool replicatedLastBlock;   // bool telling if the last block has been replicated yet
+	bool cycleDetected;         // connection cycle between proxies detected for current remote server
 	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
 	uint64_t replicationHandle; // Handle of pending replication request
 	uint64_t bytesReceived;     // Number of bytes received by the connection.

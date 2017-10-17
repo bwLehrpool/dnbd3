@@ -362,7 +362,7 @@ static void *altservers_main(void *data UNUSED)
 		if ( _shutdown ) goto cleanup;
 		if ( ret == SIGNAL_ERROR ) {
 			if ( errno == EAGAIN || errno == EINTR ) continue;
-			logadd( LOG_WARNING, "Error on signal_clear on alservers_main! Things will break!" );
+			logadd( LOG_WARNING, "Error %d on signal_clear on alservers_main! Things will break!", errno );
 			usleep( 100000 );
 		}
 		// Work your way through the queue
@@ -408,8 +408,8 @@ static void *altservers_main(void *data UNUSED)
 			int bestSock = -1;
 			int bestIndex = -1;
 			int bestProtocolVersion = -1;
-			unsigned int bestRtt = 0xfffffff;
-			unsigned int currentRtt = 0xfffffff;
+			unsigned long bestRtt = RTT_UNREACHABLE;
+			unsigned long currentRtt = RTT_UNREACHABLE;
 			for (itAlt = 0; itAlt < numAlts; ++itAlt) {
 				usleep( 1000 ); // Wait a very short moment for the network to recover (we might be doing lots of measurements...)
 				// Connect
@@ -461,8 +461,13 @@ static void *altservers_main(void *data UNUSED)
 				clock_gettime( CLOCK_MONOTONIC, &end );
 				// Measurement done - everything fine so far
 				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000; // µs
-				const unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
-				if ( uplink->fd != -1 && isSameAddressPort( &servers[itAlt], &uplink->currentServer ) ) {
+				unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
+				spin_lock( &uplink->rttLock );
+				const bool isCurrent = isSameAddressPort( &servers[itAlt], &uplink->currentServer );
+				// If a cycle was detected, or we lost connection to the current (last) server, penaltize it
+				if ( ( uplink->cycleDetected || uplink->fd == -1 ) && isCurrent ) avg = (avg * 2) + 100000;
+				spin_unlock( &uplink->rttLock );
+				if ( uplink->fd != -1 && isCurrent ) {
 					// Was measuring current server
 					currentRtt = avg;
 					close( sock );
@@ -486,7 +491,6 @@ static void *altservers_main(void *data UNUSED)
 				server_image_not_available: ;
 				close( sock );
 			}
-			image_release( image );
 			// Done testing all servers. See if we should switch
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
@@ -498,7 +502,7 @@ static void *altservers_main(void *data UNUSED)
 				uplink->rttTestResult = RTT_DOCHANGE;
 				spin_unlock( &uplink->rttLock );
 				signal_call( uplink->signal );
-			} else if (bestSock == -1) {
+			} else if ( bestSock == -1 && currentRtt == RTT_UNREACHABLE ) {
 				// No server was reachable
 				spin_lock( &uplink->rttLock );
 				uplink->rttTestResult = RTT_NOT_REACHABLE;
@@ -508,8 +512,14 @@ static void *altservers_main(void *data UNUSED)
 				if ( bestSock != -1 ) close( bestSock );
 				spin_lock( &uplink->rttLock );
 				uplink->rttTestResult = RTT_DONTCHANGE;
+				uplink->cycleDetected = false; // It's a lie, but prevents rtt measurement triggering again right away
 				spin_unlock( &uplink->rttLock );
+				if ( !image->working ) {
+					image->working = true;
+					logadd( LOG_DEBUG1, "No better alt server found, enabling '%s:%d' again.", image->name, (int)image->rid );
+				}
 			}
+			image_release( image );
 			// end of loop over all pending uplinks
 			spin_lock( &pendingLockWrite );
 			pending[itLink] = NULL;
