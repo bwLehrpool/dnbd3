@@ -37,7 +37,7 @@
 #ifdef __GNUC__
 #define UNUSED __attribute__ ((unused))
 #else
-#define UNUSED dfg dsfg dg
+#error "Please add define for your compiler for UNUSED, or define to nothing for your compiler if not supported"
 #endif
 
 #ifdef __linux__
@@ -79,6 +79,9 @@ static const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
 	(a).size = net_order_32((a).size); \
 } while (0)
 #define ENDIAN_MODE "Big Endian"
+#ifndef BIG_ENDIAN
+#define BIG_ENDIAN
+#endif
 #elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(__i386__) || defined(__i386) || defined(__x86_64)
 static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 // Make little endian our network byte order as probably 99.999% of machines this will be used on are LE
@@ -88,6 +91,9 @@ static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 #define fixup_request(a) while(0)
 #define fixup_reply(a)   while(0)
 #define ENDIAN_MODE "Little Endian"
+#ifndef LITTLE_ENDIAN
+#define LITTLE_ENDIAN
+#endif
 #else
 #error "Unknown Endianness"
 #endif
@@ -124,17 +130,31 @@ typedef struct
 #define CMD_SET_CLIENT_MODE     7
 #define CMD_GET_CRC32           8
 
+#define DNBD3_REQUEST_SIZE     24
 #pragma pack(1)
 typedef struct
 {
-	uint16_t magic;		// 2byte
-	uint16_t cmd;       // 2byte
-	uint32_t size;      // 4byte
-	uint64_t offset;	// 8byte
-	uint64_t handle;    // 8byte
+	uint16_t magic;           // 2byte
+	uint16_t cmd;             // 2byte
+	uint32_t size;            // 4byte
+	union {
+		struct {
+#ifdef LITTLE_ENDIAN
+			uint64_t offset_small:56;  // 7byte
+			uint8_t  hops;            // 1byte
+#elif defined(BIG_ENDIAN)
+			uint8_t  hops;            // 1byte
+			uint64_t offset_small:56;  // 7byte
+#endif
+		};
+		uint64_t offset;       // 8byte
+	};
+	uint64_t handle;          // 8byte
 } dnbd3_request_t;
 #pragma pack(0)
+_Static_assert( sizeof(dnbd3_request_t) == DNBD3_REQUEST_SIZE, "dnbd3_request_t is messed up" );
 
+#define DNBD3_REPLY_SIZE       16
 #pragma pack(1)
 typedef struct
 {
@@ -144,6 +164,7 @@ typedef struct
 	uint64_t handle;	// 8byte
 } dnbd3_reply_t;
 #pragma pack(0)
+_Static_assert( sizeof(dnbd3_reply_t) == DNBD3_REPLY_SIZE, "dnbd3_reply_t is messed up" );
 
 #pragma pack(1)
 typedef struct

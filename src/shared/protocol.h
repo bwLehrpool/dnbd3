@@ -13,6 +13,9 @@
 
 #define FLAGS8_SERVER (1)
 
+// 2017-10-16: We now support hop-counting, macro to pass hop count conditinally to a function
+#define COND_HOPCOUNT(vers,hopcount) ( (vers) >= 3 ? (hopcount) : 0 )
+
 #define REPLY_OK (0)
 #define REPLY_ERRNO (-1)
 #define REPLY_AGAIN (-2)
@@ -76,13 +79,16 @@ static inline bool dnbd3_select_image(int sock, const char *name, uint16_t rid, 
 	return ret == len + (ssize_t)sizeof(request);
 }
 
-static inline bool dnbd3_get_block(int sock, uint64_t offset, uint32_t size, uint64_t handle)
+static inline bool dnbd3_get_block(int sock, uint64_t offset, uint32_t size, uint64_t handle, uint8_t hopCount)
 {
 	dnbd3_request_t request;
 	request.magic = dnbd3_packet_magic;
 	request.handle = handle;
 	request.cmd = CMD_GET_BLOCK;
+	// When writing before "fixup", we can get away with assigning to offset instead of offset_small if we
+	// do it before assigning to .hops. Faster on 64bit machines (so, on everything)
 	request.offset = offset;
+	request.hops = hopCount;
 	request.size = size;
 	fixup_request( request );
 	return sock_sendAll( sock, &request, sizeof(request), 2 ) == (ssize_t)sizeof(request);

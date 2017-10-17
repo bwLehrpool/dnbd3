@@ -32,7 +32,8 @@
 // Protocol version should be increased whenever new features/messages are added,
 // so either the client or server can run in compatibility mode, or they can
 // cancel the connection right away if the protocol has changed too much
-#define PROTOCOL_VERSION 2
+#define PROTOCOL_VERSION 3
+// 2017-10-16: Update to v3: Change header to support request hop-counting
 
 #define NUMBER_SERVERS 8 // Number of alt servers per image/device
 

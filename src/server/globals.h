@@ -21,7 +21,7 @@ typedef struct _dnbd3_client dnbd3_client_t;
 // Must only be set in uplink_request()
 #define ULR_NEW 1
 // Slot is occupied, reply has not yet been received, matching request can safely rely on reuse.
-// Must only be set in uplink_mainloop()
+// Must only be set in uplink_mainloop() or uplink_request()
 #define ULR_PENDING 2
 // Slot is being processed, do not consider for hop on.
 // Must only be set in uplink_handle_receive()
@@ -34,6 +34,7 @@ typedef struct
 	dnbd3_client_t * client; // Client to send reply to
 	int status;      // status of this entry: ULR_*
 	time_t entered;           // When this request entered the queue (for debugging)
+	uint8_t hopCount;      // How many hops this request has already taken across proxies
 } dnbd3_queued_request_t;
 
 #define RTT_IDLE 0 // Not in progress
@@ -44,16 +45,16 @@ typedef struct
 struct _dnbd3_connection
 {
 	int fd;                     // socket fd to remote server
+	int version;                // remote server protocol version
 	dnbd3_signal_t* signal;     // used to wake up the process
 	pthread_t thread;           // thread holding the connection
 	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
-	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
-	int queueLen;               // length of queue
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	dnbd3_host_t currentServer; // Current server we're connected to
 	pthread_spinlock_t rttLock; // When accessing rttTestResult, betterFd or betterServer
 	int rttTestResult;          // RTT_*
 	dnbd3_host_t betterServer;  // The better server
+	int betterVersion;          // protocol version of better server
 	int betterFd;               // Active connection to better server, ready to use
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	uint32_t recvBufferLen;     // Len of ^^
@@ -62,6 +63,8 @@ struct _dnbd3_connection
 	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
 	uint64_t replicationHandle; // Handle of pending replication request
 	uint64_t bytesReceived;     // Number of bytes received by the connection.
+	int queueLen;               // length of queue
+	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
 };
 
 typedef struct

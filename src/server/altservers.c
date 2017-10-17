@@ -407,6 +407,7 @@ static void *altservers_main(void *data UNUSED)
 			// Test them all
 			int bestSock = -1;
 			int bestIndex = -1;
+			int bestProtocolVersion = -1;
 			unsigned int bestRtt = 0xfffffff;
 			unsigned int currentRtt = 0xfffffff;
 			for (itAlt = 0; itAlt < numAlts; ++itAlt) {
@@ -439,7 +440,7 @@ static void *altservers_main(void *data UNUSED)
 							imageSize, image->virtualFilesize, image->name );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
-				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0 ) ) {
+				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0, COND_HOPCOUNT( protocolVersion, 1 ) ) ) {
 					ERROR_GOTO( server_failed, "[RTT] Could not request first block for %s", image->name );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
@@ -471,6 +472,7 @@ static void *altservers_main(void *data UNUSED)
 					bestSock = sock;
 					bestRtt = avg;
 					bestIndex = itAlt;
+					bestProtocolVersion = protocolVersion;
 				} else {
 					// Was too slow, ignore
 					close( sock );
@@ -492,6 +494,7 @@ static void *altservers_main(void *data UNUSED)
 				spin_lock( &uplink->rttLock );
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];
+				uplink->betterVersion = bestProtocolVersion;
 				uplink->rttTestResult = RTT_DOCHANGE;
 				spin_unlock( &uplink->rttLock );
 				signal_call( uplink->signal );

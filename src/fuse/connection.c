@@ -203,7 +203,7 @@ bool connection_read(dnbd3_async_t *request)
 	pthread_mutex_lock( &connection.sendMutex );
 	enqueueRequest( request );
 	if ( connection.sockFd != -1 ) {
-		if ( !dnbd3_get_block( connection.sockFd, request->offset, request->length, (uint64_t)request ) ) {
+		if ( !dnbd3_get_block( connection.sockFd, request->offset, request->length, (uint64_t)request, 0 ) ) {
 			shutdown( connection.sockFd, SHUT_RDWR );
 			connection.sockFd = -1;
 			pthread_mutex_unlock( &connection.sendMutex );
@@ -501,7 +501,7 @@ static void probeAltServers()
 			srv->consecutiveFails += 10;
 			goto fail;
 		}
-		if ( !dnbd3_get_block( sock, 0, RTT_BLOCK_SIZE, 0 ) ) {
+		if ( !dnbd3_get_block( sock, 0, RTT_BLOCK_SIZE, 0, 0 ) ) {
 			logadd( LOG_DEBUG1, "-> block request fail" );
 			goto fail;
 		}
@@ -637,7 +637,7 @@ static void switchConnection(int sockFd, alt_server_t *srv)
 			logadd( LOG_DEBUG1, "Requeue after server change" );
 			next = it->next;
 			enqueueRequest( it );
-			if ( connection.sockFd != -1 && !dnbd3_get_block( connection.sockFd, it->offset, it->length, (uint64_t)it ) ) {
+			if ( connection.sockFd != -1 && !dnbd3_get_block( connection.sockFd, it->offset, it->length, (uint64_t)it, 0 ) ) {
 				logadd( LOG_WARNING, "Resending pending request failed, re-entering panic mode" );
 				shutdown( connection.sockFd, SHUT_RDWR );
 				connection.sockFd = -1;

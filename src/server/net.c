@@ -294,8 +294,9 @@ void* net_handleNewConnection(void *clientPtr)
 			if ( _shutdown ) break;
 			switch ( request.cmd ) {
 
-			case CMD_GET_BLOCK:
-				if ( request.offset >= image->virtualFilesize ) {
+			case CMD_GET_BLOCK:;
+				const uint64_t offset = request.offset_small; // Copy to full uint64 to prevent repeated masking
+				if ( offset >= image->virtualFilesize ) {
 					// Sanity check
 					logadd( LOG_WARNING, "Client %s requested non-existent block", client->hostName );
 					reply.size = 0;
@@ -303,7 +304,7 @@ void* net_handleNewConnection(void *clientPtr)
 					send_reply( client->sock, &reply, NULL );
 					break;
 				}
-				if ( request.offset + request.size > image->virtualFilesize ) {
+				if ( offset + request.size > image->virtualFilesize ) {
 					// Sanity check
 					logadd( LOG_WARNING, "Client %s requested data block that extends beyond image size", client->hostName );
 					reply.size = 0;
@@ -314,8 +315,8 @@ void* net_handleNewConnection(void *clientPtr)
 
 				if ( request.size != 0 && image->cache_map != NULL ) {
 					// This is a proxyed image, check if we need to relay the request...
-					start = request.offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-					end = (request.offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+					start = offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+					end = (offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					bool isCached = true;
 					spin_lock( &image->lock );
 					// Check again as we only aquired the lock just now
@@ -364,13 +365,13 @@ void* net_handleNewConnection(void *clientPtr)
 					}
 					spin_unlock( &image->lock );
 					if ( !isCached ) {
-						if ( !uplink_request( client, request.handle, request.offset, request.size ) ) {
+						if ( !uplink_request( client, request.handle, offset, request.size, request.hops ) ) {
 							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy, disabling image %s:%d",
 									client->hostName, image->name, image->rid );
 							image->working = false;
 							goto exit_client_cleanup;
 						}
-						break; // DONE
+						break; // DONE, exit request.cmd switch
 					}
 				}
 
@@ -391,16 +392,16 @@ void* net_handleNewConnection(void *clientPtr)
 				if ( request.size != 0 ) {
 					// Send payload if request length > 0
 					size_t done = 0;
-					off_t offset = (off_t)request.offset;
+					off_t foffset = (off_t)offset;
 					size_t realBytes;
-					if ( request.offset + request.size <= image->realFilesize ) {
+					if ( offset + request.size <= image->realFilesize ) {
 						realBytes = request.size;
 					} else {
-						realBytes = image->realFilesize - request.offset;
+						realBytes = image->realFilesize - offset;
 					}
 					while ( done < realBytes ) {
 #ifdef __linux__
-						const ssize_t ret = sendfile( client->sock, image_file, &offset, realBytes - done );
+						const ssize_t ret = sendfile( client->sock, image_file, &foffset, realBytes - done );
 						if ( ret <= 0 ) {
 							const int err = errno;
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
@@ -420,7 +421,7 @@ void* net_handleNewConnection(void *clientPtr)
 						done += ret;
 #elif defined(__FreeBSD__)
 						off_t sent;
-						int ret = sendfile( image_file, client->sock, offset, realBytes - done, NULL, &sent, 0 );
+						int ret = sendfile( image_file, client->sock, foffset, realBytes - done, NULL, &sent, 0 );
 						const int err = errno;
 						if ( ret < 0 ) {
 							if ( err == EAGAIN ) {

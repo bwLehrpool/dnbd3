@@ -430,7 +430,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			}
 		}
 		if ( candidate->uplink == NULL && candidate->cacheFd != -1 ) {
-			uplink_init( candidate, -1, NULL );
+			uplink_init( candidate, -1, NULL, -1 );
 		}
 	}
 
@@ -916,7 +916,7 @@ static bool image_load(char *base, char *path, int withUplink)
 			goto load_error;
 		}
 		if ( withUplink ) {
-			uplink_init( image, -1, NULL );
+			uplink_init( image, -1, NULL, -1 );
 		}
 	}
 
@@ -1227,7 +1227,7 @@ server_fail: ;
 	image = image_get( name, remoteRid, false );
 	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
 		// If so, init the uplink and pass it the socket
-		if ( !uplink_init( image, uplinkSock, uplinkServer ) ) {
+		if ( !uplink_init( image, uplinkSock, uplinkServer, remoteProtocolVersion ) ) {
 			close( uplinkSock );
 		} else {
 			// Clumsy busy wait, but this should only take as long as it takes to start a thread, so is it really worth using a signalling mechanism?
