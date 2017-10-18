@@ -39,7 +39,8 @@ static imagecache remoteCloneCache[CACHELEN];
 
 // ##########################################
 
-static void image_remove(dnbd3_image_t *image);
+static bool isForbiddenExtension(const char* name);
+static dnbd3_image_t* image_remove(dnbd3_image_t *image);
 static dnbd3_image_t* image_free(dnbd3_image_t *image);
 static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static bool image_load_all_internal(char *base, char *path);
@@ -315,7 +316,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 				candidate->lastWorkCheck = time( NULL );
 				spin_unlock( &candidate->lock );
 				if ( _removeMissingImages ) {
-					image_remove( candidate ); // No release here, the image is still returned and should be released by caller
+					candidate = image_remove( candidate ); // No release here, the image is still returned and should be released by caller
 				}
 				return candidate;
 			}
@@ -496,11 +497,29 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 }
 
 /**
+ * Returns true if the given file name ends in one of our meta data
+ * file extensions. Used to prevent loading them as images.
+ */
+static bool isForbiddenExtension(const char* name)
+{
+	const size_t len = strlen( name );
+	if ( len < 4 ) return false;
+	const char *ptr = name + len - 4;
+	if ( strcmp( ptr, ".crc" ) == 0 ) return true; // CRC list
+	if ( strcmp( ptr, ".map" ) == 0 ) return true; // cache map for incomplete images
+	if ( len < 5 ) return false;
+	--ptr;
+	if ( strcmp( ptr, ".meta" ) == 0 ) return true; // Meta data (currently not in use)
+	return false;
+}
+
+/**
  * Remove image from images array. Only free it if it has
  * no active users and was actually in the list.
  * Locks on: imageListLock, image[].lock
+ * @return NULL if image was also freed, image otherwise
  */
-static void image_remove(dnbd3_image_t *image)
+static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 {
 	bool mustFree = false;
 	spin_lock( &imageListLock );
@@ -515,6 +534,7 @@ static void image_remove(dnbd3_image_t *image)
 	spin_unlock( &image->lock );
 	spin_unlock( &imageListLock );
 	if ( mustFree ) image = image_free( image );
+	return image;
 }
 
 /**
@@ -669,7 +689,7 @@ static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint
  */
 static bool image_load_all_internal(char *base, char *path)
 {
-#define SUBDIR_LEN 120
+#define SUBDIR_LEN 150
 	assert( path != NULL );
 	assert( *path == '/' );
 	struct dirent entry, *entryPtr;
@@ -701,7 +721,7 @@ static bool image_load_all_internal(char *base, char *path)
 		}
 		if ( S_ISDIR( st.st_mode ) ) {
 			image_load_all_internal( base, subpath ); // Recurse
-		} else {
+		} else if ( !isForbiddenExtension( subpath ) ) {
 			image_load( base, subpath, true ); // Load image if possible
 		}
 	}
@@ -825,7 +845,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	// XXX: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 
 	// 2. Load CRC-32 list of image
-	uint32_t masterCrc;
+	uint32_t masterCrc = 0;
 	const int hashBlockCount = IMGSIZE_TO_HASHBLOCKS( virtualFilesize );
 	crc32list = image_loadCrcList( path, virtualFilesize, &masterCrc );
 
@@ -867,9 +887,8 @@ static bool image_load(char *base, char *path, int withUplink)
 			goto load_error; // Keep existing
 		}
 		// Remove existing image from images array, so it will be replaced by the reloaded image
-		image_remove( existing );
-		image_release( existing );
-		existing = NULL;
+		existing = image_remove( existing );
+		existing = image_release( existing );
 	}
 
 	// Load fresh image
@@ -937,7 +956,7 @@ static bool image_load(char *base, char *path, int withUplink)
 
 	// Clean exit:
 	load_error: ;
-	if ( existing != NULL ) image_release( existing );
+	if ( existing != NULL ) existing = image_release( existing );
 	if ( crc32list != NULL ) free( crc32list );
 	if ( cache_map != NULL ) free( cache_map );
 	if ( fdImage != -1 ) close( fdImage );
@@ -1280,7 +1299,9 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 		}
 		globfree( &g );
 	}
-	if ( _vmdkLegacyMode && requestedRid <= 1 && ( detectedRid == 0 || !file_isReadable( imageFile ) ) ) {
+	if ( _vmdkLegacyMode && requestedRid <= 1
+			&& !isForbiddenExtension( name )
+			&& ( detectedRid == 0 || !file_isReadable( imageFile ) ) ) {
 		snprintf( imageFile, PATHLEN, "%s/%s", _basePath, name );
 		detectedRid = 1;
 	}
@@ -1639,7 +1660,7 @@ static bool image_ensureDiskSpace(uint64_t size)
 					oldest = current;
 				}
 			}
-			image_release( current );
+			current = image_release( current );
 		}
 		if ( oldest == NULL || time( NULL ) - oldest->atime < 86400 ) {
 			logadd( LOG_DEBUG1, "No image is old enough :-(\n" );
@@ -1657,8 +1678,8 @@ static bool image_ensureDiskSpace(uint64_t size)
 		unlink( buffer );
 		snprintf( buffer, len, "%s.meta", oldest->path );
 		unlink( buffer );
-		image_remove( oldest );
-		image_release( oldest );
+		oldest = image_remove( oldest );
+		oldest = image_release( oldest );
 	}
 	return false;
 }

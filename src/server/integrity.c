@@ -123,7 +123,7 @@ static void* integrity_main(void * data UNUSED)
 				pthread_mutex_unlock( &integrityQueueLock );
 				const uint64_t fileSize = image->realFilesize;
 				const size_t required = IMGSIZE_TO_HASHBLOCKS(fileSize) * sizeof(uint32_t);
-				if ( required > bufferSize ) {
+				if ( buffer == NULL || required > bufferSize ) {
 					bufferSize = required;
 					if ( buffer != NULL ) free( buffer );
 					buffer = malloc( bufferSize );
