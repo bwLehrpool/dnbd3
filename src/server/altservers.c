@@ -460,12 +460,17 @@ static void *altservers_main(void *data UNUSED)
 				}
 				clock_gettime( CLOCK_MONOTONIC, &end );
 				// Measurement done - everything fine so far
-				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000; // µs
-				unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
 				spin_lock( &uplink->rttLock );
 				const bool isCurrent = isSameAddressPort( &servers[itAlt], &uplink->currentServer );
-				// If a cycle was detected, or we lost connection to the current (last) server, penaltize it
-				if ( ( uplink->cycleDetected || uplink->fd == -1 ) && isCurrent ) avg = (avg * 2) + 100000;
+				// Penaltize rtt if this was a cycle; this will treat this server with lower priority
+				// in the near future too, so we prevent alternating between two servers that are both
+				// part of a cycle and have the lowest latency.
+				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000
+						+ (end.tv_nsec - start.tv_nsec) / 1000
+						+ ( (isCurrent && uplink->cycleDetected) ? 1000000 : 0 ); // µs
+				unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
+				// If a cycle was detected, or we lost connection to the current (last) server, penaltize it one time
+				if ( ( uplink->cycleDetected || uplink->fd == -1 ) && isCurrent ) avg = (avg * 2) + 50000;
 				spin_unlock( &uplink->rttLock );
 				if ( uplink->fd != -1 && isCurrent ) {
 					// Was measuring current server
