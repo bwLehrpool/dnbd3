@@ -234,5 +234,5 @@ ENDIF()
 #
 
 FILE(GLOB conf_files "${CMAKE_CURRENT_SOURCE_DIR}/conf/*")
-INSTALL(FILES ${conf_files} DESTINATION /etc/dnbd3/)
+INSTALL(FILES ${conf_files} DESTINATION /etc/dnbd3/sample/)
 
