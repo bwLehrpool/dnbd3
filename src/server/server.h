@@ -25,7 +25,7 @@
 #include "../types.h"
 
 void dnbd3_cleanup();
-int dnbd3_serverUptime();
+uint32_t dnbd3_serverUptime();
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
 #error Please set _FILE_OFFSET_BITS to 64 in your makefile/configuration

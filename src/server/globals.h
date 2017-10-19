@@ -8,6 +8,8 @@
 #include <time.h>
 #include <pthread.h>
 
+typedef struct timespec ticks;
+
 // ######### All structs/types used by the server ########
 
 typedef struct _dnbd3_connection dnbd3_connection_t;
@@ -33,7 +35,9 @@ typedef struct
 	uint64_t to;      // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
 	dnbd3_client_t * client; // Client to send reply to
 	int status;      // status of this entry: ULR_*
-	time_t entered;           // When this request entered the queue (for debugging)
+#ifdef _DEBUG
+	ticks entered;           // When this request entered the queue (for debugging)
+#endif
 	uint8_t hopCount;      // How many hops this request has already taken across proxies
 } dnbd3_queued_request_t;
 
@@ -75,7 +79,7 @@ typedef struct
 	int rtt[SERVER_RTT_PROBES];
 	int rttIndex;
 	bool isPrivate, isClientOnly;
-	time_t lastFail;
+	ticks lastFail;
 	int numFails;
 } dnbd3_alt_server_t;
 
@@ -101,9 +105,9 @@ struct _dnbd3_image
 	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
 	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
 	uint64_t realFilesize;      // actual file size on disk
-	time_t atime;          // last access time
-	time_t lastWorkCheck;  // last time a non-working image has been checked
-	time_t nextCompletenessEstimate; // last time the completeness estimate was updated
+	ticks atime;                // last access time
+	ticks lastWorkCheck;   // last time a non-working image has been checked
+	ticks nextCompletenessEstimate; // next time the completeness estimate should be updated
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)

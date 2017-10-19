@@ -4,6 +4,7 @@
 #include "image.h"
 #include "fileutil.h"
 #include "../shared/protocol.h"
+#include "../shared/timing.h"
 #include "../serverconfig.h"
 #include <assert.h>
 #include <inttypes.h>
@@ -222,7 +223,8 @@ int altservers_get(dnbd3_host_t *output, int size, int emergency)
 {
 	if ( size <= 0 ) return 0;
 	int count = 0, i;
-	const time_t now = time( NULL );
+	ticks now;
+	timing_get( &now );
 	spin_lock( &altServersLock );
 	// Flip first server in list with a random one every time this is called
 	if ( numAltServers > 1 ) {
@@ -238,7 +240,7 @@ int altservers_get(dnbd3_host_t *output, int size, int emergency)
 		if ( _proxyPrivateOnly && !altServers[i].isPrivate ) continue; // Config says to consider private alt-servers only? ignore!
 		if ( altServers[i].isClientOnly ) continue;
 		if ( !emergency && altServers[i].numFails > SERVER_MAX_UPLINK_FAILS // server failed X times in a row
-			&& now - altServers[i].lastFail > SERVER_BAD_UPLINK_IGNORE ) continue; // and last fail was not too long ago? ignore!
+			&& timing_diff( &altServers[i].lastFail, &now ) > SERVER_BAD_UPLINK_IGNORE ) continue; // and last fail was not too long ago? ignore!
 		// server seems ok, include in output and reset its fail counter
 		if ( !emergency ) altServers[i].numFails = 0;
 		output[count++] = altServers[i].host;
@@ -304,7 +306,8 @@ int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 void altservers_serverFailed(const dnbd3_host_t * const host)
 {
 	int i;
-	const time_t now = time( NULL );
+	ticks now;
+	timing_get( &now );
 	spin_lock( &altServersLock );
 	for (i = 0; i < numAltServers; ++i) {
 		if ( !isSameAddressPort( host, &altServers[i].host ) ) continue;
@@ -312,7 +315,7 @@ void altservers_serverFailed(const dnbd3_host_t * const host)
 		// to prevent the counter from increasing rapidly if many images use the
 		// same uplink. If there's a network hickup, all uplinks will call this
 		// function and would increase the counter too quickly, disabling the server.
-		if ( now - altServers[i].lastFail > SERVER_RTT_DELAY_INIT ) {
+		if ( timing_diff( &altServers[i].lastFail, &now ) > SERVER_RTT_DELAY_INIT ) {
 			altServers[i].numFails++;
 			altServers[i].lastFail = now;
 		}
@@ -338,11 +341,12 @@ static void *altservers_main(void *data UNUSED)
 	dnbd3_host_t servers[ALTS + 1];
 	serialized_buffer_t serialized;
 	struct timespec start, end;
-	time_t nextCacheMapSave = time( NULL ) + 90;
-	time_t nextCloseUnusedFd = time( NULL ) + 900;
+	ticks nextCacheMapSave, nextCloseUnusedFd;
 
 	setThreadName( "altserver-check" );
 	blockNoncriticalSignals();
+	timing_gets( &nextCacheMapSave, 90 );
+	timing_gets( &nextCloseUnusedFd, 900 );
 	// Init spinlock
 	// Init waiting links queue
 	spin_lock( &pendingLockWrite );
@@ -413,7 +417,7 @@ static void *altservers_main(void *data UNUSED)
 			for (itAlt = 0; itAlt < numAlts; ++itAlt) {
 				usleep( 1000 ); // Wait a very short moment for the network to recover (we might be doing lots of measurements...)
 				// Connect
-				clock_gettime( CLOCK_MONOTONIC, &start );
+				clock_gettime( BEST_CLOCK_SOURCE, &start );
 				int sock = sock_connect( &servers[itAlt], 750, _uplinkTimeout );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
@@ -458,7 +462,7 @@ static void *altservers_main(void *data UNUSED)
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
 					ERROR_GOTO( server_failed, "[RTT] Could not read first block payload for %s", image->name );
 				}
-				clock_gettime( CLOCK_MONOTONIC, &end );
+				clock_gettime( BEST_CLOCK_SOURCE, &end );
 				// Measurement done - everything fine so far
 				spin_lock( &uplink->rttLock );
 				const bool isCurrent = isSameAddressPort( &servers[itAlt], &uplink->currentServer );
@@ -533,14 +537,14 @@ static void *altservers_main(void *data UNUSED)
 		}
 		// Save cache maps of all images if applicable
 		// TODO: Has nothing to do with alt servers really, maybe move somewhere else?
-		const time_t now = time( NULL );
-		if ( now > nextCacheMapSave ) {
-			nextCacheMapSave = now + SERVER_CACHE_MAP_SAVE_INTERVAL;
+		declare_now;
+		if ( timing_reached( &nextCacheMapSave, &now ) ) {
+			timing_gets( &nextCacheMapSave, SERVER_CACHE_MAP_SAVE_INTERVAL );
 			image_saveAllCacheMaps();
 		}
 		// TODO: More random crap
-		if ( _closeUnusedFd && now > nextCloseUnusedFd ) {
-			nextCloseUnusedFd = now + 900;
+		if ( _closeUnusedFd && timing_reached( &nextCloseUnusedFd, &now ) ) {
+			timing_gets( &nextCloseUnusedFd, 900 );
 			image_closeUnusedFd();
 		}
 	}

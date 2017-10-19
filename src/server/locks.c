@@ -7,6 +7,7 @@
 
 #include "locks.h"
 #include "helper.h"
+#include "../shared/timing.h"
 
 #ifdef _DEBUG
 #define MAXLOCKS (SERVER_MAX_CLIENTS * 2 + SERVER_MAX_ALTS + 200 + SERVER_MAX_IMAGES)
@@ -15,7 +16,7 @@
 typedef struct
 {
 	void *lock;
-	time_t locktime;
+	ticks locktime;
 	char locked;
 	pthread_t thread;
 	int lockId;
@@ -26,7 +27,7 @@ typedef struct
 typedef struct
 {
 	pthread_t tid;
-	time_t time;
+	ticks time;
 	char name[LOCKLEN];
 	char where[LOCKLEN];
 
@@ -96,24 +97,27 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 	for (int i = 0; i < MAXTHREADS; ++i) {
 		if ( threads[i].tid != 0 ) continue;
 		threads[i].tid = pthread_self();
-		threads[i].time = time( NULL );
+		timing_get( &threads[i].time );
 		snprintf( threads[i].name, LOCKLEN, "%s", name );
 		snprintf( threads[i].where, LOCKLEN, "%s:%d", file, line );
 		t = &threads[i];
 		break;
 	}
 	pthread_spin_unlock( &initdestory );
+	if ( t == NULL ) {
+		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads at %s:%d\n", (void*)lock, name, file, line );
+		exit( 4 );
+	}
 	const int retval = pthread_spin_lock( lock );
 	pthread_spin_lock( &initdestory );
 	t->tid = 0;
-	t->time = 0;
 	pthread_spin_unlock( &initdestory );
 	if ( l->locked ) {
 		logadd( LOG_ERROR, "Lock sanity check: lock %p (%s) already locked at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
 	l->locked = 1;
-	l->locktime = time( NULL );
+	timing_get( &l->locktime );
 	l->thread = pthread_self();
 	snprintf( l->where, LOCKLEN, "L %s:%d", file, line );
 	pthread_spin_lock( &initdestory );
@@ -143,17 +147,20 @@ int debug_spin_trylock(const char *name, const char *file, int line, pthread_spi
 	for (int i = 0; i < MAXTHREADS; ++i) {
 		if ( threads[i].tid != 0 ) continue;
 		threads[i].tid = pthread_self();
-		threads[i].time = time( NULL );
+		timing_get( &threads[i].time );
 		snprintf( threads[i].name, LOCKLEN, "%s", name );
 		snprintf( threads[i].where, LOCKLEN, "%s:%d", file, line );
 		t = &threads[i];
 		break;
 	}
 	pthread_spin_unlock( &initdestory );
+	if ( t == NULL ) {
+		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads at %s:%d\n", (void*)lock, name, file, line );
+		exit( 4 );
+	}
 	const int retval = pthread_spin_trylock( lock );
 	pthread_spin_lock( &initdestory );
 	t->tid = 0;
-	t->time = 0;
 	pthread_spin_unlock( &initdestory );
 	if ( retval == 0 ) {
 		if ( l->locked ) {
@@ -161,7 +168,7 @@ int debug_spin_trylock(const char *name, const char *file, int line, pthread_spi
 			exit( 4 );
 		}
 		l->locked = 1;
-		l->locktime = time( NULL );
+		timing_get( &l->locktime );
 		l->thread = pthread_self();
 		snprintf( l->where, LOCKLEN, "L %s:%d", file, line );
 		pthread_spin_lock( &initdestory );
@@ -191,7 +198,6 @@ int debug_spin_unlock(const char *name, const char *file, int line, pthread_spin
 		exit( 4 );
 	}
 	l->locked = 0;
-	l->locktime = 0;
 	l->thread = 0;
 	snprintf( l->where, LOCKLEN, "U %s:%d", file, line );
 	int retval = pthread_spin_unlock( lock );
@@ -219,7 +225,7 @@ int debug_spin_destroy(const char *name, const char *file, int line, pthread_spi
 
 void debug_dump_lock_stats()
 {
-	time_t now = time( NULL );
+	declare_now;
 	pthread_spin_lock( &initdestory );
 	printf( "\n **** LOCKS ****\n\n" );
 	for (int i = 0; i < MAXLOCKS; ++i) {
@@ -230,7 +236,7 @@ void debug_dump_lock_stats()
 					"* When: %d secs ago\n"
 					"* Locked: %d\n"
 					"* Serial: %d\n"
-					"* Thread: %d\n", locks[i].name, locks[i].where, (int)(now - locks[i].locktime), (int)locks[i].locked, locks[i].lockId,
+					"* Thread: %d\n", locks[i].name, locks[i].where, (int)timing_diff( &locks[i].locktime, &now ), (int)locks[i].locked, locks[i].lockId,
 					(int)locks[i].thread );
 		} else {
 			printf( "* *** %s ***\n"
@@ -244,7 +250,7 @@ void debug_dump_lock_stats()
 		printf( "* *** Thread %d ***\n"
 				"* Lock: %s\n"
 				"* Where: %s\n"
-				"* How long: %d secs\n", (int)threads[i].tid, threads[i].name, threads[i].where, (int)(now - threads[i].time) );
+				"* How long: %d secs\n", (int)threads[i].tid, threads[i].name, threads[i].where, (int)timing_diff( &threads[i].time, &now ) );
 	}
 	pthread_spin_unlock( &initdestory );
 }
@@ -254,11 +260,11 @@ static void *debug_thread_watchdog(void *something UNUSED)
 	setThreadName( "debug-watchdog" );
 	while ( !_shutdown ) {
 		if ( init_done ) {
-			time_t now = time( NULL );
+			declare_now;
 			pthread_spin_lock( &initdestory );
 			for (int i = 0; i < MAXTHREADS; ++i) {
 				if ( threads[i].tid == 0 ) continue;
-				const int diff = now - threads[i].time;
+				const uint32_t diff = timing_diff( &threads[i].time, &now );
 				if ( diff > 6 && diff < 100000 ) {
 					printf( "\n\n +++++++++ DEADLOCK ++++++++++++\n\n" );
 					pthread_spin_unlock( &initdestory );

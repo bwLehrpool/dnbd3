@@ -26,6 +26,7 @@
 #include "altservers.h"
 
 #include "../shared/sockhelper.h"
+#include "../shared/timing.h"
 #include "../serialize.h"
 
 #include <assert.h>
@@ -265,7 +266,7 @@ void* net_handleNewConnection(void *clientPtr)
 				if ( bOk ) {
 					spin_lock( &image->lock );
 					image_file = image->readFd;
-					image->atime = time( NULL );
+					timing_get( &image->atime );
 					spin_unlock( &image->lock );
 					serializer_reset_write( &payload );
 					serializer_put_uint16( &payload, PROTOCOL_VERSION );
@@ -485,7 +486,7 @@ void* net_handleNewConnection(void *clientPtr)
 				send_reply( client->sock, &reply, NULL );
 				pthread_mutex_unlock( &client->sendMutex );
 				spin_lock( &image->lock );
-				image->atime = time( NULL );
+				timing_get( &image->atime );
 				spin_unlock( &image->lock );
 set_name: ;
 				if ( !hasName ) {

@@ -5,6 +5,7 @@
 #include "altservers.h"
 #include "../shared/sockhelper.h"
 #include "../shared/protocol.h"
+#include "../shared/timing.h"
 
 #include <assert.h>
 #include <inttypes.h>
@@ -243,7 +244,7 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	uplink->queue[freeSlot].status = (foundExisting == -1 ? ULR_NEW : ULR_PENDING);
 	uplink->queue[freeSlot].hopCount = hops;
 #ifdef _DEBUG
-	uplink->queue[freeSlot].entered = time( NULL );
+	timing_get( &uplink->queue[freeSlot].entered );
 	//logadd( LOG_DEBUG2 %p] Inserting request at slot %d, was %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)uplink, freeSlot, old, uplink->queue[freeSlot].status, uplink->queue[freeSlot, ".handle, start, end );
 #endif
 	spin_unlock( &uplink->queueLock );
@@ -270,9 +271,11 @@ static void* uplink_mainloop(void *data)
 	int numSocks, i, waitTime;
 	int altCheckInterval = SERVER_RTT_DELAY_INIT;
 	int discoverFailCount = 0;
-	time_t nextAltCheck = 0, nextKeepalive = 0;
+	ticks nextAltCheck, nextKeepalive;
 	char buffer[200];
 	memset( events, 0, sizeof(events) );
+	timing_get( &nextAltCheck );
+	nextKeepalive = nextAltCheck;
 	//
 	assert( link != NULL );
 	setThreadName( "idle-uplink" );
@@ -321,12 +324,15 @@ static void* uplink_mainloop(void *data)
 			uplink_sendReplicationRequest( link );
 			events[EV_SOCKET].events = POLLIN | POLLRDHUP;
 			events[EV_SOCKET].fd = link->fd;
-			nextAltCheck = time( NULL ) + altCheckInterval;
+			timing_gets( &nextAltCheck, altCheckInterval );
 			// The rtt worker already did the handshake for our image, so there's nothing
 			// more to do here
 		}
 		// poll()
-		waitTime = (time( NULL ) - nextAltCheck) * 1000;
+		do {
+			declare_now;
+			waitTime = timing_diffMs( &now, &nextAltCheck );
+		} while(0);
 		if ( waitTime < 1500 ) waitTime = 1500;
 		if ( waitTime > 5000 ) waitTime = 5000;
 		numSocks = poll( events, EV_COUNT, waitTime );
@@ -360,13 +366,13 @@ static void* uplink_mainloop(void *data)
 			logadd( LOG_DEBUG1, "Uplink gone away, panic!\n" );
 		} else if ( (events[EV_SOCKET].revents & POLLIN) ) {
 			uplink_handleReceive( link );
-			if ( link->fd == -1 ) nextAltCheck = 0;
+			if ( link->fd == -1 ) timing_get( &nextAltCheck );
 			if ( _shutdown || link->shutdown ) goto cleanup;
 		}
 		// Send keep alive if nothing is happening
-		const time_t now = time( NULL );
-		if ( link->fd != -1 && link->replicationHandle == 0 && now > nextKeepalive ) {
-			nextKeepalive = now + 20;
+		declare_now;
+		if ( link->fd != -1 && link->replicationHandle == 0 && timing_reached( &nextKeepalive, &now ) ) {
+			timing_set( &nextKeepalive, &now, 20 );
 			if ( !uplink_sendKeepalive( link->fd ) ) {
 				const int fd = link->fd;
 				link->fd = -1;
@@ -378,10 +384,7 @@ static void* uplink_mainloop(void *data)
 		const int rttTestResult = link->rttTestResult;
 		spin_unlock( &link->rttLock );
 		if ( rttTestResult == RTT_IDLE || rttTestResult == RTT_DONTCHANGE ) {
-			if ( now + SERVER_RTT_DELAY_FAILED < nextAltCheck ) {
-				// This probably means the system time was changed - handle this case properly by capping the timeout
-				nextAltCheck = now + SERVER_RTT_DELAY_FAILED / 2;
-			} else if ( now >= nextAltCheck || link->fd == -1 || link->cycleDetected ) {
+			if ( timing_reached( &nextAltCheck, &now ) || link->fd == -1 || link->cycleDetected ) {
 				// It seems it's time for a check
 				if ( image_isComplete( link->image ) ) {
 					// Quit work if image is complete
@@ -393,22 +396,23 @@ static void* uplink_mainloop(void *data)
 					altservers_findUplink( link ); // This will set RTT_INPROGRESS (synchronous)
 				}
 				altCheckInterval = MIN(altCheckInterval + 1, SERVER_RTT_DELAY_MAX);
-				nextAltCheck = now + altCheckInterval;
+				timing_set( &nextAltCheck, &now, altCheckInterval );
 			}
 		} else if ( rttTestResult == RTT_NOT_REACHABLE ) {
 			spin_lock( &link->rttLock );
 			link->rttTestResult = RTT_IDLE;
 			spin_unlock( &link->rttLock );
 			discoverFailCount++;
-			nextAltCheck = now + (discoverFailCount < 5 ? altCheckInterval : SERVER_RTT_DELAY_FAILED);
+			timing_set( &nextAltCheck, &now, (discoverFailCount < 5 ? altCheckInterval : SERVER_RTT_DELAY_FAILED) );
 		}
 #ifdef _DEBUG
 		if ( link->fd != -1 && !link->shutdown ) {
 			bool resend = false;
-			const time_t deadline = now - 10;
+			ticks deadline;
+			timing_set( &deadline, &now, -10 );
 			spin_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
-				if ( link->queue[i].status != ULR_FREE && link->queue[i].entered < deadline ) {
+				if ( link->queue[i].status != ULR_FREE && timing_reached( &link->queue[i].entered, &deadline ) ) {
 					snprintf( buffer, sizeof(buffer), "[DEBUG %p] Starving request slot %d detected:\n"
 							"%s\n(from %" PRIu64 " to %" PRIu64 ", status: %d)\n", (void*)link, i, link->queue[i].client->image->name,
 							link->queue[i].from, link->queue[i].to, link->queue[i].status );

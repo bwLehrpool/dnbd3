@@ -31,6 +31,7 @@
 
 #include "../version.h"
 #include "../shared/sockhelper.h"
+#include "../shared/timing.h"
 
 #include <signal.h>
 #include <getopt.h>
@@ -47,7 +48,7 @@ poll_list_t *listeners = NULL;
 /**
  * Time the server was started
  */
-static time_t startupTime = 0;
+static ticks startupTime;
 static bool sigReload = false, sigLogCycle = false;
 
 static dnbd3_client_t* dnbd3_prepareClient(struct sockaddr_storage *client, int fd);
@@ -233,6 +234,7 @@ int main(int argc, char *argv[])
 	// No one-shot detected, normal server operation
 
 	if ( demonize ) daemon( 1, 0 );
+	timing_setBase();
 	image_serverStartup();
 	altservers_init();
 	integrity_init();
@@ -264,7 +266,7 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	startupTime = time( NULL );
+	timing_get( &startupTime );
 
 	// Give other threads some time to start up before accepting connections
 	sleep( 1 );
@@ -377,9 +379,11 @@ static void dnbd3_handleSignal(int signum)
 	}
 }
 
-int dnbd3_serverUptime()
+uint32_t dnbd3_serverUptime()
 {
-	return (int)(time( NULL ) - startupTime);
+	ticks now;
+	timing_get( &now );
+	return timing_diff( &startupTime, &now );
 }
 
 static void* server_asyncImageListLoad(void *data UNUSED)

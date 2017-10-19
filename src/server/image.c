@@ -6,6 +6,7 @@
 #include "integrity.h"
 #include "altservers.h"
 #include "../shared/protocol.h"
+#include "../shared/timing.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -33,7 +34,7 @@ typedef struct
 {
 	char name[NAMELEN];
 	uint16_t rid;
-	time_t deadline;
+	ticks deadline;
 } imagecache;
 static imagecache remoteCloneCache[CACHELEN];
 
@@ -313,7 +314,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			if ( newFd == -1 ) {
 				spin_lock( &candidate->lock );
 				candidate->working = false;
-				candidate->lastWorkCheck = time( NULL );
+				timing_get( &candidate->lastWorkCheck );
 				spin_unlock( &candidate->lock );
 				if ( _removeMissingImages ) {
 					candidate = image_remove( candidate ); // No release here, the image is still returned and should be released by caller
@@ -339,8 +340,8 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	// Don't re-check too often
 	spin_lock( &candidate->lock );
 	bool check;
-	const time_t now = time( NULL );
-	check = ( now - candidate->lastWorkCheck ) > NONWORKING_RECHECK_INTERVAL_SECONDS;
+	declare_now;
+	check = timing_diff( &candidate->lastWorkCheck, &now ) > NONWORKING_RECHECK_INTERVAL_SECONDS;
 	if ( check ) {
 		candidate->lastWorkCheck = now;
 	}
@@ -907,11 +908,15 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->cacheFd = -1;
 	image->working = (image->cache_map == NULL );
 	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
+	int offset;
 	if ( stat( path, &st ) == 0 ) {
-		image->atime = st.st_mtime;
+		// Negatively offset atime by file modification time
+		offset = st.st_mtime - time( NULL );
+		if ( offset > 0 ) offset = 0;
 	} else {
-		image->atime = time( NULL );
+		offset = 0;
 	}
+	timing_gets( &image->atime, offset );
 
 	// Prevent freeing in cleanup
 	cache_map = NULL;
@@ -1169,7 +1174,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	}
 
 	// Doesn't exist or is rid 0, try remote if not already tried it recently
-	const time_t now = time( NULL );
+	declare_now;
 	char *cmpname = name;
 	int useIndex = -1, fallbackIndex = 0;
 	if ( len >= NAMELEN ) cmpname += 1 + len - NAMELEN;
@@ -1177,11 +1182,11 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	for (i = 0; i < CACHELEN; ++i) {
 		if ( remoteCloneCache[i].rid == revision && strcmp( cmpname, remoteCloneCache[i].name ) == 0 ) {
 			useIndex = i;
-			if ( remoteCloneCache[i].deadline < now ) break;
+			if ( timing_reached( &remoteCloneCache[i].deadline, &now ) ) break;
 			pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
 			return image;
 		}
-		if ( remoteCloneCache[i].deadline < remoteCloneCache[fallbackIndex].deadline ) {
+		if ( timing_1le2( &remoteCloneCache[i].deadline, &remoteCloneCache[fallbackIndex].deadline ) ) {
 			fallbackIndex = i;
 		}
 	}
@@ -1200,7 +1205,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	if ( useIndex == -1 ) {
 		useIndex = fallbackIndex;
 	}
-	remoteCloneCache[useIndex].deadline = now + SERVER_REMOTE_IMAGE_CHECK_CACHETIME;
+	timing_set( &remoteCloneCache[useIndex].deadline, &now, SERVER_REMOTE_IMAGE_CHECK_CACHETIME );
 	snprintf( remoteCloneCache[useIndex].name, NAMELEN, "%s", cmpname );
 	remoteCloneCache[useIndex].rid = revision;
 	pthread_mutex_unlock( &remoteCloneLock );
@@ -1540,8 +1545,8 @@ int image_getCompletenessEstimate(dnbd3_image_t * const image)
 {
 	assert( image != NULL );
 	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
-	const time_t now = time( NULL );
-	if ( now < image->nextCompletenessEstimate ) {
+	declare_now;
+	if ( timing_reached( &image->nextCompletenessEstimate, &now ) ) {
 		// Since this operation is relatively expensive, we cache the result for a while
 		return image->completenessEstimate;
 	}
@@ -1557,7 +1562,7 @@ int image_getCompletenessEstimate(dnbd3_image_t * const image)
 		}
 	}
 	image->completenessEstimate = percent / len;
-	image->nextCompletenessEstimate = now + 10 + rand() % 30;
+	timing_set( &image->nextCompletenessEstimate, &now, 8 + rand() % 32 );
 	return image->completenessEstimate;
 }
 
@@ -1654,16 +1659,17 @@ static bool image_ensureDiskSpace(uint64_t size)
 			if ( _images[i] == NULL ) continue;
 			dnbd3_image_t *current = image_lock( _images[i] );
 			if ( current == NULL ) continue;
-			if ( current->atime != 0 && current->users == 1 ) { // Just from the lock above
-				if ( oldest == NULL || oldest->atime > current->atime ) {
+			if ( current->users == 1 ) { // Just from the lock above
+				if ( oldest == NULL || timing_1le2( &current->atime, &oldest->atime ) ) {
 					// Oldest access time so far
 					oldest = current;
 				}
 			}
 			current = image_release( current );
 		}
-		if ( oldest == NULL || time( NULL ) - oldest->atime < 86400 ) {
-			logadd( LOG_DEBUG1, "No image is old enough :-(\n" );
+		declare_now;
+		if ( oldest == NULL || timing_diff( &oldest->atime, &now ) < 86400 ) {
+			logadd( LOG_DEBUG1, "No image is old enough (all have been in use in past 24h) :-(\n" );
 			return false;
 		}
 		oldest = image_lock( oldest );
@@ -1687,7 +1693,8 @@ static bool image_ensureDiskSpace(uint64_t size)
 void image_closeUnusedFd()
 {
 	int fd, i;
-	time_t deadline = time( NULL ) - UNUSED_FD_TIMEOUT;
+	ticks deadline;
+	timing_gets( &deadline, -UNUSED_FD_TIMEOUT );
 	char imgstr[300];
 	spin_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
@@ -1696,7 +1703,7 @@ void image_closeUnusedFd()
 			continue;
 		spin_lock( &image->lock );
 		spin_unlock( &imageListLock );
-		if ( image->users == 0 && image->atime < deadline ) {
+   	if ( image->users == 0 && timing_reached( &image->atime, &deadline ) ) {
 			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
 			fd = image->readFd;
 			image->readFd = -1;
