@@ -60,7 +60,7 @@ static inline void timing_get(ticks* retval)
  * Get a ticks instance somewhere in the future.
  * Useful for timeouts.
  */
-static inline void timing_gets(ticks* retval, uint32_t addSeconds)
+static inline void timing_gets(ticks* retval, int32_t addSeconds)
 {
 	timing_get( retval );
 	retval->tv_sec += addSeconds;
