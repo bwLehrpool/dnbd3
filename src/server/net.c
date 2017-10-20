@@ -101,7 +101,7 @@ static inline bool recv_request_payload(int sock, uint32_t size, serialized_buff
 		logadd( LOG_ERROR, "Called recv_request_payload() for more bytes than the passed buffer could hold!" );
 		return false;
 	}
-	if ( sock_recv( sock, payload->buffer, size ) != size ) {
+	if ( sock_recv( sock, payload->buffer, size ) != (ssize_t)size ) {
 		logadd( LOG_DEBUG1, "Could not receive request payload of length %d\n", (int)size );
 		return false;
 	}
@@ -143,7 +143,7 @@ static inline bool sendPadding( const int fd, uint32_t bytes )
 			return false;
 		bytes -= (uint32_t)ret;
 	}
-	return sock_sendAll( fd, nullbytes, bytes, 2 ) == bytes;
+	return sock_sendAll( fd, nullbytes, bytes, 2 ) == (ssize_t)bytes;
 }
 
 uint64_t net_getTotalBytesSent()
