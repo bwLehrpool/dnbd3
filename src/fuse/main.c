@@ -23,6 +23,7 @@
 #include <getopt.h>
 #include <time.h>
 #include <signal.h>
+#include <pthread.h>
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
@@ -40,6 +41,44 @@ static void (*fuse_sigIntHandler)(int) = NULL;
 static void (*fuse_sigTermHandler)(int) = NULL;
 static struct fuse_operations dnbd3_fuse_no_operations;
 
+#define SIGPOOLSIZE 6
+static pthread_spinlock_t sigLock;
+static dnbd3_signal_t *signalPool[SIGPOOLSIZE];
+static dnbd3_signal_t **sigEnd = signalPool + SIGPOOLSIZE;
+static void signalInit()
+{
+	pthread_spin_init( &sigLock, PTHREAD_PROCESS_PRIVATE );
+	for ( size_t i = 0; i < SIGPOOLSIZE; ++i ) {
+		signalPool[i] = NULL;
+	}
+}
+static inline dnbd3_signal_t *signalGet()
+{
+	pthread_spin_lock( &sigLock );
+	for ( dnbd3_signal_t **it = signalPool; it < sigEnd; ++it ) {
+		if ( *it != NULL ) {
+			dnbd3_signal_t *ret = *it;
+			*it = NULL;
+			pthread_spin_unlock( &sigLock );
+			return ret;
+		}
+	}
+	pthread_spin_unlock( &sigLock );
+	return signal_newBlocking();
+}
+static inline void signalPut(dnbd3_signal_t *signal)
+{
+	pthread_spin_lock( &sigLock );
+	for ( dnbd3_signal_t **it = signalPool; it < sigEnd; ++it ) {
+		if ( *it == NULL ) {
+			*it = signal;
+			pthread_spin_unlock( &sigLock );
+			return;
+		}
+	}
+	pthread_spin_unlock( &sigLock );
+	signal_close( signal );
+}
 
 static int image_getattr(const char *path, struct stat *stbuf)
 {
@@ -140,9 +179,10 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	request.buffer = buf;
 	request.length = (uint32_t)size;
 	request.offset = offset;
-	request.signal = signal_newBlocking();
+	request.signal = signalGet();
 
 	if ( !connection_read( &request ) ) {
+		signalPut( request.signal );
 		return -EINVAL;
 	}
 	while ( !request.finished ) {
@@ -155,7 +195,7 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 			debugf( "fuse_read signal wait returned %d", ret );
 		}
 	}
-	signal_close( request.signal );
+	signalPut( request.signal );
 	if ( request.success ) {
 		return request.length;
 	} else {
@@ -377,5 +417,6 @@ int main(int argc, char *argv[])
 	putchar('\n');
 	clock_gettime( CLOCK_REALTIME, &startupTime );
 	owner = getuid();
+	signalInit();
 	return fuse_main( newArgc, newArgv, &image_oper, NULL );
 }
