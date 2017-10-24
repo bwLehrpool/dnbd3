@@ -199,7 +199,7 @@ uint64_t connection_getImageSize()
 
 bool connection_read(dnbd3_async_t *request)
 {
-	if (!connectionInitDone) return false;
+	if ( !connectionInitDone ) return false;
 	pthread_mutex_lock( &connection.sendMutex );
 	enqueueRequest( request );
 	if ( connection.sockFd != -1 ) {
@@ -296,7 +296,7 @@ static void* connection_receiveThreadMain(void *sockPtr)
 {
 	int sockFd = (int)(size_t)sockPtr;
 	dnbd3_reply_t reply;
-	pthread_detach(pthread_self());
+	pthread_detach( pthread_self() );
 
 	while ( keepRunning ) {
 		int ret;
@@ -502,7 +502,7 @@ static void probeAltServers()
 			logadd( LOG_DEBUG1, "<- select fail" );
 			goto fail;
 		}
-		if ( remoteProto < MIN_SUPPORTED_SERVER || remoteProto > PROTOCOL_VERSION ) {
+		if ( remoteProto < MIN_SUPPORTED_SERVER ) {
 			logadd( LOG_WARNING, "Unsupported remote version (local: %d, remote: %d)", (int)PROTOCOL_VERSION, (int)remoteProto );
 			srv->consecutiveFails += 10;
 			goto fail;
