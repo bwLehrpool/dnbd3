@@ -2,6 +2,7 @@
 #define _CONNECTION_H_
 
 #include "../shared/fdsignal.h"
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -27,6 +28,6 @@ bool connection_read(dnbd3_async_t *request);
 
 void connection_close();
 
-int connection_printStats(char *buffer, const int len);
+size_t connection_printStats(char *buffer, const size_t len);
 
 #endif /* CONNECTION_H_ */

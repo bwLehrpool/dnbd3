@@ -234,17 +234,21 @@ void connection_close()
 	pthread_mutex_unlock( &connection.sendMutex );
 }
 
-int connection_printStats(char *buffer, const int len)
+size_t connection_printStats(char *buffer, const size_t len)
 {
 	int ret;
-	int remaining = len;
+	size_t remaining = len;
 	if ( remaining > 0 ) {
 		ret = snprintf( buffer, remaining, "Image:    %s\nRevision: %d\n\nCurrent connection time: %ds\n\n",
 				image.name, (int)image.rid, (int)( (nowMilli() - connection.startupTime) / 1000 ) );
-		if ( ret > 0 ) {
-			remaining -= ret;
-			buffer += ret;
+		if ( ret < 0 ) {
+			ret = 0;
 		}
+		if ( (size_t)ret >= remaining ) {
+			return len;
+		}
+		remaining -= ret;
+		buffer += ret;
 	}
 	int i = -1;
 	pthread_spin_lock( &altLock );
@@ -256,12 +260,12 @@ int connection_printStats(char *buffer, const int len)
 		} else {
 			*buffer++ = ' ';
 		}
-		ret = sock_printHost( &altservers[i].host, buffer, remaining );
-		remaining -= (ret + 1); // For space or * above
-		buffer += ret;
+		const size_t addrlen = sock_printHost( &altservers[i].host, buffer, remaining );
+		remaining -= (addrlen + 1); // For space or * above
+		buffer += addrlen;
 		if ( remaining < 3 )
 			break;
-		int width = MAX( 35 - ret, 0 );
+		int width = addrlen >= 35 ? 0 : 35 - (int)addrlen;
 		char *unit;
 		int value;
 		if ( altservers[i].rtt > 5000 ) {
@@ -274,6 +278,13 @@ int connection_printStats(char *buffer, const int len)
 		}
 		ret = snprintf( buffer, remaining, "% *d %s   Unreachable: % 4d   BestCount: % 4d\n",
 				width, value, unit, altservers[i].consecutiveFails, altservers[i].bestCount );
+		if ( ret < 0 ) {
+			ret = 0;
+		}
+		if ( (size_t)ret >= remaining ) {
+			remaining = 0;
+			break;
+		}
 		remaining -= ret;
 		buffer += ret;
 	}

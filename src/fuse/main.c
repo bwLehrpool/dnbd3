@@ -90,10 +90,10 @@ static int image_open(const char *path, struct fuse_file_info *fi)
 
 static int fillStatsFile(char *buf, size_t size, off_t offset) {
 	if ( offset == 0 ) {
-		return connection_printStats( buf, size );
+		return (int)connection_printStats( buf, size );
 	}
 	char buffer[4096];
-	int ret = connection_printStats( buffer, sizeof buffer );
+	int ret = (int)connection_printStats( buffer, sizeof buffer );
 	int len = MIN( ret - (int)offset, (int)size );
 	if ( len == 0 )
 		return 0;
@@ -106,14 +106,21 @@ static int fillStatsFile(char *buf, size_t size, off_t offset) {
 
 static int image_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
 {
-	if ( (uint64_t)offset >= imageSize ) {
-		return 0;
+	if ( size > __INT_MAX__ ) {
+		// fuse docs say we MUST fill the buffer with exactly size bytes and return size,
+		// otherwise the buffer will we padded with zeros. Since the return value is just
+		// an int, we could not properly fulfill read requests > 2GB. Since there is no
+		// mention of a guarantee that this will never happen, better add a safety check.
+		// Way to go fuse.
+		return -EIO;
+	}
+	if ( path[1] == STATS_PATH[1] ) {
+		return fillStatsFile( buf, size, offset );
 	}
 
-	if ( path[1] == STATS_PATH[1] ) {
-		return fillStatsFile(buf, size, offset);
+	if ( (uint64_t)offset >= imageSize ) {
+		return -EIO;
 	}
-	//return -ENOENT;
 
 	if ( offset + size > imageSize ) {
 		size = imageSize - offset;
@@ -125,7 +132,7 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 
 	if ( useDebug ) {
 		for ( ; startBlock <= endBlock; startBlock++ ) {
-			logInfo.blockRequestCount[startBlock] += 1;
+			++logInfo.blockRequestCount[startBlock];
 		}
 	}
 
