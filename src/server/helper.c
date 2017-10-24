@@ -87,11 +87,11 @@ bool host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen)
 	if ( targetlen < 10 ) return false;
 	if ( host->type == AF_INET6 ) {
 		*target++ = '[';
-		inet_ntop( AF_INET6, host->addr, target, targetlen - 10 );
+		inet_ntop( AF_INET6, host->addr, target, (socklen_t)targetlen - 10 );
 		target += strlen( target );
 		*target++ = ']';
 	} else if ( host->type == AF_INET ) {
-		inet_ntop( AF_INET, host->addr, target, targetlen - 8 );
+		inet_ntop( AF_INET, host->addr, target, (socklen_t)targetlen - 8 );
 		target += strlen( target );
 	} else {
 		snprintf( target, targetlen, "<?addrtype=%d>", (int)host->type );

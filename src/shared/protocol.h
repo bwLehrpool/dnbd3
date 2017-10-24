@@ -26,7 +26,7 @@
 
 static inline int dnbd3_read_reply(int sock, dnbd3_reply_t *reply, bool wait)
 {
-	int ret = recv( sock, reply, sizeof(*reply), (wait ? MSG_WAITALL : MSG_DONTWAIT) | MSG_NOSIGNAL );
+	ssize_t ret = recv( sock, reply, sizeof(*reply), (wait ? MSG_WAITALL : MSG_DONTWAIT) | MSG_NOSIGNAL );
 	if ( ret == 0 ) return REPLY_CLOSED;
 	if ( ret < 0 ) {
 		if ( errno == EAGAIN || errno == EWOULDBLOCK ) return REPLY_AGAIN;
@@ -62,7 +62,7 @@ static inline bool dnbd3_select_image(int sock, const char *name, uint16_t rid, 
 	const ssize_t len = serializer_get_written_length( &serialized );
 	request.magic = dnbd3_packet_magic;
 	request.cmd = CMD_SELECT_IMAGE;
-	request.size = len;
+	request.size = (uint32_t)len;
 #ifdef _DEBUG
 	request.handle = 0;
 	request.offset = 0;

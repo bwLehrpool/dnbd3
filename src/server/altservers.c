@@ -469,9 +469,9 @@ static void *altservers_main(void *data UNUSED)
 				// Penaltize rtt if this was a cycle; this will treat this server with lower priority
 				// in the near future too, so we prevent alternating between two servers that are both
 				// part of a cycle and have the lowest latency.
-				const unsigned int rtt = (end.tv_sec - start.tv_sec) * 1000000
+				const unsigned int rtt = (unsigned int)((end.tv_sec - start.tv_sec) * 1000000
 						+ (end.tv_nsec - start.tv_nsec) / 1000
-						+ ( (isCurrent && uplink->cycleDetected) ? 1000000 : 0 ); // µs
+						+ ( (isCurrent && uplink->cycleDetected) ? 1000000 : 0 )); // µs
 				unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
 				// If a cycle was detected, or we lost connection to the current (last) server, penaltize it one time
 				if ( ( uplink->cycleDetected || uplink->fd == -1 ) && isCurrent ) avg = (avg * 2) + 50000;

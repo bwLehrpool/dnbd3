@@ -331,7 +331,7 @@ static void* uplink_mainloop(void *data)
 		// poll()
 		do {
 			declare_now;
-			waitTime = timing_diffMs( &now, &nextAltCheck );
+			waitTime = (int)timing_diffMs( &now, &nextAltCheck );
 		} while(0);
 		if ( waitTime < 1500 ) waitTime = 1500;
 		if ( waitTime > 5000 ) waitTime = 5000;
@@ -474,10 +474,10 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 		//logadd( LOG_DEBUG2 %p] Sending slot %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, j, link->queue[j].status, link->queue[j].handle, link->queue[j].from, link->queue[j, ".to );
 		link->queue[j].status = ULR_PENDING;
 		const uint64_t offset = link->queue[j].from;
-		const uint32_t size = link->queue[j].to - link->queue[j].from;
+		const uint32_t size = (uint32_t)( link->queue[j].to - link->queue[j].from );
 		uint8_t hops = link->queue[j].hopCount;
 		spin_unlock( &link->queueLock );
-		if ( hops < 200 ) hops += 1;
+		if ( hops < 200 ) ++hops;
 		const int ret = dnbd3_get_block( link->fd, offset, size, offset, COND_HOPCOUNT( link->version, hops ) );
 		if ( !ret ) {
 			// Non-critical - if the connection dropped or the server was changed
@@ -525,7 +525,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		spin_unlock( &image->lock );
 		// Unlocked - do not break or continue here...
 		const uint64_t offset = link->replicationHandle = (uint64_t)i * (uint64_t)requestBlockSize;
-		const uint32_t size = MIN( image->realFilesize - offset, requestBlockSize );
+		const uint32_t size = (uint32_t)MIN( image->realFilesize - offset, requestBlockSize );
 		if ( !dnbd3_get_block( link->fd, offset, size, link->replicationHandle, COND_HOPCOUNT( link->version, 1 ) ) ) {
 			logadd( LOG_DEBUG1, "Error sending background replication request to uplink server!\n" );
 			return;
@@ -627,7 +627,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 				dnbd3_client_t * const client = req->client;
 				outReply.cmd = CMD_GET_BLOCK;
 				outReply.handle = req->handle;
-				outReply.size = req->to - req->from;
+				outReply.size = (uint32_t)( req->to - req->from );
 				iov[0].iov_base = &outReply;
 				iov[0].iov_len = sizeof outReply;
 				iov[1].iov_base = link->recvBuffer + (req->from - start);

@@ -160,37 +160,39 @@ void sock_destroyPollList(poll_list_t *list)
 	free( list );
 }
 
-int sock_printHost(const dnbd3_host_t * const host, char * const buffer, const int len)
+size_t sock_printHost(const dnbd3_host_t * const host, char * const buffer, const size_t len)
 {
 	// Worst case: Port 5 chars, ':' to separate ip and port 1 char, terminating null 1 char = 7, [] for IPv6
 	if ( len < 10 ) return 0;
 	char *output = buffer;
 	if ( host->type == AF_INET6 ) {
 		*output++ = '[';
-		inet_ntop( AF_INET6, host->addr, output, len - 10 );
+		inet_ntop( AF_INET6, host->addr, output, (socklen_t)( len - 10 ) );
 		output += strlen( output );
 		*output++ = ']';
 	} else if ( host->type == AF_INET ) {
-		inet_ntop( AF_INET, host->addr, output, len - 8 );
+		inet_ntop( AF_INET, host->addr, output, (socklen_t)( len - 8 ) );
 		output += strlen( output );
 	} else {
 		int ret = snprintf( output, len, "<?addrtype=%d>", (int)host->type );
-		return MIN( ret, len-1 );
+		if ( ret <= 0 ) return 0;
+		return MIN( (size_t)ret, len-1 );
 	}
 	*output = '\0';
 	if ( host->port != 0 ) {
 		// There are still at least 7 bytes left in the buffer, port is at most 5 bytes + ':' + '\0' = 7
 		int ret = snprintf( output, 7, ":%d", (int)ntohs( host->port ) );
+		if ( ret < 0 ) ret = 0;
 		output += MIN( ret, 6 );
 	}
 	return output - buffer;
 }
 
-int sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int len)
+size_t sock_printable(const struct sockaddr * const addr, const socklen_t addrLen, char *output, const size_t len)
 {
 	char host[100], port[10];
 	int outlen = 0;
-	int ret = getnameinfo( addr, addrLen, host, 100, port, 10, NI_NUMERICHOST | NI_NUMERICSERV );
+	int ret = getnameinfo( addr, addrLen, host, sizeof(host), port, sizeof(port), NI_NUMERICHOST | NI_NUMERICSERV );
 	if ( ret == 0 ) {
 		if ( addr->sa_family == AF_INET ) {
 			outlen = snprintf( output, len, "%s:%s", host, port );
@@ -198,7 +200,8 @@ int sock_printable(struct sockaddr *addr, socklen_t addrLen, char *output, int l
 			outlen = snprintf( output, len, "[%s]:%s", host, port );
 		}
 	}
-	return MIN( outlen, len-1 );
+	if ( outlen <= 0 ) return 0;
+	return MIN( (size_t)outlen, len-1 );
 }
 
 bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port)
@@ -289,7 +292,7 @@ bool sock_append(poll_list_t *list, const int sock, bool wantRead, bool wantWrit
 {
 	if ( sock == -1 || list->count >= MAXLISTEN ) return false;
 	list->entry[list->count++].fd = sock;
-	list->entry[list->count++].events = ( wantRead ? POLLIN : 0 ) | ( wantWrite ? POLLOUT : 0 ) | POLLRDHUP;
+	list->entry[list->count++].events = (short)( ( wantRead ? POLLIN : 0 ) | ( wantWrite ? POLLOUT : 0 ) | POLLRDHUP );
 	list->count++;
 	return true;
 }

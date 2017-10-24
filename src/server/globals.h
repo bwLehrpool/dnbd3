@@ -76,8 +76,8 @@ typedef struct
 {
 	char comment[COMMENT_LENGTH];
 	dnbd3_host_t host;
-	int rtt[SERVER_RTT_PROBES];
-	int rttIndex;
+	unsigned int rtt[SERVER_RTT_PROBES];
+	unsigned int rttIndex;
 	bool isPrivate, isClientOnly;
 	ticks lastFail;
 	int numFails;
@@ -112,11 +112,11 @@ struct _dnbd3_image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
 	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
-	int rid;               // revision of image
 	int completenessEstimate; // Completeness estimate in percent
 	int users;             // clients currently using this image
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
 	bool working;          // true if image exists and completeness is == 100% or a working upstream proxy is connected
+	uint16_t rid;          // revision of image
 	pthread_spinlock_t lock;
 };
 
@@ -125,7 +125,7 @@ struct _dnbd3_client
 #define HOSTNAMELEN (48)
 	uint64_t bytesSent;    // Byte counter for this client. Use statsLock when accessing
 	dnbd3_image_t *image;
-	uint32_t tmpBytesSent; // Temporary byte counter that gets added to the global counter periodically. Use statsLock when accessing
+	size_t tmpBytesSent;   // Temporary byte counter that gets added to the global counter periodically. Use statsLock when accessing
 	int sock;
 	bool isServer;         // true if a server in proxy mode, false if real client
 	dnbd3_host_t host;

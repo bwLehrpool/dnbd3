@@ -15,7 +15,7 @@ void serializer_reset_read(serialized_buffer_t *buffer, size_t data_len);
 
 void serializer_reset_write(serialized_buffer_t *buffer);
 
-ssize_t serializer_get_written_length(serialized_buffer_t *buffer);
+uint32_t serializer_get_written_length(serialized_buffer_t *buffer);
 
 //
 

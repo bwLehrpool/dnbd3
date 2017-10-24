@@ -78,7 +78,7 @@ void serializer_put_string(serialized_buffer_t *buffer, const char *value)
 	buffer->buffer_pointer += len;
 }
 
-ssize_t serializer_get_written_length(serialized_buffer_t *buffer)
+uint32_t serializer_get_written_length(serialized_buffer_t *buffer)
 {
-	return buffer->buffer_pointer - buffer->buffer;
+	return (uint32_t)( buffer->buffer_pointer - buffer->buffer );
 }

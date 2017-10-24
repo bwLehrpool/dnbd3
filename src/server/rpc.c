@@ -250,7 +250,7 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 		}
 	}
 	memcpy( aclRules[aclCount].host, host.addr, 16 );
-	aclRules[aclCount].bytes = bits / 8;
+	aclRules[aclCount].bytes = (int)( bits / 8 );
 	aclRules[aclCount].bitMask = 0;
 	aclRules[aclCount].permissions = mask;
 	bits %= 8;
@@ -258,7 +258,7 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 		for (long int i = 0; i < bits; ++i) {
 			aclRules[aclCount].bitMask = ( aclRules[aclCount].bitMask >> 1 ) | 0x80;
 		}
-		aclRules[aclCount].host[aclRules[aclCount].bytes] &= aclRules[aclCount].bitMask;
+		aclRules[aclCount].host[aclRules[aclCount].bytes] &= (uint8_t)aclRules[aclCount].bitMask;
 	}
 	// We now have .bytes set to the number of bytes to memcmp.
 	// In case we have an odd bitmask, .bitMask will be != 0, so when comparing,

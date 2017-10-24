@@ -89,26 +89,26 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 	ret = vsnprintf( buffer + offset, LINE_LEN - offset, fmt, ap );
 	va_end( ap );
 	if ( ret < 0 ) return;
-	ret += offset;
-	if ( ret + 1 >= LINE_LEN ) {
+	offset += ret;
+	if ( offset + 1 >= LINE_LEN ) {
 		buffer[LINE_LEN-2] = '\0';
-		ret = LINE_LEN - 2;
+		offset = LINE_LEN - 2;
 	}
-	if ( ret > 0 && buffer[ret-1] != '\n' ) {
-		buffer[ret++] = '\n';
-		buffer[ret] = '\0';
+	if ( buffer[offset-1] != '\n' ) {
+		buffer[offset++] = '\n';
+		buffer[offset] = '\0';
 	}
 	if ( maskFile & mask ) {
 		pthread_mutex_lock( &logLock );
 		if ( logFd >= 0 ) {
-			int done = 0;
-			while (done < ret ) {
-				const int wr = write( logFd, buffer + done, ret - done );
+			size_t done = 0;
+			while (done < offset ) {
+				const ssize_t wr = write( logFd, buffer + done, ret - done );
 				if ( wr < 0 ) {
 					printf( "Logging to file failed! (errno=%d)\n", errno );
 					break;
 				}
-				done += wr;
+				done += (size_t)wr;
 			}
 		}
 		pthread_mutex_unlock( &logLock );

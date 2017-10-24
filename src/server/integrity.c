@@ -102,7 +102,7 @@ static void* integrity_main(void * data UNUSED)
 	// Setting nice of this thread - this is not POSIX conforming, so check if other platforms support this.
 	// POSIX says that setpriority() should set the nice value of all threads belonging to the current process,
 	// but on linux you can do this per thread.
-	pid_t tid = syscall( SYS_gettid );
+	pid_t tid = (pid_t)syscall( SYS_gettid );
 	setpriority( PRIO_PROCESS, tid, 10 );
 #endif
 	pthread_mutex_lock( &integrityQueueLock );

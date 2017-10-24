@@ -68,7 +68,7 @@ void net_updateGlobalSentStatsFromClient(dnbd3_client_t * const client)
 
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
-	int ret, fails = 0;
+	ssize_t ret, fails = 0;
 	// Read request header from socket
 	while ( ( ret = recv( sock, request, sizeof(*request), MSG_WAITALL ) ) != sizeof(*request) ) {
 		if ( errno == EINTR && ++fails < 10 ) continue;
@@ -165,33 +165,34 @@ void* net_handleNewConnection(void *clientPtr)
 {
 	dnbd3_client_t * const client = (dnbd3_client_t *)clientPtr;
 	dnbd3_request_t request;
-	int ret;
 
 	// Await data from client. Since this is a fresh connection, we expect data right away
 	sock_setTimeout( client->sock, _clientTimeout );
-	ret = recv( client->sock, &request, sizeof(request), MSG_WAITALL );
-	// Let's see if this looks like an HTTP request
-	if ( ret > 5 && request.magic != dnbd3_packet_magic
-			&& ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) ) {
-		rpc_sendStatsJson( client->sock, &client->host, &request, (size_t)ret );
-		goto fail_preadd;
-	}
+	do {
+		const int ret = (int)recv( client->sock, &request, sizeof(request), MSG_WAITALL );
+		// Let's see if this looks like an HTTP request
+		if ( ret > 5 && request.magic != dnbd3_packet_magic
+				&& ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) ) {
+			rpc_sendStatsJson( client->sock, &client->host, &request, ret );
+			goto fail_preadd;
+		}
 
-	// It's expected to be a real dnbd3 client
-	// Check request for validity
-	if ( ret != sizeof(request) ) {
-		logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)", ret, (int)sizeof(request), errno );
-		goto fail_preadd;
-	}
-	if ( request.magic != dnbd3_packet_magic ) {
-		logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
-		goto fail_preadd;
-	}
-	fixup_request( request );
-	if ( request.cmd != CMD_SELECT_IMAGE ) {
-		logadd( LOG_WARNING, "Client sent != CMD_SELECT_IMAGE in handshake (got cmd=%d, size=%d), dropping client.", (int)request.cmd, (int)request.size );
-		goto fail_preadd;
-	}
+		// It's expected to be a real dnbd3 client
+		// Check request for validity
+		if ( ret != sizeof(request) ) {
+			logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)", (int)ret, (int)sizeof(request), errno );
+			goto fail_preadd;
+		}
+		if ( request.magic != dnbd3_packet_magic ) {
+			logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
+			goto fail_preadd;
+		}
+		fixup_request( request );
+		if ( request.cmd != CMD_SELECT_IMAGE ) {
+			logadd( LOG_WARNING, "Client sent != CMD_SELECT_IMAGE in handshake (got cmd=%d, size=%d), dropping client.", (int)request.cmd, (int)request.size );
+			goto fail_preadd;
+		}
+	} while (0);
 	// Fully init client struct
 	spin_init( &client->lock, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &client->statsLock, PTHREAD_PROCESS_PRIVATE );
@@ -341,7 +342,7 @@ void* net_handleNewConnection(void *clientPtr)
 							pos = start;
 							do {
 								const int map_x = (pos >> 12) & 7; // mod 8
-								const uint8_t bit_mask = 1 << map_x;
+								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
 								if ( (image->cache_map[firstByteInMap] & bit_mask) == 0 ) {
 									isCached = false;
 									break;
@@ -355,7 +356,7 @@ void* net_handleNewConnection(void *clientPtr)
 							while ( pos < end ) {
 								assert( lastByteInMap == (pos >> 15) );
 								const int map_x = (pos >> 12) & 7; // mod 8
-								const uint8_t bit_mask = 1 << map_x;
+								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
 								if ( (image->cache_map[lastByteInMap] & bit_mask) == 0 ) {
 									isCached = false;
 									break;
@@ -472,7 +473,7 @@ void* net_handleNewConnection(void *clientPtr)
 				// Build list of known working alt servers
 				num = altservers_getMatching( &client->host, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
-				reply.size = num * sizeof(dnbd3_server_entry_t);
+				reply.size = (uint32_t)( num * sizeof(dnbd3_server_entry_t) );
 				pthread_mutex_lock( &client->sendMutex );
 				send_reply( client->sock, &reply, server_list );
 				pthread_mutex_unlock( &client->sendMutex );
@@ -506,7 +507,7 @@ set_name: ;
 					reply.size = 0;
 					send_reply( client->sock, &reply, NULL );
 				} else {
-					const int size = reply.size = (IMGSIZE_TO_HASHBLOCKS(image->realFilesize) + 1) * sizeof(uint32_t);
+					const uint32_t size = reply.size = (uint32_t)( (IMGSIZE_TO_HASHBLOCKS(image->realFilesize) + 1) * sizeof(uint32_t) );
 					send_reply( client->sock, &reply, NULL );
 					send( client->sock, &image->masterCrc32, sizeof(uint32_t), MSG_MORE );
 					send( client->sock, image->crc32, size - sizeof(uint32_t), 0 );

@@ -48,7 +48,7 @@ static bool image_load_all_internal(char *base, char *path);
 static bool image_addToList(dnbd3_image_t *image);
 static bool image_load(char *base, char *path, int withUplink);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
-static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t realFilesize, uint32_t *crc);
+static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc);
 static bool image_ensureDiskSpace(uint64_t size);
 
 static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
@@ -92,7 +92,7 @@ bool image_isComplete(dnbd3_image_t *image)
 			last_byte = 0xFF;
 		} else {
 			for (j = 0; j < blocks_in_last_byte; ++j)
-				last_byte |= (1 << j);
+				last_byte |= (uint8_t)(1 << j);
 		}
 		complete = ((image->cache_map[map_len_bytes - 1] & last_byte) == last_byte);
 	}
@@ -121,14 +121,14 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		return;
 	}
 	while ( pos < end ) {
-		const int map_y = pos >> 15;
-		const int map_x = (pos >> 12) & 7; // mod 8
-		const uint8_t bit_mask = 1 << map_x;
+		const size_t map_y = (int)( pos >> 15 );
+		const int map_x = (int)( (pos >> 12) & 7 ); // mod 8
+		const int bit_mask = 1 << map_x;
 		if ( set ) {
 			if ( (image->cache_map[map_y] & bit_mask) == 0 ) dirty = true;
-			image->cache_map[map_y] |= bit_mask;
+			image->cache_map[map_y] |= (uint8_t)bit_mask;
 		} else {
-			image->cache_map[map_y] &= ~bit_mask;
+			image->cache_map[map_y] &= (uint8_t)~bit_mask;
 		}
 		pos += DNBD3_BLOCK_SIZE;
 	}
@@ -142,7 +142,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		pos = start;
 		while ( pos < end ) {
 			if ( image->cache_map == NULL ) break;
-			const int block = pos / HASH_BLOCK_SIZE;
+			const int block = (int)( pos / HASH_BLOCK_SIZE );
 			if ( image_isHashBlockComplete( image->cache_map, block, image->virtualFilesize ) ) {
 				spin_unlock( &image->lock );
 				integrity_check( image, block );
@@ -269,7 +269,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	const char *removingText = _removeMissingImages ? ", removing from list" : "";
 	dnbd3_image_t *candidate = NULL;
 	// Simple sanity check
-	const int slen = strlen( name );
+	const size_t slen = strlen( name );
 	if ( slen == 0 || name[slen - 1] == '/' || name[0] == '/' ) return NULL ;
 	// Go through array
 	spin_lock( &imageListLock );
@@ -666,7 +666,7 @@ static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint
 	if ( end <= realFilesize ) {
 		// Trivial case: block in question is not the last block (well, or image size is multiple of HASH_BLOCK_SIZE)
 		const int startCacheIndex = (int)( ( block * HASH_BLOCK_SIZE ) / ( DNBD3_BLOCK_SIZE * 8 ) );
-		const int endCacheIndex = startCacheIndex + ( HASH_BLOCK_SIZE / ( DNBD3_BLOCK_SIZE * 8 ) );
+		const int endCacheIndex = startCacheIndex + (int)( HASH_BLOCK_SIZE / ( DNBD3_BLOCK_SIZE * 8 ) );
 		for ( int i = startCacheIndex; i < endCacheIndex; ++i ) {
 			if ( cacheMap[i] != 0xff ) {
 				return false;
@@ -675,8 +675,8 @@ static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint
 	} else {
 		// Special case: Checking last block, which is smaller than HASH_BLOCK_SIZE
 		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < realFilesize; mapPos += DNBD3_BLOCK_SIZE ) {
-			const int map_y = mapPos >> 15;
-			const int map_x = (mapPos >> 12) & 7; // mod 8
+			const size_t map_y = mapPos >> 15;
+			const int map_x = (int)( (mapPos >> 12) & 7 ); // mod 8
 			const int mask = 1 << map_x;
 			if ( (cacheMap[map_y] & mask) == 0 ) return false;
 		}
@@ -694,7 +694,7 @@ static bool image_load_all_internal(char *base, char *path)
 	assert( path != NULL );
 	assert( *path == '/' );
 	struct dirent entry, *entryPtr;
-	const int pathLen = strlen( path );
+	const size_t pathLen = strlen( path );
 	char subpath[PATHLEN];
 	struct stat st;
 	DIR * const dir = opendir( path );
@@ -764,7 +764,7 @@ static bool image_addToList(dnbd3_image_t *image)
  */
 static bool image_load(char *base, char *path, int withUplink)
 {
-	int i, revision = -1;
+	int revision = -1;
 	struct stat st;
 	uint8_t *cache_map = NULL;
 	uint32_t *crc32list = NULL;
@@ -780,7 +780,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	char *lastSlash = strrchr( path, '/' );
 	char *fileName = lastSlash + 1;
 	char imgName[strlen( path )];
-	const int fileNameLen = strlen( fileName );
+	const size_t fileNameLen = strlen( fileName );
 
 	// Copy virtual path (relative path in "base")
 	char * const virtBase = path + strlen( base ) + 1;
@@ -791,19 +791,23 @@ static bool image_load(char *base, char *path, int withUplink)
 	}
 	*dst = '\0';
 
-	// Parse file name for revision
-	// Try to parse *.r<ID> syntax
-	for (i = fileNameLen - 1; i > 1; --i) {
-		if ( fileName[i] < '0' || fileName[i] > '9' ) break;
-	}
-	if ( i != fileNameLen - 1 && fileName[i] == 'r' && fileName[i - 1] == '.' ) {
-		revision = atoi( fileName + i + 1 );
-		src = fileName;
-		while ( src < fileName + i - 1 ) {
-			*dst++ = *src++;
+	do {
+		// Parse file name for revision
+		// Try to parse *.r<ID> syntax
+		size_t i;
+		for (i = fileNameLen - 1; i > 1; --i) {
+			if ( fileName[i] < '0' || fileName[i] > '9' ) break;
 		}
-		*dst = '\0';
-	}
+		if ( i != fileNameLen - 1 && fileName[i] == 'r' && fileName[i - 1] == '.' ) {
+			revision = atoi( fileName + i + 1 );
+			src = fileName;
+			while ( src < fileName + i - 1 ) {
+				*dst++ = *src++;
+			}
+			*dst = '\0';
+		}
+	} while (0);
+
 	// Legacy mode enabled and no rid extracted from filename?
 	if ( _vmdkLegacyMode && revision == -1 ) {
 		// Yes, simply append full file name and set rid to 1
@@ -817,7 +821,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	}
 
 	// Get pointer to already existing image if possible
-	existing = image_get( imgName, revision, true );
+	existing = image_get( imgName, (uint16_t)revision, true );
 
 	// ### Now load the actual image related data ###
 	fdImage = open( path, O_RDONLY );
@@ -902,16 +906,16 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->uplink = NULL;
 	image->realFilesize = realFilesize;
 	image->virtualFilesize = virtualFilesize;
-	image->rid = revision;
+	image->rid = (uint16_t)revision;
 	image->users = 0;
 	image->readFd = -1;
 	image->cacheFd = -1;
 	image->working = (image->cache_map == NULL );
 	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
-	int offset;
+	int32_t offset;
 	if ( stat( path, &st ) == 0 ) {
 		// Negatively offset atime by file modification time
-		offset = st.st_mtime - time( NULL );
+		offset = (int32_t)( st.st_mtime - time( NULL ) );
 		if ( offset > 0 ) offset = 0;
 	} else {
 		offset = 0;
@@ -1590,35 +1594,36 @@ bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks
 /**
  * Calc CRC-32 of block. Value is returned as little endian.
  */
-static bool image_calcBlockCrc32(const int fd, const int block, const uint64_t realFilesize, uint32_t *crc)
+static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc)
 {
 	char buffer[40000];
-	*crc = crc32( 0L, Z_NULL, 0 );
-	int bytes = 0;
 	// How many bytes to read from the input file
-	const int bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( (int64_t)block * HASH_BLOCK_SIZE) );
+	const size_t bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( block * HASH_BLOCK_SIZE) );
 	// Determine how many bytes we had to read if the file size were a multiple of 4k
 	// This might be the same value if the real file's size is a multiple of 4k
-	const int64_t vbs = ( ( realFilesize + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) ) - ( (int64_t)block * HASH_BLOCK_SIZE);
-	const int virtualBytesFromFile = (int)MIN( HASH_BLOCK_SIZE, vbs );
+	const size_t vbs = ( ( realFilesize + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) ) - ( block * HASH_BLOCK_SIZE );
+	const size_t virtualBytesFromFile = MIN( HASH_BLOCK_SIZE, vbs );
 	const off_t readPos = (int64_t)block * HASH_BLOCK_SIZE;
+	size_t bytes = 0;
+	assert( vbs >= bytesFromFile );
+	*crc = crc32( 0L, Z_NULL, 0 );
 	// Calculate the crc32 by reading data from the file
 	while ( bytes < bytesFromFile ) {
 		const int n = MIN( (int)sizeof(buffer), bytesFromFile - bytes );
-		const int r = pread( fd, buffer, n, readPos + bytes );
+		const ssize_t r = pread( fd, buffer, n, readPos + bytes );
 		if ( r <= 0 ) {
 			logadd( LOG_WARNING, "CRC: Read error (errno=%d)", errno );
 			return false;
 		}
 		*crc = crc32( *crc, (Bytef*)buffer, r );
-		bytes += r;
+		bytes += (size_t)r;
 	}
 	// If the virtual file size is different, keep going using nullbytes
 	if ( bytesFromFile < virtualBytesFromFile ) {
 		memset( buffer, 0, sizeof(buffer) );
 		bytes = virtualBytesFromFile - bytesFromFile;
 		while ( bytes != 0 ) {
-			const int len = MIN( (int)sizeof(buffer), bytes );
+			const size_t len = MIN( sizeof(buffer), bytes );
 			*crc = crc32( *crc, (Bytef*)buffer, len );
 			bytes -= len;
 		}
