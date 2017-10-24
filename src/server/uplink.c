@@ -6,10 +6,10 @@
 #include "../shared/sockhelper.h"
 #include "../shared/protocol.h"
 #include "../shared/timing.h"
+#include "../shared/crc32.h"
 
 #include <assert.h>
 #include <inttypes.h>
-#include <zlib.h>
 #include <fcntl.h>
 #include <poll.h>
 
@@ -702,8 +702,8 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 		free( buffer );
 		return;
 	}
-	uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
-	lists_crc = crc32( lists_crc, (Bytef*)buffer, bytes );
+	uint32_t lists_crc = crc32( 0, NULL, 0 );
+	lists_crc = crc32( lists_crc, (uint8_t*)buffer, bytes );
 	lists_crc = net_order_32( lists_crc );
 	if ( lists_crc != masterCrc ) {
 		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s)!", uplink->image->name );

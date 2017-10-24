@@ -7,12 +7,12 @@
 #include "altservers.h"
 #include "../shared/protocol.h"
 #include "../shared/timing.h"
+#include "../shared/crc32.h"
 
 #include <assert.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include <zlib.h>
 #include <inttypes.h>
 #include <glob.h>
 #include <jansson.h>
@@ -1010,24 +1010,24 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 			if ( pread( fdHash, masterCrc, sizeof(uint32_t), 0 ) != sizeof(uint32_t) ) {
 				logadd( LOG_WARNING, "Error reading first crc32 of '%s'", imagePath );
 			} else {
-				const off_t listEnd = hashBlocks * (off_t)sizeof(uint32_t);
-				off_t pos = 0;
+				const size_t crcFileLen = hashBlocks * sizeof(uint32_t);
+				size_t pos = 0;
 				retval = calloc( hashBlocks, sizeof(uint32_t) );
-				while ( pos < listEnd ) {
-					ssize_t ret = pread( fdHash, retval + pos, listEnd - pos, pos + sizeof(uint32_t) /* skip master-crc */ );
+				while ( pos < crcFileLen ) {
+					ssize_t ret = pread( fdHash, retval + pos, crcFileLen - pos, pos + sizeof(uint32_t) /* skip master-crc */ );
 					if ( ret == -1 ) {
 						if ( errno == EINTR || errno == EAGAIN ) continue;
 					}
 					if ( ret <= 0 ) break;
 					pos += ret;
 				}
-				if ( pos != listEnd ) {
+				if ( pos != crcFileLen ) {
 					free( retval );
 					retval = NULL;
 					logadd( LOG_WARNING, "Could not read crc32 list of '%s'", imagePath );
 				} else {
-					uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
-					lists_crc = crc32( lists_crc, (Bytef*)retval, hashBlocks * sizeof(uint32_t) );
+					uint32_t lists_crc = crc32( 0, NULL, 0 );
+					lists_crc = crc32( lists_crc, (uint8_t*)retval, hashBlocks * sizeof(uint32_t) );
 					lists_crc = net_order_32( lists_crc );
 					if ( lists_crc != *masterCrc ) {
 						free( retval );
@@ -1381,8 +1381,8 @@ static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageS
 			return false;
 		}
 		if ( crc32len != 0 ) {
-			uint32_t lists_crc = crc32( 0L, Z_NULL, 0 );
-			lists_crc = crc32( lists_crc, (Bytef*)crc32list, crc32len );
+			uint32_t lists_crc = crc32( 0, NULL, 0 );
+			lists_crc = crc32( lists_crc, (uint8_t*)crc32list, crc32len );
 			lists_crc = net_order_32( lists_crc );
 			if ( lists_crc != masterCrc ) {
 				logadd( LOG_WARNING, "OTF-Clone: Corrupted CRC-32 list. ignored. (%s)", name );
@@ -1468,14 +1468,14 @@ bool image_generateCrcFile(char *image)
 	}
 	char buffer[400];
 	int blocksToGo = blockCount;
-	crc = crc32( 0L, Z_NULL, 0 );
+	crc = crc32( 0, NULL, 0 );
 	while ( blocksToGo > 0 ) {
 		const int numBlocks = MIN( (int)( sizeof(buffer) / sizeof(crc) ), blocksToGo );
 		if ( read( fdCrc, buffer, numBlocks * sizeof(crc) ) != numBlocks * (int)sizeof(crc) ) {
 			logadd( LOG_ERROR, "Could not re-read from crc32 file" );
 			goto cleanup_fail;
 		}
-		crc = crc32( crc, (Bytef*)buffer, numBlocks * sizeof(crc) );
+		crc = crc32( crc, (uint8_t*)buffer, numBlocks * sizeof(crc) );
 		blocksToGo -= numBlocks;
 	}
 	crc = net_order_32( crc );
@@ -1606,16 +1606,16 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 	const off_t readPos = (int64_t)block * HASH_BLOCK_SIZE;
 	size_t bytes = 0;
 	assert( vbs >= bytesFromFile );
-	*crc = crc32( 0L, Z_NULL, 0 );
+	*crc = crc32( 0, NULL, 0 );
 	// Calculate the crc32 by reading data from the file
 	while ( bytes < bytesFromFile ) {
-		const int n = MIN( (int)sizeof(buffer), bytesFromFile - bytes );
+		const size_t n = MIN( sizeof(buffer), bytesFromFile - bytes );
 		const ssize_t r = pread( fd, buffer, n, readPos + bytes );
 		if ( r <= 0 ) {
 			logadd( LOG_WARNING, "CRC: Read error (errno=%d)", errno );
 			return false;
 		}
-		*crc = crc32( *crc, (Bytef*)buffer, r );
+		*crc = crc32( *crc, (uint8_t*)buffer, r );
 		bytes += (size_t)r;
 	}
 	// If the virtual file size is different, keep going using nullbytes
@@ -1624,7 +1624,7 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 		bytes = virtualBytesFromFile - bytesFromFile;
 		while ( bytes != 0 ) {
 			const size_t len = MIN( sizeof(buffer), bytes );
-			*crc = crc32( *crc, (Bytef*)buffer, len );
+			*crc = crc32( *crc, (uint8_t*)buffer, len );
 			bytes -= len;
 		}
 	}
