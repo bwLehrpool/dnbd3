@@ -31,6 +31,7 @@ int altservers_getCount()
 
 void altservers_init()
 {
+	srand( (unsigned int)time( NULL ) );
 	spin_init( &pendingLockWrite, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &altServersLock, PTHREAD_PROCESS_PRIVATE );
 	memset( altServers, 0, SERVER_MAX_ALTS * sizeof(dnbd3_alt_server_t) );

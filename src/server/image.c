@@ -59,6 +59,7 @@ static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t 
 
 void image_serverStartup()
 {
+	srand( (unsigned int)time( NULL ) );
 	spin_init( &imageListLock, PTHREAD_PROCESS_PRIVATE );
 }
 
