@@ -23,6 +23,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link);
 static int uplink_sendKeepalive(const int fd);
 static void uplink_addCrc32(dnbd3_connection_t *uplink);
 static void uplink_sendReplicationRequest(dnbd3_connection_t *link);
+static void uplink_updateGlobalReceivedCounter(dnbd3_connection_t *link);
 
 // ############ uplink connection handling
 
@@ -64,6 +65,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	spin_init( &link->rttLock, PTHREAD_PROCESS_PRIVATE );
 	link->image = image;
 	link->bytesReceived = 0;
+	link->lastBytesReceived = 0;
 	link->queueLen = 0;
 	link->fd = -1;
 	link->signal = NULL;
@@ -378,6 +380,7 @@ static void* uplink_mainloop(void *data)
 				link->fd = -1;
 				close( fd );
 			}
+			uplink_updateGlobalReceivedCounter( link );
 		}
 		// See if we should trigger an RTT measurement
 		spin_lock( &link->rttLock );
@@ -457,9 +460,7 @@ static void* uplink_mainloop(void *data)
 	spin_destroy( &link->rttLock );
 	free( link->recvBuffer );
 	link->recvBuffer = NULL;
-	spin_lock( &statisticsReceivedLock );
-	totalBytesReceived += link->bytesReceived;
-	spin_unlock( &statisticsReceivedLock );
+	uplink_updateGlobalReceivedCounter( link );
 	free( link );
 	return NULL ;
 }
@@ -648,7 +649,6 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 				pthread_mutex_unlock( &client->sendMutex );
 				if ( bytesSent != 0 ) {
 					client->bytesSent += bytesSent;
-					client->tmpBytesSent += bytesSent;
 				}
 				spin_unlock( &client->statsLock );
 				spin_lock( &link->queueLock );
@@ -722,3 +722,12 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 		close( fd );
 	}
 }
+
+static void uplink_updateGlobalReceivedCounter(dnbd3_connection_t *link)
+{
+	spin_lock( &statisticsReceivedLock );
+	totalBytesReceived += ( link->bytesReceived - link->lastBytesReceived );
+	link->lastBytesReceived = 0;
+	spin_unlock( &statisticsReceivedLock );
+}
+

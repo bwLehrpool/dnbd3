@@ -61,9 +61,9 @@ static bool dnbd3_addClient(dnbd3_client_t *client);
 void net_updateGlobalSentStatsFromClient(dnbd3_client_t * const client)
 {
 	spin_lock( &statisticsSentLock );
-	totalBytesSent += client->tmpBytesSent;
+	totalBytesSent += ( client->bytesSent - client->lastBytesSent );
 	spin_unlock( &statisticsSentLock );
-	client->tmpBytesSent = 0;
+	client->lastBytesSent = client->bytesSent;
 }
 
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
@@ -197,6 +197,16 @@ void* net_handleNewConnection(void *clientPtr)
 	spin_init( &client->lock, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &client->statsLock, PTHREAD_PROCESS_PRIVATE );
 	pthread_mutex_init( &client->sendMutex, NULL );
+
+	spin_lock( &client->lock );
+	host_to_string( &client->host, client->hostName, HOSTNAMELEN );
+	client->hostName[HOSTNAMELEN-1] = '\0';
+	spin_unlock( &client->lock );
+	spin_lock( &client->statsLock );
+	client->bytesSent = 0;
+	client->lastBytesSent = 0;
+	spin_unlock( &client->statsLock );
+
 	if ( !dnbd3_addClient( client ) ) {
 		dnbd3_freeClient( client );
 		logadd( LOG_WARNING, "Could not add new client to list when connecting" );
@@ -222,11 +232,6 @@ void* net_handleNewConnection(void *clientPtr)
 	memset( &reply, 0, sizeof(reply) );
 	memset( &payload, 0, sizeof(payload) );
 	reply.magic = dnbd3_packet_magic;
-
-	spin_lock( &client->lock );
-	host_to_string( &client->host, client->hostName, HOSTNAMELEN );
-	client->hostName[HOSTNAMELEN-1] = '\0';
-	spin_unlock( &client->lock );
 
 	// Receive first packet's payload
 	if ( recv_request_payload( client->sock, request.size, &payload ) ) {
@@ -461,11 +466,6 @@ void* net_handleNewConnection(void *clientPtr)
 				spin_lock( &client->statsLock );
 				// Global per-client counter
 				client->bytesSent += request.size; // Increase counter for statistics.
-				// Local counter that gets added to the global total bytes sent counter periodically
-				client->tmpBytesSent += request.size;
-				if ( client->tmpBytesSent > 100000000 ) {
-					net_updateGlobalSentStatsFromClient( client );
-				}
 				spin_unlock( &client->statsLock );
 				break;
 

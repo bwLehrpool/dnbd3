@@ -68,6 +68,7 @@ struct _dnbd3_connection
 	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
 	uint64_t replicationHandle; // Handle of pending replication request
 	uint64_t bytesReceived;     // Number of bytes received by the connection.
+	uint64_t lastBytesReceived; // Number of bytes received last time we updated the global counter.
 	int queueLen;               // length of queue
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
 };
@@ -123,11 +124,11 @@ struct _dnbd3_image
 struct _dnbd3_client
 {
 #define HOSTNAMELEN (48)
-	uint64_t bytesSent;    // Byte counter for this client. Use statsLock when accessing
+	uint64_t bytesSent;     // Byte counter for this client. Use statsLock when accessing.
+	uint64_t lastBytesSent; // Byte counter from when we last added to global counter. Use statsLock when accessing.
 	dnbd3_image_t *image;
-	size_t tmpBytesSent;   // Temporary byte counter that gets added to the global counter periodically. Use statsLock when accessing
 	int sock;
-	bool isServer;         // true if a server in proxy mode, false if real client
+	bool isServer;          // true if a server in proxy mode, false if real client
 	dnbd3_host_t host;
 	char hostName[HOSTNAMELEN];
 	pthread_mutex_t sendMutex;
