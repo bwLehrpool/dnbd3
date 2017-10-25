@@ -32,12 +32,17 @@ int altservers_getCount()
 void altservers_init()
 {
 	srand( (unsigned int)time( NULL ) );
+	// Init spinlock
 	spin_init( &pendingLockWrite, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &altServersLock, PTHREAD_PROCESS_PRIVATE );
 	memset( altServers, 0, SERVER_MAX_ALTS * sizeof(dnbd3_alt_server_t) );
 	if ( 0 != thread_create( &altThread, NULL, &altservers_main, (void *)NULL ) ) {
 		logadd( LOG_ERROR, "Could not start altservers connector thread" );
 		exit( EXIT_FAILURE );
+	}
+	// Init waiting links queue
+	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
+		pending[i] = NULL;
 	}
 	initDone = true;
 }
@@ -175,41 +180,43 @@ int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int
 	if ( host == NULL || host->type == 0 || numAltServers == 0 || output == NULL || size <= 0 ) return 0;
 	int i, j;
 	int count = 0;
-	int distance[size];
+	int scores[size];
+	int score;
 	spin_lock( &altServersLock );
 	for (i = 0; i < numAltServers; ++i) {
-		if ( host->type != altServers[i].host.type ) continue; // Wrong address family
+		if ( altServers[i].host.type == 0 ) continue; // Slot is empty
 		if ( altServers[i].isPrivate ) continue; // Do not tell clients about private servers
-		// TODO: Prefer same AF here, but if in the end we got less servers than requested, add
-		// servers of other AF too (after this loop)
+		if ( host->type == altServers[i].host.type ) {
+			score = altservers_netCloseness( host, &altServers[i].host ) - altServers[i].numFails;
+		} else {
+			score = -( altServers[i].numFails + 128 ); // Wrong address family
+		}
 		if ( count == 0 ) {
 			// Trivial - this is the first entry
 			output[0].host = altServers[i].host;
 			output[0].failures = 0;
-			distance[0] = altservers_netCloseness( host, &output[0].host );
+			scores[0] = score;
 			count++;
 		} else {
 			// Other entries already exist, insert in proper position
-			const int dist = altservers_netCloseness( host, &altServers[i].host );
 			for (j = 0; j < size; ++j) {
-				if ( j < count && dist <= distance[j] ) continue;
+				if ( j < count && score <= scores[j] ) continue;
 				if ( j > count ) break; // Should never happen but just in case...
 				if ( j < count && j + 1 < size ) {
 					// Check if we're in the middle and need to move other entries...
 					memmove( &output[j + 1], &output[j], sizeof(dnbd3_server_entry_t) * (size - j - 1) );
-					memmove( &distance[j + 1], &distance[j], sizeof(int) * (size - j - 1) );
+					memmove( &scores[j + 1], &scores[j], sizeof(int) * (size - j - 1) );
 				}
 				if ( count < size ) {
 					count++;
 				}
 				output[j].host = altServers[i].host;
 				output[j].failures = 0;
-				distance[j] = dist;
+				scores[j] = score;
 				break;
 			}
 		}
 	}
-	// TODO: "if count < size then add servers of other address families"
 	spin_unlock( &altServersLock );
 	return count;
 }
@@ -243,7 +250,7 @@ int altservers_get(dnbd3_host_t *output, int size, int emergency)
 		if ( !emergency && altServers[i].numFails > SERVER_MAX_UPLINK_FAILS // server failed X times in a row
 			&& timing_diff( &altServers[i].lastFail, &now ) > SERVER_BAD_UPLINK_IGNORE ) continue; // and last fail was not too long ago? ignore!
 		// server seems ok, include in output and reset its fail counter
-		if ( !emergency ) altServers[i].numFails = 0;
+		if ( !emergency ) altServers[i].numFails /= 2;
 		output[count++] = altServers[i].host;
 		if ( count >= size ) break;
 	}
@@ -307,20 +314,34 @@ int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 void altservers_serverFailed(const dnbd3_host_t * const host)
 {
 	int i;
+	int foundIndex = -1, lastOk = -1;
 	ticks now;
 	timing_get( &now );
 	spin_lock( &altServersLock );
 	for (i = 0; i < numAltServers; ++i) {
-		if ( !isSameAddressPort( host, &altServers[i].host ) ) continue;
-		// Do only increase counter if last fail was not too recent. This is
-		// to prevent the counter from increasing rapidly if many images use the
-		// same uplink. If there's a network hickup, all uplinks will call this
-		// function and would increase the counter too quickly, disabling the server.
-		if ( timing_diff( &altServers[i].lastFail, &now ) > SERVER_RTT_DELAY_INIT ) {
-			altServers[i].numFails++;
-			altServers[i].lastFail = now;
+		if ( foundIndex == -1 ) {
+			// Looking for the failed server in list
+			if ( isSameAddressPort( host, &altServers[i].host ) ) {
+				foundIndex = i;
+			}
+		} else if ( altServers[i].host.type != 0 && altServers[i].numFails == 0 ) {
+			lastOk = i;
 		}
-		break;
+	}
+	// Do only increase counter if last fail was not too recent. This is
+	// to prevent the counter from increasing rapidly if many images use the
+	// same uplink. If there's a network hickup, all uplinks will call this
+	// function and would increase the counter too quickly, disabling the server.
+	if ( foundIndex != -1 && timing_diff( &altServers[foundIndex].lastFail, &now ) > SERVER_RTT_DELAY_INIT ) {
+		altServers[foundIndex].numFails++;
+		altServers[foundIndex].lastFail = now;
+		if ( lastOk != -1 ) {
+			// Make sure non-working servers are put at the end of the list, so they're less likely
+			// to get picked when testing servers for uplink connections.
+			const dnbd3_alt_server_t tmp = altServers[foundIndex];
+			altServers[foundIndex] = altServers[lastOk];
+			altServers[lastOk] = tmp;
+		}
 	}
 	spin_unlock( &altServersLock );
 }
@@ -348,12 +369,6 @@ static void *altservers_main(void *data UNUSED)
 	blockNoncriticalSignals();
 	timing_gets( &nextCacheMapSave, 90 );
 	timing_gets( &nextCloseUnusedFd, 900 );
-	// Init spinlock
-	// Init waiting links queue
-	spin_lock( &pendingLockWrite );
-	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i)
-		pending[i] = NULL;
-	spin_unlock( &pendingLockWrite );
 	// Init signal
 	runSignal = signal_new();
 	if ( runSignal == NULL ) {
