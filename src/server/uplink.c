@@ -380,7 +380,6 @@ static void* uplink_mainloop(void *data)
 				link->fd = -1;
 				close( fd );
 			}
-			uplink_updateGlobalReceivedCounter( link );
 		}
 		// See if we should trigger an RTT measurement
 		spin_lock( &link->rttLock );
@@ -400,6 +399,8 @@ static void* uplink_mainloop(void *data)
 				}
 				altCheckInterval = MIN(altCheckInterval + 1, SERVER_RTT_DELAY_MAX);
 				timing_set( &nextAltCheck, &now, altCheckInterval );
+				// Use opportunity to update global byte counter
+				uplink_updateGlobalReceivedCounter( link );
 			}
 		} else if ( rttTestResult == RTT_NOT_REACHABLE ) {
 			spin_lock( &link->rttLock );
@@ -723,11 +724,15 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	}
 }
 
+/**
+ * Only ever called from uplink thread, so only lock when updating global counter,
+ * the lastBytesReceived field is ony accessed by us.
+ */
 static void uplink_updateGlobalReceivedCounter(dnbd3_connection_t *link)
 {
 	spin_lock( &statisticsReceivedLock );
 	totalBytesReceived += ( link->bytesReceived - link->lastBytesReceived );
-	link->lastBytesReceived = 0;
 	spin_unlock( &statisticsReceivedLock );
+	link->lastBytesReceived = link->bytesReceived;
 }
 
