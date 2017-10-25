@@ -10,10 +10,10 @@ track of what's going on. ;)
 ===== SERVER =====
 This is a list of used locks, in the order they
 have to be aquired if you must hold multiple locks:
+remoteCloneLock | reloadLock
 _clients_lock
 _clients[].lock
 integrityQueueLock
-remoteCloneLock | reloadLock
 _images_lock
 _images[].lock
 pendingLockConsume

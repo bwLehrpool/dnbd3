@@ -570,9 +570,13 @@ bool image_loadAll(char *path)
 	dnbd3_image_t *imgHandle;
 
 	if ( path == NULL ) path = _basePath;
+	if ( pthread_mutex_trylock( &reloadLock ) != 0 ) {
+		logadd( LOG_MINOR, "Could not (re)load image list, already in progress." );
+		return false;
+	}
 	if ( _removeMissingImages ) {
 		// Check if all loaded images still exist on disk
-		logadd( LOG_DEBUG1, "Checking for vanished images" );
+		logadd( LOG_INFO, "Checking for vanished images" );
 		spin_lock( &imageListLock );
 		for ( int i = _num_images - 1; i >= 0; --i ) {
 			if ( _shutdown ) break;
@@ -595,6 +599,8 @@ bool image_loadAll(char *path)
 			spin_lock( &imgHandle->lock );
 			const bool freeImg = ( imgHandle->users == 0 );
 			spin_unlock( &imgHandle->lock );
+			// We unlocked, but the image has been removed from the list already, so
+			// there's no way the users-counter can increase at this point.
 			if ( freeImg ) {
 				// Image is not in use anymore, free the dangling entry immediately
 				spin_unlock( &imageListLock ); // image_free might do several fs operations; unlock
@@ -603,11 +609,13 @@ bool image_loadAll(char *path)
 			}
 		}
 		spin_unlock( &imageListLock );
-		if ( _shutdown ) return true;
+		if ( _shutdown ) {
+			pthread_mutex_unlock( &reloadLock );
+			return true;
+		}
 	}
 	// Now scan for new images
-	logadd( LOG_DEBUG1, "Scanning for new or modified images" );
-	pthread_mutex_lock( &reloadLock );
+	logadd( LOG_INFO, "Scanning for new or modified images" );
 	ret = image_load_all_internal( path, path );
 	pthread_mutex_unlock( &reloadLock );
 	logadd( LOG_INFO, "Finished scanning %s", path );
