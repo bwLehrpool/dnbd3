@@ -170,23 +170,24 @@ void* net_handleNewConnection(void *clientPtr)
 	sock_setTimeout( client->sock, _clientTimeout );
 	do {
 		const int ret = (int)recv( client->sock, &request, sizeof(request), MSG_WAITALL );
-		// Let's see if this looks like an HTTP request
-		if ( ret > 5 && request.magic != dnbd3_packet_magic
-				&& ( strncmp( (char*)&request, "GET ", 4 ) == 0 || strncmp( (char*)&request, "POST ", 5 ) == 0 ) ) {
-			rpc_sendStatsJson( client->sock, &client->host, &request, ret );
-			goto fail_preadd;
-		}
-
 		// It's expected to be a real dnbd3 client
-		// Check request for validity
-		if ( ret != sizeof(request) ) {
+		// Check request for validity. This implicitly dictates that all HTTP requests are more than 16 bytes...
+		if ( ret != (int)sizeof(request) ) {
 			logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)", (int)ret, (int)sizeof(request), errno );
 			goto fail_preadd;
 		}
+
 		if ( request.magic != dnbd3_packet_magic ) {
-			logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
+			// Let's see if this looks like an HTTP request
+			if ( ((char*)&request)[0] == 'G' || ((char*)&request)[0] == 'P' ) {
+				// Close enough...
+				rpc_sendStatsJson( client->sock, &client->host, &request, ret );
+			} else {
+				logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
+			}
 			goto fail_preadd;
 		}
+		// Magic OK, untangle byte order if required
 		fixup_request( request );
 		if ( request.cmd != CMD_SELECT_IMAGE ) {
 			logadd( LOG_WARNING, "Client sent != CMD_SELECT_IMAGE in handshake (got cmd=%d, size=%d), dropping client.", (int)request.cmd, (int)request.size );
