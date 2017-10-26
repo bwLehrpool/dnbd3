@@ -6,6 +6,7 @@
 #include "image.h"
 #include "../shared/sockhelper.h"
 #include "fileutil.h"
+#include "picohttpparser/picohttpparser.h"
 
 #include <jansson.h>
 #include <sys/types.h>
@@ -21,13 +22,17 @@
 #define HTTP_CLOSE 4
 #define HTTP_KEEPALIVE 9
 
+_Static_assert( sizeof("test") == 5 && sizeof("test2") == 6, "Stringsize messup :/" );
+#define STRCMP(str,chr) ( (str).l == sizeof(chr)-1 && strncmp( (str).s, (chr), MIN((str).l, sizeof(chr)-1) ) == 0 )
+#define STRSTART(str,chr) ( (str).l >= sizeof(chr)-1 && strncmp( (str).s, (chr), MIN((str).l, sizeof(chr)-1) ) == 0 )
+
 #define MAX_ACLS 100
 static bool aclLoaded = false;
 static int aclCount = 0;
 static dnbd3_access_rule_t aclRules[MAX_ACLS];
 static json_int_t randomRunId;
 
-static bool handleStatus(int sock, const char *request, int permissions);
+static bool handleStatus(int sock, struct string *path, int permissions);
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive);
 static int getacl(dnbd3_host_t *host);
 static void addacl(int argc, char **argv, void *data);
@@ -35,7 +40,6 @@ static void loadAcl();
 
 void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int dataLen)
 {
-	// TODO use some small HTTP parser (picohttpparser or similar)
 	// TODO Parse Connection-header sent by client to see if keep-alive is supported
 	bool ok;
 	loadAcl();
@@ -44,87 +48,90 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		sendReply( sock, "403 Forbidden", "text/plain", "Access denied", -1, HTTP_CLOSE );
 		return;
 	}
-	char header[1000];
+	char headerBuf[1000];
 	if ( dataLen > 0 ) {
 		// We call this function internally with a maximum data len of sizeof(dnbd3_request_t) so no bounds checking
-		memcpy( header, data, dataLen );
+		memcpy( headerBuf, data, dataLen );
 	}
 	size_t hoff = dataLen;
 	do {
 		// Read request from client
-		char *end = NULL;
-		int state = 0;
+		struct phr_header headers[100];
+		size_t numHeaders, prevLen = 0, consumed;
+		struct string method, path;
 		do {
-			for (char *p = header; p < header + hoff; ++p) {
-				if ( *p == '\r' && ( state == 0 || state == 2 ) ) {
-					state++;
-				} else if ( *p == '\n' ) {
-					if ( state == 3 ) {
-						end = p + 1;
-						break;
-					}
-					if ( state == 1 ) {
-						state = 2;
-					} else {
-						state = 0;
-					}
-				} else if ( state != 0 ) {
-					state = 0;
-				}
+			int pret, minorVersion;
+			if ( hoff >= sizeof(headerBuf) ) return; // Request too large
+			if ( hoff != 0 ) {
+				numHeaders = 100;
+				pret = phr_parse_request( headerBuf, hoff, &method, &path, &minorVersion, headers, &numHeaders, prevLen );
+			} else {
+				pret = -2;
 			}
-			if ( end != NULL ) break;
-			if ( hoff >= sizeof(header) ) return; // Request too large
-			const size_t space = sizeof(header) - hoff;
-			const ssize_t ret = recv( sock, header + hoff, space, 0 );
-			if ( ret == 0 || ( ret == -1 && errno == EAGAIN ) ) return;
-			if ( ret == -1 && ( errno == EWOULDBLOCK || errno == EINTR ) ) continue;
-			hoff += ret;
+			if ( pret > 0 ) {
+				consumed = (size_t)pret;
+				break;
+			}
+			if ( pret == -2 ) {
+				prevLen = hoff;
+				ssize_t ret = recv( sock, headerBuf + hoff, sizeof(headerBuf) - hoff, 0 );
+				if ( ret == 0 ) return;
+				if ( ret == -1 ) {
+					if ( errno == EINTR ) continue;
+					sendReply( sock, "500 Internal Server Error", "text/plain", "Server made a boo-boo", -1, HTTP_CLOSE );
+					return; // Unknown error
+				}
+				hoff += ret;
+			} else {
+				sendReply( sock, "400 Bad Request", "text/plain", "Server cannot understand what you're trying to say", -1, HTTP_CLOSE );
+				return;
+			}
 		} while ( true );
-		// Now end points to the byte after the \r\n\r\n of the header,
-		if ( strncmp( header, "GET ", 4 ) != 0 && strncmp( header, "POST ", 5 ) != 0 ) return;
-		char *br = strstr( header, "\r\n" );
-		if ( br == NULL ) return; // Huh?
-		*br = '\0';
-		if ( strstr( header, " /query" ) != NULL ) {
-			ok = handleStatus( sock, header, permissions );
-		} else {
-			ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, HTTP_KEEPALIVE );
+		if ( method.s != NULL && path.s != NULL ) {
+			// Handle stuff
+			if ( method.s && method.s[0] == 'P' ) {
+				// POST only methods
+			}
+			// Don't care if GET or POST
+			if ( STRSTART( path, "/query" ) ) {
+				ok = handleStatus( sock, &path, permissions );
+			} else {
+				ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, HTTP_KEEPALIVE );
+			}
+			if ( !ok ) break;
 		}
-		if ( !ok ) break;
 		// hoff might be beyond end if the client sent another request (burst)
-		const ssize_t extra = ( header + hoff ) - end;
+		const ssize_t extra = hoff - consumed;
 		if ( extra > 0 ) {
-			memmove( header, end, extra );
-			hoff = extra;
-		} else {
-			hoff = 0;
+			memmove( headerBuf, headerBuf + consumed, extra );
 		}
+		hoff = extra;
 	} while (true);
 }
 
-static bool handleStatus(int sock, const char *request, int permissions)
+static bool handleStatus(int sock, struct string *path, int permissions)
 {
 	bool ok;
 	bool stats = false, images = false, clients = false, space = false;
-	if ( strstr( request, "stats" ) != NULL ) {
+	if ( strstr( path->s, "stats" ) != NULL ) {
 		if ( !(permissions & ACL_STATS) ) {
 			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
 		}
 		stats = true;
 	}
-	if ( strstr( request, "space" ) != NULL ) {
+	if ( strstr( path->s, "space" ) != NULL ) {
 		if ( !(permissions & ACL_STATS) ) {
 			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
 		}
 		space = true;
 	}
-	if ( strstr( request, "images" ) != NULL ) {
+	if ( strstr( path->s, "images" ) != NULL ) {
 		if ( !(permissions & ACL_IMAGE_LIST) ) {
 			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, HTTP_KEEPALIVE );
 		}
 		images = true;
 	}
-	if ( strstr(request, "clients" ) != NULL ) {
+	if ( strstr(path->s, "clients" ) != NULL ) {
 		if ( !(permissions & ACL_CLIENT_LIST) ) {
 			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access client list", -1, HTTP_KEEPALIVE );
 		}
