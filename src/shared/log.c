@@ -103,7 +103,7 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 		if ( logFd >= 0 ) {
 			size_t done = 0;
 			while (done < offset ) {
-				const ssize_t wr = write( logFd, buffer + done, ret - done );
+				const ssize_t wr = write( logFd, buffer + done, offset - done );
 				if ( wr < 0 ) {
 					printf( "Logging to file failed! (errno=%d)\n", errno );
 					break;
