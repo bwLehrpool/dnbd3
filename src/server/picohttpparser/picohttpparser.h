@@ -44,7 +44,6 @@ struct string {
     size_t l;
 };
 
-
 /* contains name and value of a header (name == NULL if is a continuing line
  * of a multiline header */
 struct phr_header {

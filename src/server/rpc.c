@@ -7,6 +7,7 @@
 #include "../shared/sockhelper.h"
 #include "fileutil.h"
 #include "picohttpparser/picohttpparser.h"
+#include "urldecode.h"
 
 #include <jansson.h>
 #include <sys/types.h>
@@ -32,8 +33,9 @@ static int aclCount = 0;
 static dnbd3_access_rule_t aclRules[MAX_ACLS];
 static json_int_t randomRunId;
 
-static bool handleStatus(int sock, struct string *path, int permissions);
+static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num);
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive);
+static void parsePath(struct string *path, struct string *file, struct field *getv, size_t *getc);
 static int getacl(dnbd3_host_t *host);
 static void addacl(int argc, char **argv, void *data);
 static void loadAcl();
@@ -48,7 +50,7 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		sendReply( sock, "403 Forbidden", "text/plain", "Access denied", -1, HTTP_CLOSE );
 		return;
 	}
-	char headerBuf[1000];
+	char headerBuf[3000];
 	if ( dataLen > 0 ) {
 		// We call this function internally with a maximum data len of sizeof(dnbd3_request_t) so no bounds checking
 		memcpy( headerBuf, data, dataLen );
@@ -89,12 +91,17 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		} while ( true );
 		if ( method.s != NULL && path.s != NULL ) {
 			// Handle stuff
+			struct string file;
+			struct field getv[10];
+			size_t getc = 10;
+			parsePath( &path, &file, getv, &getc );
 			if ( method.s && method.s[0] == 'P' ) {
 				// POST only methods
+
 			}
 			// Don't care if GET or POST
-			if ( STRSTART( path, "/query" ) ) {
-				ok = handleStatus( sock, &path, permissions );
+			if ( STRCMP( file, "/query" ) ) {
+				ok = handleStatus( sock, permissions, getv, getc );
 			} else {
 				ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, HTTP_KEEPALIVE );
 			}
@@ -109,33 +116,27 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	} while (true);
 }
 
-static bool handleStatus(int sock, struct string *path, int permissions)
+static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num)
 {
 	bool ok;
 	bool stats = false, images = false, clients = false, space = false;
-	if ( strstr( path->s, "stats" ) != NULL ) {
-		if ( !(permissions & ACL_STATS) ) {
-			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
-		}
-		stats = true;
+#define SETVAR(var) if ( !var && STRCMP(fields[i].value, #var) ) var = true
+	for (size_t i = 0; i < fields_num; ++i) {
+		if ( !STRCMP( fields[i].name, "q" ) ) continue;
+		SETVAR(stats);
+		else SETVAR(space);
+		else SETVAR(images);
+		else SETVAR(clients);
 	}
-	if ( strstr( path->s, "space" ) != NULL ) {
-		if ( !(permissions & ACL_STATS) ) {
-			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
-		}
-		space = true;
+#undef SETVAR
+	if ( ( stats || space ) && !(permissions & ACL_STATS) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
 	}
-	if ( strstr( path->s, "images" ) != NULL ) {
-		if ( !(permissions & ACL_IMAGE_LIST) ) {
-			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, HTTP_KEEPALIVE );
-		}
-		images = true;
+	if ( images && !(permissions & ACL_IMAGE_LIST) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, HTTP_KEEPALIVE );
 	}
-	if ( strstr(path->s, "clients" ) != NULL ) {
-		if ( !(permissions & ACL_CLIENT_LIST) ) {
-			return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access client list", -1, HTTP_KEEPALIVE );
-		}
-		clients = true;
+	if ( clients && !(permissions & ACL_CLIENT_LIST) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access client list", -1, HTTP_KEEPALIVE );
 	}
 	// Call this first because it will update the total bytes sent counter
 	json_t *jsonClients = NULL;
@@ -197,8 +198,28 @@ static bool sendReply(int sock, const char *status, const char *ctype, const cha
 		// Wait for flush
 		shutdown( sock, SHUT_WR );
 		while ( read( sock, buffer, sizeof buffer ) > 0 );
+		return false;
 	}
 	return true;
+}
+
+static void parsePath(struct string *path, struct string *file, struct field *getv, size_t *getc)
+{
+	size_t i = 0;
+	while ( i < path->l && path->s[i] != '?' ) ++i;
+	if ( i == path->l ) {
+		*getc = 0;
+		*file = *path;
+		return;
+	}
+	file->s = path->s;
+	file->l = i;
+	++i;
+	path->s += i;
+	path->l -= i;
+	urldecode( path, getv, getc );
+	path->s -= i;
+	path->l += i;
 }
 
 static int getacl(dnbd3_host_t *host)
