@@ -82,12 +82,12 @@ static char host_to_string(const dnbd3_host_t *host, char *target, size_t target
 {
 	// Worst case: Port 5 chars, ':' to separate ip and port 1 char, terminating null 1 char = 7, [] for IPv6
 	if ( targetlen < 10 ) return false;
-	if ( host->type == AF_INET6 ) {
+	if ( host->type == HOST_IP6 ) {
 		*target++ = '[';
 		inet_ntop( AF_INET6, host->addr, target, targetlen - 10 );
 		target += strlen( target );
 		*target++ = ']';
-	} else if ( host->type == AF_INET ) {
+	} else if ( host->type == HOST_IP4 ) {
 		inet_ntop( AF_INET, host->addr, target, targetlen - 8 );
 		target += strlen( target );
 	} else {
@@ -106,7 +106,7 @@ static char host_to_string(const dnbd3_host_t *host, char *target, size_t target
 /**
  * Parse IPv4 or IPv6 address in string representation to a suitable format usable by the BSD socket library
  * @string eg. "1.2.3.4" or "2a01::10:5", optially with port appended, eg "1.2.3.4:6666" or "[2a01::10:5]:6666"
- * @af will contain either AF_INET or AF_INET6
+ * @af will contain either HOST_IP4 or HOST_IP6
  * @addr will contain the address in network representation
  * @port will contain the port in network representation, defaulting to #define PORT if none was given
  * returns 1 on success, 0 in failure. contents of af, addr and port are undefined in the latter case
@@ -119,14 +119,14 @@ static char parse_address(char *string, dnbd3_host_t *host)
 
 	// Try IPv4 without port
 	if ( 1 == inet_pton( AF_INET, string, &v4 ) ) {
-		host->type = AF_INET;
+		host->type = HOST_IP4;
 		memcpy( host->addr, &v4, 4 );
 		host->port = htons( PORT );
 		return 1;
 	}
 	// Try IPv6 without port
 	if ( 1 == inet_pton( AF_INET6, string, &v6 ) ) {
-		host->type = AF_INET6;
+		host->type = HOST_IP6;
 		memcpy( host->addr, &v6, 16 );
 		host->port = htons( PORT );
 		return 1;
@@ -153,13 +153,13 @@ static char parse_address(char *string, dnbd3_host_t *host)
 
 	// Try IPv4 with port
 	if ( 1 == inet_pton( AF_INET, string, &v4 ) ) {
-		host->type = AF_INET;
+		host->type = HOST_IP4;
 		memcpy( host->addr, &v4, 4 );
 		return 1;
 	}
 	// Try IPv6 with port
 	if ( 1 == inet_pton( AF_INET6, string, &v6 ) ) {
-		host->type = AF_INET6;
+		host->type = HOST_IP6;
 		memcpy( host->addr, &v6, 16 );
 		return 1;
 	}
@@ -178,10 +178,11 @@ static int dnbd3_get_ip(char *hostname, dnbd3_host_t *host)
 		return false;
 	}
 
-	host->type = (uint8_t)hent->h_addrtype;
 	if ( hent->h_addrtype == AF_INET ) {
+		host->type = HOST_IP4;
 		memcpy( host->addr, hent->h_addr, 4);
 	} else if (hent->h_addrtype == AF_INET6) {
+		host->type = HOST_IP6;
 		memcpy(host->addr, hent->h_addr, 16);
 	} else {
 		printf("FATAL: Unknown address type: %d\n", hent->h_addrtype);

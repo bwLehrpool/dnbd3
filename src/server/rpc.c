@@ -267,11 +267,11 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 		char *last;
 		bits = strtol( slash, &last, 10 );
 		if ( last == slash ) slash = NULL;
-		if ( host.type == AF_INET && bits > 32 ) bits = 32;
+		if ( host.type == HOST_IP4 && bits > 32 ) bits = 32;
 		if ( bits > 128 ) bits = 128;
 	}
 	if ( slash == NULL ) {
-		if ( host.type == AF_INET ) {
+		if ( host.type == HOST_IP4 ) {
 			bits = 32;
 		} else {
 			bits = 128;

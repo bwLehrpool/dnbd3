@@ -29,9 +29,9 @@
 
 ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
 {
-	if (dev->cur_server.host.type == AF_INET)
+	if (dev->cur_server.host.type == HOST_IP4)
 		return MIN(snprintf(buf, PAGE_SIZE, "%pI4,%d\n", dev->cur_server.host.addr, (int)ntohs(dev->cur_server.host.port)), PAGE_SIZE);
-	else if (dev->cur_server.host.type == AF_INET6)
+	else if (dev->cur_server.host.type == HOST_IP6)
 		return MIN(snprintf(buf, PAGE_SIZE, "%pI6,%d\n", dev->cur_server.host.addr, (int)ntohs(dev->cur_server.host.port)), PAGE_SIZE);
 	*buf = '\0';
 	return 0;
@@ -57,14 +57,14 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 	int i, size = PAGE_SIZE, ret;
 	for (i = 0; i < NUMBER_SERVERS; ++i)
 	{
-		if (dev->alt_servers[i].host.type == AF_INET)
+		if (dev->alt_servers[i].host.type == HOST_IP4)
 			ret = MIN(snprintf(buf, size, "%pI4,%d,%llu,%d\n",
 			                   dev->alt_servers[i].host.addr,
 			                   (int)ntohs(dev->alt_servers[i].host.port),
 			                   (unsigned long long)((dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3]) / 4),
 			                   (int)dev->alt_servers[i].failures)
 			          , size);
-		else if (dev->alt_servers[i].host.type == AF_INET6)
+		else if (dev->alt_servers[i].host.type == HOST_IP6)
 			ret = MIN(snprintf(buf, size, "%pI6,%d,%llu,%d\n",
 			                   dev->alt_servers[i].host.addr,
 			                   (int)ntohs(dev->alt_servers[i].host.port),

@@ -25,7 +25,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	struct sockaddr_storage ss;
 	int proto, addrlen;
 	memset( &ss, 0, sizeof ss );
-	if ( addr->type == AF_INET ) {
+	if ( addr->type == HOST_IP4 ) {
 		// Set host (IPv4)
 		struct sockaddr_in *addr4 = (struct sockaddr_in*)&ss;
 		addr4->sin_family = AF_INET;
@@ -35,7 +35,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 		addrlen = sizeof *addr4;
 	}
 #ifdef WITH_IPV6
-	else if ( addr->type == AF_INET6 ) {
+	else if ( addr->type == HOST_IP6 ) {
 		// Set host (IPv6)
 		struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)&ss;
 		addr6->sin6_family = AF_INET6;
@@ -112,11 +112,10 @@ int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const des
 		return 0;
 	}
 	for ( ptr = res; ptr != NULL && count > 0; ptr = ptr->ai_next ) {
-		// TODO: AF->DNBD3
 		if ( ptr->ai_addr->sa_family == AF_INET ) {
 			// Set host (IPv4)
 			struct sockaddr_in *addr4 = (struct sockaddr_in*)ptr->ai_addr;
-			dest[addCount].type = AF_INET;
+			dest[addCount].type = HOST_IP4;
 			dest[addCount].port = addr4->sin_port;
 			memcpy( dest[addCount].addr, &addr4->sin_addr, 4 );
 			addCount += 1;
@@ -124,7 +123,7 @@ int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const des
 		} else if ( ptr->ai_addr->sa_family == AF_INET6 ) {
 			// Set host (IPv6)
 			struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)ptr->ai_addr;
-			dest[addCount].type = AF_INET6;
+			dest[addCount].type = HOST_IP6;
 			dest[addCount].port = addr6->sin6_port;
 			memcpy( dest[addCount].addr, &addr6->sin6_addr, 16 );
 			addCount += 1;
@@ -165,12 +164,12 @@ size_t sock_printHost(const dnbd3_host_t * const host, char * const buffer, cons
 	// Worst case: Port 5 chars, ':' to separate ip and port 1 char, terminating null 1 char = 7, [] for IPv6
 	if ( len < 10 ) return 0;
 	char *output = buffer;
-	if ( host->type == AF_INET6 ) {
+	if ( host->type == HOST_IP6 ) {
 		*output++ = '[';
 		inet_ntop( AF_INET6, host->addr, output, (socklen_t)( len - 10 ) );
 		output += strlen( output );
 		*output++ = ']';
-	} else if ( host->type == AF_INET ) {
+	} else if ( host->type == HOST_IP4 ) {
 		inet_ntop( AF_INET, host->addr, output, (socklen_t)( len - 8 ) );
 		output += strlen( output );
 	} else {

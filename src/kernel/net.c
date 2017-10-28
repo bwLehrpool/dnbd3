@@ -32,9 +32,9 @@
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
-#define dnbd3_sock_create(af,type,proto,sock) sock_create_kern(&init_net, af, type, proto, sock)
+#define dnbd3_sock_create(af,type,proto,sock) sock_create_kern(&init_net, (af) == HOST_IP4 ? AF_INET : AF_INET6, type, proto, sock)
 #else
-#define dnbd3_sock_create(af,type,proto,sock) sock_create_kern(af, type, proto, sock)
+#define dnbd3_sock_create(af,type,proto,sock) sock_create_kern((af) == HOST_IP4 ? AF_INET : AF_INET6, type, proto, sock)
 #endif
 
 /**
@@ -44,7 +44,7 @@
  */
 #if 1 // Change to 0 to disable debug messages
 #define debug_print_va_host(_host, _fmt, ...) do { \
-	if ((_host).type == AF_INET) \
+	if ((_host).type == HOST_IP4) \
 		printk("%s:%d " _fmt " (%s, %pI4:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
 	else \
 		printk("%s:%d " _fmt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, __VA_ARGS__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
@@ -59,7 +59,7 @@
 #define error_alt_va(_fmt, ...) debug_error_va_host(dev->alt_servers[i].host, _fmt, __VA_ARGS__)
 
 #define debug_print_host(_host, txt) do { \
-	if ((_host).type == AF_INET) \
+	if ((_host).type == HOST_IP4) \
 		printk("%s:%d " txt " (%s, %pI4:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
 	else \
 		printk("%s:%d " txt " (%s, [%pI6]:%d)\n", __FILE__, __LINE__, dev->disk->disk_name, (_host).addr, (int)ntohs((_host).port)); \
@@ -87,7 +87,7 @@
 static inline int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b)
 {
 	return (a->host.type == b->host.type) && (a->host.port == b->host.port)
-	   && (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == AF_INET ? 4 : 16)));
+	   && (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == HOST_IP4 ? 4 : 16)));
 }
 
 static inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t * const newserver,
@@ -99,7 +99,7 @@ static inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t * c
 		if ((newserver->host.type == dev->alt_servers[i].host.type)
 		   && (newserver->host.port == dev->alt_servers[i].host.port)
 		   && (0
-		      == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr, (newserver->host.type == AF_INET ? 4 : 16))))
+		      == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr, (newserver->host.type == HOST_IP4 ? 4 : 16))))
 		{
 			return &dev->alt_servers[i];
 			break;
@@ -159,7 +159,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	if (dev->sock)
 		error_dev("ERROR: Already connected.");
 
-	if (dev->cur_server.host.type != AF_INET && dev->cur_server.host.type != AF_INET6)
+	if (dev->cur_server.host.type != HOST_IP4 && dev->cur_server.host.type != HOST_IP6)
 		error_dev_va("ERROR: Unknown address type %d", (int)dev->cur_server.host.type);
 
 	debug_dev("INFO: Connecting...");
@@ -182,7 +182,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
 		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
 		dev->sock->sk->sk_allocation = GFP_NOIO;
-		if (dev->cur_server.host.type == AF_INET)
+		if (dev->cur_server.host.type == HOST_IP4)
 		{
 			struct sockaddr_in sin;
 			memset(&sin, 0, sizeof(sin));
@@ -479,7 +479,7 @@ int dnbd3_net_discover(void *data)
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			for (i = 0; i < dev->new_servers_num; ++i)
 			{
-				if (dev->new_servers[i].host.type != AF_INET && dev->new_servers[i].host.type != AF_INET6) // Invalid entry?
+				if (dev->new_servers[i].host.type != HOST_IP4 && dev->new_servers[i].host.type != HOST_IP6) // Invalid entry?
 					continue;
 				alt_server = get_existing_server(&dev->new_servers[i], dev);
 				if (alt_server != NULL ) // Server already known
@@ -487,7 +487,7 @@ int dnbd3_net_discover(void *data)
 					if (dev->new_servers[i].failures == 1)
 					{
 						// REMOVE request
-						if (alt_server->host.type == AF_INET)
+						if (alt_server->host.type == HOST_IP4)
 							debug_dev_va("Removing alt server %pI4", alt_server->host.addr);
 						else
 							debug_dev_va("Removing alt server %pI6", alt_server->host.addr);
@@ -505,7 +505,7 @@ int dnbd3_net_discover(void *data)
 					continue;
 				// Add new server entry
 				alt_server->host = dev->new_servers[i].host;
-				if (alt_server->host.type == AF_INET)
+				if (alt_server->host.type == HOST_IP4)
 					debug_dev_va("Adding alt server %pI4", alt_server->host.addr);
 				else
 					debug_dev_va("Adding alt server %pI6", alt_server->host.addr);
@@ -559,7 +559,7 @@ int dnbd3_net_discover(void *data)
 			kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
 			kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
 			sock->sk->sk_allocation = GFP_NOIO;
-			if (dev->alt_servers[i].host.type == AF_INET)
+			if (dev->alt_servers[i].host.type == HOST_IP4)
 			{
 				sin4.sin_family = AF_INET;
 				memcpy(&sin4.sin_addr, dev->alt_servers[i].host.addr, 4);

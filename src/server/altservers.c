@@ -296,7 +296,7 @@ int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2)
 {
 	if ( host1 == NULL || host2 == NULL || host1->type != host2->type ) return -1;
 	int retval = 0;
-	const int max = host1->type == AF_INET ? 4 : 16;
+	const int max = host1->type == HOST_IP4 ? 4 : 16;
 	for (int i = 0; i < max; ++i) {
 		if ( (host1->addr[i] & 0xf0) != (host2->addr[i] & 0xf0) ) return retval;
 		++retval;
