@@ -69,6 +69,9 @@ void net_updateGlobalSentStatsFromClient(dnbd3_client_t * const client)
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
 	ssize_t ret, fails = 0;
+#ifdef AFL_MODE
+	sock = 0;
+#endif
 	// Read request header from socket
 	while ( ( ret = recv( sock, request, sizeof(*request), MSG_WAITALL ) ) != sizeof(*request) ) {
 		if ( errno == EINTR && ++fails < 10 ) continue;
@@ -93,6 +96,9 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 
 static inline bool recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
 {
+#ifdef AFL_MODE
+	sock = 0;
+#endif
 	if ( size == 0 ) {
 		logadd( LOG_ERROR, "Called recv_request_payload() to receive 0 bytes" );
 		return false;
@@ -169,7 +175,11 @@ void* net_handleNewConnection(void *clientPtr)
 	// Await data from client. Since this is a fresh connection, we expect data right away
 	sock_setTimeout( client->sock, _clientTimeout );
 	do {
+#ifdef AFL_MODE
+		const int ret = (int)recv( 0, &request, sizeof(request), MSG_WAITALL );
+#else
 		const int ret = (int)recv( client->sock, &request, sizeof(request), MSG_WAITALL );
+#endif
 		// It's expected to be a real dnbd3 client
 		// Check request for validity. This implicitly dictates that all HTTP requests are more than 16 bytes...
 		if ( ret != (int)sizeof(request) ) {
@@ -408,7 +418,32 @@ void* net_handleNewConnection(void *clientPtr)
 						realBytes = image->realFilesize - offset;
 					}
 					while ( done < realBytes ) {
-#ifdef __linux__
+#ifdef AFL_MODE
+						char buf[1000];
+						size_t cnt = realBytes - done;
+						if ( cnt > 1000 ) {
+							cnt = 1000;
+						}
+						const ssize_t ret = pread( image_file, buf, cnt, offset );
+						if ( ret <= 0 ) {
+							const int err = errno;
+							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+							if ( ret == -1 ) {
+								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
+										&& err != EAGAIN && err != EWOULDBLOCK ) {
+									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
+											client->hostName, (int)done, (int)realBytes, err );
+								}
+								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
+									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
+									image->working = false;
+								}
+							}
+							goto exit_client_cleanup;
+						}
+						write( client->sock, buf, ret );
+						done += ret;
+#elif defined(__linux__)
 						const ssize_t ret = sendfile( client->sock, image_file, &foffset, realBytes - done );
 						if ( ret <= 0 ) {
 							const int err = errno;

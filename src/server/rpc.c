@@ -133,7 +133,11 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			// Reaching here means partial request or parse error
 			if ( pret == -2 ) { // Partial, keep reading
 				prevLen = hoff;
+#ifdef AFL_MODE
+				ssize_t ret = recv( 0, headerBuf + hoff, sizeof(headerBuf) - hoff, 0 );
+#else
 				ssize_t ret = recv( sock, headerBuf + hoff, sizeof(headerBuf) - hoff, 0 );
+#endif
 				if ( ret == 0 ) return;
 				if ( ret == -1 ) {
 					if ( errno == EINTR ) continue;
@@ -260,6 +264,9 @@ static bool sendReply(int sock, const char *status, const char *ctype, const cha
 	if ( keepAlive == HTTP_CLOSE ) {
 		// Wait for flush
 		shutdown( sock, SHUT_WR );
+#ifdef AFL_MODE
+		sock = 0;
+#endif
 		while ( read( sock, buffer, sizeof buffer ) > 0 );
 		return false;
 	}
@@ -303,7 +310,11 @@ static int getacl(dnbd3_host_t *host)
 		if ( aclRules[i].bitMask != 0 && aclRules[i].host[aclRules[i].bytes] != ( host->addr[aclRules[i].bytes] & aclRules[i].bitMask ) ) continue;
 		return aclRules[i].permissions;
 	}
+#ifdef AFL_MODE
+	return 0x7fffff;
+#else
 	return 0;
+#endif
 }
 
 #define SETBIT(x) else if ( strcmp( argv[i], #x ) == 0 ) mask |= ACL_ ## x

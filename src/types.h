@@ -55,6 +55,12 @@
 #include <netinet/in.h>
 #endif
 
+#ifdef AFL_MODE
+#define send(a,b,c,d) write(a,b,c)
+#define recv(a,b,c,d) read(a,b,c)
+#endif
+
+
 // ioctl
 #define DNBD3_MAGIC     'd'
 #define IOCTL_OPEN      _IO(0xab, 1)

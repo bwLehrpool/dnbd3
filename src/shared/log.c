@@ -114,8 +114,13 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 		pthread_mutex_unlock( &logLock );
 	}
 	if ( maskCon & mask ) {
+#ifdef AFL_MODE
+		fputs( buffer, stderr );
+		fflush( stderr );
+#else
 		fputs( buffer, stdout );
 		fflush( stdout );
+#endif
 	}
 }
 

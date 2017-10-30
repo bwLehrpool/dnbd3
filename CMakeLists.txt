@@ -14,6 +14,8 @@ OPTION(BUILD_FUSE_CLIENT "Build dnbd3 fuse client" ON)
 OPTION(BUILD_SERVER "Build dnbd3 server" ON)
 OPTION(BUILD_STRESSTEST "Build dnbd3 stress testing tool" OFF)
 
+OPTION(SERVER_FOR_AFL "Build dnbd3-server for usage with afl-fuzz" OFF)
+
 # Is there a non-retarded way to check if build type is debug or release?
 # When specifying, it is case insensitive, so DeBuG would also enable debug builds,
 # but in cmake, we can only do case sensitive matches... :/
@@ -140,6 +142,10 @@ ENDIF()
 ################################################################################
 
 if(BUILD_SERVER)
+	IF(SERVER_FOR_AFL)
+		message(" ######################## Building server for AFL mode - will be useless otherwise!")
+		ADD_DEFINITIONS(-DAFL_MODE)
+	ENDIF()
 	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${JANSSON_INCLUDE_DIR})
 	FILE(GLOB SERVER_SRCS src/server/*.c src/shared/*.c src/server/picohttpparser/*.c)
 	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})

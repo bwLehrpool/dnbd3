@@ -28,6 +28,7 @@
 #include "altservers.h"
 #include "integrity.h"
 #include "threadpool.h"
+#include "rpc.h"
 
 #include "../version.h"
 #include "../shared/sockhelper.h"
@@ -227,6 +228,40 @@ int main(int argc, char *argv[])
 		exit( EXIT_FAILURE );
 	}
 
+	timing_setBase();
+	timing_get( &startupTime );
+
+#ifdef AFL_MODE
+	// ###### AFL
+	//
+	image_serverStartup();
+	net_init();
+	uplink_globalsInit();
+	rpc_init();
+	if ( !image_loadAll( NULL ) || _shutdown ) {
+		fprintf( stderr, "Error loading images\n" );
+		exit( 3 );
+	}
+	{
+		struct sockaddr_storage client;
+		memset( &client, 0, sizeof client );
+		client.ss_family = AF_INET;
+		dnbd3_client_t *dnbd3_client = dnbd3_prepareClient( &client, 1 );
+		if ( dnbd3_client == NULL ) {
+			fprintf( stderr, "New client failed\n" );
+			exit( 1 );
+		}
+#ifdef __AFL_HAVE_MANUAL_CONTROL
+		__AFL_INIT();
+#endif
+		net_handleNewConnection( dnbd3_client );
+		exit( 0 );
+	}
+	//
+	// ###### AFL END
+#endif
+
+
 	// One-shots first:
 
 	if ( paramCreate != NULL ) {
@@ -236,12 +271,12 @@ int main(int argc, char *argv[])
 	// No one-shot detected, normal server operation
 
 	if ( demonize ) daemon( 1, 0 );
-	timing_setBase();
 	image_serverStartup();
 	altservers_init();
 	integrity_init();
 	net_init();
 	uplink_globalsInit();
+	rpc_init();
 	logadd( LOG_INFO, "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
 
 	if ( altservers_load() < 0 ) {
@@ -267,8 +302,6 @@ int main(int argc, char *argv[])
 		dnbd3_cleanup();
 		return 0;
 	}
-
-	timing_get( &startupTime );
 
 	// Give other threads some time to start up before accepting connections
 	sleep( 1 );
