@@ -80,7 +80,9 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 				if ( ret == 0 ) return;
 				if ( ret == -1 ) {
 					if ( errno == EINTR ) continue;
-					sendReply( sock, "500 Internal Server Error", "text/plain", "Server made a boo-boo", -1, HTTP_CLOSE );
+					if ( errno != EAGAIN && errno != EWOULDBLOCK ) {
+						sendReply( sock, "500 Internal Server Error", "text/plain", "Server made a boo-boo", -1, HTTP_CLOSE );
+					}
 					return; // Unknown error
 				}
 				hoff += ret;
