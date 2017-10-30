@@ -254,7 +254,7 @@ static bool sendReply(int sock, const char *status, const char *ctype, const cha
 	const char *connection = ( keepAlive == HTTP_KEEPALIVE ) ? "Keep-Alive" : "Close";
 	int hlen = snprintf(buffer, sizeof(buffer), "HTTP/1.1 %s\r\n"
 			"Connection: %s\r\n"
-			"Content-Type: %s\r\n"
+			"Content-Type: %s; charset=utf-8\r\n"
 			"Content-Length: %u\r\n"
 			"\r\n",
 			status, connection, ctype, (unsigned int)plen );
