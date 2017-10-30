@@ -15,6 +15,7 @@
 
 /* Constants */
 static const size_t SHORTBUF = 100;
+#define SOCKET_KEEPALIVE_TIMEOUT (3)
 #define MAX_ALTS (8)
 #define MAX_HOSTS_PER_ADDRESS (2)
 // If a server wasn't reachable this many times, we slowly start skipping it on measurements
