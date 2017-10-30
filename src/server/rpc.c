@@ -23,28 +23,80 @@
 #define HTTP_CLOSE 4
 #define HTTP_KEEPALIVE 9
 
+// Make sure compiler does not reserve more space for static strings than required (or rather, does not tell so in sizeof calls)
+// TODO Might be time for a dedicated string.h
 _Static_assert( sizeof("test") == 5 && sizeof("test2") == 6, "Stringsize messup :/" );
-#define STRCMP(str,chr) ( (str).l == sizeof(chr)-1 && strncmp( (str).s, (chr), MIN((str).l, sizeof(chr)-1) ) == 0 )
-#define STRSTART(str,chr) ( (str).l >= sizeof(chr)-1 && strncmp( (str).s, (chr), MIN((str).l, sizeof(chr)-1) ) == 0 )
+#define STRCMP(str,chr) ( (str).s != NULL && (str).l == sizeof(chr)-1 && strncmp( (str).s, (chr), MIN((str).l, sizeof(chr)-1) ) == 0 )
+#define STRSTART(str,chr) ( (str).s != NULL && (str).l >= sizeof(chr)-1 && strncmp( (str).s, (chr), MIN((str).l, sizeof(chr)-1) ) == 0 )
+#define SETSTR(name,value) do { name.s = value; name.l = sizeof(value)-1; } while (0)
+#define DEFSTR(name,value) static struct string name = { .s = value, .l = sizeof(value)-1 };
+#define chartolower(c) ((char)( (c) >= 'A' && (c) <= 'Z' ? (c) + ('a'-'A') : (c) ))
+
+//static struct string STR_CONNECTION, STR_KEEPALIVE;
+DEFSTR(STR_CONNECTION, "connection")
+DEFSTR(STR_CLOSE, "close")
+DEFSTR(STR_QUERY, "/query")
+DEFSTR(STR_Q, "q")
+
+static inline bool equals(struct string *s1,struct string *s2)
+{
+	if ( s1->s == NULL ) {
+		return s2->s == NULL;
+	} else if ( s2->s == NULL || s1->l != s2->l ) {
+		return false;
+	}
+	return memcmp( s1->s, s2->s, s1->l ) == 0;
+}
+
+static inline bool iequals(struct string *cmpMixed, struct string *cmpLower)
+{
+	if ( cmpMixed->s == NULL ) {
+		return cmpLower->s == NULL;
+	} else if ( cmpLower->s == NULL || cmpMixed->l != cmpLower->l ) {
+		return false;
+	}
+	for ( size_t i = 0; i < cmpMixed->l; ++i ) {
+		if ( chartolower( cmpMixed->s[i] ) != cmpLower->s[i] ) return false;
+	}
+	return true;
+}
 
 #define MAX_ACLS 100
-static bool aclLoaded = false;
 static int aclCount = 0;
 static dnbd3_access_rule_t aclRules[MAX_ACLS];
 static json_int_t randomRunId;
+static pthread_spinlock_t aclLock;
 
-static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num);
+static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive);
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive);
 static void parsePath(struct string *path, struct string *file, struct field *getv, size_t *getc);
+static bool hasHeaderValue(struct phr_header *headers, size_t numHeaders, struct string *name, struct string *value);
 static int getacl(dnbd3_host_t *host);
 static void addacl(int argc, char **argv, void *data);
 static void loadAcl();
+
+void rpc_init()
+{
+	spin_init( &aclLock, PTHREAD_PROCESS_PRIVATE );
+	randomRunId = (((json_int_t)getpid()) << 16) | (json_int_t)time(NULL);
+	// </guard>
+	if ( sizeof(randomRunId) > 4 ) {
+		int fd = open( "/dev/urandom", O_RDONLY );
+		if ( fd != -1 ) {
+			uint32_t bla = 1;
+			read( fd, &bla, 4 );
+			randomRunId = (randomRunId << 32) | bla;
+		}
+		close( fd );
+	}
+	loadAcl();
+}
 
 void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int dataLen)
 {
 	// TODO Parse Connection-header sent by client to see if keep-alive is supported
 	bool ok;
-	loadAcl();
+	int keepAlive = HTTP_KEEPALIVE;
 	int permissions = getacl( host );
 	if ( permissions == 0 ) {
 		sendReply( sock, "403 Forbidden", "text/plain", "Access denied", -1, HTTP_CLOSE );
@@ -61,20 +113,25 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		struct phr_header headers[100];
 		size_t numHeaders, prevLen = 0, consumed;
 		struct string method, path;
+		int minorVersion;
 		do {
-			int pret, minorVersion;
+			// Parse before calling recv, there might be a complete pipelined request in the buffer already
+			int pret;
 			if ( hoff >= sizeof(headerBuf) ) return; // Request too large
 			if ( hoff != 0 ) {
 				numHeaders = 100;
 				pret = phr_parse_request( headerBuf, hoff, &method, &path, &minorVersion, headers, &numHeaders, prevLen );
 			} else {
+				// Nothing in buffer yet, just set to -2 which is the phr return code for "partial request"
 				pret = -2;
 			}
 			if ( pret > 0 ) {
+				// > 0 means parsing completed without error
 				consumed = (size_t)pret;
 				break;
 			}
-			if ( pret == -2 ) {
+			// Reaching here means partial request or parse error
+			if ( pret == -2 ) { // Partial, keep reading
 				prevLen = hoff;
 				ssize_t ret = recv( sock, headerBuf + hoff, sizeof(headerBuf) - hoff, 0 );
 				if ( ret == 0 ) return;
@@ -86,12 +143,17 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 					return; // Unknown error
 				}
 				hoff += ret;
-			} else {
+			} else { // Parse error
 				sendReply( sock, "400 Bad Request", "text/plain", "Server cannot understand what you're trying to say", -1, HTTP_CLOSE );
 				return;
 			}
 		} while ( true );
+		// Only keep the connection alive (and indicate so) if the client seems to support this
+		if ( minorVersion == 0 || hasHeaderValue( headers, numHeaders, &STR_CONNECTION, &STR_CLOSE ) ) {
+			keepAlive = HTTP_CLOSE;
+		}
 		if ( method.s != NULL && path.s != NULL ) {
+			// Basic data filled from request parser
 			// Handle stuff
 			struct string file;
 			struct field getv[10];
@@ -99,13 +161,12 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			parsePath( &path, &file, getv, &getc );
 			if ( method.s && method.s[0] == 'P' ) {
 				// POST only methods
-
 			}
 			// Don't care if GET or POST
-			if ( STRCMP( file, "/query" ) ) {
-				ok = handleStatus( sock, permissions, getv, getc );
+			if ( equals( &file, &STR_QUERY ) ) {
+				ok = handleStatus( sock, permissions, getv, getc, keepAlive );
 			} else {
-				ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, HTTP_KEEPALIVE );
+				ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, keepAlive );
 			}
 			if ( !ok ) break;
 		}
@@ -118,13 +179,13 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	} while (true);
 }
 
-static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num)
+static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive)
 {
 	bool ok;
 	bool stats = false, images = false, clients = false, space = false;
 #define SETVAR(var) if ( !var && STRCMP(fields[i].value, #var) ) var = true
 	for (size_t i = 0; i < fields_num; ++i) {
-		if ( !STRCMP( fields[i].name, "q" ) ) continue;
+		if ( !equals( &fields[i].name, &STR_Q ) ) continue;
 		SETVAR(stats);
 		else SETVAR(space);
 		else SETVAR(images);
@@ -132,13 +193,13 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	}
 #undef SETVAR
 	if ( ( stats || space ) && !(permissions & ACL_STATS) ) {
-		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, HTTP_KEEPALIVE );
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, keepAlive );
 	}
 	if ( images && !(permissions & ACL_IMAGE_LIST) ) {
-		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, HTTP_KEEPALIVE );
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, keepAlive );
 	}
 	if ( clients && !(permissions & ACL_CLIENT_LIST) ) {
-		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access client list", -1, HTTP_KEEPALIVE );
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access client list", -1, keepAlive );
 	}
 	// Call this first because it will update the total bytes sent counter
 	json_t *jsonClients = NULL;
@@ -177,7 +238,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 
 	char *jsonString = json_dumps( statisticsJson, 0 );
 	json_decref( statisticsJson );
-	ok = sendReply( sock, "200 OK", "application/json", jsonString, -1, HTTP_KEEPALIVE );
+	ok = sendReply( sock, "200 OK", "application/json", jsonString, -1, keepAlive );
 	free( jsonString );
 	return ok;
 }
@@ -224,6 +285,15 @@ static void parsePath(struct string *path, struct string *file, struct field *ge
 	path->l += i;
 }
 
+static bool hasHeaderValue(struct phr_header *headers, size_t numHeaders, struct string *name, struct string *value)
+{
+	for (size_t i = 0; i < numHeaders; ++i) {
+		if ( !iequals( &headers[i].name, name ) ) continue;
+		if ( iequals( &headers[i].value, value ) ) return true;
+	}
+	return false;
+}
+
 static int getacl(dnbd3_host_t *host)
 {
 	if ( aclCount == 0 ) return 0x7fffff; // For now compat mode - no rules defined == all access
@@ -241,9 +311,10 @@ static int getacl(dnbd3_host_t *host)
 static void addacl(int argc, char **argv, void *data UNUSED)
 {
 	if ( argv[0][0] == '#' ) return;
+	spin_lock( &aclLock );
 	if ( aclCount >= MAX_ACLS ) {
 		logadd( LOG_WARNING, "Too many ACL rules, ignoring %s", argv[0] );
-		return;
+		goto unlock_end;
 	}
 	int mask = 0;
 	for (int i = 1; i < argc; ++i) {
@@ -256,14 +327,14 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 	}
 	if ( mask == 0 ) {
 		logadd( LOG_INFO, "Ignoring empty rule for %s", argv[0] );
-		return;
+		goto unlock_end;
 	}
 	dnbd3_host_t host;
 	char *slash = strchr( argv[0], '/' );
 	if ( slash != NULL ) {
 		*slash++ = '\0';
 	}
-	if ( !parse_address( argv[0], &host ) ) return;
+	if ( !parse_address( argv[0], &host ) ) goto unlock_end;
 	long int bits;
 	if ( slash != NULL ) {
 		char *last;
@@ -295,27 +366,27 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 	// we need AND the host[.bytes] of the address to compare with the value
 	// in .bitMask, and compate it, otherwise, a simple memcmp will do.
 	aclCount++;
+unlock_end:;
+	spin_unlock( &aclLock );
 }
 
 static void loadAcl()
 {
+	static bool inProgress = false;
 	char *fn;
-	// TODO <guard>
-	if ( aclLoaded ) return;
-	aclLoaded = true;
-	randomRunId = (((json_int_t)getpid()) << 16) | (json_int_t)time(NULL);
-	// </guard>
-	if ( sizeof(randomRunId) > 4 ) {
-		int fd = open( "/dev/urandom", O_RDONLY );
-		if ( fd != -1 ) {
-			uint32_t bla = 1;
-			read( fd, &bla, 4 );
-			randomRunId = (randomRunId << 32) | bla;
-		}
-		close( fd );
-	}
 	if ( asprintf( &fn, "%s/%s", _configDir, "rpc.acl" ) == -1 ) return;
+	spin_lock( &aclLock );
+	if ( inProgress ) {
+		spin_unlock( &aclLock );
+		return;
+	}
+	aclCount = 0;
+	inProgress = true;
+	spin_unlock( &aclLock );
 	file_loadLineBased( fn, 1, 20, &addacl, NULL );
+	spin_lock( &aclLock );
+	inProgress = false;
+	spin_unlock( &aclLock );
 	free( fn );
 	logadd( LOG_INFO, "%d HTTPRPC ACL rules loaded", (int)aclCount );
 }
