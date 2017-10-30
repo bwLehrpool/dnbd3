@@ -98,7 +98,6 @@ void dnbd3_cleanup()
 	int retries;
 
 	_shutdown = true;
-	debug_locks_stop_watchdog();
 	logadd( LOG_INFO, "Cleanup..." );
 
 	if ( listeners != NULL ) sock_destroyPollList( listeners );
@@ -121,6 +120,9 @@ void dnbd3_cleanup()
 
 	// Wait for clients to disconnect
 	net_waitForAllDisconnected();
+
+	// Watchdog not needed anymore
+	debug_locks_stop_watchdog();
 
 	// Clean up images
 	retries = 5;
@@ -351,12 +353,12 @@ static dnbd3_client_t* dnbd3_prepareClient(struct sockaddr_storage *client, int 
 
 	if ( client->ss_family == AF_INET ) {
 		struct sockaddr_in *v4 = (struct sockaddr_in *)client;
-		dnbd3_client->host.type = AF_INET;
+		dnbd3_client->host.type = HOST_IP4;
 		memcpy( dnbd3_client->host.addr, &(v4->sin_addr), 4 );
 		dnbd3_client->host.port = v4->sin_port;
 	} else if ( client->ss_family == AF_INET6 ) {
 		struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)client;
-		dnbd3_client->host.type = AF_INET6;
+		dnbd3_client->host.type = HOST_IP6;
 		memcpy( dnbd3_client->host.addr, &(v6->sin6_addr), 16 );
 		dnbd3_client->host.port = v6->sin6_port;
 	} else {
@@ -370,6 +372,7 @@ static dnbd3_client_t* dnbd3_prepareClient(struct sockaddr_storage *client, int 
 
 static void dnbd3_handleSignal(int signum)
 {
+	if ( _shutdown ) return;
 	if ( signum == SIGINT || signum == SIGTERM ) {
 		_shutdown = true;
 	} else if ( signum == SIGUSR1 || signum == SIGHUP ) {
