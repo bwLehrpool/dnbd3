@@ -51,9 +51,9 @@ static uint64_t totalBytesSent = 0;
 static pthread_spinlock_t statisticsSentLock;
 
 // Adding and removing clients -- list management
-static void dnbd3_removeClient(dnbd3_client_t *client);
-static dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client);
-static bool dnbd3_addClient(dnbd3_client_t *client);
+static bool addToList(dnbd3_client_t *client);
+static void removeFromList(dnbd3_client_t *client);
+static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client);
 
 /**
  * Update global sent stats. Hold client's statsLock when calling.
@@ -218,8 +218,8 @@ void* net_handleNewConnection(void *clientPtr)
 	client->lastBytesSent = 0;
 	spin_unlock( &client->statsLock );
 
-	if ( !dnbd3_addClient( client ) ) {
-		dnbd3_freeClient( client );
+	if ( !addToList( client ) ) {
+		freeClientStruct( client );
 		logadd( LOG_WARNING, "Could not add new client to list when connecting" );
 		return NULL;
 	}
@@ -418,61 +418,39 @@ void* net_handleNewConnection(void *clientPtr)
 						realBytes = image->realFilesize - offset;
 					}
 					while ( done < realBytes ) {
+						// TODO: Should we consider EOPNOTSUPP on BSD for sendfile and fallback to read/write?
+						// Linux would set EINVAL or ENOSYS instead, which it unfortunately also does for a couple of other failures :/
+						// read/write would kill performance anyways so a fallback would probably be of little use either way.
 #ifdef AFL_MODE
 						char buf[1000];
 						size_t cnt = realBytes - done;
 						if ( cnt > 1000 ) {
 							cnt = 1000;
 						}
-						const ssize_t ret = pread( image_file, buf, cnt, offset );
-						if ( ret <= 0 ) {
+						const ssize_t sent = pread( image_file, buf, cnt, foffset );
+						if ( sent > 0 ) {
+							//write( client->sock, buf, sent ); // This is not verified in any way, so why even do it...
+						} else {
 							const int err = errno;
-							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-							if ( ret == -1 ) {
-								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
-										&& err != EAGAIN && err != EWOULDBLOCK ) {
-									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
-											client->hostName, (int)done, (int)realBytes, err );
-								}
-								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
-									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
-									image->working = false;
-								}
-							}
-							goto exit_client_cleanup;
-						}
-						write( client->sock, buf, ret );
-						done += ret;
 #elif defined(__linux__)
-						const ssize_t ret = sendfile( client->sock, image_file, &foffset, realBytes - done );
-						if ( ret <= 0 ) {
+						const ssize_t sent = sendfile( client->sock, image_file, &foffset, realBytes - done );
+						if ( sent <= 0 ) {
 							const int err = errno;
-							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-							if ( ret == -1 ) {
-								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
-										&& err != EAGAIN && err != EWOULDBLOCK ) {
-									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
-											client->hostName, (int)done, (int)realBytes, err );
-								}
-								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
-									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
-									image->working = false;
-								}
-							}
-							goto exit_client_cleanup;
-						}
-						done += ret;
 #elif defined(__FreeBSD__)
 						off_t sent;
-						int ret = sendfile( image_file, client->sock, foffset, realBytes - done, NULL, &sent, 0 );
-						const int err = errno;
-						if ( ret < 0 ) {
-							if ( err == EAGAIN ) {
-								done += sent;
-								continue;
-							}
+						const int ret = sendfile( image_file, client->sock, foffset, realBytes - done, NULL, &sent, 0 );
+						if ( ret == -1 || sent == 0 ) {
+							const int err = errno;
 							if ( ret == -1 ) {
-								if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+								if ( err == EAGAIN || err == EINTR ) { // EBUSY? manpage doesn't explicitly mention *sent here.. But then again we dont set the according flag anyways
+									done += sent;
+									continue;
+								}
+								sent = -1;
+							}
+#endif
+							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+							if ( sent == -1 ) {
 								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
 										&& err != EAGAIN && err != EWOULDBLOCK ) {
 									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
@@ -484,13 +462,10 @@ void* net_handleNewConnection(void *clientPtr)
 								}
 							}
 							goto exit_client_cleanup;
-						} else {
-							done += sent;
-							if ( sent == 0 ) break;
 						}
-#endif
+						done += sent;
 					}
-					logadd( LOG_DEBUG2, "Send %i to %s", realBytes, client->hostName );
+					logadd( LOG_DEBUG2, "Send %i to %s", (int)realBytes, client->hostName );
 					if ( request.size > (uint32_t)realBytes ) {
 						if ( !sendPadding( client->sock, request.size - (uint32_t)realBytes ) ) {
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
@@ -559,9 +534,9 @@ set_name: ;
 		}
 	}
 exit_client_cleanup: ;
-	dnbd3_removeClient( client );
+	removeFromList( client );
 	net_updateGlobalSentStatsFromClient( client ); // Don't need client's lock here as it's not active anymore
-	dnbd3_freeClient( client ); // This will also call image_release on client->image
+	freeClientStruct( client ); // This will also call image_release on client->image
 	return NULL ;
 fail_preadd: ;
 	close( client->sock );
@@ -672,7 +647,7 @@ void net_waitForAllDisconnected()
  * Remove a client from the clients array
  * Locks on: _clients_lock
  */
-static void dnbd3_removeClient(dnbd3_client_t *client)
+static void removeFromList(dnbd3_client_t *client)
 {
 	int i;
 	spin_lock( &_clients_lock );
@@ -691,7 +666,7 @@ static void dnbd3_removeClient(dnbd3_client_t *client)
  * Locks on: _clients[].lock, _images[].lock
  * might call functions that lock on _images, _image[], uplink.queueLock, client.sendMutex
  */
-static dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client)
+static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 {
 	spin_lock( &client->lock );
 	pthread_mutex_lock( &client->sendMutex );
@@ -720,7 +695,7 @@ static dnbd3_client_t* dnbd3_freeClient(dnbd3_client_t *client)
  * Add client to the clients array.
  * Locks on: _clients_lock
  */
-static bool dnbd3_addClient(dnbd3_client_t *client)
+static bool addToList(dnbd3_client_t *client)
 {
 	int i;
 	spin_lock( &_clients_lock );
