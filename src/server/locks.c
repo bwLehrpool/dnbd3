@@ -105,7 +105,7 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 	}
 	pthread_spin_unlock( &initdestory );
 	if ( t == NULL ) {
-		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads at %s:%d\n", (void*)lock, name, file, line );
+		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads for lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
 	const int retval = pthread_spin_lock( lock );
@@ -155,7 +155,7 @@ int debug_spin_trylock(const char *name, const char *file, int line, pthread_spi
 	}
 	pthread_spin_unlock( &initdestory );
 	if ( t == NULL ) {
-		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads at %s:%d\n", (void*)lock, name, file, line );
+		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads for %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
 	const int retval = pthread_spin_trylock( lock );

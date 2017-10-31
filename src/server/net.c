@@ -40,6 +40,7 @@
 #include <sys/uio.h>
 #endif
 #include <jansson.h>
+#include <inttypes.h>
 
 static dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 static int _num_clients = 0;
@@ -77,7 +78,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 		if ( errno == EINTR && ++fails < 10 ) continue;
 		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_CLIENT_RETRIES ) return false;
 		if ( errno == EAGAIN ) continue;
-		logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)\n", ret, (int)sizeof(*request), errno );
+		logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)\n", (int)ret, (int)sizeof(*request), errno );
 		return false;
 	}
 	// Make sure all bytes are in the right order (endianness)
@@ -122,7 +123,7 @@ static inline bool recv_request_payload(int sock, uint32_t size, serialized_buff
  */
 static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 {
-	const size_t size = reply->size;
+	const uint32_t size = reply->size;
 	fixup_reply( *reply );
 	if ( sock_sendAll( sock, reply, sizeof(dnbd3_reply_t), 1 ) != sizeof(dnbd3_reply_t) ) {
 		logadd( LOG_DEBUG1, "Sending reply header to client failed" );
@@ -130,7 +131,7 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
 	}
 	if ( size != 0 && payload != NULL ) {
 		if ( sock_sendAll( sock, payload, size, 1 ) != (ssize_t)size ) {
-			logadd( LOG_DEBUG1, "Sending payload of %u bytes to client failed", size );
+			logadd( LOG_DEBUG1, "Sending payload of %"PRIu32" bytes to client failed", size );
 			return false;
 		}
 	}

@@ -519,7 +519,7 @@ static void *altservers_main(void *data UNUSED)
 			// Done testing all servers. See if we should switch
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
-				logadd( LOG_DEBUG1, "Change @ %s - best: %uµs, current: %uµs\n", image->name, bestRtt, currentRtt );
+				logadd( LOG_DEBUG1, "Change @ %s - best: %luµs, current: %luµs\n", image->name, bestRtt, currentRtt );
 				spin_lock( &uplink->rttLock );
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];

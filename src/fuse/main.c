@@ -228,10 +228,10 @@ static void* image_init(struct fuse_conn_info *conn UNUSED)
 	// Retrieve old handlers when setting
 	sigaction( SIGINT, &newHandler, &oldHandler );
 	fuse_sigIntHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", fuse_sigIntHandler );
+	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
 	sigaction( SIGTERM, &newHandler, &oldHandler );
 	fuse_sigTermHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", fuse_sigIntHandler );
+	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
 	return NULL;
 }
 

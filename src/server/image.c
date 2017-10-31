@@ -992,7 +992,7 @@ static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t f
 		retval = calloc( 1, map_size );
 		const ssize_t rd = read( fdMap, retval, map_size );
 		if ( map_size != rd ) {
-			logadd( LOG_WARNING, "Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, fileSize );
+			logadd( LOG_WARNING, "Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, imagePath );
 			// Could not read complete map, that means the rest of the image file will be considered incomplete
 		}
 		close( fdMap );

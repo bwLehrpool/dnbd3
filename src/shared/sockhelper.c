@@ -235,7 +235,7 @@ bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port)
 			continue;
 		}
 		if ( listen( sock, 20 ) == -1 ) {
-			logadd( LOG_WARNING, "(Bind to %s): cannot listen(), errno=%d", errno );
+			logadd( LOG_WARNING, "(Bind to %s): cannot listen(), errno=%d", bla, errno );
 			close( sock );
 			continue;
 		}

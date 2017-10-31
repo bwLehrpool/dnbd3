@@ -45,7 +45,8 @@ bool log_openLogFile(const char *path);
 /**
  * Add a line to the log
  */
-void logadd(const logmask_t mask, const char *text, ...);
+void logadd(const logmask_t mask, const char *text, ...)
+	__attribute__ ((format (printf, 2, 3)));
 
 /**
  * Return last size bytes of log.
