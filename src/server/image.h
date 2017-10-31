@@ -5,9 +5,6 @@
 
 struct json_t;
 
-extern dnbd3_image_t *_images[];
-extern int _num_images;
-
 void image_serverStartup();
 
 bool image_isComplete(dnbd3_image_t *image);

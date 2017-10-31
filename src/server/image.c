@@ -22,8 +22,8 @@
 
 // ##########################################
 
-dnbd3_image_t *_images[SERVER_MAX_IMAGES];
-int _num_images = 0;
+static dnbd3_image_t *_images[SERVER_MAX_IMAGES];
+static int _num_images = 0;
 
 static pthread_spinlock_t imageListLock;
 static pthread_mutex_t remoteCloneLock = PTHREAD_MUTEX_INITIALIZER;
