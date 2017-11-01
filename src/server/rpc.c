@@ -32,7 +32,6 @@ _Static_assert( sizeof("test") == 5 && sizeof("test2") == 6, "Stringsize messup 
 #define DEFSTR(name,value) static struct string name = { .s = value, .l = sizeof(value)-1 };
 #define chartolower(c) ((char)( (c) >= 'A' && (c) <= 'Z' ? (c) + ('a'-'A') : (c) ))
 
-//static struct string STR_CONNECTION, STR_KEEPALIVE;
 DEFSTR(STR_CONNECTION, "connection")
 DEFSTR(STR_CLOSE, "close")
 DEFSTR(STR_QUERY, "/query")
@@ -66,6 +65,13 @@ static int aclCount = 0;
 static dnbd3_access_rule_t aclRules[MAX_ACLS];
 static json_int_t randomRunId;
 static pthread_spinlock_t aclLock;
+#define MAX_CLIENTS 50
+#define CUTOFF_START 40
+static pthread_spinlock_t statusLock;
+static struct {
+	int count;
+	bool overloaded;
+} status;
 
 static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive);
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive);
@@ -78,6 +84,7 @@ static void loadAcl();
 void rpc_init()
 {
 	spin_init( &aclLock, PTHREAD_PROCESS_PRIVATE );
+	spin_init( &statusLock, PTHREAD_PROCESS_PRIVATE );
 	randomRunId = (((json_int_t)getpid()) << 16) | (json_int_t)time(NULL);
 	// </guard>
 	if ( sizeof(randomRunId) > 4 ) {
@@ -92,15 +99,31 @@ void rpc_init()
 	loadAcl();
 }
 
+#define UPDATE_LOADSTATE(cnt) do { \
+	if ( cnt < (CUTOFF_START/2) ) {                        \
+		if ( status.overloaded ) status.overloaded = false; \
+	} else if ( cnt > CUTOFF_START ) {                     \
+		if ( !status.overloaded ) status.overloaded = true; \
+	}                                                      \
+} while (0)
+
 void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int dataLen)
 {
-	bool ok;
-	int keepAlive = HTTP_KEEPALIVE;
 	int permissions = getacl( host );
 	if ( permissions == 0 ) {
 		sendReply( sock, "403 Forbidden", "text/plain", "Access denied", -1, HTTP_CLOSE );
 		return;
 	}
+	do {
+		spin_lock( &statusLock );
+		const int curCount = ++status.count;
+		UPDATE_LOADSTATE( curCount );
+		spin_unlock( &statusLock );
+		if ( curCount > MAX_CLIENTS ) {
+			sendReply( sock, "503 Service Temporarily Unavailable", "text/plain", "Too many HTTP clients", -1, HTTP_CLOSE );
+			goto func_return;
+		}
+	} while (0);
 	char headerBuf[3000];
 	if ( dataLen > 0 ) {
 		// We call this function internally with a maximum data len of sizeof(dnbd3_request_t) so no bounds checking
@@ -108,6 +131,8 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	}
 	size_t hoff = dataLen;
 	bool hasName = false;
+	bool ok;
+	int keepAlive = HTTP_KEEPALIVE;
 	do {
 		// Read request from client
 		struct phr_header headers[100];
@@ -116,13 +141,21 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		int minorVersion;
 		do {
 			// Parse before calling recv, there might be a complete pipelined request in the buffer already
+			// If the request is incomplete, we allow exactly one additional recv() to complete it.
+			// This should suffice for real world scenarios as I don't know of any
+			// HTTP client that sends the request headers in multiple packets. Even
+			// with pipelining this should not break as we re-enter this loop after
+			// processing the requests one by one, so a potential partial request in the
+			// buffer will get another recv() (blocking mode)
+			// The alternative would be manual tracking of idle/request time to protect
+			// against never ending requests (slowloris)
 			int pret;
-			if ( hoff >= sizeof(headerBuf) ) return; // Request too large
+			if ( hoff >= sizeof(headerBuf) ) goto func_return; // Request too large
 			if ( hoff != 0 ) {
 				numHeaders = 100;
 				pret = phr_parse_request( headerBuf, hoff, &method, &path, &minorVersion, headers, &numHeaders, prevLen );
 			} else {
-				// Nothing in buffer yet, just set to -2 which is the phr return code for "partial request"
+				// Nothing in buffer yet, just set to -2 which is the phr goto func_return code for "partial request"
 				pret = -2;
 			}
 			if ( pret > 0 ) {
@@ -138,23 +171,29 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 #else
 				ssize_t ret = recv( sock, headerBuf + hoff, sizeof(headerBuf) - hoff, 0 );
 #endif
-				if ( ret == 0 ) return;
+				if ( ret == 0 ) goto func_return;
 				if ( ret == -1 ) {
 					if ( errno == EINTR ) continue;
 					if ( errno != EAGAIN && errno != EWOULDBLOCK ) {
 						sendReply( sock, "500 Internal Server Error", "text/plain", "Server made a boo-boo", -1, HTTP_CLOSE );
 					}
-					return; // Unknown error
+					goto func_return; // Timeout or unknown error
 				}
 				hoff += ret;
 			} else { // Parse error
 				sendReply( sock, "400 Bad Request", "text/plain", "Server cannot understand what you're trying to say", -1, HTTP_CLOSE );
-				return;
+				goto func_return;
 			}
 		} while ( true );
-		// Only keep the connection alive (and indicate so) if the client seems to support this
-		if ( minorVersion == 0 || hasHeaderValue( headers, numHeaders, &STR_CONNECTION, &STR_CLOSE ) ) {
-			keepAlive = HTTP_CLOSE;
+		if ( keepAlive == HTTP_KEEPALIVE ) {
+			// Only keep the connection alive (and indicate so) if the client seems to support this
+			if ( minorVersion == 0 || hasHeaderValue( headers, numHeaders, &STR_CONNECTION, &STR_CLOSE ) ) {
+				keepAlive = HTTP_CLOSE;
+			} else { // And if there aren't too many active HTTP sessions
+				spin_lock( &statusLock );
+				if ( status.overloaded ) keepAlive = HTTP_CLOSE;
+				spin_unlock( &statusLock );
+			}
 		}
 		if ( method.s != NULL && path.s != NULL ) {
 			// Basic data filled from request parser
@@ -185,6 +224,13 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			setThreadName( "HTTP" );
 		}
 	} while (true);
+func_return:;
+	do {
+		spin_lock( &statusLock );
+		const int curCount = --status.count;
+		UPDATE_LOADSTATE( curCount );
+		spin_unlock( &statusLock );
+	} while (0);
 }
 
 static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive)
