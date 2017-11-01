@@ -287,7 +287,7 @@ void* net_handleNewConnection(void *clientPtr)
 					timing_get( &image->atime );
 					spin_unlock( &image->lock );
 					serializer_reset_write( &payload );
-					serializer_put_uint16( &payload, PROTOCOL_VERSION );
+					serializer_put_uint16( &payload, client_version < 3 ? client_version : PROTOCOL_VERSION ); // XXX: Since messed up fuse client was messed up before :(
 					serializer_put_string( &payload, image->name );
 					serializer_put_uint16( &payload, (uint16_t)image->rid );
 					serializer_put_uint64( &payload, image->virtualFilesize );
