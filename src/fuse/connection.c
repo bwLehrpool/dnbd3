@@ -132,6 +132,9 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 			} else if ( rid != 0 && rid != remoteRid ) {
 				logadd( LOG_ERROR, "rid mismatch (want: %d, got: %d)", (int)rid, (int)remoteRid );
 			} else {
+				logadd( LOG_INFO, "Connection accepted by server %d", i );
+				logadd( LOG_INFO, "Requested: '%s:%d'", lowerImage, (int)rid );
+				logadd( LOG_INFO, "Returned:  '%s:%d'", remoteName, (int)remoteRid );
 				image.name = strdup( remoteName );
 				image.rid = remoteRid;
 				image.size = remoteSize;
@@ -495,11 +498,11 @@ static void probeAltServers()
 			goto fail;
 		}
 		if ( !dnbd3_select_image( sock, image.name, image.rid, 0 ) ) {
-			logadd( LOG_DEBUG1, "-> select fail" );
+			logadd( LOG_DEBUG1, "probe: select_image failed" );
 			goto fail;
 		}
 		if ( !dnbd3_select_image_reply( &buffer, sock, &remoteProto, &remoteName, &remoteRid, &remoteSize )) {
-			logadd( LOG_DEBUG1, "<- select fail" );
+			logadd( LOG_DEBUG1, "probe: select image reply failed" );
 			goto fail;
 		}
 		if ( remoteProto < MIN_SUPPORTED_SERVER ) {
