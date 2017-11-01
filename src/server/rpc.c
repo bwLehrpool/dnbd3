@@ -94,7 +94,6 @@ void rpc_init()
 
 void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int dataLen)
 {
-	// TODO Parse Connection-header sent by client to see if keep-alive is supported
 	bool ok;
 	int keepAlive = HTTP_KEEPALIVE;
 	int permissions = getacl( host );
@@ -108,6 +107,7 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		memcpy( headerBuf, data, dataLen );
 	}
 	size_t hoff = dataLen;
+	bool hasName = false;
 	do {
 		// Read request from client
 		struct phr_header headers[100];
@@ -180,6 +180,10 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			memmove( headerBuf, headerBuf + consumed, extra );
 		}
 		hoff = extra;
+		if ( !hasName ) {
+			hasName = true;
+			setThreadName( "HTTP" );
+		}
 	} while (true);
 }
 
