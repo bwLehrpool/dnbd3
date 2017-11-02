@@ -233,6 +233,19 @@ func_return:;
 	} while (0);
 }
 
+void rpc_sendErrorMessage(int sock, const char* message)
+{
+	static const char *encoded = NULL;
+	static size_t len;
+	if ( encoded == NULL ) {
+		json_t *tmp = json_pack( "{ss}", "errorMsg", message );
+		encoded = json_dumps( tmp, 0 );
+		json_decref( tmp );
+		len = strlen( encoded );
+	}
+	sendReply( sock, "200 Somewhat OK", "application/json", encoded, len, HTTP_CLOSE );
+}
+
 static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive)
 {
 	bool ok;

@@ -43,6 +43,7 @@
 #define LONGOPT_CREATE     1002
 #define LONGOPT_REVISION   1003
 #define LONGOPT_SIZE       1004
+#define LONGOPT_ERRORMSG   1005
 
 static poll_list_t *listeners = NULL;
 
@@ -51,6 +52,8 @@ static poll_list_t *listeners = NULL;
  */
 static ticks startupTime;
 static bool sigReload = false, sigLogCycle = false;
+
+static poll_list_t* setupNetwork(char *bindAddress);
 
 static dnbd3_client_t* dnbd3_prepareClient(struct sockaddr_storage *client, int fd);
 
@@ -75,6 +78,7 @@ void dnbd3_printHelp(char *argv_0)
 	printf( "--crc [image-file]  Generate crc block list for given image\n" );
 	printf( "--create [image-name] --revision [rid] --size [filesize]\n"
 			"\tCreate a local empty image file with a zeroed cache-map for the specified image\n" );
+	printf( "--errormsg [text]   Just serve given error message via HTTP, no service otherwise\n" );
 	printf( "\n" );
 	exit( 0 );
 }
@@ -144,6 +148,7 @@ int main(int argc, char *argv[])
 	int longIndex = 0;
 	char *paramCreate = NULL;
 	char *bindAddress = NULL;
+	char *errorMsg = NULL;
 	int64_t paramSize = -1;
 	int paramRevision = -1;
 	static const char *optString = "b:c:d:hnv?";
@@ -159,6 +164,7 @@ int main(int argc, char *argv[])
 			{ "create", required_argument, NULL, LONGOPT_CREATE },
 			{ "revision", required_argument, NULL, LONGOPT_REVISION },
 			{ "size", required_argument, NULL, LONGOPT_SIZE },
+			{ "errormsg", required_argument, NULL, LONGOPT_ERRORMSG },
 			{ 0, 0, 0, 0 }
 	};
 
@@ -172,18 +178,6 @@ int main(int argc, char *argv[])
 		case 'n':
 			demonize = 0;
 			break;
-		case 'r':
-			logadd( LOG_INFO, "Reloading configuration file..." );
-			//dnbd3_rpc_send(RPC_RELOAD);
-			return EXIT_SUCCESS;
-		case 's':
-			logadd( LOG_INFO, "Stopping running server..." );
-			//dnbd3_rpc_send(RPC_EXIT);
-			return EXIT_SUCCESS;
-		case 'i':
-			logadd( LOG_INFO, "Requesting information..." );
-			//dnbd3_rpc_send(RPC_IMG_LIST);
-			return EXIT_SUCCESS;
 		case 'h':
 		case '?':
 			dnbd3_printHelp( argv[0] );
@@ -210,6 +204,9 @@ int main(int argc, char *argv[])
 		case LONGOPT_SIZE:
 			paramSize = strtoll( optarg, NULL, 10 );
 			break;
+		case LONGOPT_ERRORMSG:
+			errorMsg = strdup( optarg );
+			break;
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
@@ -218,8 +215,8 @@ int main(int argc, char *argv[])
 
 	if ( _configDir == NULL ) _configDir = strdup( "/etc/dnbd3-server" );
 	globals_loadConfig();
-	if ( _basePath == NULL ) {
-		logadd( LOG_ERROR, "basePath not set in %s/%s", _configDir, CONFIG_FILENAME );
+	if ( _basePath == NULL && errorMsg == NULL ) {
+		logadd( LOG_ERROR, "Aborting, set proper basePath in %s/%s", _configDir, CONFIG_FILENAME );
 		exit( EXIT_FAILURE );
 	}
 
@@ -263,9 +260,27 @@ int main(int argc, char *argv[])
 		return image_create( paramCreate, paramRevision, paramSize ) ? 0 : EXIT_FAILURE;
 	}
 
-	// No one-shot detected, normal server operation
-
-	if ( demonize ) daemon( 1, 0 );
+	// No one-shot detected, normal server operation or errormsg serving
+	if ( demonize ) {
+		logadd( LOG_INFO, "Forking into background, see log file for further information" );
+		daemon( 1, 0 );
+	}
+	if ( errorMsg != NULL ) {
+		setupNetwork( bindAddress );
+		logadd( LOG_INFO, "Running errormsg server" );
+		while ( true ) {
+			const int fd = sock_accept( listeners, NULL, NULL );
+			if ( fd >= 0 ) {
+				rpc_sendErrorMessage( fd, errorMsg );
+			} else {
+				const int err = errno;
+				if ( err == EINTR || err == EAGAIN ) continue;
+				logadd( LOG_ERROR, "Client accept failure (err=%d)", err );
+				usleep( 10000 ); // 10ms
+			}
+		}
+		exit( 0 );
+	}
 	image_serverStartup();
 	altservers_init();
 	integrity_init();
@@ -302,18 +317,7 @@ int main(int argc, char *argv[])
 	sleep( 1 );
 
 	// setup network
-	listeners = sock_newPollList();
-	if ( listeners == NULL ) {
-		logadd( LOG_ERROR, "Didnt get a poll list!" );
-		exit( EXIT_FAILURE );
-	}
-	if ( !sock_listen( listeners, bindAddress, (uint16_t)_listenPort ) ) {
-		logadd( LOG_ERROR, "Could not listen on any local interface." );
-		exit( EXIT_FAILURE );
-	}
-	struct sockaddr_storage client;
-	socklen_t len;
-	int fd;
+	listeners = setupNetwork( bindAddress );
 
 	// Initialize thread pool
 	if ( !threadpool_init( 8 ) ) {
@@ -324,6 +328,9 @@ int main(int argc, char *argv[])
 	logadd( LOG_INFO, "Server is ready. (%s)", VERSION_STRING );
 
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
+	struct sockaddr_storage client;
+	socklen_t len;
+	int fd;
 	while ( !_shutdown ) {
 		// Handle signals
 		if ( sigReload ) {
@@ -364,6 +371,21 @@ int main(int argc, char *argv[])
 	}
 	free( bindAddress );
 	dnbd3_cleanup();
+	return 0;
+}
+
+static poll_list_t* setupNetwork(char *bindAddress)
+{
+	listeners = sock_newPollList();
+	if ( listeners == NULL ) {
+		logadd( LOG_ERROR, "Didnt get a poll list!" );
+		exit( EXIT_FAILURE );
+	}
+	if ( !sock_listen( listeners, bindAddress, (uint16_t)_listenPort ) ) {
+		logadd( LOG_ERROR, "Could not listen on any local interface." );
+		exit( EXIT_FAILURE );
+	}
+	return listeners;
 }
 
 /**
