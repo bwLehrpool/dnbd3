@@ -38,13 +38,13 @@
 #include <getopt.h>
 #include <assert.h>
 
-#define LONGOPT_CRC4		1000
-#define LONGOPT_ASSERT		1001
-#define LONGOPT_CREATE		1002
-#define LONGOPT_REVISION	1003
-#define LONGOPT_SIZE		1004
+#define LONGOPT_CRC4       1000
+#define LONGOPT_ASSERT     1001
+#define LONGOPT_CREATE     1002
+#define LONGOPT_REVISION   1003
+#define LONGOPT_SIZE       1004
 
-poll_list_t *listeners = NULL;
+static poll_list_t *listeners = NULL;
 
 /**
  * Time the server was started
@@ -69,9 +69,6 @@ void dnbd3_printHelp(char *argv_0)
 	printf( "-c or --config      Configuration directory (default /etc/dnbd3-server/)\n" );
 	printf( "-n or --nodaemon    Start server in foreground\n" );
 	printf( "-b or --bind        Local Address to bind to\n" );
-	//printf( "-r or --reload      Reload configuration file\n" );
-	//printf( "-s or --stop        Stop running dnbd3-server\n" );
-	//printf( "-i or --info        Print connected clients and used images\n" );
 	printf( "-h or --help        Show this help text and quit\n" );
 	printf( "-v or --version     Show version and quit\n" );
 	printf( "\nManagement functions:\n" );
@@ -149,13 +146,11 @@ int main(int argc, char *argv[])
 	char *bindAddress = NULL;
 	int64_t paramSize = -1;
 	int paramRevision = -1;
-	static const char *optString = "c:d:b:nrsihv?";
+	static const char *optString = "b:c:d:hnv?";
 	static const struct option longOpts[] = {
 			{ "config", required_argument, NULL, 'c' },
 			{ "nodaemon", no_argument, NULL, 'n' },
 			{ "reload", no_argument, NULL, 'r' },
-			{ "stop", no_argument, NULL, 's' },
-			{ "info", no_argument, NULL, 'i' },
 			{ "help", no_argument, NULL, 'h' },
 			{ "version", no_argument, NULL, 'v' },
 			{ "bind", required_argument, NULL, 'b' },
@@ -326,7 +321,7 @@ int main(int argc, char *argv[])
 		exit( EXIT_FAILURE );
 	}
 
-	logadd( LOG_INFO, "Server is ready..." );
+	logadd( LOG_INFO, "Server is ready. (%s)", VERSION_STRING );
 
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
 	while ( !_shutdown ) {
