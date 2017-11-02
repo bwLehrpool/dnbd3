@@ -62,16 +62,19 @@ void globals_loadConfig()
 	// Validate settings after loading:
 	// base path for images valid?
 	if ( _basePath == NULL || _basePath[0] == '\0' ) {
-		logadd( LOG_ERROR, "Need to specify basePath in " CONFIG_FILENAME );
-		exit( EXIT_FAILURE );
+		logadd( LOG_WARNING, "No/empty basePath in " CONFIG_FILENAME );
+		free( _basePath );
+		_basePath = NULL;
+	} else if ( _basePath[0] != '/' ) {
+		logadd( LOG_WARNING, "basePath must be absolute!" );
+		free( _basePath );
+		_basePath = NULL;
+	} else {
+		char *end = _basePath + strlen( _basePath ) - 1;
+		while ( end >= _basePath && *end == '/' ) {
+			*end-- = '\0';
+		}
 	}
-	if ( _basePath[0] != '/' ) {
-		logadd( LOG_ERROR, "_basePath must be absolute!" );
-		exit( EXIT_FAILURE );
-	}
-	char *end = _basePath + strlen( _basePath ) - 1;
-	while ( end >= _basePath && *end == '/' )
-		*end-- = '\0';
 	// listen port
 	if ( _listenPort < 1 || _listenPort > 65535 ) {
 		logadd( LOG_ERROR, "listenPort must be 1-65535, but is %d", _listenPort );
