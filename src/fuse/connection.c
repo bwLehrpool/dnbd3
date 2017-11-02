@@ -642,7 +642,7 @@ static void switchConnection(int sockFd, alt_server_t *srv)
 	connection.startupTime = nowMilli();
 	pthread_create( &thread, NULL, &connection_receiveThreadMain, (void*)(size_t)sockFd );
 	sock_printable( (struct sockaddr*)&addr, sizeof(addr), message + len, sizeof(message) - len );
-	logadd( LOG_INFO, message );
+	logadd( LOG_INFO, "%s", message );
 	// resend queue
 	if ( queue != NULL ) {
 		pthread_mutex_lock( &connection.sendMutex );
