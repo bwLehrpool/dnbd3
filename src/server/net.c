@@ -27,6 +27,7 @@
 
 #include "../shared/sockhelper.h"
 #include "../shared/timing.h"
+#include "../shared/protocol.h"
 #include "../serialize.h"
 
 #include <assert.h>
@@ -251,7 +252,8 @@ void* net_handleNewConnection(void *clientPtr)
 		client_version = serializer_get_uint16( &payload );
 		image_name = serializer_get_string( &payload );
 		rid = serializer_get_uint16( &payload );
-		client->isServer = serializer_get_uint8( &payload );
+		const uint8_t flags = serializer_get_uint8( &payload );
+		client->isServer = ( flags & FLAGS8_SERVER );
 		if ( request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT ) {
 			if ( client_version < MIN_SUPPORTED_CLIENT ) {
 				logadd( LOG_DEBUG1, "Client %s too old", client->hostName );
@@ -259,7 +261,25 @@ void* net_handleNewConnection(void *clientPtr)
 				logadd( LOG_DEBUG1, "Incomplete handshake received from %s", client->hostName );
 			}
 		} else {
-			image = image_getOrLoad( image_name, rid );
+			if ( !client->isServer || !_isProxy ) {
+				// Is a normal client, or we're not proxy
+				image = image_getOrLoad( image_name, rid );
+			} else if ( !_backgroundReplication && ( flags & FLAGS8_BG_REP ) ) {
+				// We're a proxy, client is another proxy, we don't do BGR, but connecting proxy does...
+				// Reject, as this would basically force this proxy to do BGR too.
+				image = image_get( image_name, rid, true );
+				if ( image != NULL && image->cache_map != NULL ) {
+					// Only exception is if the image is complete locally
+					image = image_release( image );
+				}
+			} else if ( _lookupMissingForProxy ) {
+				// No BGR mismatch and we're told to lookup missing images on a known uplink server
+				// if the requesting client is a proxy
+				image = image_getOrLoad( image_name, rid );
+			} else {
+				// No BGR mismatch, but don't lookup if image is unknown locally
+				image = image_get( image_name, rid, true );
+			}
 			spin_lock( &client->lock );
 			client->image = image;
 			spin_unlock( &client->lock );

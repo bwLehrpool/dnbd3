@@ -14,6 +14,7 @@ bool _removeMissingImages = true;
 bool _isProxy = false;
 bool _proxyPrivateOnly = false;
 bool _backgroundReplication = true;
+bool _lookupMissingForProxy = true;
 int _listenPort = PORT;
 int _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
 int _clientTimeout = SOCKET_TIMEOUT_CLIENT;
@@ -32,6 +33,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_BOOL( dnbd3, isProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_BOOL( dnbd3, backgroundReplication );
+	SAVE_TO_VAR_BOOL( dnbd3, lookupMissingForProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, removeMissingImages );
 	SAVE_TO_VAR_BOOL( dnbd3, closeUnusedFd );
 	SAVE_TO_VAR_INT( dnbd3, serverPenalty );

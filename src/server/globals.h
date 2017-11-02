@@ -207,6 +207,13 @@ extern bool _closeUnusedFd;
 extern bool _backgroundReplication;
 
 /**
+ * (In proxy mode): If connecting client is a proxy, and the requested image
+ * is not known locally, should we ask our known alt servers for it?
+ * Otherwise the request is rejected.
+ */
+extern bool _lookupMissingForProxy;
+
+/**
  * Port to listen on (default: #define PORT (5003))
  */
 extern int _listenPort;

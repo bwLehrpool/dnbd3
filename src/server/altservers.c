@@ -437,7 +437,7 @@ static void *altservers_main(void *data UNUSED)
 				int sock = sock_connect( &servers[itAlt], 750, _uplinkTimeout );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
-				if ( !dnbd3_select_image( sock, image->name, image->rid, FLAGS8_SERVER ) ) {
+				if ( !dnbd3_select_image( sock, image->name, image->rid, SI_SERVER_FLAGS ) ) {
 					goto server_failed;
 				}
 				// See if selecting the image succeeded ++++++++++++++++++++++++++++++

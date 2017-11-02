@@ -11,10 +11,16 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 
+// Client tells server that it is another server
 #define FLAGS8_SERVER (1)
+// Client (which is a proxy) tells server that it has background-replication enabled
+#define FLAGS8_BG_REP (2)
 
 // 2017-10-16: We now support hop-counting, macro to pass hop count conditinally to a function
 #define COND_HOPCOUNT(vers,hopcount) ( (vers) >= 3 ? (hopcount) : 0 )
+
+// 2017-11-02: Macro to set flags in select image message properly if we're a server, as BG_REP depends on global var
+#define SI_SERVER_FLAGS ( FLAGS8_SERVER | (_backgroundReplication ? FLAGS8_BG_REP : 0) )
 
 #define REPLY_OK (0)
 #define REPLY_ERRNO (-1)

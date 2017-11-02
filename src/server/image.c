@@ -1236,7 +1236,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 		bool ok = false;
 		int sock = sock_connect( &servers[i], 750, _uplinkTimeout );
 		if ( sock == -1 ) continue;
-		if ( !dnbd3_select_image( sock, name, revision, FLAGS8_SERVER ) ) goto server_fail;
+		if ( !dnbd3_select_image( sock, name, revision, SI_SERVER_FLAGS ) ) goto server_fail;
 		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteProtocolVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
 		if ( remoteProtocolVersion < MIN_SUPPORTED_SERVER || remoteRid == 0 ) goto server_fail;
 		if ( revision != 0 && remoteRid != revision ) goto server_fail; // Want specific revision but uplink supplied different rid
