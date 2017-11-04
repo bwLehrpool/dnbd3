@@ -16,7 +16,8 @@
 
 /* Constants */
 static const size_t SHORTBUF = 100;
-#define MAX_ALTS (8)
+#define MAX_ALTS (16)
+#define MAX_ALTS_ACTIVE (5)
 #define MAX_HOSTS_PER_ADDRESS (2)
 // If a server wasn't reachable this many times, we slowly start skipping it on measurements
 static const int FAIL_BACKOFF_START_COUNT = 8;
@@ -61,9 +62,10 @@ typedef struct _alt_server {
 	int rttIndex;
 	int bestCount;
 } alt_server_t;
-alt_server_t altservers[MAX_ALTS];
-dnbd3_server_entry_t newservers[MAX_ALTS];
-pthread_spinlock_t altLock;
+
+static alt_server_t altservers[MAX_ALTS];
+static dnbd3_server_entry_t newservers[MAX_ALTS];
+static pthread_spinlock_t altLock;
 
 /* Static methods */
 
@@ -72,6 +74,7 @@ static void* connection_receiveThreadMain(void *sock);
 static void* connection_backgroundThread(void *something);
 
 static void addAltServers();
+static void sortAltServers();
 static void probeAltServers();
 static void switchConnection(int sockFd, alt_server_t *srv);
 static void requestAltServers();
@@ -260,6 +263,8 @@ size_t connection_printStats(char *buffer, const size_t len)
 			continue;
 		if ( isSameAddressPort( &connection.currentServer, &altservers[i].host ) ) {
 			*buffer++ = '*';
+		} else if ( i >= MAX_ALTS_ACTIVE ) {
+			*buffer++ = '-';
 		} else {
 			*buffer++ = ' ';
 		}
@@ -390,6 +395,7 @@ static void* connection_backgroundThread(void *something UNUSED)
 		// Check alt servers
 		if ( panic || now >= nextRttCheck ) {
 			addAltServers();
+			sortAltServers();
 			probeAltServers();
 			if ( panic || connection.startupTime + ( STARTUP_MODE_DURATION * 1000ull ) > now ) {
 				nextRttCheck = now + TIMER_INTERVAL_PROBE_STARTUP * 1000ull;
@@ -434,15 +440,16 @@ static void addAltServers()
 				goto skip_server;
 			}
 		}
-		// Not known yet, add
+		// Not known yet, add - find free slot
 		int slot = -1;
 		for ( int eIdx = 0; eIdx < MAX_ALTS; ++eIdx ) {
 			if ( altservers[eIdx].host.type == 0 ) {
-				slot = eIdx;
+				slot = eIdx; // free - bail out and use this one
 				break;
 			}
 			if ( altservers[eIdx].consecutiveFails > FAIL_BACKOFF_START_COUNT
 					&& slot != -1 && altservers[slot].consecutiveFails < altservers[eIdx].consecutiveFails ) {
+				// Replace an existing alt-server that failed recently if we got no more slots
 				slot = eIdx;
 			}
 		}
@@ -462,6 +469,43 @@ skip_server:;
 	pthread_spin_unlock( &altLock );
 }
 
+/**
+ * Find a server at index >= MAX_ALTS_ACTIVE (one that isn't considered for switching over)
+ * that has been inactive for a while, then look if there's an active server that's failed
+ * a couple of times recently. Swap both if found.
+ */
+static void sortAltServers()
+{
+	int ac = 0;
+	pthread_spin_lock( &altLock );
+	for ( int ia = MAX_ALTS_ACTIVE; ia < MAX_ALTS; ++ia ) {
+		alt_server_t * const inactive = &altservers[ia];
+		if ( inactive->host.type == 0 || inactive->consecutiveFails > 0 )
+			continue;
+		while ( ac < MAX_ALTS_ACTIVE ) {
+			if ( altservers[ac].host.type == 0 || altservers[ac].consecutiveFails > FAIL_BACKOFF_START_COUNT )
+				break;
+			ac++;
+		}
+		if ( ac == MAX_ALTS_ACTIVE )
+			break;
+		// Switch!
+		alt_server_t * const active = &altservers[ac];
+		dnbd3_host_t tmp = inactive->host;
+		inactive->host = active->host;
+		inactive->consecutiveFails = FAIL_BACKOFF_START_COUNT * 4;
+		inactive->bestCount = 0;
+		inactive->rtts[0] = RTT_UNREACHABLE;
+		inactive->rttIndex = 1;
+		active->host = tmp;
+		active->consecutiveFails = 0;
+		active->bestCount = 0;
+		active->rtts[0] = RTT_UNREACHABLE;
+		active->rttIndex = 1;
+	}
+	pthread_spin_unlock( &altLock );
+}
+
 static void probeAltServers()
 {
 	serialized_buffer_t buffer;
@@ -476,7 +520,7 @@ static void probeAltServers()
 	bool doSwitch;
 	const bool panic = connection.sockFd == -1;
 
-	for ( int altIndex = 0; altIndex < MAX_ALTS; ++altIndex ) {
+	for ( int altIndex = 0; altIndex < (panic ? MAX_ALTS : MAX_ALTS_ACTIVE); ++altIndex ) {
 		alt_server_t * const srv = &altservers[altIndex];
 		if ( srv->host.type == 0 )
 			continue;
@@ -568,7 +612,8 @@ fail:;
 	if ( bestIndex != -1 ) {
 		// Time-sensitive switch decision: If a server was best for some consecutive measurements,
 		// we switch no matter how small the difference to the current server is
-		for ( int i = 0; i < MAX_ALTS; ++i ) {
+		pthread_spin_lock( &altLock );
+		for ( int i = 0; i < MAX_ALTS_ACTIVE; ++i ) {
 			if ( i == bestIndex ) {
 				if ( altservers[i].bestCount < 50 ) {
 					altservers[i].bestCount += 2;
@@ -581,6 +626,12 @@ fail:;
 				altservers[i].bestCount--;
 			}
 		}
+		for ( int i = MAX_ALTS_ACTIVE; i < MAX_ALTS; ++i ) {
+			if ( altservers[i].consecutiveFails > 0 ) {
+				altservers[i].consecutiveFails--;
+			}
+		}
+		pthread_spin_unlock( &altLock );
 		// This takes care of the situation where two servers alternate being the best server all the time
 		if ( doSwitch && currentIndex != -1 && altservers[bestIndex].bestCount - altservers[currentIndex].bestCount < 8 ) {
 			doSwitch = false;
