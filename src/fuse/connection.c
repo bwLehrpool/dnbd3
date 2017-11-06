@@ -90,10 +90,14 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 {
 	int sock = -1;
 	char host[SHORTBUF];
+	size_t hlen;
 	serialized_buffer_t buffer;
 	uint16_t remoteVersion, remoteRid;
 	char *remoteName;
 	uint64_t remoteSize;
+	struct sockaddr_storage sa;
+	socklen_t salen = sizeof(sa);
+	poll_list_t *cons = sock_newPollList();
 
 	pthread_mutex_lock( &mutexInit );
 	if ( !connectionInitDone && keepRunning ) {
@@ -121,27 +125,49 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 		} while ( end != NULL && altIndex < MAX_ALTS );
 		logadd( LOG_INFO, "Got %d servers from init call", altIndex );
 		// Connect
-		for ( int i = 0; i < altIndex; ++i ) {
-			if ( altservers[i].host.type == 0 )
+		for ( int i = 0; i <= altIndex; ++i ) {
+			if ( i == altIndex ) {
+				// Last iteration - no corresponding slot in altservers, this
+				// is just so we can make a final call with longer timeout
+				sock = sock_multiConnect( cons, NULL, 2000, 1000 );
+				if ( sock == -1 || sock == -2 ) {
+					logadd( LOG_ERROR, "Could not connect to any host" );
+					sock = -1;
+					break;
+				}
+			} else {
+				if ( altservers[i].host.type == 0 )
+					continue;
+				// Try to connect - 100ms timeout
+				sock = sock_multiConnect( cons, &altservers[i].host, 100, 1000 );
+				if ( sock == -2 || sock == -1 )
+					continue;
+			}
+			if ( getpeername( sock, (struct sockaddr*)&sa, &salen ) == -1 ) {
+				logadd( LOG_ERROR, "getpeername on successful connection failed!? (errno=%d)", errno );
+				close( sock );
+				sock = -1;
 				continue;
-			// Try to connect
-			sock = sock_connect( &altservers[i].host, 500, SOCKET_KEEPALIVE_TIMEOUT * 1000 );
-			if ( sock == -1 ) {
-				logadd( LOG_ERROR, "Could not connect to host" );
-			} else if ( !dnbd3_select_image( sock, lowerImage, rid, 0 ) ) {
+			}
+			hlen = sock_printable( (struct sockaddr*)&sa, salen, host, sizeof(host) );
+			logadd( LOG_INFO, "Connected to %.*s", (int)hlen, host );
+			if ( !dnbd3_select_image( sock, lowerImage, rid, 0 ) ) {
 				logadd( LOG_ERROR, "Could not send select image" );
 			} else if ( !dnbd3_select_image_reply( &buffer, sock, &remoteVersion, &remoteName, &remoteRid, &remoteSize ) ) {
 				logadd( LOG_ERROR, "Could not read select image reply (%d)", errno );
 			} else if ( rid != 0 && rid != remoteRid ) {
 				logadd( LOG_ERROR, "rid mismatch (want: %d, got: %d)", (int)rid, (int)remoteRid );
 			} else {
-				logadd( LOG_INFO, "Connection accepted by server %d", i );
 				logadd( LOG_INFO, "Requested: '%s:%d'", lowerImage, (int)rid );
 				logadd( LOG_INFO, "Returned:  '%s:%d'", remoteName, (int)remoteRid );
+				sock_setTimeout( sock, SOCKET_KEEPALIVE_TIMEOUT * 1000 );
 				image.name = strdup( remoteName );
 				image.rid = remoteRid;
 				image.size = remoteSize;
-				connection.currentServer = altservers[i].host;
+				if ( !sock_sockaddrToDnbd3( (struct sockaddr*)&sa, &connection.currentServer ) ) {
+					logadd( LOG_ERROR, "sockaddr to dnbd3_host_t failed!?" );
+					connection.currentServer.type = 0;
+				}
 				connection.panicSignal = signal_new();
 				connection.startupTime = nowMilli();
 				connection.sockFd = sock;
@@ -151,7 +177,6 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 				break;
 			}
 			// Failed
-			logadd( LOG_DEBUG1, "Server does not offer requested image... " );
 			if ( sock != -1 ) {
 				close( sock );
 				sock = -1;
@@ -162,6 +187,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 		}
 	}
 	pthread_mutex_unlock( &mutexInit );
+	sock_destroyPollList( cons );
 	return sock != -1;
 }
 
