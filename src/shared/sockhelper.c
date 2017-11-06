@@ -19,9 +19,8 @@ struct _poll_list {
 int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const int rw_ms)
 {
 	// TODO: Move out of here, this unit should contain general socket functions
-	// TODO: Rework the dnbd3_host_t to not use AF_* as these could theoretically change
 	// TODO: Abstract away from sockaddr_in* like the rest of the functions here do,
-	// so WITH_IPV6 can finally be removed as everything is transparent.
+	// so WITH_IPV6 can finally be removed as everything is transparent. b- but how?
 	struct sockaddr_storage ss;
 	int proto, addrlen;
 	memset( &ss, 0, sizeof ss );
@@ -52,16 +51,43 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	int client_sock = socket( proto, SOCK_STREAM, IPPROTO_TCP );
 	if ( client_sock == -1 ) return -1;
 	// Apply connect timeout
-	sock_setTimeout( client_sock, connect_ms );
-	for ( int i = 0;; ++i ) {
+	if ( connect_ms == -1 ) {
+		sock_set_nonblock( client_sock );
+	} else {
+		sock_setTimeout( client_sock, connect_ms );
+	}
+	for ( int i = 0; i < 5; ++i ) {
 		int ret = connect( client_sock, (struct sockaddr *)&ss, addrlen );
-		if ( ret != -1 ) break;
-		if ( errno == EINTR && i < 5 ) continue;
+		if ( ret != -1 || errno == EINPROGRESS || errno == EISCONN ) break;
+		if ( errno == EINTR ) {
+			// http://www.madore.org/~david/computers/connect-intr.html
+#ifdef __linux__
+			continue;
+#else
+			struct pollfd unix_really_sucks = { .fd = client_sock, .events = POLLOUT | POLLIN };
+			while ( i-- > 0 ) {
+				int pr = poll( &unix_really_sucks, 1, connect_ms == 0 ? -1 : connect_ms );
+				if ( pr == 1 && ( unix_really_sucks.revents & POLLOUT ) ) break;
+				if ( pr == -1 && errno == EINTR ) continue;
+				close( client_sock );
+				return -1;
+			}
+			sockaddr_storage junk;
+			socklen_t more_junk = sizeof(junk);
+			if ( getpeername( client_sock, (struct sockaddr*)&junk, &more_junk ) == -1 ) {
+				close( client_sock );
+				return -1;
+			}
+			break;
+#endif
+		} // EINTR
 		close( client_sock );
 		return -1;
 	}
-	// Apply read/write timeout
-	sock_setTimeout( client_sock, rw_ms );
+	if ( connect_ms != -1 && connect_ms != rw_ms ) {
+		// Apply read/write timeout
+		sock_setTimeout( client_sock, rw_ms );
+	}
 	return client_sock;
 }
 
@@ -112,27 +138,36 @@ int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const des
 		return 0;
 	}
 	for ( ptr = res; ptr != NULL && count > 0; ptr = ptr->ai_next ) {
-		if ( ptr->ai_addr->sa_family == AF_INET ) {
-			// Set host (IPv4)
-			struct sockaddr_in *addr4 = (struct sockaddr_in*)ptr->ai_addr;
-			dest[addCount].type = HOST_IP4;
-			dest[addCount].port = addr4->sin_port;
-			memcpy( dest[addCount].addr, &addr4->sin_addr, 4 );
+		if ( sock_sockaddrToDnbd3( ptr->ai_addr, &dest[addCount] ) ) {
 			addCount += 1;
-#ifdef WITH_IPV6
-		} else if ( ptr->ai_addr->sa_family == AF_INET6 ) {
-			// Set host (IPv6)
-			struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)ptr->ai_addr;
-			dest[addCount].type = HOST_IP6;
-			dest[addCount].port = addr6->sin6_port;
-			memcpy( dest[addCount].addr, &addr6->sin6_addr, 16 );
-			addCount += 1;
-#endif
 		}
 	}
 
 	freeaddrinfo( res );
 	return addCount;
+}
+
+bool sock_sockaddrToDnbd3(struct sockaddr* sa, dnbd3_host_t *host)
+{
+	if ( sa->sa_family == AF_INET ) {
+		// Set host (IPv4)
+		struct sockaddr_in *addr4 = (struct sockaddr_in*)sa;
+		host->type = HOST_IP4;
+		host->port = addr4->sin_port;
+		memcpy( host->addr, &addr4->sin_addr, 4 );
+		return true;
+	}
+#ifdef WITH_IPV6
+	if ( sa->sa_family == AF_INET6 ) {
+		// Set host (IPv6)
+		struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)sa;
+		host->type = HOST_IP6;
+		host->port = addr6->sin6_port;
+		memcpy( host->addr, &addr6->sin6_addr, 16 );
+		return true;
+	}
+#endif
+	return false;
 }
 
 void sock_setTimeout(const int sockfd, const int milliseconds)
@@ -249,9 +284,67 @@ bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port)
 	return openCount > 0;
 }
 
-int sock_listenAny(poll_list_t* list, uint16_t port)
+bool sock_listenAny(poll_list_t* list, uint16_t port)
 {
 	return sock_listen( list, NULL, port );
+}
+
+int sock_multiConnect(poll_list_t* list, const dnbd3_host_t* host, int connect_ms, int rw_ms)
+{
+	// Nonblocking connect seems to be hard to get right in a portable fashion
+	// that's why you might see some weird checks here and there. For now there's
+	// only Linux and FreeBSD, but let's try to not make this code fall on its nose
+	// should dnbd3 be ported to other platforms.
+	if ( list->count < MAXLISTEN && host != NULL ) {
+		int sock = sock_connect( host, -1, -1 );
+		if ( sock != -1 ) {
+			list->entry[list->count].fd = sock;
+			list->entry[list->count].events = POLLIN | POLLOUT | POLLRDHUP;
+			list->count++;
+		}
+	}
+	if ( list->count == 0 ) {
+		return -2;
+	}
+	int ret, tries = 5;
+	do {
+		ret = poll( list->entry, list->count, connect_ms );
+		if ( ret > 0 ) break;
+		if ( ret == 0 ) return -1;
+		if ( ret == -1 && ( errno == EINTR || errno == EAGAIN ) ) {
+			if ( --tries == 0 ) return -1;
+			if ( connect_ms > 1 ) connect_ms /= 2; // Maybe properly account time one day
+			continue;
+		}
+		return -1;
+	} while ( true );
+	for ( int i = list->count - 1; i >= 0; --i ) {
+		int fd = -1;
+		if ( list->entry[i].revents & ( POLLIN | POLLOUT ) ) {
+			struct sockaddr_storage tmp;
+			socklen_t len = sizeof(tmp);
+			fd = list->entry[i].fd;
+			if ( getpeername( fd, (struct sockaddr*)&tmp, &len ) == -1 ) { // More portable then SO_ERROR ...
+				close( fd );
+				fd = -1;
+			}
+		} else if ( list->entry[i].revents != 0 ) {
+			close( list->entry[i].fd );
+		} else {
+			continue;
+		}
+		// Either error or connect success
+		list->count--;
+		if ( i != list->count ) list->entry[i] = list->entry[list->count];
+		if ( fd != -1 ) {
+			sock_set_block( fd );
+			if ( rw_ms != -1 && rw_ms != connect_ms ) {
+				sock_setTimeout( fd, rw_ms );
+			}
+			return fd;
+		}
+	}
+	return -1;
 }
 
 int sock_accept(poll_list_t *list, struct sockaddr_storage *addr, socklen_t *length_ptr)
@@ -265,9 +358,9 @@ int sock_accept(poll_list_t *list, struct sockaddr_storage *addr, socklen_t *len
 		if ( list->entry[i].revents == POLLIN ) return accept( list->entry[i].fd, (struct sockaddr *)addr, length_ptr );
 		if ( list->entry[i].revents & ( POLLNVAL | POLLHUP | POLLERR | POLLRDHUP ) ) {
 			logadd( LOG_DEBUG1, "poll fd revents=%d for index=%d and fd=%d", (int)list->entry[i].revents, i, list->entry[i].fd );
-			if ( ( list->entry[i].revents & POLLNVAL ) == 0 ) close( list->entry[i].fd );
-			if ( i != list->count ) list->entry[i] = list->entry[list->count];
+			close( list->entry[i].fd );
 			list->count--;
+			if ( i != list->count ) list->entry[i] = list->entry[list->count];
 		}
 	}
 	return -1;

@@ -29,6 +29,8 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
  */
 int sock_resolveToDnbd3Host(const char * const address, dnbd3_host_t * const dest, const int count);
 
+bool sock_sockaddrToDnbd3(struct sockaddr* sa, dnbd3_host_t *host);
+
 void sock_setTimeout(const int sockfd, const int milliseconds);
 
 size_t sock_printHost(const dnbd3_host_t * const host, char *output, const size_t len);
@@ -50,16 +52,32 @@ void sock_destroyPollList(poll_list_t *list);
  * IPv4 and IPv6 are supported.
  * @param protocol_family PF_INET or PF_INET6
  * @param port port to listen on
- * @return the socket descriptor if successful, -1 otherwise.
+ * @return true if any listen call was successful
  */
-int sock_listenAny(poll_list_t* list, uint16_t port);
+bool sock_listenAny(poll_list_t* list, uint16_t port);
 
 /**
  * Listen on a specific address and port.
- * @param addr pointer to a properly filled sockaddr_in or sockaddr_in6
- * @param addrlen length of the passed struct
+ * @param bind_addr human readable address to bind to for listening
+ * @param port to listen on
  */
 bool sock_listen(poll_list_t* list, char* bind_addr, uint16_t port);
+
+/**
+ * Asynchroneously connect to multiple hosts.
+ * This can be called multiple times with varying timeouts. Calling it
+ * the first time on an empty list is identical to sock_connect(). On
+ * consecutive calls, more nonblocking sockets in connecting state will
+ * be added to the list, and on each of these calls, all the pending
+ * sockets will be checked for successful connection (or error), respecting
+ * the passed timeout.
+ * host can be NULL to just wait on the sockets already in the list.
+ * If at least one socket completed the connection
+ * within the given timeout, it will be removed from the list and
+ * returned. On error or timeout, -1 is returned. If there are no more sockets
+ * in the list, -2 is returned.
+ */
+int sock_multiConnect(poll_list_t* list, const dnbd3_host_t* host, int connect_ms, int rw_ms);
 
 /**
  * This is a multi-socket version of accept. Pass in an array of listening sockets.
