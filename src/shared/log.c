@@ -41,6 +41,11 @@ static int logFd = -1;
 static int writeLevel(char *buffer, logmask_t level);
 
 
+bool log_hasMask(const logmask_t mask)
+{
+	return ( ( maskFile | maskCon ) & mask ) == mask;
+}
+
 void log_setFileMask(logmask_t mask)
 {
 	maskFile = mask;

@@ -31,6 +31,12 @@ typedef unsigned int logmask_t;
 #define LOG_DEBUG1  ((logmask_t)16)  // Debug information, use this for non-spammy stuff
 #define LOG_DEBUG2  ((logmask_t)32)  // Use this for debug messages that will show up a lot
 
+
+/**
+ * Check if cansoleMask | fileMask has all of mask set.
+ */
+bool log_hasMask(const logmask_t mask);
+
 void log_setFileMask(logmask_t mask);
 
 void log_setConsoleMask(logmask_t mask);
