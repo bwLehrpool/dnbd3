@@ -125,12 +125,12 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 		} while ( end != NULL && altIndex < MAX_ALTS );
 		logadd( LOG_INFO, "Got %d servers from init call", altIndex );
 		// Connect
-		for ( int i = 0; i <= altIndex; ++i ) {
-			if ( i == altIndex ) {
-				// Last iteration - no corresponding slot in altservers, this
-				// is just so we can make a final call with longer timeout
-				sock = sock_multiConnect( cons, NULL, 2000, 1000 );
-				if ( sock == -1 || sock == -2 ) {
+		for ( int i = 0; i < altIndex + 5; ++i ) {
+			if ( i >= altIndex ) {
+				// Additional iteration - no corresponding slot in altservers, this
+				// is just so we can make a final calls with longer timeout
+				sock = sock_multiConnect( cons, NULL, 400, 1000 );
+				if ( sock == -2 ) {
 					logadd( LOG_ERROR, "Could not connect to any host" );
 					sock = -1;
 					break;
@@ -140,9 +140,9 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 					continue;
 				// Try to connect - 100ms timeout
 				sock = sock_multiConnect( cons, &altservers[i].host, 100, 1000 );
-				if ( sock == -2 || sock == -1 )
-					continue;
 			}
+			if ( sock == -2 || sock == -1 )
+				continue;
 			salen = sizeof(sa);
 			if ( getpeername( sock, (struct sockaddr*)&sa, &salen ) == -1 ) {
 				logadd( LOG_ERROR, "getpeername on successful connection failed!? (errno=%d)", errno );
