@@ -24,11 +24,6 @@ static pthread_t altThread;
 static void *altservers_main(void *data);
 static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const unsigned int rtt);
 
-int altservers_getCount()
-{
-	return numAltServers;
-}
-
 void altservers_init()
 {
 	srand( (unsigned int)time( NULL ) );
@@ -175,7 +170,7 @@ void altservers_removeUplink(dnbd3_connection_t *uplink)
  * Private servers are excluded, so this is what you want to call to
  * get a list of servers you can tell a client about
  */
-int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
+int altservers_getListForClient(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
 {
 	if ( host == NULL || host->type == 0 || numAltServers == 0 || output == NULL || size <= 0 ) return 0;
 	int i, j;
@@ -183,6 +178,7 @@ int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int
 	int scores[size];
 	int score;
 	spin_lock( &altServersLock );
+	if ( size > numAltServers ) size = numAltServers;
 	for (i = 0; i < numAltServers; ++i) {
 		if ( altServers[i].host.type == 0 ) continue; // Slot is empty
 		if ( altServers[i].isPrivate ) continue; // Do not tell clients about private servers
@@ -227,7 +223,7 @@ int altservers_getMatching(dnbd3_host_t *host, dnbd3_server_entry_t *output, int
  * This function is suited for finding uplink servers as
  * it includes private servers and ignores any "client only" servers
  */
-int altservers_get(dnbd3_host_t *output, int size, int emergency)
+int altservers_getListForUplink(dnbd3_host_t *output, int size, int emergency)
 {
 	if ( size <= 0 ) return 0;
 	int count = 0, i;
@@ -243,15 +239,25 @@ int altservers_get(dnbd3_host_t *output, int size, int emergency)
 		altServers[0] = altServers[i];
 		altServers[i] = tmp;
 	}
-	for (i = 0; i < numAltServers; ++i) {
-		if ( altServers[i].host.type == 0 ) continue; // Slot is empty
-		if ( _proxyPrivateOnly && !altServers[i].isPrivate ) continue; // Config says to consider private alt-servers only? ignore!
-		if ( altServers[i].isClientOnly ) continue;
-		if ( !emergency && altServers[i].numFails > SERVER_MAX_UPLINK_FAILS // server failed X times in a row
-			&& timing_diff( &altServers[i].lastFail, &now ) > SERVER_BAD_UPLINK_IGNORE ) continue; // and last fail was not too long ago? ignore!
-		// server seems ok, include in output and reset its fail counter
-		if ( !emergency ) altServers[i].numFails /= 2;
-		output[count++] = altServers[i].host;
+	// We iterate over the list twice. First run adds servers with 0 failures only,
+	// second one also considers those that failed (not too many times)
+	if ( size > numAltServers ) size = numAltServers;
+	for (i = 0; i < numAltServers * 2; ++i) {
+		dnbd3_alt_server_t *srv = &altServers[i % numAltServers];
+		if ( srv->host.type == 0 ) continue; // Slot is empty
+		if ( _proxyPrivateOnly && !srv->isPrivate ) continue; // Config says to consider private alt-servers only? ignore!
+		if ( srv->isClientOnly ) continue;
+		bool first = ( i < numAltServers );
+		if ( first ) {
+			if ( srv->numFails > 0 ) continue;
+		} else {
+			if ( srv->numFails == 0 ) continue; // Already added in first iteration
+			if ( !emergency && srv->numFails > SERVER_BAD_UPLINK_THRES // server failed X times in a row
+				&& timing_diff( &srv->lastFail, &now ) < SERVER_BAD_UPLINK_IGNORE ) continue; // and last fail was not too long ago? ignore!
+			if ( !emergency ) srv->numFails--;
+		}
+		// server seems ok, include in output and decrease its fail counter
+		output[count++] = srv->host;
 		if ( count >= size ) break;
 	}
 	spin_unlock( &altServersLock );
@@ -280,6 +286,10 @@ static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const 
 		}
 		avg /= SERVER_RTT_PROBES;
 #endif
+		// If we got a new rtt value, server must be working
+		if ( altServers[i].numFails > 0 ) {
+			altServers[i].numFails--;
+		}
 		break;
 	}
 	spin_unlock( &altServersLock );
@@ -333,7 +343,7 @@ void altservers_serverFailed(const dnbd3_host_t * const host)
 	// same uplink. If there's a network hickup, all uplinks will call this
 	// function and would increase the counter too quickly, disabling the server.
 	if ( foundIndex != -1 && timing_diff( &altServers[foundIndex].lastFail, &now ) > SERVER_RTT_DELAY_INIT ) {
-		altServers[foundIndex].numFails++;
+		altServers[foundIndex].numFails += SERVER_UPLINK_FAIL_INCREASE;
 		altServers[foundIndex].lastFail = now;
 		if ( lastOk != -1 ) {
 			// Make sure non-working servers are put at the end of the list, so they're less likely
@@ -413,7 +423,7 @@ static void *altservers_main(void *data UNUSED)
 			}
 			assert( uplink->rttTestResult == RTT_INPROGRESS );
 			// Now get 4 alt servers
-			numAlts = altservers_get( servers, ALTS, uplink->fd == -1 );
+			numAlts = altservers_getListForUplink( servers, ALTS, uplink->fd == -1 );
 			if ( uplink->fd != -1 ) {
 				// Add current server if not already in list
 				found = false;

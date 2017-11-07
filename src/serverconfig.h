@@ -3,15 +3,18 @@
 
 #include "config.h"
 
-// +++++ Performance related
+// +++++ Performance/memory related
 #define SERVER_MAX_CLIENTS 4000
 #define SERVER_MAX_IMAGES  5000
-#define SERVER_MAX_ALTS    250
-#define SERVER_MAX_UPLINK_FAILS  8 // How many times may a server fail until it is considered bad
-#define SERVER_BAD_UPLINK_IGNORE 120 // How many seconds is a server considered bad?
+#define SERVER_MAX_ALTS    100
+// +++++ Uplink handling (proxy mode)
+#define SERVER_UPLINK_FAIL_INCREASE 5 // On server failure, increase numFails by this value
+#define SERVER_BAD_UPLINK_THRES  40 // Thresold for numFails at which we ignore a server for the time span below
+#define SERVER_BAD_UPLINK_IGNORE 180 // How many seconds is a server ignored
 #define SERVER_MAX_UPLINK_QUEUE  1500 // Maximum number of queued requests per uplink
 #define SERVER_UPLINK_QUEUELEN_THRES  900 // Threshold where we start dropping incoming clients
-#define SERVER_MAX_PENDING_ALT_CHECKS 50
+#define SERVER_MAX_PENDING_ALT_CHECKS 50 // Length of queue for pending alt checks requested by uplinks
+
 #define SERVER_CACHE_MAP_SAVE_INTERVAL 90
 
 // Time in ms to wait for a read/write call to complete on an uplink connection
