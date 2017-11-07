@@ -110,8 +110,15 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	assert( image != NULL );
 	// This should always be block borders due to how the protocol works, but better be safe
 	// than accidentally mark blocks as cached when they really aren't entirely cached.
-	end &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-	start = (uint64_t)(start + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+	if ( set ) {
+		// If we set as cached, move "inwards" in case we're not at 4k border
+		end &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+		start = (uint64_t)(start + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+	} else {
+		// If marking as NOT cached, move "outwards" in case we're not at 4k border
+		start &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+		end = (uint64_t)(end + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+	}
 	bool dirty = false;
 	uint64_t pos = start;
 	spin_lock( &image->lock );
