@@ -193,7 +193,7 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 		}
 		if ( uplink->queue[i].status != ULR_PENDING && uplink->queue[i].status != ULR_NEW ) continue;
 		if ( uplink->queue[i].from <= start && uplink->queue[i].to >= end ) {
-			if ( hops > uplink->queue[i].hopCount ) {
+			if ( hops > uplink->queue[i].hopCount && uplink->queue[i].from == start && uplink->queue[i].to == end ) {
 				requestLoop = true;
 				break;
 			}

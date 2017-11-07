@@ -1179,7 +1179,6 @@ dnbd3_image_t* image_getOrLoad(char * const name, const uint16_t revision)
  */
 static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision, const size_t len)
 {
-	int i;
 	// Already existing locally?
 	dnbd3_image_t *image = NULL;
 	if ( revision == 0 ) {
@@ -1192,7 +1191,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	int useIndex = -1, fallbackIndex = 0;
 	if ( len >= NAMELEN ) cmpname += 1 + len - NAMELEN;
 	pthread_mutex_lock( &remoteCloneLock );
-	for (i = 0; i < CACHELEN; ++i) {
+	for (int i = 0; i < CACHELEN; ++i) {
 		if ( remoteCloneCache[i].rid == revision && strcmp( cmpname, remoteCloneCache[i].name ) == 0 ) {
 			useIndex = i;
 			if ( timing_reached( &remoteCloneCache[i].deadline, &now ) ) break;
@@ -1224,18 +1223,40 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	pthread_mutex_unlock( &remoteCloneLock );
 
 	// Get some alt servers and try to get the image from there
-	dnbd3_host_t servers[4];
+#define REP_NUM_SRV (8)
+	dnbd3_host_t servers[REP_NUM_SRV];
 	int uplinkSock = -1;
-	dnbd3_host_t *uplinkServer = NULL;
-	const int count = altservers_get( servers, 4, false );
+	dnbd3_host_t uplinkServer;
+	const int count = altservers_get( servers, REP_NUM_SRV, false );
 	uint16_t remoteProtocolVersion;
 	uint16_t remoteRid = revision;
 	uint64_t remoteImageSize;
-	for (i = 0; i < count; ++i) {
+	struct sockaddr_storage sa;
+	socklen_t salen;
+	poll_list_t *cons = sock_newPollList();
+	logadd( LOG_DEBUG1, "Trying to clone %s:%d from %d hosts", name, (int)revision, count );
+	for (int i = 0; i < count + 5; ++i) { // "i < count + 5" for 5 additional iterations, waiting on pending connects
 		char *remoteName;
 		bool ok = false;
-		int sock = sock_connect( &servers[i], 750, _uplinkTimeout );
-		if ( sock == -1 ) continue;
+		int sock;
+		if ( i >= count ) {
+			sock = sock_multiConnect( cons, NULL, 100, 1000 );
+			if ( sock == -2 ) break;
+		} else {
+			if ( log_hasMask( LOG_DEBUG1 ) ) {
+				char host[50];
+				size_t len = sock_printHost( &servers[i], host, sizeof(host) );
+				host[len] = '\0';
+				logadd( LOG_DEBUG1, "Trying to replicate from %s", host );
+			}
+			sock = sock_multiConnect( cons, &servers[i], 100, 1000 );
+		}
+		if ( sock == -1 || sock == -2 ) continue;
+		salen = sizeof(sa);
+		if ( getpeername( sock, (struct sockaddr*)&sa, &salen ) == -1 ) {
+			logadd( LOG_MINOR, "getpeername on successful connection failed!? (errno=%d)", errno );
+			goto server_fail;
+		}
 		if ( !dnbd3_select_image( sock, name, revision, SI_SERVER_FLAGS ) ) goto server_fail;
 		if ( !dnbd3_select_image_reply( &serialized, sock, &remoteProtocolVersion, &remoteName, &remoteRid, &remoteImageSize ) ) goto server_fail;
 		if ( remoteProtocolVersion < MIN_SUPPORTED_SERVER || remoteRid == 0 ) goto server_fail;
@@ -1251,24 +1272,28 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 
 		// Cloning worked :-)
 		uplinkSock = sock;
-		uplinkServer = &servers[i];
+		if ( !sock_sockaddrToDnbd3( (struct sockaddr*)&sa, &uplinkServer ) ) {
+			uplinkServer.type = 0;
+		}
 		break;
 
 server_fail: ;
 		close( sock );
 	}
+	sock_destroyPollList( cons );
 
 	// If we still have a pointer to a local image, release the reference
 	if ( image != NULL ) image_release( image );
 	// If everything worked out, this call should now actually return the image
 	image = image_get( name, remoteRid, false );
-	if ( image != NULL && uplinkSock != -1 && uplinkServer != NULL ) {
+	if ( image != NULL && uplinkSock != -1 ) {
 		// If so, init the uplink and pass it the socket
-		if ( !uplink_init( image, uplinkSock, uplinkServer, remoteProtocolVersion ) ) {
+		sock_setTimeout( uplinkSock, _uplinkTimeout );
+		if ( !uplink_init( image, uplinkSock, &uplinkServer, remoteProtocolVersion ) ) {
 			close( uplinkSock );
 		} else {
 			// Clumsy busy wait, but this should only take as long as it takes to start a thread, so is it really worth using a signalling mechanism?
-			i = 0;
+			int i = 0;
 			while ( !image->working && ++i < 100 )
 				usleep( 2000 );
 		}
