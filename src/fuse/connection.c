@@ -96,7 +96,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 	char *remoteName;
 	uint64_t remoteSize;
 	struct sockaddr_storage sa;
-	socklen_t salen = sizeof(sa);
+	socklen_t salen;
 	poll_list_t *cons = sock_newPollList();
 
 	pthread_mutex_lock( &mutexInit );
@@ -143,6 +143,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 				if ( sock == -2 || sock == -1 )
 					continue;
 			}
+			salen = sizeof(sa);
 			if ( getpeername( sock, (struct sockaddr*)&sa, &salen ) == -1 ) {
 				logadd( LOG_ERROR, "getpeername on successful connection failed!? (errno=%d)", errno );
 				close( sock );
