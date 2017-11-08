@@ -451,6 +451,7 @@ static void *altservers_main(void *data UNUSED)
 				logadd( LOG_DEBUG1, "Image has gone away that was queued for RTT measurement\n" );
 				continue;
 			}
+			logadd( LOG_DEBUG2, "Running altcheck for '%s:%d'", image->name, (int)image->rid );
 			assert( uplink->rttTestResult == RTT_INPROGRESS );
 			// Now get 4 alt servers
 			numAlts = altservers_getListForUplink( servers, ALTS, uplink->fd == -1 );
@@ -474,7 +475,7 @@ static void *altservers_main(void *data UNUSED)
 				usleep( 1000 ); // Wait a very short moment for the network to recover (we might be doing lots of measurements...)
 				// Connect
 				clock_gettime( BEST_CLOCK_SOURCE, &start );
-				int sock = sock_connect( &servers[itAlt], 750, _uplinkTimeout );
+				int sock = sock_connect( &servers[itAlt], 750, 1000 );
 				if ( sock < 0 ) continue;
 				// Select image ++++++++++++++++++++++++++++++
 				if ( !dnbd3_select_image( sock, image->name, image->rid, SI_SERVER_FLAGS ) ) {
@@ -560,6 +561,7 @@ static void *altservers_main(void *data UNUSED)
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
 				logadd( LOG_DEBUG1, "Change @ %s - best: %luµs, current: %luµs\n", image->name, bestRtt, currentRtt );
+				sock_setTimeout( bestSock, _uplinkTimeout );
 				spin_lock( &uplink->rttLock );
 				uplink->betterFd = bestSock;
 				uplink->betterServer = servers[bestIndex];

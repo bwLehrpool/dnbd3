@@ -473,14 +473,17 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 	spin_lock( &link->queueLock );
 	for (j = 0; j < link->queueLen; ++j) {
 		if ( link->queue[j].status != ULR_NEW && (newOnly || link->queue[j].status != ULR_PENDING) ) continue;
-		//logadd( LOG_DEBUG2 %p] Sending slot %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)link, j, link->queue[j].status, link->queue[j].handle, link->queue[j].from, link->queue[j, ".to );
 		link->queue[j].status = ULR_PENDING;
-		const uint64_t offset = link->queue[j].from;
-		const uint32_t size = (uint32_t)( link->queue[j].to - link->queue[j].from );
 		uint8_t hops = link->queue[j].hopCount;
+		const uint64_t reqStart = link->queue[j].from & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+		const uint32_t reqSize = (uint32_t)(((link->queue[j].to + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1)) - reqStart);
+		/*
+		logadd( LOG_DEBUG2, "[%p] Sending slot %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 " (%" PRIu64 "-%" PRIu64 ")",
+				(void*)link, j, link->queue[j].status, link->queue[j].handle, link->queue[j].from, link->queue[j].to, reqStart, reqStart+reqSize );
+		*/
 		spin_unlock( &link->queueLock );
 		if ( hops < 200 ) ++hops;
-		const int ret = dnbd3_get_block( link->fd, offset, size, offset, COND_HOPCOUNT( link->version, hops ) );
+		const int ret = dnbd3_get_block( link->fd, reqStart, reqSize, reqStart, COND_HOPCOUNT( link->version, hops ) );
 		if ( !ret ) {
 			// Non-critical - if the connection dropped or the server was changed
 			// the thread will re-send this request as soon as the connection
