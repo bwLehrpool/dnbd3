@@ -762,7 +762,7 @@ static bool image_addToList(dnbd3_image_t *image)
 		break;
 	}
 	if ( i >= _num_images ) {
-		if ( _num_images >= SERVER_MAX_IMAGES ) {
+		if ( _num_images >= _maxImages ) {
 			spin_unlock( &imageListLock );
 			return false;
 		}
@@ -1270,7 +1270,10 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 		if ( revision != 0 && remoteRid != revision ) goto server_fail; // Want specific revision but uplink supplied different rid
 		if ( revision == 0 && image != NULL && image->rid >= remoteRid ) goto server_fail; // Not actually a failure: Highest remote rid is <= highest local rid - don't clone!
 		if ( remoteImageSize < DNBD3_BLOCK_SIZE || remoteName == NULL || strcmp( name, remoteName ) != 0 ) goto server_fail;
-		if ( remoteImageSize > SERVER_MAX_PROXY_IMAGE_SIZE ) goto server_fail;
+		if ( remoteImageSize > _maxReplicationSize ) {
+			logadd( LOG_MINOR, "Won't proxy '%s:%d': Larger than maxReplicationSize", name, (int)revision );
+			goto server_fail;
+		}
 		pthread_mutex_lock( &reloadLock );
 		ok = image_ensureDiskSpace( remoteImageSize )
 				&& image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img

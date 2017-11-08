@@ -564,13 +564,13 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 			logadd( LOG_INFO, "Uplink: Connection error %d (%s)", ret, link->image->path );
 			goto error_cleanup;
 		}
-		if ( inReply.size > 9000000 ) { // TODO: Configurable
+		if ( inReply.size > (uint32_t)_maxPayload ) {
 			logadd( LOG_WARNING, "Pure evil: Uplink server sent too much payload for %s", link->image->path );
 			goto error_cleanup;
 		}
 
 		if ( link->recvBufferLen < inReply.size ) {
-			link->recvBufferLen = MIN(9000000, inReply.size + 65536); // XXX dont miss occurrence
+			link->recvBufferLen = MIN((uint32_t)_maxPayload, inReply.size + 65536);
 			link->recvBuffer = realloc( link->recvBuffer, link->recvBufferLen );
 		}
 		if ( (uint32_t)sock_recv( link->fd, link->recvBuffer, inReply.size ) != inReply.size ) {

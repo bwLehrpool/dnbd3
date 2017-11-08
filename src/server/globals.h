@@ -219,8 +219,37 @@ extern bool _lookupMissingForProxy;
 extern int _listenPort;
 
 /**
+ * Max number of DNBD3 clients we accept
+ */
+extern int _maxClients;
+
+/**
+ * Max number of Images we support (in baseDir)
+ */
+extern int _maxImages;
+
+/**
+ * Maximum payload length we accept on uplinks and thus indirectly
+ * from clients in case the requested range is not cached locally.
+ * Usually this isn't even a megabyte for "real" clients (blockdev
+ * or fuse).
+ */
+extern int _maxPayload;
+
+/**
+ * If in proxy mode, don't replicate images that are
+ * larger than this according to the uplink server.
+ */
+extern uint64_t _maxReplicationSize;
+
+/**
  * Load the server configuration.
  */
 void globals_loadConfig();
+
+/**
+ * Dump the effective configuration in use to given buffer.
+ */
+size_t globals_dumpConfig(char *buffer, size_t size);
 
 #endif /* GLOBALS_H_ */

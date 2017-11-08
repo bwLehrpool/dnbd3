@@ -33,7 +33,6 @@
 #define SERVER_RTT_DELAY_FAILED 180
 
 #define SERVER_REMOTE_IMAGE_CHECK_CACHETIME 120 // 2 minutes
-#define SERVER_MAX_PROXY_IMAGE_SIZE 100000000000LL // 100GB
 
 // Which is the minimum protocol version the server expects from the client
 #define MIN_SUPPORTED_CLIENT 2

@@ -726,7 +726,7 @@ static bool addToList(dnbd3_client_t *client)
 		spin_unlock( &_clients_lock );
 		return true;
 	}
-	if ( _num_clients >= SERVER_MAX_CLIENTS ) {
+	if ( _num_clients >= _maxClients ) {
 		spin_unlock( &_clients_lock );
 		logadd( LOG_ERROR, "Maximum number of clients reached!" );
 		return false;
