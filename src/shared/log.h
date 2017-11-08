@@ -22,6 +22,7 @@
 #define LOG_H_
 
 #include <stdbool.h>
+#include <unistd.h>
 
 typedef unsigned int logmask_t;
 #define LOG_ERROR    ((logmask_t)1)  // Fatal error, server will terminate
@@ -57,6 +58,6 @@ void logadd(const logmask_t mask, const char *text, ...)
 /**
  * Return last size bytes of log.
  */
-bool log_fetch(char *buffer, int size);
+ssize_t log_fetch(char *buffer, int size);
 
 #endif /* LOG_H_ */

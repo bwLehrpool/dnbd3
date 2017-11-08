@@ -8,6 +8,7 @@
 #include "../serverconfig.h"
 #include <assert.h>
 #include <inttypes.h>
+#include <jansson.h>
 
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLockWrite; // Lock for adding something to pending. (NULL -> nonNULL)
@@ -262,6 +263,35 @@ int altservers_getListForUplink(dnbd3_host_t *output, int size, int emergency)
 	}
 	spin_unlock( &altServersLock );
 	return count;
+}
+
+json_t* altservers_toJson()
+{
+	json_t *list = json_array();
+
+	spin_lock( &altServersLock );
+	char host[100];
+	const int count = numAltServers;
+	dnbd3_alt_server_t src[count];
+	memcpy( src, altServers, sizeof(src) );
+	spin_unlock( &altServersLock );
+	for (int i = 0; i < count; ++i) {
+		json_t *rtts = json_array();
+		for (int j = 0; j < SERVER_RTT_PROBES; ++j) {
+			json_array_append_new( rtts, json_integer( src[i].rtt[ (j + src[i].rttIndex + 1) % SERVER_RTT_PROBES ] ) );
+		}
+		sock_printHost( &src[i].host, host, sizeof(host) );
+		json_t *server = json_pack( "{ss,ss,so,sb,sb,si}",
+			"comment", src[i].comment,
+			"host", host,
+			"rtt", rtts,
+			"isPrivate", (int)src[i].isPrivate,
+			"isClientOnly", (int)src[i].isClientOnly,
+			"numFails", src[i].numFails
+		);
+		json_array_append_new( list, server );
+	}
+	return list;
 }
 
 /**

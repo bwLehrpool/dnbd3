@@ -4,6 +4,7 @@
 #include "uplink.h"
 #include "locks.h"
 #include "image.h"
+#include "altservers.h"
 #include "../shared/sockhelper.h"
 #include "fileutil.h"
 #include "picohttpparser/picohttpparser.h"
@@ -19,6 +20,9 @@
 #define ACL_STATS               1
 #define ACL_CLIENT_LIST         2
 #define ACL_IMAGE_LIST          4
+#define ACL_CONFIG              8
+#define ACL_LOG                16
+#define ACL_ALTSERVERS         32
 
 #define HTTP_CLOSE 4
 #define HTTP_KEEPALIVE 9
@@ -250,6 +254,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 {
 	bool ok;
 	bool stats = false, images = false, clients = false, space = false;
+	bool logfile = false, config = false, altservers = false;
 #define SETVAR(var) if ( !var && STRCMP(fields[i].value, #var) ) var = true
 	for (size_t i = 0; i < fields_num; ++i) {
 		if ( !equals( &fields[i].name, &STR_Q ) ) continue;
@@ -257,6 +262,9 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 		else SETVAR(space);
 		else SETVAR(images);
 		else SETVAR(clients);
+		else SETVAR(logfile);
+		else SETVAR(config);
+		else SETVAR(altservers);
 	}
 #undef SETVAR
 	if ( ( stats || space ) && !(permissions & ACL_STATS) ) {
@@ -267,6 +275,15 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	}
 	if ( clients && !(permissions & ACL_CLIENT_LIST) ) {
 		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access client list", -1, keepAlive );
+	}
+	if ( logfile && !(permissions & ACL_LOG) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access log", -1, keepAlive );
+	}
+	if ( config && !(permissions & ACL_CONFIG) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access config", -1, keepAlive );
+	}
+	if ( altservers && !(permissions & ACL_ALTSERVERS) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access altservers", -1, keepAlive );
 	}
 	// Call this first because it will update the total bytes sent counter
 	json_t *jsonClients = NULL;
@@ -301,6 +318,25 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	}
 	if ( images ) {
 		json_object_set_new( statisticsJson, "images", image_getListAsJson() );
+	}
+	if ( logfile ) {
+		char logbuf[4000];
+		ssize_t len = log_fetch( logbuf, sizeof(logbuf) );
+		json_t *val;
+		if ( len <= 0 ) {
+			val = json_null();
+		} else {
+			val = json_stringn_nocheck( logbuf, (size_t)len );
+		}
+		json_object_set_new( statisticsJson, "logfile", val );
+	}
+	if ( config ) {
+		char buf[2000];
+		size_t len = globals_dumpConfig( buf, sizeof(buf) );
+		json_object_set_new( statisticsJson, "config", json_stringn_nocheck( buf, len ) );
+	}
+	if ( altservers ) {
+		json_object_set_new( statisticsJson, "altservers", altservers_toJson() );
 	}
 
 	char *jsonString = json_dumps( statisticsJson, 0 );

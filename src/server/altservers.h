@@ -3,6 +3,8 @@
 
 #include "globals.h"
 
+struct json_t;
+
 void altservers_init();
 
 void altservers_shutdown();
@@ -22,5 +24,7 @@ int altservers_getListForUplink(dnbd3_host_t *output, int size, int emergency);
 int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2);
 
 void altservers_serverFailed(const dnbd3_host_t * const host);
+
+struct json_t* altservers_toJson();
 
 #endif /* UPLINK_CONNECTOR_H_ */

@@ -129,17 +129,17 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 	}
 }
 
-bool log_fetch(char *buffer, int size)
+ssize_t log_fetch(char *buffer, int size)
 {
 	if ( logFile == NULL || size <= 1 )
-		return false;
+		return -1;
 	int fd = open( logFile, O_RDONLY );
 	if ( fd < 0 )
-		return false;
+		return -1;
 	off_t off = lseek( fd, 0, SEEK_END );
 	if ( off == (off_t)-1 ) {
 		close( fd );
-		return false;
+		return -1;
 	}
 	if ( (off_t)size <= off ) {
 		off -= size;
@@ -148,10 +148,8 @@ bool log_fetch(char *buffer, int size)
 	}
 	ssize_t ret = pread( fd, buffer, size - 1, off );
 	close( fd );
-	if ( ret < 0 )
-		return false;
 	buffer[ret] = '\0';
-	return true;
+	return ret;
 }
 
 static int writeLevel(char *buffer, logmask_t level)
