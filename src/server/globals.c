@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <sys/resource.h>
+#include <errno.h>
 
 char *_configDir = NULL;
 volatile bool _shutdown = false;
@@ -107,6 +109,43 @@ void globals_loadConfig()
 	// Cap to hard limit
 	if ( _maxClients > SERVER_MAX_CLIENTS ) _maxClients = SERVER_MAX_CLIENTS;
 	if ( _maxImages > SERVER_MAX_IMAGES ) _maxImages = SERVER_MAX_IMAGES;
+	// Consider rlimits
+	struct rlimit limit;
+	if ( getrlimit( RLIMIT_NOFILE, &limit ) != 0 ) {
+		logadd( LOG_DEBUG1, "getrlimit failed, errno %d", errno );
+	} else {
+		const rlim_t required = (rlim_t)( _maxClients + _maxImages * ( _isProxy ? 2 : 1 ) + 50 );
+		if ( limit.rlim_cur != RLIM_INFINITY && limit.rlim_cur < required ) {
+			rlim_t current = limit.rlim_cur;
+			if ( required <= limit.rlim_max || limit.rlim_max == RLIM_INFINITY ) {
+				limit.rlim_cur = required;
+			} else {
+				limit.rlim_cur = limit.rlim_max;
+			}
+			if ( current != limit.rlim_cur && setrlimit( RLIMIT_NOFILE, &limit ) == 0 ) {
+				current = limit.rlim_cur;
+				logadd( LOG_INFO, "LIMIT_NOFILE (ulimit -n) soft limit increased to %d", (int)current );
+			}
+			if ( current < required ) {
+				logadd( LOG_WARNING, "This process can only have %d open file handles,"
+						" which is not enough for the selected maxClients and maxImages counts."
+						" Consider increasing the limit to at least %d (RLIMIT_NOFILE, ulimit -n)"
+						" to support the current configuration. maxClients and maxImages have"
+						" been lowered for this session.", (int)current, (int)required );
+				do {
+					if ( _maxClients > 500 && _maxImages > 150 ) {
+						_maxImages -= _maxImages / 20 + 1;
+						_maxClients -= _maxClients / 20 + 1;
+					} else if ( _maxImages > 100 ) {
+						_maxImages -= _maxImages / 20 + 1;
+						if ( _maxClients > 200 ) _maxClients -= _maxClients / 25 + 1;
+					} else {
+						break;
+					}
+				} while ( (rlim_t)( _maxClients + _maxImages * ( _isProxy ? 2 : 1 ) + 50 ) > current );
+			}
+		}
+	}
 	// Dump config as interpreted
 	char buffer[2000];
 	globals_dumpConfig( buffer, sizeof(buffer) );
