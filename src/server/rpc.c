@@ -16,6 +16,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#if JANSSON_VERSION_HEX < 0x020600
+#define json_stringn_nocheck(a,b) json_string_nocheck(a)
+#endif
+
 #define ACL_ALL        0x7fffffff
 #define ACL_STATS               1
 #define ACL_CLIENT_LIST         2
@@ -327,6 +331,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 			val = json_null();
 		} else {
 			val = json_stringn_nocheck( logbuf, (size_t)len );
+
 		}
 		json_object_set_new( statisticsJson, "logfile", val );
 	}
