@@ -556,7 +556,9 @@ set_name: ;
 	}
 exit_client_cleanup: ;
 	removeFromList( client );
-	net_updateGlobalSentStatsFromClient( client ); // Don't need client's lock here as it's not active anymore
+	spin_lock( &client->statsLock ); // Make TSAN happy
+	net_updateGlobalSentStatsFromClient( client );
+	spin_unlock( &client->statsLock );
 	freeClientStruct( client ); // This will also call image_release on client->image
 	return NULL ;
 fail_preadd: ;
