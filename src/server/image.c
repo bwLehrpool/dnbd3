@@ -49,7 +49,7 @@ static bool image_addToList(dnbd3_image_t *image);
 static bool image_load(char *base, char *path, int withUplink);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc);
-static bool image_ensureDiskSpace(uint64_t size);
+static bool image_ensureDiskSpace(uint64_t size, bool force);
 
 static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
@@ -1125,13 +1125,16 @@ bool image_create(char *image, int revision, uint64_t size)
 	// Try cache map first
 	if ( !file_alloc( fdCache, 0, mapsize ) ) {
 		const int err = errno;
-		logadd( LOG_ERROR, "Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
-		goto failure_cleanup;
+		logadd( LOG_DEBUG1, "Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
 	}
 	// Now write image
-	if ( !file_alloc( fdImage, 0, size ) ) {
+	if ( !_sparseFiles && !file_alloc( fdImage, 0, size ) ) {
 		const int err = errno;
 		logadd( LOG_ERROR, "Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, err );
+		logadd( LOG_ERROR, "It is highly recommended to use a file system that supports preallocating disk"
+				" space without actually writing all zeroes to the block device." );
+		logadd( LOG_ERROR, "If you cannot fix this, try setting sparseFiles=true, but don't expect"
+				" divine performance during replication." );
 		goto failure_cleanup;
 	}
 	close( fdImage );
@@ -1275,8 +1278,13 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 			goto server_fail;
 		}
 		pthread_mutex_lock( &reloadLock );
-		ok = image_ensureDiskSpace( remoteImageSize )
-				&& image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img
+		// Ensure disk space entirely if not using sparse files, otherwise just make sure we have some room at least
+		if ( _sparseFiles ) {
+			ok = image_ensureDiskSpace( 2ull * 1024 * 1024 * 1024, false ); // 2GiB, maybe configurable one day
+		} else {
+			ok = image_ensureDiskSpace( remoteImageSize + ( 10 * 1024 * 1024 ), false ); // some extra space for cache map etc.
+		}
+		ok = ok && image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img
 		pthread_mutex_unlock( &reloadLock );
 		if ( !ok ) goto server_fail;
 
@@ -1677,14 +1685,30 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 }
 
 /**
+ * Call image_ensureDiskSpace (below), but aquire
+ * reloadLock first.
+ */
+bool image_ensureDiskSpaceLocked(uint64_t size, bool force)
+{
+	bool ret;
+	pthread_mutex_lock( &reloadLock );
+	ret = image_ensureDiskSpace( size, force );
+	pthread_mutex_unlock( &reloadLock );
+	return ret;
+}
+
+/**
  * Make sure at least size bytes are available in _basePath.
  * Will delete old images to make room for new ones.
  * TODO: Store last access time of images. Currently the
- * last access time is reset on server restart. Thus it will
- * currently only delete images if server uptime is > 10 hours
+ * last access time is reset to the file modification time
+ * on server restart. Thus it will
+ * currently only delete images if server uptime is > 10 hours.
+ * This can be overridden by setting force to true, in case
+ * free space is desperately needed.
  * Return true iff enough space is available. false in random other cases
  */
-static bool image_ensureDiskSpace(uint64_t size)
+static bool image_ensureDiskSpace(uint64_t size, bool force)
 {
 	for ( int maxtries = 0; maxtries < 20; ++maxtries ) {
 		uint64_t available;
@@ -1694,7 +1718,7 @@ static bool image_ensureDiskSpace(uint64_t size)
 			return true;
 		}
 		if ( available > size ) return true;
-		if ( dnbd3_serverUptime() < 10 * 3600 ) {
+		if ( !force && dnbd3_serverUptime() < 10 * 3600 ) {
 			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024ll * 1024ll)),
 					(int)(size / (1024 * 1024)) );
 			return false;

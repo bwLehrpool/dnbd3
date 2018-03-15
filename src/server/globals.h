@@ -214,6 +214,20 @@ extern bool _backgroundReplication;
 extern bool _lookupMissingForProxy;
 
 /**
+ * Should we preallocate proxied images right at the start to make
+ * sure we can cache it entirely, or rather create sparse files
+ * with holes in them? With sparse files, we just keep writing
+ * cached blocks to disk until it is full, and only then will we
+ * start to delete old images. This might be a bit flaky so use
+ * only in space restricted environments. Also make sure your
+ * file system actually supports sparse files / files with holes
+ * in them, or you might get really shitty performance.
+ * This setting will have no effect if background replication is
+ * turned on.
+ */
+extern bool _sparseFiles;
+
+/**
  * Port to listen on (default: #define PORT (5003))
  */
 extern int _listenPort;

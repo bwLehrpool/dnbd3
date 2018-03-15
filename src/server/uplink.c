@@ -592,10 +592,19 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		spin_unlock( &link->image->lock );
 		// 1) Write to cache file
 		if ( link->image->cacheFd != -1 ) {
+			bool tryFree = true;
 			uint32_t done = 0;
 			while ( done < inReply.size ) {
 				ret = (int)pwrite( link->image->cacheFd, link->recvBuffer + done, inReply.size - done, start + done );
-				if ( ret == -1 && errno == EINTR ) continue;
+				if ( ret == -1 ) {
+					if ( errno == EINTR ) continue;
+					if ( errno == ENOSPC || errno == EDQUOT ) {
+						// try to free 256MiB
+						if ( !tryFree || !image_ensureDiskSpaceLocked( 256ull * 1024 * 1024, true ) ) break;
+						tryFree = false;
+						continue; // Success, retry write
+					}
+				}
 				if ( ret <= 0 ) break;
 				done += (uint32_t)ret;
 			}

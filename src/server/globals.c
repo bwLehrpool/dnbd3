@@ -18,6 +18,7 @@ int _clientPenalty = 0;
 bool _isProxy = false;
 bool _backgroundReplication = true;
 bool _lookupMissingForProxy = true;
+bool _sparseFiles = false;
 bool _removeMissingImages = true;
 int _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
 int _clientTimeout = SOCKET_TIMEOUT_CLIENT;
@@ -54,6 +55,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_BOOL( dnbd3, backgroundReplication );
 	SAVE_TO_VAR_BOOL( dnbd3, lookupMissingForProxy );
+	SAVE_TO_VAR_BOOL( dnbd3, sparseFiles );
 	SAVE_TO_VAR_BOOL( dnbd3, removeMissingImages );
 	SAVE_TO_VAR_BOOL( dnbd3, closeUnusedFd );
 	SAVE_TO_VAR_UINT( dnbd3, serverPenalty );
@@ -145,6 +147,10 @@ void globals_loadConfig()
 				} while ( (rlim_t)( _maxClients + _maxImages * ( _isProxy ? 2 : 1 ) + 50 ) > current );
 			}
 		}
+	}
+	if ( _backgroundReplication && _sparseFiles ) {
+		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true" );
+		_sparseFiles = false;
 	}
 	// Dump config as interpreted
 	char buffer[2000];
@@ -257,6 +263,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PBOOL(isProxy);
 	PBOOL(backgroundReplication);
 	PBOOL(lookupMissingForProxy);
+	PBOOL(sparseFiles);
 	PBOOL(removeMissingImages);
 	PINT(uplinkTimeout);
 	PINT(clientTimeout);
