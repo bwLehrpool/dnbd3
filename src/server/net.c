@@ -436,7 +436,7 @@ void* net_handleNewConnection(void *clientPtr)
 					if ( offset + request.size <= image->realFilesize ) {
 						realBytes = request.size;
 					} else {
-						realBytes = image->realFilesize - offset;
+						realBytes = (size_t)(image->realFilesize - offset);
 					}
 					while ( done < realBytes ) {
 						// TODO: Should we consider EOPNOTSUPP on BSD for sendfile and fallback to read/write?

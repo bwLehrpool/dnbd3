@@ -691,7 +691,7 @@ static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint
 	} else {
 		// Special case: Checking last block, which is smaller than HASH_BLOCK_SIZE
 		for (uint64_t mapPos = block * HASH_BLOCK_SIZE; mapPos < realFilesize; mapPos += DNBD3_BLOCK_SIZE ) {
-			const size_t map_y = mapPos >> 15;
+			const size_t map_y = (size_t)( mapPos >> 15 );
 			const int map_x = (int)( (mapPos >> 12) & 7 ); // mod 8
 			const int mask = 1 << map_x;
 			if ( (cacheMap[map_y] & mask) == 0 ) return false;
@@ -1653,18 +1653,18 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 {
 	char buffer[40000];
 	// How many bytes to read from the input file
-	const size_t bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( block * HASH_BLOCK_SIZE) );
+	const uint64_t bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( block * HASH_BLOCK_SIZE) );
 	// Determine how many bytes we had to read if the file size were a multiple of 4k
 	// This might be the same value if the real file's size is a multiple of 4k
-	const size_t vbs = ( ( realFilesize + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) ) - ( block * HASH_BLOCK_SIZE );
-	const size_t virtualBytesFromFile = MIN( HASH_BLOCK_SIZE, vbs );
+	const uint64_t vbs = ( ( realFilesize + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) ) - ( block * HASH_BLOCK_SIZE );
+	const uint64_t virtualBytesFromFile = MIN( HASH_BLOCK_SIZE, vbs );
 	const off_t readPos = (int64_t)block * HASH_BLOCK_SIZE;
 	size_t bytes = 0;
 	assert( vbs >= bytesFromFile );
 	*crc = crc32( 0, NULL, 0 );
 	// Calculate the crc32 by reading data from the file
 	while ( bytes < bytesFromFile ) {
-		const size_t n = MIN( sizeof(buffer), bytesFromFile - bytes );
+		const size_t n = (size_t)MIN( sizeof(buffer), bytesFromFile - bytes );
 		const ssize_t r = pread( fd, buffer, n, readPos + bytes );
 		if ( r <= 0 ) {
 			logadd( LOG_WARNING, "CRC: Read error (errno=%d)", errno );
@@ -1676,7 +1676,7 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 	// If the virtual file size is different, keep going using nullbytes
 	if ( bytesFromFile < virtualBytesFromFile ) {
 		memset( buffer, 0, sizeof(buffer) );
-		bytes = virtualBytesFromFile - bytesFromFile;
+		bytes = (size_t)( virtualBytesFromFile - bytesFromFile );
 		while ( bytes != 0 ) {
 			const size_t len = MIN( sizeof(buffer), bytes );
 			*crc = crc32( *crc, (uint8_t*)buffer, len );
