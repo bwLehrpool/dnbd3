@@ -1123,18 +1123,21 @@ bool image_create(char *image, int revision, uint64_t size)
 		goto failure_cleanup;
 	}
 	// Try cache map first
-	if ( !file_alloc( fdCache, 0, mapsize ) ) {
+	if ( !file_alloc( fdCache, 0, mapsize ) && !file_setSize( fdCache, mapsize ) ) {
 		const int err = errno;
 		logadd( LOG_DEBUG1, "Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
 	}
 	// Now write image
 	if ( !_sparseFiles && !file_alloc( fdImage, 0, size ) ) {
-		const int err = errno;
-		logadd( LOG_ERROR, "Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, err );
+		logadd( LOG_ERROR, "Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, errno );
 		logadd( LOG_ERROR, "It is highly recommended to use a file system that supports preallocating disk"
 				" space without actually writing all zeroes to the block device." );
 		logadd( LOG_ERROR, "If you cannot fix this, try setting sparseFiles=true, but don't expect"
 				" divine performance during replication." );
+		goto failure_cleanup;
+	} else if ( _sparseFiles && !file_setSize( fdImage, size ) ) {
+		logadd( LOG_ERROR, "Could not create sparse file of %" PRIu64 " bytes for %s (errno=%d)", size, path, errno );
+		logadd( LOG_ERROR, "Make sure you have enough disk space, check directory permissions, fs errors etc." );
 		goto failure_cleanup;
 	}
 	close( fdImage );
@@ -1741,8 +1744,12 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 			current = image_release( current );
 		}
 		declare_now;
-		if ( oldest == NULL || timing_diff( &oldest->atime, &now ) < 86400 ) {
-			logadd( LOG_DEBUG1, "No image is old enough (all have been in use in past 24h) :-(\n" );
+		if ( oldest == NULL || ( !_sparseFiles && timing_diff( &oldest->atime, &now ) < 86400 ) ) {
+			if ( oldest == NULL ) {
+				logadd( LOG_INFO, "All images are currently in use :-(" );
+			} else {
+				logadd( LOG_INFO, "Won't free any image, all have been in use in the past 24 hours :-(" );
+			}
 			return false;
 		}
 		oldest = image_lock( oldest );

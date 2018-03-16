@@ -58,11 +58,18 @@ bool file_alloc(int fd, uint64_t offset, uint64_t size)
 #elif defined(__FreeBSD__)
 	if ( posix_fallocate( fd, offset, size ) == 0 ) return true; // slow way
 #endif
+	return false;
+}
 
-	/* This doesn't make any sense, AFAIK
-	if ( lseek( fd, offset + size - 1, SEEK_SET ) != (off_t)offset ) return false; // dumb way
-	if ( write( fd, "", 1 ) != 1 ) return false;
-	*/
+bool file_setSize(int fd, uint64_t size)
+{
+	if ( ftruncate( fd, size ) == 0 ) return true;
+
+	// Try really hard... image loading logic relies on the file
+	// having the proper apparent size
+	uint8_t byte = 0;
+	pread( fd, &byte, 1, size - 1 );
+	if ( pwrite( fd, &byte, 1, size - 1 ) == 1 ) return true;
 	return false;
 }
 

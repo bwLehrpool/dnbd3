@@ -9,6 +9,7 @@ bool file_isReadable(char *file);
 bool file_isWritable(char *file);
 bool mkdir_p(const char* path);
 bool file_alloc(int fd, uint64_t offset, uint64_t size);
+bool file_setSize(int fd, uint64_t size);
 bool file_freeDiskSpace(const char * const path, uint64_t *total, uint64_t *avail);
 time_t file_lastModification(const char * const file);
 int file_loadLineBased(const char * const file, int minFields, int maxFields, void (*cb)(int argc, char **argv, void *data), void *data);
