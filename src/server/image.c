@@ -1761,17 +1761,19 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 		oldest = image_lock( oldest );
 		if ( oldest == NULL ) continue; // Image freed in the meantime? Try again
 		logadd( LOG_INFO, "'%s:%d' has to go!", oldest->name, (int)oldest->rid );
-		unlink( oldest->path );
-		size_t len = strlen( oldest->path ) + 5 + 1;
-		char buffer[len];
-		snprintf( buffer, len, "%s.map", oldest->path );
-		unlink( buffer );
-		snprintf( buffer, len, "%s.crc", oldest->path );
-		unlink( buffer );
-		snprintf( buffer, len, "%s.meta", oldest->path );
-		unlink( buffer );
+		char *filename = strdup( oldest->path );
 		oldest = image_remove( oldest );
 		oldest = image_release( oldest );
+		unlink( filename );
+		size_t len = strlen( filename ) + 10;
+		char buffer[len];
+		snprintf( buffer, len, "%s.map", filename );
+		unlink( buffer );
+		snprintf( buffer, len, "%s.crc", filename );
+		unlink( buffer );
+		snprintf( buffer, len, "%s.meta", filename );
+		unlink( buffer );
+		free( filename );
 	}
 	return false;
 }
