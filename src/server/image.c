@@ -927,6 +927,8 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->readFd = -1;
 	image->cacheFd = -1;
 	image->working = (image->cache_map == NULL );
+	timing_get( &image->nextCompletenessEstimate );
+	image->completenessEstimate = -1;
 	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
 	int32_t offset;
 	if ( stat( path, &st ) == 0 ) {
@@ -1605,7 +1607,7 @@ int image_getCompletenessEstimate(dnbd3_image_t * const image)
 	assert( image != NULL );
 	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
 	declare_now;
-	if ( timing_reached( &image->nextCompletenessEstimate, &now ) ) {
+	if ( !timing_reached( &image->nextCompletenessEstimate, &now ) ) {
 		// Since this operation is relatively expensive, we cache the result for a while
 		return image->completenessEstimate;
 	}
