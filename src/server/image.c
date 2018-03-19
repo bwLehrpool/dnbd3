@@ -1653,7 +1653,7 @@ bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks
  */
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc)
 {
-	char buffer[40000];
+	char buffer[262144];
 	// How many bytes to read from the input file
 	const uint64_t bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( block * HASH_BLOCK_SIZE) );
 	// Determine how many bytes we had to read if the file size were a multiple of 4k
