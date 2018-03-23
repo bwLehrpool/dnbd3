@@ -290,8 +290,20 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
 	// add heartbeat timer
 	dev->heartbeat_count = 0;
+
+// Adapted from https://elixir.bootlin.com/linux/v3.4/source/include/linux/timer.h#L98
+#define CONFIG_LOCKDEP
+#ifdef CONFIG_LOCKDEP
+#define init_timer(timer)						\
+	do {								\
+		static struct lock_class_key __key;			\
+		init_timer_key((timer), NULL, 0, #timer, &__key);		\
+	} while (0)
+#else
+#define init_timer(timer)\
+	init_timer_key((timer), NULL, 0, NULL, NULL)
+#endif
 	init_timer(&dev->hb_timer);
-	dev->hb_timer.data = (unsigned long)dev;
 	dev->hb_timer.function = dnbd3_net_heartbeat;
 	dev->hb_timer.expires = jiffies + HZ;
 	add_timer(&dev->hb_timer);
@@ -359,12 +371,12 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 	return 0;
 }
 
-void dnbd3_net_heartbeat(unsigned long arg)
+void dnbd3_net_heartbeat(struct timer_list *arg)
 {
 	// Because different events need different intervals, the timer is called once a second.
 	// Other intervals can be derived using dev->heartbeat_count.
 #define timeout_seconds(x) (dev->heartbeat_count % (x) == 0)
-	dnbd3_device_t *dev = (dnbd3_device_t *)arg;
+	dnbd3_device_t *dev = (dnbd3_device_t *) container_of(arg, dnbd3_device_t, hb_timer);
 
 	if (!dev->panic)
 	{

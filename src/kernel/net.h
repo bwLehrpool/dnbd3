@@ -39,7 +39,7 @@ int dnbd3_net_send(void *data);
 
 int dnbd3_net_receive(void *data);
 
-void dnbd3_net_heartbeat(unsigned long arg);
+void dnbd3_net_heartbeat(struct timer_list *arg);
 
 int dnbd3_net_discover(void *data);
 
