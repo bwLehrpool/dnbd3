@@ -26,6 +26,7 @@
 #include "serialize.h"
 
 #include <linux/time.h>
+#include <linux/signal.h>
 
 #ifndef MIN
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
