@@ -273,8 +273,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	dev->panic_count = 0;
 
 	// Enqueue request to request_queue_send for a fresh list of alt servers
-	req1->cmd_type = REQ_TYPE_SPECIAL;
-	req1->cmd_flags = CMD_GET_SERVERS;
+	req1->cmd_flags = REQ_OP_DRV_IN | CMD_GET_SERVERS;
 	list_add(&req1->queuelist, &dev->request_queue_send);
 
 	// create required threads
@@ -374,8 +373,7 @@ void dnbd3_net_heartbeat(unsigned long arg)
 			// send keepalive
 			if (req)
 			{
-				req->cmd_type = REQ_TYPE_SPECIAL;
-				req->cmd_flags = CMD_KEEPALIVE;
+				req->cmd_flags = REQ_OP_DRV_IN | CMD_KEEPALIVE;
 				list_add_tail(&req->queuelist, &dev->request_queue_send);
 				wake_up(&dev->process_queue_send);
 			}
@@ -846,9 +844,10 @@ int dnbd3_net_send(void *data)
 		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 
 		// what to do?
-		switch (blk_request->cmd_type)
+		switch (req_op(blk_request))
 		{
-		case REQ_TYPE_FS:
+		case REQ_OP_READ:
+		case REQ_OP_WRITE:
 			dnbd3_request.cmd = CMD_GET_BLOCK;
 			dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
 			dnbd3_request.size = blk_rq_bytes(blk_request); // bytes left to complete entire request
@@ -859,7 +858,8 @@ int dnbd3_net_send(void *data)
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			break;
 
-		case REQ_TYPE_SPECIAL:
+		case REQ_OP_DRV_IN:
+		case REQ_OP_DRV_OUT:
 			dnbd3_request.cmd = blk_request->cmd_flags;
 			dnbd3_request.size = 0;
 			spin_lock_irqsave(&dev->blk_lock, irqflags);

@@ -267,7 +267,7 @@ void dnbd3_blk_request(struct request_queue *q)
 			continue;
 		}
 
-		if (req->cmd_type != REQ_TYPE_FS)
+		if (req_op(req) != REQ_OP_READ && req_op(req) != REQ_OP_WRITE)
 		{
 			__blk_end_request_all(req, 0);
 			continue;
@@ -279,7 +279,7 @@ void dnbd3_blk_request(struct request_queue *q)
 			continue;
 		}
 
-		if (rq_data_dir(req) != READ)
+		if (req_op(req) != REQ_OP_READ)
 		{
 			__blk_end_request_all(req, -EACCES);
 			continue;
@@ -341,13 +341,13 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist)
 	{
 		list_del_init(&blk_request->queuelist);
-		if (blk_request->cmd_type == REQ_TYPE_FS)
+		if (req_op(blk_request) == REQ_OP_READ || req_op(blk_request) == REQ_OP_WRITE)
 		{
 			spin_lock_irqsave(&dev->blk_lock, flags);
 			__blk_end_request_all(blk_request, -EIO);
 			spin_unlock_irqrestore(&dev->blk_lock, flags);
 		}
-		else if (blk_request->cmd_type == REQ_TYPE_SPECIAL)
+		else if (blk_rq_is_private(blk_request))
 		{
 			kfree(blk_request);
 		}
