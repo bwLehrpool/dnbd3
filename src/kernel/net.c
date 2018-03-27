@@ -38,6 +38,23 @@
 #define dnbd3_sock_create(af,type,proto,sock) sock_create_kern((af) == HOST_IP4 ? AF_INET : AF_INET6, type, proto, sock)
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+// cmd_flags and cmd_type are merged into cmd_flags now
+#if REQ_FLAG_BITS > 24
+#error "Fix CMD bitshift"
+#endif
+// Pack into cmd_flags field by shifting CMD_* into unused bits of cmd_flags
+#define dnbd3_cmd_to_priv(req, cmd)   (req)->cmd_flags = REQ_OP_DRV_IN | ((cmd) << REQ_FLAG_BITS)
+#define dnbd3_priv_to_cmd(req)        ((req)->cmd_flags >> REQ_FLAG_BITS)
+#else
+// Old way with type and flags separated
+#define dnbd3_cmd_to_priv(req, cmd)   do {  \
+	(req)->cmd_type = REQ_TYPE_SPECIAL;      \
+	(req)->cmd_flags = (cmd);                \
+} while (0)
+#define dnbd3_priv_to_cmd(req)        (req)->cmd_flags
+#endif
+
 /**
  * Some macros for easier debug output. Location in source-code
  * as well as server IP:port info will be printed.
@@ -274,7 +291,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	dev->panic_count = 0;
 
 	// Enqueue request to request_queue_send for a fresh list of alt servers
-	req1->cmd_flags = REQ_OP_DRV_IN | CMD_GET_SERVERS;
+	dnbd3_cmd_to_priv(req1, CMD_GET_SERVERS);
 	list_add(&req1->queuelist, &dev->request_queue_send);
 
 	// create required threads
@@ -386,7 +403,7 @@ void dnbd3_net_heartbeat(struct timer_list *arg)
 			// send keepalive
 			if (req)
 			{
-				req->cmd_flags = REQ_OP_DRV_IN | CMD_KEEPALIVE;
+				dnbd3_cmd_to_priv(req, CMD_KEEPALIVE);
 				list_add_tail(&req->queuelist, &dev->request_queue_send);
 				wake_up(&dev->process_queue_send);
 			}
@@ -873,7 +890,7 @@ int dnbd3_net_send(void *data)
 
 		case REQ_OP_DRV_IN:
 		case REQ_OP_DRV_OUT:
-			dnbd3_request.cmd = blk_request->cmd_flags;
+			dnbd3_request.cmd = dnbd3_priv_to_cmd(blk_request);
 			dnbd3_request.size = 0;
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			list_del_init(&blk_request->queuelist);
@@ -881,7 +898,7 @@ int dnbd3_net_send(void *data)
 			break;
 
 		default:
-			printk("ERROR: Unknown command (send)\n");
+			printk("ERROR: Unknown command (send %u %u)\n", (int)blk_request->cmd_flags, (int)req_op(blk_request));
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			list_del_init(&blk_request->queuelist);
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
