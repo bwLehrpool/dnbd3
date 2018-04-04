@@ -25,6 +25,22 @@
 
 #include <linux/pagemap.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#define dnbd3_req_read(req) \
+	req_op(req) == REQ_OP_READ
+#define dnbd3_req_fs(req) \
+	dnbd3_req_read(req) || req_op(req) == REQ_OP_WRITE
+#define dnbd3_req_special(req) \
+	blk_rq_is_private(req)
+#else
+#define dnbd3_req_read(req) \
+	rq_data_dir(req) == READ
+#define dnbd3_req_fs(req) \
+	req->cmd_type == REQ_TYPE_FS
+#define dnbd3_req_special(req) \
+	req->cmd_type == REQ_TYPE_SPECIAL
+#endif
+
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
 	struct gendisk *disk;
@@ -267,7 +283,7 @@ void dnbd3_blk_request(struct request_queue *q)
 			continue;
 		}
 
-		if (req_op(req) != REQ_OP_READ && req_op(req) != REQ_OP_WRITE)
+		if (!(dnbd3_req_fs(req)))
 		{
 			__blk_end_request_all(req, 0);
 			continue;
@@ -279,7 +295,7 @@ void dnbd3_blk_request(struct request_queue *q)
 			continue;
 		}
 
-		if (req_op(req) != REQ_OP_READ)
+		if (!(dnbd3_req_read(req)))
 		{
 			__blk_end_request_all(req, -EACCES);
 			continue;
@@ -341,13 +357,13 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist)
 	{
 		list_del_init(&blk_request->queuelist);
-		if (req_op(blk_request) == REQ_OP_READ || req_op(blk_request) == REQ_OP_WRITE)
+		if (dnbd3_req_fs(blk_request))
 		{
 			spin_lock_irqsave(&dev->blk_lock, flags);
 			__blk_end_request_all(blk_request, -EIO);
 			spin_unlock_irqrestore(&dev->blk_lock, flags);
 		}
-		else if (blk_rq_is_private(blk_request))
+		else if (dnbd3_req_special(blk_request))
 		{
 			kfree(blk_request);
 		}

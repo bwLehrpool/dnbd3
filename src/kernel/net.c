@@ -46,6 +46,9 @@
 // Pack into cmd_flags field by shifting CMD_* into unused bits of cmd_flags
 #define dnbd3_cmd_to_priv(req, cmd)   (req)->cmd_flags = REQ_OP_DRV_IN | ((cmd) << REQ_FLAG_BITS)
 #define dnbd3_priv_to_cmd(req)        ((req)->cmd_flags >> REQ_FLAG_BITS)
+#define dnbd3_req_op(req)             req_op(req)
+#define DNBD3_DEV_READ REQ_OP_READ
+#define DNBD3_REQ_OP_SPECIAL REQ_OP_DRV_IN
 #else
 // Old way with type and flags separated
 #define dnbd3_cmd_to_priv(req, cmd)   do {  \
@@ -53,6 +56,9 @@
 	(req)->cmd_flags = (cmd);                \
 } while (0)
 #define dnbd3_priv_to_cmd(req)        (req)->cmd_flags
+#define dnbd3_req_op(req)             (req)->cmd_type
+#define DNBD3_DEV_READ REQ_TYPE_FS
+#define DNBD3_REQ_OP_SPECIAL REQ_TYPE_SPECIAL
 #endif
 
 /**
@@ -875,10 +881,9 @@ int dnbd3_net_send(void *data)
 		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 
 		// what to do?
-		switch (req_op(blk_request))
+		switch (dnbd3_req_op(blk_request))
 		{
-		case REQ_OP_READ:
-		case REQ_OP_WRITE:
+		case DNBD3_DEV_READ:
 			dnbd3_request.cmd = CMD_GET_BLOCK;
 			dnbd3_request.offset = blk_rq_pos(blk_request) << 9; // *512
 			dnbd3_request.size = blk_rq_bytes(blk_request); // bytes left to complete entire request
@@ -888,9 +893,7 @@ int dnbd3_net_send(void *data)
 			list_add_tail(&blk_request->queuelist, &dev->request_queue_receive);
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			break;
-
-		case REQ_OP_DRV_IN:
-		case REQ_OP_DRV_OUT:
+		case DNBD3_REQ_OP_SPECIAL:
 			dnbd3_request.cmd = dnbd3_priv_to_cmd(blk_request);
 			dnbd3_request.size = 0;
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
@@ -899,7 +902,7 @@ int dnbd3_net_send(void *data)
 			break;
 
 		default:
-			printk("ERROR: Unknown command (send %u %u)\n", (int)blk_request->cmd_flags, (int)req_op(blk_request));
+			printk("ERROR: Unknown command (send %u %u)\n", (int)blk_request->cmd_flags, (int)dnbd3_req_op(blk_request));
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			list_del_init(&blk_request->queuelist);
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
