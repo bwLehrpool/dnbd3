@@ -39,7 +39,11 @@ int dnbd3_net_send(void *data);
 
 int dnbd3_net_receive(void *data);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
 void dnbd3_net_heartbeat(struct timer_list *arg);
+#else
+void dnbd3_net_heartbeat(unsigned long arg);
+#endif
 
 int dnbd3_net_discover(void *data);
 

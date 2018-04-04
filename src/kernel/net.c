@@ -308,23 +308,18 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	// add heartbeat timer
 	dev->heartbeat_count = 0;
 
-// Adapted from https://elixir.bootlin.com/linux/v3.4/source/include/linux/timer.h#L98
-#define CONFIG_LOCKDEP
-#ifdef CONFIG_LOCKDEP
-#define init_timer(timer)						\
-	do {								\
-		static struct lock_class_key __key;			\
-		init_timer_key((timer), NULL, 0, #timer, &__key);		\
-	} while (0)
+// init_timer_key changed from kernel version 4.14 to 4.15, see and compare to 4.15:
+// https://elixir.bootlin.com/linux/v4.14.32/source/include/linux/timer.h#L98
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+	timer_setup(&dev->hb_timer, dnbd3_net_heartbeat, 0);
 #else
-#define init_timer(timer)\
-	init_timer_key((timer), NULL, 0, NULL, NULL)
-#endif
+	// Old timer setup
 	init_timer(&dev->hb_timer);
+	dev->hb_timer.data = (unsigned long)dev;
 	dev->hb_timer.function = dnbd3_net_heartbeat;
 	dev->hb_timer.expires = jiffies + HZ;
 	add_timer(&dev->hb_timer);
-
+#endif
 	return 0;
 	error: ;
 	if (dev->sock)
@@ -388,12 +383,18 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
 void dnbd3_net_heartbeat(struct timer_list *arg)
 {
+	dnbd3_device_t *dev = (dnbd3_device_t *)container_of(arg, dnbd3_device_t, hb_timer);
+#else
+void dnbd3_net_heartbeat(unsigned long arg)
+{
+	dnbd3_device_t *dev = (dnbd3_device_t *)arg;
+#endif
 	// Because different events need different intervals, the timer is called once a second.
 	// Other intervals can be derived using dev->heartbeat_count.
 #define timeout_seconds(x) (dev->heartbeat_count % (x) == 0)
-	dnbd3_device_t *dev = (dnbd3_device_t *) container_of(arg, dnbd3_device_t, hb_timer);
 
 	if (!dev->panic)
 	{
