@@ -20,6 +20,12 @@
 #define PATHLEN (2000)
 #define NONWORKING_RECHECK_INTERVAL_SECONDS (60)
 
+#ifdef HAVE_FDATASYNC
+#define dnbd3_fdatasync fdatasync
+#else
+#define dnbd3_fdatasync fsync
+#endif
+
 // ##########################################
 
 static dnbd3_image_t *_images[SERVER_MAX_IMAGES];
@@ -212,56 +218,63 @@ void image_saveAllCacheMaps()
 bool image_saveCacheMap(dnbd3_image_t *image)
 {
 	if ( image == NULL || image->cache_map == NULL ) return true;
+	image = image_lock( image ); // Again after locking:
+	if ( image == NULL ) return true;
 	spin_lock( &image->lock );
 	// Lock and get a copy of the cache map, as it could be freed by another thread that is just about to
 	// figure out that this image's cache copy is complete
 	if ( image->cache_map == NULL || image->virtualFilesize < DNBD3_BLOCK_SIZE ) {
 		spin_unlock( &image->lock );
+		image_release( image );
 		return true;
 	}
 	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
 	uint8_t *map = malloc( size );
 	memcpy( map, image->cache_map, size );
 	// Unlock. Use path and cacheFd without locking. path should never change after initialization of the image,
-	// cacheFd is written to and we don't hold a spinlock during I/O
-	// By increasing the user count we make sure the image is not freed in the meantime
-	// TODO: If the caller isn't a user of the image we still have a race condition when entering the function
-	image->users++;
+	// cacheFd is written to and we don't want to hold a spinlock during I/O
 	spin_unlock( &image->lock );
 	assert( image->path != NULL );
 	char mapfile[strlen( image->path ) + 4 + 1];
-	int fd;
 	strcpy( mapfile, image->path );
 	strcat( mapfile, ".map" );
 
-	fd = open( mapfile, O_WRONLY | O_CREAT, 0644 );
+	int fd = open( mapfile, O_WRONLY | O_CREAT, 0644 );
 	if ( fd < 0 ) {
-		spin_lock( &image->lock );
-		image->users--;
-		spin_unlock( &image->lock );
+		const int err = errno;
+		image_release( image );
 		free( map );
+		logadd( LOG_WARNING, "Could not open file to write cache map to disk (errno=%d) file %s", err, mapfile );
 		return false;
 	}
 
-	write( fd, map, size );
-	if ( image->cacheFd != -1 ) {
-#ifdef HAVE_FDATASYNC
-		fdatasync( image->cacheFd );
-#else
-		fsync( image->cacheFd );
-#endif
+	size_t done = 0;
+	while ( done < size ) {
+		const ssize_t ret = write( fd, map, size - done );
+		if ( ret == -1 ) {
+			if ( errno == EINTR ) continue;
+			logadd( LOG_WARNING, "Could not write cache map (errno=%d) file %s", errno, mapfile );
+			break;
+		}
+		if ( ret <= 0 ) {
+			logadd( LOG_WARNING, "Unexpected return value %d for write() to %s", (int)ret, mapfile );
+			break;
+		}
+		done += (size_t)ret;
 	}
-#ifdef HAVE_FDATASYNC
-	fdatasync( fd );
-#else
-	fsync( fd );
-#endif
+	if ( image->cacheFd != -1 ) {
+		if ( dnbd3_fdatasync( image->cacheFd ) == -1 ) {
+			logadd( LOG_ERROR, "fsync() on image file %s failed with errno %d", image->path, errno );
+			logadd( LOG_ERROR, "Bailing out immediately" );
+			exit( 1 );
+		}
+	}
+	if ( dnbd3_fdatasync( fd ) == -1 ) {
+		logadd( LOG_WARNING, "fsync() on image map %s failed with errno %d", mapfile, errno );
+	}
+	image_release( image ); // Release only after both hit the disk
 	close( fd );
 	free( map );
-
-	spin_lock( &image->lock );
-	image->users--;
-	spin_unlock( &image->lock );
 	return true;
 }
 
