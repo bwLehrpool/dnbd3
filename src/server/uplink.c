@@ -592,24 +592,33 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		spin_unlock( &link->image->lock );
 		// 1) Write to cache file
 		if ( link->image->cacheFd != -1 ) {
+			int err = 0;
 			bool tryFree = true;
 			uint32_t done = 0;
+			ret = 0;
 			while ( done < inReply.size ) {
 				ret = (int)pwrite( link->image->cacheFd, link->recvBuffer + done, inReply.size - done, start + done );
 				if ( ret == -1 ) {
-					if ( errno == EINTR ) continue;
-					if ( errno == ENOSPC || errno == EDQUOT ) {
+					err = errno;
+					if ( err == EINTR ) continue;
+					if ( err == ENOSPC || err == EDQUOT ) {
 						// try to free 256MiB
 						if ( !tryFree || !image_ensureDiskSpaceLocked( 256ull * 1024 * 1024, true ) ) break;
 						tryFree = false;
 						continue; // Success, retry write
 					}
+					logadd( LOG_DEBUG1, "Error trying to cache data for %s:%d -- errno=%d", link->image->name, (int)link->image->rid, err );
+					break;
 				}
-				if ( ret <= 0 ) break;
+				if ( ret <= 0 || (uint32_t)ret > inReply.size - done ) {
+					logadd( LOG_WARNING, "Unexpected return value %d from pwrite to %s:%d", ret, link->image->name, (int)link->image->rid );
+					break;
+				}
 				done += (uint32_t)ret;
 			}
 			if ( done > 0 ) image_updateCachemap( link->image, start, start + done, true );
-			if ( ret == -1 && ( errno == EBADF || errno == EINVAL || errno == EIO ) ) {
+			if ( ret == -1 && ( err == EBADF || err == EINVAL || err == EIO ) ) {
+				// Only disable caching if something seems severely wrong, not on ENOSPC since that might get better
 				logadd( LOG_WARNING, "Error writing received data for %s:%d; disabling caching.",
 						link->image->name, (int)link->image->rid );
 				const int fd = link->image->cacheFd;
