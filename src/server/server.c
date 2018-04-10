@@ -303,6 +303,7 @@ int main(int argc, char *argv[])
 	signal( SIGUSR1, dnbd3_handleSignal );
 	signal( SIGHUP, dnbd3_handleSignal );
 	signal( SIGUSR2, dnbd3_handleSignal );
+	signal( SIGPIPE, SIG_IGN );
 
 	logadd( LOG_INFO, "Loading images...." );
 	// Load all images in base path
