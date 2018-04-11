@@ -1262,7 +1262,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	struct sockaddr_storage sa;
 	socklen_t salen;
 	poll_list_t *cons = sock_newPollList();
-	logadd( LOG_DEBUG1, "Trying to clone %s:%d from %d hosts", name, (int)revision, count );
+	logadd( LOG_DEBUG2, "Trying to clone %s:%d from %d hosts", name, (int)revision, count );
 	for (int i = 0; i < count + 5; ++i) { // "i < count + 5" for 5 additional iterations, waiting on pending connects
 		char *remoteName;
 		bool ok = false;
@@ -1271,11 +1271,11 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 			sock = sock_multiConnect( cons, NULL, 100, 1000 );
 			if ( sock == -2 ) break;
 		} else {
-			if ( log_hasMask( LOG_DEBUG1 ) ) {
+			if ( log_hasMask( LOG_DEBUG2 ) ) {
 				char host[50];
 				size_t len = sock_printHost( &servers[i], host, sizeof(host) );
 				host[len] = '\0';
-				logadd( LOG_DEBUG1, "Trying to replicate from %s", host );
+				logadd( LOG_DEBUG2, "Trying to replicate from %s", host );
 			}
 			sock = sock_multiConnect( cons, &servers[i], 100, 1000 );
 		}
