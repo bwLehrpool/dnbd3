@@ -37,6 +37,8 @@ static logmask_t maskCon  = 15;
 static char *logFile = NULL;
 static int logFd = -1;
 
+static bool consoleTimestamps = false;
+
 
 static int writeLevel(char *buffer, logmask_t level);
 
@@ -54,6 +56,11 @@ void log_setFileMask(logmask_t mask)
 void log_setConsoleMask(logmask_t mask)
 {
 	maskCon = mask;
+}
+
+void log_setConsoleTimestamps(bool on)
+{
+	consoleTimestamps = on;
 }
 
 bool log_openLogFile(const char *path)
@@ -85,10 +92,18 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 	time_t rawtime;
 	struct tm timeinfo;
 	char buffer[LINE_LEN];
+	bool toFile = maskFile & mask;
+	bool toStdout = maskCon & mask;
+	size_t offset;
 
-	time( &rawtime );
-	localtime_r( &rawtime, &timeinfo );
-	size_t offset = strftime( buffer, LINE_LEN, "[%d.%m. %H:%M:%S] ", &timeinfo );
+	if ( toFile || ( toStdout && consoleTimestamps ) ) {
+		time( &rawtime );
+		localtime_r( &rawtime, &timeinfo );
+		offset = strftime( buffer, LINE_LEN, "[%d.%m. %H:%M:%S] ", &timeinfo );
+	} else {
+		offset = 0;
+	}
+	const char *stdoutLine = buffer + offset;
 	offset += writeLevel( buffer + offset, mask );
 	va_start( ap, fmt );
 	ret = vsnprintf( buffer + offset, LINE_LEN - offset, fmt, ap );
@@ -103,13 +118,14 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 		buffer[offset++] = '\n';
 		buffer[offset] = '\0';
 	}
-	if ( maskFile & mask ) {
+	if ( toFile ) {
 		pthread_mutex_lock( &logLock );
 		if ( logFd >= 0 ) {
 			size_t done = 0;
 			while (done < offset ) {
 				const ssize_t wr = write( logFd, buffer + done, offset - done );
 				if ( wr < 0 ) {
+					if ( errno == EINTR ) continue;
 					printf( "Logging to file failed! (errno=%d)\n", errno );
 					break;
 				}
@@ -118,12 +134,13 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 		}
 		pthread_mutex_unlock( &logLock );
 	}
-	if ( maskCon & mask ) {
+	if ( toStdout ) {
+		if ( consoleTimestamps ) stdoutLine = buffer;
 #ifdef AFL_MODE
-		fputs( buffer, stderr );
+		fputs( stdoutLine, stderr );
 		fflush( stderr );
 #else
-		fputs( buffer, stdout );
+		fputs( stdoutLine, stdout );
 		fflush( stdout );
 #endif
 	}

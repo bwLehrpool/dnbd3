@@ -42,6 +42,8 @@ void log_setFileMask(logmask_t mask);
 
 void log_setConsoleMask(logmask_t mask);
 
+void log_setConsoleTimestamps(bool on);
+
 /**
  * Open or reopen the log file. If path is NULL and the
  * function was called with a path before, the same path

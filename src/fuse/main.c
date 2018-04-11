@@ -308,6 +308,7 @@ int main(int argc, char *argv[])
 
 	// TODO Make log mask configurable
 	log_setConsoleMask( 65535 );
+	log_setConsoleTimestamps( true );
 	log_setFileMask( 65535 );
 
 	newArgv = calloc( argc + 10, sizeof(char*) );

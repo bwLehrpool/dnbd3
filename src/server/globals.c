@@ -32,8 +32,9 @@ int _maxImages = SERVER_MAX_IMAGES;
 int _maxPayload = 9000000; // 9MB
 uint64_t _maxReplicationSize = (uint64_t)100000000000LL;
 
+#define IS_TRUE(value) (atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "TRUE") == 0)
 #define SAVE_TO_VAR_STR(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) { if (_ ## kk != NULL) free(_ ## kk); _ ## kk = strdup(value); } } while (0)
-#define SAVE_TO_VAR_BOOL(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "TRUE") == 0; } while (0)
+#define SAVE_TO_VAR_BOOL(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) _ ## kk = IS_TRUE(value); } while (0)
 #define SAVE_TO_VAR_INT(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) parse32(value, &_ ## kk, #ss); } while (0)
 #define SAVE_TO_VAR_UINT(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) parse32u(value, &_ ## kk, #ss); } while (0)
 #define SAVE_TO_VAR_UINT64(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) parse64u(value, &_ ## kk, #ss); } while (0)
@@ -69,6 +70,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_UINT64( limits, maxReplicationSize );
 	if ( strcmp( section, "logging" ) == 0 && strcmp( key, "fileMask" ) == 0 ) handleMaskString( value, &log_setFileMask );
 	if ( strcmp( section, "logging" ) == 0 && strcmp( key, "consoleMask" ) == 0 ) handleMaskString( value, &log_setConsoleMask );
+	if ( strcmp( section, "logging" ) == 0 && strcmp( key, "consoleTimestamps" ) == 0 ) log_setConsoleTimestamps( IS_TRUE(value) );
 	if ( strcmp( section, "logging" ) == 0 && strcmp( key, "file" ) == 0 ) {
 		if ( log_openLogFile( value ) ) {
 			logadd( LOG_INFO, "Opened log file %s", value );
