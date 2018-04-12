@@ -17,6 +17,7 @@ int _serverPenalty = 0;
 int _clientPenalty = 0;
 bool _isProxy = false;
 bool _backgroundReplication = true;
+int _bgrMinClients = 0;
 bool _lookupMissingForProxy = true;
 bool _sparseFiles = false;
 bool _removeMissingImages = true;
@@ -55,6 +56,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_BOOL( dnbd3, isProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_BOOL( dnbd3, backgroundReplication );
+	SAVE_TO_VAR_INT( dnbd3, bgrMinClients );
 	SAVE_TO_VAR_BOOL( dnbd3, lookupMissingForProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, sparseFiles );
 	SAVE_TO_VAR_BOOL( dnbd3, removeMissingImages );
@@ -150,8 +152,8 @@ void globals_loadConfig()
 			}
 		}
 	}
-	if ( _backgroundReplication && _sparseFiles ) {
-		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true" );
+	if ( _backgroundReplication && _sparseFiles && _bgrMinClients < 5 ) {
+		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true and bgrMinClients is too low" );
 		_sparseFiles = false;
 	}
 	// Dump config as interpreted
@@ -264,6 +266,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PINT(clientPenalty);
 	PBOOL(isProxy);
 	PBOOL(backgroundReplication);
+	PINT(bgrMinClients);
 	PBOOL(lookupMissingForProxy);
 	PBOOL(sparseFiles);
 	PBOOL(removeMissingImages);

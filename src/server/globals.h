@@ -207,6 +207,11 @@ extern bool _closeUnusedFd;
 extern bool _backgroundReplication;
 
 /**
+ * Minimum connected clients for background replication to kick in
+ */
+extern int _bgrMinClients;
+
+/**
  * (In proxy mode): If connecting client is a proxy, and the requested image
  * is not known locally, should we ask our known alt servers for it?
  * Otherwise the request is rejected.

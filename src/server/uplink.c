@@ -375,7 +375,10 @@ static void* uplink_mainloop(void *data)
 		declare_now;
 		if ( link->fd != -1 && link->replicationHandle == 0 && timing_reached( &nextKeepalive, &now ) ) {
 			timing_set( &nextKeepalive, &now, 20 );
-			if ( !uplink_sendKeepalive( link->fd ) ) {
+			if ( uplink_sendKeepalive( link->fd ) ) {
+				// Re-trigger periodically, in case it requires a minimum user count
+				uplink_sendReplicationRequest( link );
+			} else {
 				const int fd = link->fd;
 				link->fd = -1;
 				close( fd );
@@ -514,8 +517,8 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 	dnbd3_image_t * const image = link->image;
 	if ( image->realFilesize < DNBD3_BLOCK_SIZE ) return;
 	spin_lock( &image->lock );
-	if ( image == NULL || image->cache_map == NULL || link->replicationHandle != 0 ) {
-		// No cache map (=image complete), or replication pending, do nothing
+	if ( image == NULL || image->cache_map == NULL || link->replicationHandle != 0 || image->users < _bgrMinClients ) {
+		// No cache map (=image complete), or replication pending, or not enough users, do nothing
 		spin_unlock( &image->lock );
 		return;
 	}
