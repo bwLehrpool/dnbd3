@@ -36,10 +36,14 @@ void altservers_init()
 		logadd( LOG_ERROR, "Could not start altservers connector thread" );
 		exit( EXIT_FAILURE );
 	}
-	// Init waiting links queue
+	// Init waiting links queue -- this is currently a global static array so
+	// it will already be zero, but in case we refactor later do it explicitly
+	// while also holding the write lock so thread sanitizer is happy
+	spin_lock( &pendingLockWrite );
 	for (int i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
 		pending[i] = NULL;
 	}
+	spin_unlock( &pendingLockWrite );
 	initDone = true;
 }
 
