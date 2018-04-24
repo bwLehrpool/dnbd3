@@ -199,8 +199,8 @@ void image_saveAllCacheMaps()
 		dnbd3_image_t * const image = _images[i];
 		spin_lock( &image->lock );
 		image->users++;
-		spin_unlock( &image->lock );
 		spin_unlock( &imageListLock );
+		spin_unlock( &image->lock );
 		image_saveCacheMap( image );
 		spin_lock( &imageListLock );
 		spin_lock( &image->lock );
@@ -213,7 +213,7 @@ void image_saveAllCacheMaps()
 /**
  * Saves the cache map of the given image.
  * Return true on success.
- * Locks on: image.lock
+ * Locks on: imageListLock, image.lock
  */
 bool image_saveCacheMap(dnbd3_image_t *image)
 {
@@ -652,7 +652,11 @@ bool image_tryFreeAll()
 	spin_lock( &imageListLock );
 	for (int i = _num_images - 1; i >= 0; --i) {
 		if ( _images[i] != NULL && _images[i]->users == 0 ) { // XXX Data race...
-			_images[i] = image_free( _images[i] );
+			dnbd3_image_t *image = _images[i];
+			_images[i] = NULL;
+			spin_unlock( &imageListLock );
+			image = image_free( image );
+			spin_lock( &imageListLock );
 		}
 		if ( i + 1 == _num_images && _images[i] == NULL ) _num_images--;
 	}
@@ -662,7 +666,7 @@ bool image_tryFreeAll()
 
 /**
  * Free image. DOES NOT check if it's in use.
- * Indirectly locks on image.lock, uplink.queueLock
+ * Indirectly locks on imageListLock, image.lock, uplink.queueLock
  */
 static dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
