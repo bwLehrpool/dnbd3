@@ -308,10 +308,14 @@ int main(int argc, char *argv[])
 	logadd( LOG_INFO, "Loading images...." );
 	// Load all images in base path
 	if ( !image_loadAll( NULL ) || _shutdown ) {
-		logadd( LOG_ERROR, "Could not load images." );
+		if ( _shutdown ) {
+			logadd( LOG_ERROR, "Received shutdown request while loading images." );
+		} else {
+			logadd( LOG_ERROR, "Could not load images." );
+		}
 		free( bindAddress );
 		dnbd3_cleanup();
-		return 0;
+		return _shutdown ? 0 : 1;
 	}
 
 	// Give other threads some time to start up before accepting connections
