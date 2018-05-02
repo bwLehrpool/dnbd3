@@ -843,6 +843,8 @@ static bool image_load(char *base, char *path, int withUplink)
 
 	// Legacy mode enabled and no rid extracted from filename?
 	if ( _vmdkLegacyMode && revision == -1 ) {
+		fdImage = open( path, O_RDONLY ); // Check if it exists
+		if ( fdImage == -1 ) goto load_error;
 		// Yes, simply append full file name and set rid to 1
 		strcat( dst, fileName );
 		revision = 1;
@@ -857,8 +859,10 @@ static bool image_load(char *base, char *path, int withUplink)
 	existing = image_get( imgName, (uint16_t)revision, true );
 
 	// ### Now load the actual image related data ###
-	fdImage = open( path, O_RDONLY );
-	if ( fdImage < 0 ) {
+	if ( fdImage == -1 ) {
+		fdImage = open( path, O_RDONLY );
+	}
+	if ( fdImage == -1 ) {
 		logadd( LOG_ERROR, "Could not open '%s' for reading...", path );
 		goto load_error;
 	}
@@ -999,7 +1003,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	function_return = true;
 
 	// Clean exit:
-	load_error: ;
+load_error: ;
 	if ( existing != NULL ) existing = image_release( existing );
 	if ( crc32list != NULL ) free( crc32list );
 	if ( cache_map != NULL ) free( cache_map );
