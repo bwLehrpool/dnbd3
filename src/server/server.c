@@ -53,11 +53,21 @@ static poll_list_t *listeners = NULL;
 static ticks startupTime;
 static bool sigReload = false, sigLogCycle = false;
 
+/**
+ * Copied to in signal handler so we can print info
+ * later on
+ */
+static siginfo_t lastSignal;
+
+void printSignal();
+
 static poll_list_t* setupNetwork(char *bindAddress);
 
 static dnbd3_client_t* dnbd3_prepareClient(struct sockaddr_storage *client, int fd);
 
 static void dnbd3_handleSignal(int signum);
+
+static void dnbd3_handleSignal2(int signum, siginfo_t *info, void *data);
 
 static void* server_asyncImageListLoad(void *data);
 
@@ -298,11 +308,16 @@ int main(int argc, char *argv[])
 #endif
 
 	// setup signal handler
-	signal( SIGTERM, dnbd3_handleSignal );
-	signal( SIGINT, dnbd3_handleSignal );
-	signal( SIGUSR1, dnbd3_handleSignal );
-	signal( SIGHUP, dnbd3_handleSignal );
-	signal( SIGUSR2, dnbd3_handleSignal );
+	struct sigaction sa;
+	memset( &sa, 0, sizeof(sa) );
+	sa.sa_sigaction = dnbd3_handleSignal2;
+	sa.sa_flags = SA_SIGINFO;
+	//sa.sa_mask = ;
+	sigaction( SIGTERM, &sa, NULL );
+	sigaction( SIGINT, &sa, NULL );
+	sigaction( SIGUSR1, &sa, NULL );
+	sigaction( SIGHUP, &sa, NULL );
+	sigaction( SIGUSR2, &sa, NULL );
 	signal( SIGPIPE, SIG_IGN );
 
 	logadd( LOG_INFO, "Loading images...." );
@@ -338,6 +353,7 @@ int main(int argc, char *argv[])
 	int fd;
 	while ( !_shutdown ) {
 		// Handle signals
+		printSignal();
 		if ( sigReload ) {
 			sigReload = false;
 			logadd( LOG_INFO, "SIGHUP received, re-scanning image directory" );
@@ -374,9 +390,28 @@ int main(int argc, char *argv[])
 			continue;
 		}
 	}
+	printSignal();
 	free( bindAddress );
 	dnbd3_cleanup();
 	return 0;
+}
+
+void printSignal()
+{
+	if ( lastSignal.si_signo != 0 ) {
+		logadd( LOG_INFO, "Signal %d (via %d) by pid %u, uid %u",
+				lastSignal.si_signo, lastSignal.si_code,
+				(unsigned int)lastSignal.si_pid, (unsigned int)lastSignal.si_uid );
+		if ( lastSignal.si_pid != 0 ) {
+			char buffer[500], path[100];
+			snprintf( path, sizeof(path), "/proc/%u/exe", (unsigned int)lastSignal.si_pid );
+			ssize_t len = readlink( path, buffer, sizeof(buffer) );
+			if ( len > 0 ) {
+				logadd( LOG_INFO, "%u is %.*s", (unsigned int)lastSignal.si_pid, (int)len, buffer );
+			}
+		}
+		lastSignal.si_signo = 0;
+	}
 }
 
 static poll_list_t* setupNetwork(char *bindAddress)
@@ -435,6 +470,12 @@ static void dnbd3_handleSignal(int signum)
 	} else if ( signum == SIGUSR2 ) {
 		sigLogCycle = true;
 	}
+}
+
+static void dnbd3_handleSignal2(int signum, siginfo_t *info, void *data UNUSED)
+{
+	memcpy( &lastSignal, info, sizeof(siginfo_t) );
+	dnbd3_handleSignal( signum );
 }
 
 uint32_t dnbd3_serverUptime()
