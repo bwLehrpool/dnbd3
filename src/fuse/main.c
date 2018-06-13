@@ -165,11 +165,11 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 		size = imageSize - offset;
 	}
 
-	/* count the requested blocks */
-	uint64_t startBlock = offset / ( 4096 );
-	const uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
-
 	if ( useDebug ) {
+		/* count the requested blocks */
+		uint64_t startBlock = offset / ( 4096 );
+		const uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
+
 		for ( ; startBlock <= endBlock; startBlock++ ) {
 			++logInfo.blockRequestCount[startBlock];
 		}
