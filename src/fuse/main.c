@@ -158,7 +158,7 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	}
 
 	if ( (uint64_t)offset >= imageSize ) {
-		return -EIO;
+		return 0;
 	}
 
 	if ( offset + size > imageSize ) {
