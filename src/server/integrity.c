@@ -117,6 +117,12 @@ static void* integrity_main(void * data UNUSED)
 			if ( i + 1 == queueLen ) queueLen--;
 			if ( image == NULL ) continue;
 			// We have the image. Call image_release() some time
+			// Make sure the image is open for reading (closeUnusedFd)
+			if ( !image_ensureOpen( image ) ) {
+				logadd( LOG_MINOR, "Cannot hash check block %d of %s -- no readFd", checkQueue[i].block, image->path );
+				image_release( image );
+				continue;
+			}
 			spin_lock( &image->lock );
 			if ( image->crc32 != NULL && image->realFilesize != 0 ) {
 				int const blocks[2] = { checkQueue[i].block, -1 };

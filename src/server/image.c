@@ -279,6 +279,51 @@ bool image_saveCacheMap(dnbd3_image_t *image)
 }
 
 /**
+ * Make sure readFd is open, useful when closeUnusedFd is active.
+ * This function assumes you called image_lock first, so its known
+ * to be active and the fd won't be closed halfway through the
+ * function.
+ * Does not update atime, so the fd might be closed again very soon.
+ * Since the caller should have image_lock()ed first, it could do
+ * a quick operation on it before calling image_release which
+ * guarantees that the fd will not be closed meanwhile.
+ */
+bool image_ensureOpen(dnbd3_image_t *image)
+{
+	if ( image->readFd != -1 ) return image;
+	int newFd = open( image->path, O_RDONLY );
+	if ( newFd != -1 ) {
+		// Check size
+		const off_t flen = lseek( newFd, 0, SEEK_END );
+		if ( flen == -1 ) {
+			logadd( LOG_WARNING, "Could not seek to end of %s (errno %d)", image->path, errno );
+			close( newFd );
+			newFd = -1;
+		} else if ( (uint64_t)flen != image->realFilesize ) {
+			logadd( LOG_WARNING, "Size of active image with closed fd changed from %" PRIu64 " to %" PRIu64, image->realFilesize, (uint64_t)flen );
+			close( newFd );
+			newFd = -1;
+		}
+	}
+	if ( newFd == -1 ) {
+		spin_lock( &image->lock );
+		image->working = false;
+		spin_unlock( &image->lock );
+		return false;
+	}
+	spin_lock( &image->lock );
+	if ( image->readFd == -1 ) {
+		image->readFd = newFd;
+		spin_unlock( &image->lock );
+	} else {
+		// There was a race while opening the file (happens cause not locked cause blocking), we lost the race so close new fd and proceed
+		spin_unlock( &image->lock );
+		close( newFd );
+	}
+	return image->readFd != -1;
+}
+
+/**
  * Get an image by name+rid. This function increases a reference counter,
  * so you HAVE TO CALL image_release for every image_get() call at some
  * point...
@@ -321,36 +366,14 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 // TODO: But remember size-changed images forever
 	if ( candidate->working || checkIfWorking ) {
 		// Is marked working, but might not have an fd open
-		if ( candidate->readFd == -1 ) {
-			int newFd = open( candidate->path, O_RDONLY );
-			if ( newFd != -1 ) {
-				// Check size
-				const off_t flen = lseek( newFd, 0, SEEK_END );
-				if ( flen == -1 || (uint64_t)flen != candidate->realFilesize ) {
-					logadd( LOG_WARNING, "Size of active image with closed fd changed from %" PRIu64 " to %" PRIu64, candidate->realFilesize, (uint64_t)flen );
-					close( newFd );
-					newFd = -1;
-				}
-			}
-			if ( newFd == -1 ) {
-				spin_lock( &candidate->lock );
-				candidate->working = false;
-				timing_get( &candidate->lastWorkCheck );
-				spin_unlock( &candidate->lock );
-				if ( _removeMissingImages ) {
-					candidate = image_remove( candidate ); // No release here, the image is still returned and should be released by caller
-				}
-				return candidate;
-			}
+		if ( !image_ensureOpen( candidate ) ) {
 			spin_lock( &candidate->lock );
-			if ( candidate->readFd == -1 ) {
-				candidate->readFd = newFd;
-				spin_unlock( &candidate->lock );
-			} else {
-				// There was a race while opening the file (happens while not locked cause blocking), we lost the race to close new fd and proceed
-				spin_unlock( &candidate->lock );
-				close( newFd );
+			timing_get( &candidate->lastWorkCheck );
+			spin_unlock( &candidate->lock );
+			if ( _removeMissingImages ) {
+				candidate = image_remove( candidate ); // No release here, the image is still returned and should be released by caller
 			}
+			return candidate;
 		}
 	}
 
@@ -1812,7 +1835,7 @@ void image_closeUnusedFd()
 			continue;
 		spin_lock( &image->lock );
 		spin_unlock( &imageListLock );
-   	if ( image->users == 0 && timing_reached( &image->atime, &deadline ) ) {
+		if ( image->users == 0 && image->uplink == NULL && timing_reached( &image->atime, &deadline ) ) {
 			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
 			fd = image->readFd;
 			image->readFd = -1;
