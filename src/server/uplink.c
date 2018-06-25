@@ -594,17 +594,17 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		link->bytesReceived += inReply.size;
 		spin_unlock( &link->image->lock );
 		// 1) Write to cache file
-		if ( link->image->cacheFd == -1 ) {
+		if ( unlikely( link->image->cacheFd == -1 ) ) {
 			image_reopenCacheFd( link->image, false );
 		}
-		if ( link->image->cacheFd != -1 ) {
+		if ( likely( link->image->cacheFd != -1 ) ) {
 			int err = 0;
 			bool tryAgain = true; // Allow one retry in case we run out of space or the write fd became invalid
 			uint32_t done = 0;
 			ret = 0;
 			while ( done < inReply.size ) {
 				ret = (int)pwrite( link->image->cacheFd, link->recvBuffer + done, inReply.size - done, start + done );
-				if ( ret == -1 ) {
+				if ( unlikely( ret == -1 ) ) {
 					err = errno;
 					if ( err == EINTR ) continue;
 					if ( err == ENOSPC || err == EDQUOT ) {
@@ -622,7 +622,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 					logadd( LOG_DEBUG1, "Error trying to cache data for %s:%d -- errno=%d", link->image->name, (int)link->image->rid, err );
 					break;
 				}
-				if ( ret <= 0 || (uint32_t)ret > inReply.size - done ) {
+				if ( unlikely( ret <= 0 || (uint32_t)ret > inReply.size - done ) ) {
 					logadd( LOG_WARNING, "Unexpected return value %d from pwrite to %s:%d", ret, link->image->name, (int)link->image->rid );
 					break;
 				}

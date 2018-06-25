@@ -40,6 +40,14 @@
 #error "Please add define for your compiler for UNUSED, or define to nothing for your compiler if not supported"
 #endif
 
+#if defined(__GNUC__) && __GNUC__ >= 3
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+#define likely(x) (x)
+#define unlikely(x) (x)
+#endif
+
 #ifdef __linux__
 #define HAVE_THREAD_NAMES
 #define HAVE_FDATASYNC
