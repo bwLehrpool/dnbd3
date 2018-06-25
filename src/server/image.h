@@ -21,6 +21,8 @@ bool image_ensureOpen(dnbd3_image_t *image);
 
 dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking);
 
+bool image_reopenCacheFd(dnbd3_image_t *image, const bool force);
+
 dnbd3_image_t* image_getOrLoad(char *name, uint16_t revision);
 
 dnbd3_image_t* image_lock(dnbd3_image_t *image);

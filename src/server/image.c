@@ -469,7 +469,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	if ( candidate->cache_map != NULL ) {
 		// -- Incomplete - rw check
 		if ( candidate->cacheFd == -1 ) { // Make sure file is open for writing
-			candidate->cacheFd = open( candidate->path, O_RDWR );
+			image_reopenCacheFd( candidate, false );
 			// It might have failed - still offer proxy mode, we just can't cache
 			if ( candidate->cacheFd == -1 ) {
 				logadd( LOG_WARNING, "Cannot re-open %s for writing - replication disabled", candidate->path );
@@ -481,6 +481,49 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	}
 
 	return candidate; // We did all we can, hopefully it's working
+}
+
+/**
+ * Open the given image's main image file in
+ * rw mode, assigning it to the cacheFd struct member.
+ *
+ * @param force If cacheFd was previously assigned a file descriptor (not == -1),
+ * it will be closed first. Otherwise, nothing will happen and true will be returned
+ * immediately.
+ */
+bool image_reopenCacheFd(dnbd3_image_t *image, const bool force)
+{
+	if ( image->cacheFd != -1 && !force )
+		return true;
+	const int nfd = open( image->path, O_RDWR );
+	if ( nfd == -1 ) {
+		if ( force ) {
+			// Opening new one failed, force is enabled -- close old one
+			spin_lock( &image->lock );
+			int ofd = image->cacheFd;
+			image->cacheFd = -1;
+			spin_unlock( &image->lock );
+			if ( ofd != -1 ) {
+				close( ofd );
+			}
+		}
+		return false;
+	}
+	// Open succeeded, now switch out while holding lock to make it look somewhat atomic
+	spin_lock( &image->lock );
+	int closeFd = -1;
+	if ( force || image->cacheFd == -1 ) {
+		closeFd = image->cacheFd;
+		image->cacheFd = nfd;
+	} else {
+		closeFd = nfd;
+	}
+	spin_unlock( &image->lock );
+	if ( closeFd != -1 ) { // Failed
+		close( closeFd );
+	}
+	return true; // We either replaced the fd in force mode or the old one was -1, or
+	// force was false and cacheFd != -1. Either way we consider that success
 }
 
 /**

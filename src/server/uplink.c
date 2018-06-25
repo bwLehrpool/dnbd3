@@ -594,9 +594,12 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		link->bytesReceived += inReply.size;
 		spin_unlock( &link->image->lock );
 		// 1) Write to cache file
+		if ( link->image->cacheFd == -1 ) {
+			image_reopenCacheFd( link->image, false );
+		}
 		if ( link->image->cacheFd != -1 ) {
 			int err = 0;
-			bool tryFree = true;
+			bool tryAgain = true; // Allow one retry in case we run out of space or the write fd became invalid
 			uint32_t done = 0;
 			ret = 0;
 			while ( done < inReply.size ) {
@@ -606,9 +609,15 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 					if ( err == EINTR ) continue;
 					if ( err == ENOSPC || err == EDQUOT ) {
 						// try to free 256MiB
-						if ( !tryFree || !image_ensureDiskSpaceLocked( 256ull * 1024 * 1024, true ) ) break;
-						tryFree = false;
+						if ( !tryAgain || !image_ensureDiskSpaceLocked( 256ull * 1024 * 1024, true ) ) break;
+						tryAgain = false;
 						continue; // Success, retry write
+					}
+					if ( err == EBADF || err == EINVAL || err == EIO ) {
+						if ( !tryAgain || !image_reopenCacheFd( link->image, true ) )
+							break;
+						tryAgain = false;
+						continue; // Write handle to image successfully re-opened, try again
 					}
 					logadd( LOG_DEBUG1, "Error trying to cache data for %s:%d -- errno=%d", link->image->name, (int)link->image->rid, err );
 					break;
@@ -624,9 +633,6 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 				// Only disable caching if something seems severely wrong, not on ENOSPC since that might get better
 				logadd( LOG_WARNING, "Error writing received data for %s:%d; disabling caching.",
 						link->image->name, (int)link->image->rid );
-				const int fd = link->image->cacheFd;
-				link->image->cacheFd = -1;
-				close( fd );
 			}
 		}
 		// 2) Figure out which clients are interested in it
