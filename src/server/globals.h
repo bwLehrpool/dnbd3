@@ -57,9 +57,10 @@ struct _dnbd3_connection
 	dnbd3_host_t currentServer; // Current server we're connected to
 	pthread_spinlock_t rttLock; // When accessing rttTestResult, betterFd or betterServer
 	int rttTestResult;          // RTT_*
-	dnbd3_host_t betterServer;  // The better server
+	int cacheFd;                // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int betterVersion;          // protocol version of better server
 	int betterFd;               // Active connection to better server, ready to use
+	dnbd3_host_t betterServer;  // The better server
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	uint32_t recvBufferLen;     // Len of ^^
 	volatile bool shutdown;     // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
@@ -70,6 +71,7 @@ struct _dnbd3_connection
 	uint64_t bytesReceived;     // Number of bytes received by the connection.
 	uint64_t lastBytesReceived; // Number of bytes received last time we updated the global counter.
 	int queueLen;               // length of queue
+	int idleCount;              // How many iterations of keepalive check connection was idle
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
 };
 
@@ -112,7 +114,6 @@ struct _dnbd3_image
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
-	int cacheFd;           // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int completenessEstimate; // Completeness estimate in percent
 	int users;             // clients currently using this image
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server

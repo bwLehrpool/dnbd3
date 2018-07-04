@@ -289,15 +289,17 @@ void* net_handleNewConnection(void *clientPtr)
 				logadd( LOG_DEBUG1, "Client %s requested non-working image '%s' (rid:%d), rejected\n",
 						client->hostName, image_name, (int)rid );
 			} else {
+				bool penalty;
 				// Image is fine so far, but occasionally drop a client if the uplink for the image is clogged or unavailable
 				bOk = true;
 				if ( image->cache_map != NULL ) {
 					spin_lock( &image->lock );
-					if ( image->uplink == NULL || image->uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
+					if ( image->uplink == NULL || image->uplink->cacheFd == -1 || image->uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
 						bOk = ( rand() % 4 ) == 1;
 					}
+					penalty = bOk && image->uplink != NULL && image->uplink->cacheFd == -1;
 					spin_unlock( &image->lock );
-					if ( image->cacheFd == -1 ) { // Wait 100ms if local caching is not working so this
+					if ( penalty ) { // Wait 100ms if local caching is not working so this
 						usleep( 100000 ); // server gets a penalty and is less likely to be selected
 					}
 				}

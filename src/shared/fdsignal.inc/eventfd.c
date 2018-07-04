@@ -27,7 +27,7 @@ dnbd3_signal_t* signal_newBlocking()
 int signal_call(const dnbd3_signal_t* const signal)
 {
 	if ( signal == NULL ) return SIGNAL_ERROR;
-	static uint64_t one = 1;
+	static const uint64_t one = 1;
 	const int signalFd = ( (int)(intptr_t)signal ) - 1;
 	return write( signalFd, &one, sizeof one ) == sizeof one ? SIGNAL_OK : SIGNAL_ERROR;
 }

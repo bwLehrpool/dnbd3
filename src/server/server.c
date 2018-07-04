@@ -334,7 +334,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Give other threads some time to start up before accepting connections
-	sleep( 1 );
+	usleep( 100000 );
 
 	// setup network
 	listeners = setupNetwork( bindAddress );

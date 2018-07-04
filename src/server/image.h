@@ -9,13 +9,11 @@ void image_serverStartup();
 
 bool image_isComplete(dnbd3_image_t *image);
 
+bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
+
 void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const bool set);
 
 void image_markComplete(dnbd3_image_t *image);
-
-void image_saveAllCacheMaps();
-
-bool image_saveCacheMap(dnbd3_image_t *image);
 
 bool image_ensureOpen(dnbd3_image_t *image);
 

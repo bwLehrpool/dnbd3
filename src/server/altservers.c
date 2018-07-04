@@ -18,7 +18,6 @@ static dnbd3_signal_t* runSignal = NULL;
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
 static int numAltServers = 0;
 static pthread_spinlock_t altServersLock;
-static bool initDone = false;
 
 static pthread_t altThread;
 
@@ -31,6 +30,12 @@ void altservers_init()
 	// Init spinlock
 	spin_init( &pendingLockWrite, PTHREAD_PROCESS_PRIVATE );
 	spin_init( &altServersLock, PTHREAD_PROCESS_PRIVATE );
+	// Init signal
+	runSignal = signal_new();
+	if ( runSignal == NULL ) {
+		logadd( LOG_ERROR, "Error creating signal object. Uplink feature unavailable." );
+		exit( EXIT_FAILURE );
+	}
 	memset( altServers, 0, SERVER_MAX_ALTS * sizeof(dnbd3_alt_server_t) );
 	if ( 0 != thread_create( &altThread, NULL, &altservers_main, (void *)NULL ) ) {
 		logadd( LOG_ERROR, "Could not start altservers connector thread" );
@@ -44,12 +49,11 @@ void altservers_init()
 		pending[i] = NULL;
 	}
 	spin_unlock( &pendingLockWrite );
-	initDone = true;
 }
 
 void altservers_shutdown()
 {
-	if ( !initDone ) return;
+	if ( runSignal == NULL ) return;
 	signal_call( runSignal ); // Wake altservers thread up
 	thread_join( altThread, NULL );
 }
@@ -407,18 +411,11 @@ static void *altservers_main(void *data UNUSED)
 	dnbd3_host_t servers[ALTS + 1];
 	serialized_buffer_t serialized;
 	struct timespec start, end;
-	ticks nextCacheMapSave, nextCloseUnusedFd;
+	ticks nextCloseUnusedFd;
 
 	setThreadName( "altserver-check" );
 	blockNoncriticalSignals();
-	timing_gets( &nextCacheMapSave, 90 );
 	timing_gets( &nextCloseUnusedFd, 900 );
-	// Init signal
-	runSignal = signal_new();
-	if ( runSignal == NULL ) {
-		logadd( LOG_WARNING, "error creating signal object. Uplink feature unavailable." );
-		goto cleanup;
-	}
 	// LOOP
 	while ( !_shutdown ) {
 		// Wait 5 seconds max.
@@ -598,13 +595,8 @@ static void *altservers_main(void *data UNUSED)
 			pthread_mutex_unlock( &pendingLockConsume );
 		}
 		// Save cache maps of all images if applicable
-		// TODO: Has nothing to do with alt servers really, maybe move somewhere else?
 		declare_now;
-		if ( timing_reached( &nextCacheMapSave, &now ) ) {
-			timing_gets( &nextCacheMapSave, SERVER_CACHE_MAP_SAVE_INTERVAL );
-			image_saveAllCacheMaps();
-		}
-		// TODO: More random crap
+		// TODO: Has nothing to do with alt servers really, maybe move somewhere else?
 		if ( _closeUnusedFd && timing_reached( &nextCloseUnusedFd, &now ) ) {
 			timing_gets( &nextCloseUnusedFd, 900 );
 			image_closeUnusedFd();

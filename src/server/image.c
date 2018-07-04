@@ -20,12 +20,6 @@
 #define PATHLEN (2000)
 #define NONWORKING_RECHECK_INTERVAL_SECONDS (60)
 
-#ifdef HAVE_FDATASYNC
-#define dnbd3_fdatasync fdatasync
-#else
-#define dnbd3_fdatasync fsync
-#endif
-
 // ##########################################
 
 static dnbd3_image_t *_images[SERVER_MAX_IMAGES];
@@ -49,7 +43,6 @@ static imagecache remoteCloneCache[CACHELEN];
 static bool isForbiddenExtension(const char* name);
 static dnbd3_image_t* image_remove(dnbd3_image_t *image);
 static dnbd3_image_t* image_free(dnbd3_image_t *image);
-static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t fileSize);
 static bool image_load_all_internal(char *base, char *path);
 static bool image_addToList(dnbd3_image_t *image);
 static bool image_load(char *base, char *path, int withUplink);
@@ -67,43 +60,6 @@ void image_serverStartup()
 {
 	srand( (unsigned int)time( NULL ) );
 	spin_init( &imageListLock, PTHREAD_PROCESS_PRIVATE );
-}
-
-/**
- * Returns true if the given image is complete.
- * DOES NOT LOCK
- */
-bool image_isComplete(dnbd3_image_t *image)
-{
-	assert( image != NULL );
-	if ( image->working && image->cache_map == NULL ) {
-		return true;
-	}
-	if ( image->virtualFilesize == 0 ) {
-		return false;
-	}
-	bool complete = true;
-	int j;
-	const int map_len_bytes = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
-	for (j = 0; j < map_len_bytes - 1; ++j) {
-		if ( image->cache_map[j] != 0xFF ) {
-			complete = false;
-			break;
-		}
-	}
-	if ( complete ) // Every block except the last one is complete
-	{ // Last one might need extra treatment if it's not a full byte
-		const int blocks_in_last_byte = (image->virtualFilesize >> 12) & 7;
-		uint8_t last_byte = 0;
-		if ( blocks_in_last_byte == 0 ) {
-			last_byte = 0xFF;
-		} else {
-			for (j = 0; j < blocks_in_last_byte; ++j)
-				last_byte |= (uint8_t)(1 << j);
-		}
-		complete = ((image->cache_map[map_len_bytes - 1] & last_byte) == last_byte);
-	}
-	return complete;
 }
 
 /**
@@ -125,29 +81,36 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		start &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 		end = (uint64_t)(end + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 	}
-	bool dirty = false;
+	bool setNewBlocks = false;
 	uint64_t pos = start;
 	spin_lock( &image->lock );
 	if ( image->cache_map == NULL ) {
 		// Image seems already complete
-		spin_unlock( &image->lock );
-		logadd( LOG_DEBUG1, "image_updateCachemap with no cache_map: %s", image->path );
-		return;
+		if ( set ) {
+			// This makes no sense
+			spin_unlock( &image->lock );
+			logadd( LOG_DEBUG1, "image_updateCachemap(true) with no cache_map: %s", image->path );
+			return;
+		}
+		// Recreate a cache map, set it to all 1 initially as we assume the image was complete
+		const int byteSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+		image->cache_map = malloc( byteSize );
+		memset( image->cache_map, 0xff, byteSize );
 	}
 	while ( pos < end ) {
 		const size_t map_y = (int)( pos >> 15 );
 		const int map_x = (int)( (pos >> 12) & 7 ); // mod 8
 		const int bit_mask = 1 << map_x;
 		if ( set ) {
-			if ( (image->cache_map[map_y] & bit_mask) == 0 ) dirty = true;
+			if ( (image->cache_map[map_y] & bit_mask) == 0 ) setNewBlocks = true;
 			image->cache_map[map_y] |= (uint8_t)bit_mask;
 		} else {
 			image->cache_map[map_y] &= (uint8_t)~bit_mask;
 		}
 		pos += DNBD3_BLOCK_SIZE;
 	}
-	if ( dirty && image->crc32 != NULL ) {
-		// If dirty is set, at least one of the blocks was not cached before, so queue all hash blocks
+	if ( setNewBlocks && image->crc32 != NULL ) {
+		// If setNewBlocks is set, at least one of the blocks was not cached before, so queue all hash blocks
 		// for checking, even though this might lead to checking some hash block again, if it was
 		// already complete and the block range spanned at least two hash blocks.
 		// First set start and end to borders of hash blocks
@@ -157,7 +120,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		while ( pos < end ) {
 			if ( image->cache_map == NULL ) break;
 			const int block = (int)( pos / HASH_BLOCK_SIZE );
-			if ( image_isHashBlockComplete( image->cache_map, block, image->virtualFilesize ) ) {
+			if ( image_isHashBlockComplete( image->cache_map, block, image->realFilesize ) ) {
 				spin_unlock( &image->lock );
 				integrity_check( image, block );
 				spin_lock( &image->lock );
@@ -169,112 +132,54 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 }
 
 /**
- * Mark image as complete by freeing the cache_map and deleting the map file on disk
+ * Returns true if the given image is complete.
+ * Also frees cache_map and deletes it on disk
+ * if it hasn't been complete before
  * Locks on: image.lock
  */
-void image_markComplete(dnbd3_image_t *image)
+bool image_isComplete(dnbd3_image_t *image)
 {
-	char mapfile[PATHLEN] = "";
 	assert( image != NULL );
 	spin_lock( &image->lock );
-	if ( image->cache_map != NULL ) {
-		free( image->cache_map );
-		image->cache_map = NULL;
-		snprintf( mapfile, PATHLEN, "%s.map", image->path );
-	}
-	spin_unlock( &image->lock );
-	if ( mapfile[0] != '\0' ) {
-		remove( mapfile );
-	}
-}
-
-/**
- * Save cache map of every image
- */
-void image_saveAllCacheMaps()
-{
-	spin_lock( &imageListLock );
-	for (int i = 0; i < _num_images; ++i) {
-		if ( _images[i] == NULL ) continue;
-		dnbd3_image_t * const image = _images[i];
-		spin_lock( &image->lock );
-		image->users++;
-		spin_unlock( &imageListLock );
+	if ( image->virtualFilesize == 0 ) {
 		spin_unlock( &image->lock );
-		image_saveCacheMap( image );
-		spin_lock( &imageListLock );
-		spin_lock( &image->lock );
-		image->users--;
-		spin_unlock( &image->lock );
-	}
-	spin_unlock( &imageListLock );
-}
-
-/**
- * Saves the cache map of the given image.
- * Return true on success.
- * Locks on: imageListLock, image.lock
- */
-bool image_saveCacheMap(dnbd3_image_t *image)
-{
-	if ( image == NULL || image->cache_map == NULL ) return true;
-	image = image_lock( image ); // Again after locking:
-	if ( image == NULL ) return true;
-	spin_lock( &image->lock );
-	// Lock and get a copy of the cache map, as it could be freed by another thread that is just about to
-	// figure out that this image's cache copy is complete
-	if ( image->cache_map == NULL || image->virtualFilesize < DNBD3_BLOCK_SIZE ) {
-		spin_unlock( &image->lock );
-		image_release( image );
-		return true;
-	}
-	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
-	uint8_t *map = malloc( size );
-	memcpy( map, image->cache_map, size );
-	// Unlock. Use path and cacheFd without locking. path should never change after initialization of the image,
-	// cacheFd is written to and we don't want to hold a spinlock during I/O
-	spin_unlock( &image->lock );
-	assert( image->path != NULL );
-	char mapfile[strlen( image->path ) + 4 + 1];
-	strcpy( mapfile, image->path );
-	strcat( mapfile, ".map" );
-
-	int fd = open( mapfile, O_WRONLY | O_CREAT, 0644 );
-	if ( fd < 0 ) {
-		const int err = errno;
-		image_release( image );
-		free( map );
-		logadd( LOG_WARNING, "Could not open file to write cache map to disk (errno=%d) file %s", err, mapfile );
 		return false;
 	}
-
-	size_t done = 0;
-	while ( done < size ) {
-		const ssize_t ret = write( fd, map, size - done );
-		if ( ret == -1 ) {
-			if ( errno == EINTR ) continue;
-			logadd( LOG_WARNING, "Could not write cache map (errno=%d) file %s", errno, mapfile );
+	if ( image->cache_map == NULL ) {
+		spin_unlock( &image->lock );
+		return true;
+	}
+	bool complete = true;
+	int j;
+	const int map_len_bytes = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+	for (j = 0; j < map_len_bytes - 1; ++j) {
+		if ( image->cache_map[j] != 0xFF ) {
+			complete = false;
 			break;
 		}
-		if ( ret <= 0 ) {
-			logadd( LOG_WARNING, "Unexpected return value %d for write() to %s", (int)ret, mapfile );
-			break;
+	}
+	if ( complete ) { // Every block except the last one is complete
+		// Last one might need extra treatment if it's not a full byte
+		const int blocks_in_last_byte = (image->virtualFilesize >> 12) & 7;
+		uint8_t last_byte = 0;
+		if ( blocks_in_last_byte == 0 ) {
+			last_byte = 0xFF;
+		} else {
+			for (j = 0; j < blocks_in_last_byte; ++j)
+				last_byte |= (uint8_t)(1 << j);
 		}
-		done += (size_t)ret;
+		complete = ((image->cache_map[map_len_bytes - 1] & last_byte) == last_byte);
 	}
-	if ( image->cacheFd != -1 ) {
-		if ( dnbd3_fdatasync( image->cacheFd ) == -1 ) {
-			logadd( LOG_ERROR, "fsync() on image file %s failed with errno %d", image->path, errno );
-			logadd( LOG_ERROR, "Bailing out immediately" );
-			exit( 1 );
-		}
+	if ( !complete ) {
+		spin_unlock( &image->lock );
+		return false;
 	}
-	if ( dnbd3_fdatasync( fd ) == -1 ) {
-		logadd( LOG_WARNING, "fsync() on image map %s failed with errno %d", mapfile, errno );
-	}
-	image_release( image ); // Release only after both hit the disk
-	close( fd );
-	free( map );
+	char mapfile[PATHLEN] = "";
+	free( image->cache_map );
+	image->cache_map = NULL;
+	snprintf( mapfile, PATHLEN, "%s.map", image->path );
+	spin_unlock( &image->lock );
+	unlink( mapfile );
 	return true;
 }
 
@@ -435,7 +340,6 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		img->atime = now;
 		img->masterCrc32 = candidate->masterCrc32;
 		img->readFd = -1;
-		img->cacheFd = -1;
 		img->rid = candidate->rid;
 		img->users = 1;
 		img->working = false;
@@ -467,63 +371,12 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 
 	// Check if image is incomplete, handle
 	if ( candidate->cache_map != NULL ) {
-		// -- Incomplete - rw check
-		if ( candidate->cacheFd == -1 ) { // Make sure file is open for writing
-			image_reopenCacheFd( candidate, false );
-			// It might have failed - still offer proxy mode, we just can't cache
-			if ( candidate->cacheFd == -1 ) {
-				logadd( LOG_WARNING, "Cannot re-open %s for writing - replication disabled", candidate->path );
-			}
-		}
-		if ( candidate->uplink == NULL && candidate->cacheFd != -1 ) {
+		if ( candidate->uplink == NULL ) {
 			uplink_init( candidate, -1, NULL, -1 );
 		}
 	}
 
 	return candidate; // We did all we can, hopefully it's working
-}
-
-/**
- * Open the given image's main image file in
- * rw mode, assigning it to the cacheFd struct member.
- *
- * @param force If cacheFd was previously assigned a file descriptor (not == -1),
- * it will be closed first. Otherwise, nothing will happen and true will be returned
- * immediately.
- */
-bool image_reopenCacheFd(dnbd3_image_t *image, const bool force)
-{
-	if ( image->cacheFd != -1 && !force )
-		return true;
-	const int nfd = open( image->path, O_RDWR );
-	if ( nfd == -1 ) {
-		if ( force ) {
-			// Opening new one failed, force is enabled -- close old one
-			spin_lock( &image->lock );
-			int ofd = image->cacheFd;
-			image->cacheFd = -1;
-			spin_unlock( &image->lock );
-			if ( ofd != -1 ) {
-				close( ofd );
-			}
-		}
-		return false;
-	}
-	// Open succeeded, now switch out while holding lock to make it look somewhat atomic
-	spin_lock( &image->lock );
-	int closeFd = -1;
-	if ( force || image->cacheFd == -1 ) {
-		closeFd = image->cacheFd;
-		image->cacheFd = nfd;
-	} else {
-		closeFd = nfd;
-	}
-	spin_unlock( &image->lock );
-	if ( closeFd != -1 ) { // Failed
-		close( closeFd );
-	}
-	return true; // We either replaced the fd in force mode or the old one was -1, or
-	// force was false and cacheFd != -1. Either way we consider that success
 }
 
 /**
@@ -636,7 +489,12 @@ void image_killUplinks()
 		if ( _images[i] == NULL ) continue;
 		spin_lock( &_images[i]->lock );
 		if ( _images[i]->uplink != NULL ) {
-			_images[i]->uplink->shutdown = true;
+			spin_lock( &_images[i]->uplink->queueLock );
+			if ( !_images[i]->uplink->shutdown ) {
+				thread_detach( _images[i]->uplink->thread );
+				_images[i]->uplink->shutdown = true;
+			}
+			spin_unlock( &_images[i]->uplink->queueLock );
 			signal_call( _images[i]->uplink->signal );
 		}
 		spin_unlock( &_images[i]->lock );
@@ -741,15 +599,17 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 		logadd( LOG_INFO, "Freeing image %s:%d", image->name, (int)image->rid );
 	}
 	//
-	image_saveCacheMap( image );
 	uplink_shutdown( image );
 	spin_lock( &image->lock );
 	free( image->cache_map );
 	free( image->crc32 );
 	free( image->path );
 	free( image->name );
+	image->cache_map = NULL;
+	image->crc32 = NULL;
+	image->path = NULL;
+	image->name = NULL;
 	spin_unlock( &image->lock );
-	if ( image->cacheFd != -1 ) close( image->cacheFd );
 	if ( image->readFd != -1 ) close( image->readFd );
 	spin_destroy( &image->lock );
 	//
@@ -758,7 +618,7 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	return NULL ;
 }
 
-static bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
+bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
 {
 	if ( cacheMap == NULL ) return true;
 	const uint64_t end = (block + 1) * HASH_BLOCK_SIZE;
@@ -953,6 +813,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	// XXX: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 
 	// 2. Load CRC-32 list of image
+	bool doFullCheck = false;
 	uint32_t masterCrc = 0;
 	const int hashBlockCount = IMGSIZE_TO_HASHBLOCKS( virtualFilesize );
 	crc32list = image_loadCrcList( path, virtualFilesize, &masterCrc );
@@ -961,7 +822,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	if ( crc32list != NULL ) {
 		if ( !image_checkRandomBlocks( 4, fdImage, realFilesize, crc32list, cache_map ) ) {
 			logadd( LOG_ERROR, "quick crc32 check of %s failed. Data corruption?", path );
-			goto load_error;
+			doFullCheck = true;
 		}
 	}
 
@@ -1012,7 +873,6 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->rid = (uint16_t)revision;
 	image->users = 0;
 	image->readFd = -1;
-	image->cacheFd = -1;
 	image->working = (image->cache_map == NULL );
 	timing_get( &image->nextCompletenessEstimate );
 	image->completenessEstimate = -1;
@@ -1032,22 +892,13 @@ static bool image_load(char *base, char *path, int withUplink)
 	crc32list = NULL;
 
 	// Get rid of cache map if image is complete
-	if ( image->cache_map != NULL && image_isComplete( image ) ) {
-		image_markComplete( image );
-		image->working = true;
+	if ( image->cache_map != NULL ) {
+		image_isComplete( image );
 	}
 
-	// Image is definitely incomplete, open image file for writing, so we can update the cache
+	// Image is definitely incomplete, initialize uplink worker
 	if ( image->cache_map != NULL ) {
 		image->working = false;
-		image->cacheFd = open( path, O_WRONLY );
-		if ( image->cacheFd < 0 ) {
-			// Proxy mode without disk caching is pointless, bail out
-			image->cacheFd = -1;
-			logadd( LOG_ERROR, "Could not open incomplete image %s for writing!", path );
-			image = image_free( image );
-			goto load_error;
-		}
 		if ( withUplink ) {
 			uplink_init( image, -1, NULL, -1 );
 		}
@@ -1060,11 +911,16 @@ static bool image_load(char *base, char *path, int withUplink)
 		fdImage = -1;
 	} else {
 		logadd( LOG_ERROR, "Image list full: Could not add image %s", path );
-		image->readFd = -1;
+		image->readFd = -1; // Keep fdImage instead, will be closed below
 		image = image_free( image );
 		goto load_error;
 	}
 	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->name, (int)image->rid );
+	// CRC errors found...
+	if ( doFullCheck ) {
+		logadd( LOG_INFO, "Queueing full CRC32 check for '%s:%d'\n", image->name, (int)image->rid );
+		integrity_check( image, -1 );
+	}
 
 	function_return = true;
 
@@ -1407,7 +1263,7 @@ server_fail: ;
 			while ( !image->working && ++i < 100 )
 				usleep( 2000 );
 		}
-	} else if ( uplinkSock >= 0 ) {
+	} else if ( uplinkSock != -1 ) {
 		close( uplinkSock );
 	}
 	return image;
@@ -1719,8 +1575,9 @@ int image_getCompletenessEstimate(dnbd3_image_t * const image)
 }
 
 /**
- * Check the CRC-32 of the given blocks. The array blocks is of variable length.
+ * Check the CRC-32 of the given blocks. The array "blocks" is of variable length.
  * !! pass -1 as the last block so the function knows when to stop !!
+ * Does NOT check whether block index is within image.
  * Returns true or false
  */
 bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks, const uint64_t realFilesize)

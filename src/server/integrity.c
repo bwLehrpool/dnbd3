@@ -3,17 +3,19 @@
 #include "helper.h"
 #include "locks.h"
 #include "image.h"
+#include "uplink.h"
 
 #include <assert.h>
 #include <sys/syscall.h>
 #include <sys/resource.h>
 
-#define CHECK_QUEUE_SIZE 100
+#define CHECK_QUEUE_SIZE 500
 
 typedef struct
 {
-	dnbd3_image_t *image;
-	int block;
+	dnbd3_image_t *image; // Image to check
+	int block;            // Block to check
+	bool full;            // Check all blocks in image; .block will be increased
 } queue_entry;
 
 static pthread_t thread;
@@ -72,7 +74,8 @@ void integrity_check(dnbd3_image_t *image, int block)
 	for (i = 0; i < queueLen; ++i) {
 		if ( freeSlot == -1 && checkQueue[i].image == NULL ) {
 			freeSlot = i;
-		} else if ( checkQueue[i].image == image && checkQueue[i].block == block ) {
+		} else if ( checkQueue[i].image == image
+				&& ( checkQueue[i].block == block || checkQueue[i].full ) ) {
 			pthread_mutex_unlock( &integrityQueueLock );
 			return;
 		}
@@ -86,7 +89,13 @@ void integrity_check(dnbd3_image_t *image, int block)
 		freeSlot = queueLen++;
 	}
 	checkQueue[freeSlot].image = image;
-	checkQueue[freeSlot].block = block;
+	if ( block == -1 ) {
+		checkQueue[freeSlot].block = 0;
+		checkQueue[freeSlot].full = true;
+	} else {
+		checkQueue[freeSlot].block = block;
+		checkQueue[freeSlot].full = false;
+	}
 	pthread_cond_signal( &queueSignal );
 	pthread_mutex_unlock( &integrityQueueLock );
 }
@@ -113,22 +122,30 @@ static void* integrity_main(void * data UNUSED)
 		for (i = queueLen - 1; i >= 0; --i) {
 			if ( _shutdown ) break;
 			dnbd3_image_t * const image = image_lock( checkQueue[i].image );
-			checkQueue[i].image = NULL;
-			if ( i + 1 == queueLen ) queueLen--;
+			if ( !checkQueue[i].full || image == NULL ) {
+				checkQueue[i].image = NULL;
+				if ( i + 1 == queueLen ) queueLen--;
+			}
 			if ( image == NULL ) continue;
 			// We have the image. Call image_release() some time
 			// Make sure the image is open for reading (closeUnusedFd)
 			if ( !image_ensureOpen( image ) ) {
+				// TODO: Open new fd for file with O_DIRECT in case we do a full scan,
+				// so we don't thrash the whole fs cache
 				logadd( LOG_MINOR, "Cannot hash check block %d of %s -- no readFd", checkQueue[i].block, image->path );
 				image_release( image );
 				continue;
 			}
+			bool full = checkQueue[i].full;
+			bool foundCorrupted = false;
 			spin_lock( &image->lock );
 			if ( image->crc32 != NULL && image->realFilesize != 0 ) {
-				int const blocks[2] = { checkQueue[i].block, -1 };
+				int blocks[2] = { checkQueue[i].block, -1 };
 				pthread_mutex_unlock( &integrityQueueLock );
+				// Make copy of crc32 list as it might go away
 				const uint64_t fileSize = image->realFilesize;
-				const size_t required = IMGSIZE_TO_HASHBLOCKS(fileSize) * sizeof(uint32_t);
+				const int numHashBlocks = IMGSIZE_TO_HASHBLOCKS(fileSize);
+				const size_t required = numHashBlocks * sizeof(uint32_t);
 				if ( buffer == NULL || required > bufferSize ) {
 					bufferSize = required;
 					if ( buffer != NULL ) free( buffer );
@@ -136,13 +153,59 @@ static void* integrity_main(void * data UNUSED)
 				}
 				memcpy( buffer, image->crc32, required );
 				spin_unlock( &image->lock );
-				if ( !image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
-					logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->name );
-					image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
+				int checkCount = full ? 5 : 1;
+				while ( blocks[0] < numHashBlocks ) {
+					bool complete = true;
+					if ( full ) {
+						// When checking full image, skip incomplete blocks, otherwise assume block is complete
+						spin_lock( &image->lock );
+						complete = image_isHashBlockComplete( image->cache_map, blocks[0], fileSize );
+						spin_unlock( &image->lock );
+					}
+					if ( complete && !image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
+						logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->name );
+						image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
+						// If this is not a full check, queue one
+						if ( !full ) {
+							logadd( LOG_INFO, "Queueing full check for %s", image->name );
+							integrity_check( image, -1 );
+						}
+						foundCorrupted = true;
+					}
+					if ( complete && --checkCount == 0 ) break;
+					blocks[0]++;
 				}
 				pthread_mutex_lock( &integrityQueueLock );
+				if ( full ) {
+					assert( checkQueue[i].image == image );
+					assert( checkQueue[i].full );
+					if ( checkCount == 0 ) {
+						// Not done yet, keep going
+						checkQueue[i].block = blocks[0] + 1;
+					} else {
+						// Didn't check as many blocks as requested, so we must be done
+						checkQueue[i].image = NULL;
+						if ( i + 1 == queueLen ) queueLen--;
+						spin_lock( &image->lock );
+						if ( image->uplink != NULL ) { // TODO: image_determineWorkingState() helper?
+							image->working = image->uplink->fd != -1 && image->readFd != -1;
+						}
+						spin_unlock( &image->lock );
+					}
+				}
 			} else {
 				spin_unlock( &image->lock );
+			}
+			if ( foundCorrupted ) {
+				// Something was fishy, make sure uplink exists
+				spin_lock( &image->lock );
+				image->working = false;
+				bool restart = image->uplink == NULL || image->uplink->shutdown;
+				spin_unlock( &image->lock );
+				if ( restart ) {
+					uplink_shutdown( image );
+					uplink_init( image, -1, NULL, -1 );
+				}
 			}
 			// Release :-)
 			image_release( image );
@@ -153,3 +216,4 @@ static void* integrity_main(void * data UNUSED)
 	bRunning = false;
 	return NULL ;
 }
+
