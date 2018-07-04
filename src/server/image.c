@@ -72,6 +72,8 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	assert( image != NULL );
 	// This should always be block borders due to how the protocol works, but better be safe
 	// than accidentally mark blocks as cached when they really aren't entirely cached.
+	assert( end <= image->virtualFilesize );
+	assert( start <= end );
 	if ( set ) {
 		// If we set as cached, move "inwards" in case we're not at 4k border
 		end &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
@@ -81,6 +83,8 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		start &= ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 		end = (uint64_t)(end + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 	}
+	if ( start >= end )
+		return;
 	bool setNewBlocks = false;
 	uint64_t pos = start;
 	spin_lock( &image->lock );
@@ -1601,7 +1605,10 @@ bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks
  */
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc)
 {
-	char buffer[262144];
+	// Make buffer 4k aligned in case fd has O_DIRECT set
+#define BSIZE 262144
+	char rawBuffer[BSIZE + DNBD3_BLOCK_SIZE];
+	char * const buffer = (char*)( ( (uintptr_t)rawBuffer + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) );
 	// How many bytes to read from the input file
 	const uint64_t bytesFromFile = MIN( HASH_BLOCK_SIZE, realFilesize - ( block * HASH_BLOCK_SIZE) );
 	// Determine how many bytes we had to read if the file size were a multiple of 4k
@@ -1614,7 +1621,7 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 	*crc = crc32( 0, NULL, 0 );
 	// Calculate the crc32 by reading data from the file
 	while ( bytes < bytesFromFile ) {
-		const size_t n = (size_t)MIN( sizeof(buffer), bytesFromFile - bytes );
+		const size_t n = (size_t)MIN( BSIZE, bytesFromFile - bytes );
 		const ssize_t r = pread( fd, buffer, n, readPos + bytes );
 		if ( r <= 0 ) {
 			logadd( LOG_WARNING, "CRC: Read error (errno=%d)", errno );
@@ -1625,16 +1632,17 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 	}
 	// If the virtual file size is different, keep going using nullbytes
 	if ( bytesFromFile < virtualBytesFromFile ) {
-		memset( buffer, 0, sizeof(buffer) );
+		memset( buffer, 0, BSIZE );
 		bytes = (size_t)( virtualBytesFromFile - bytesFromFile );
 		while ( bytes != 0 ) {
-			const size_t len = MIN( sizeof(buffer), bytes );
+			const size_t len = MIN( BSIZE, bytes );
 			*crc = crc32( *crc, (uint8_t*)buffer, len );
 			bytes -= len;
 		}
 	}
 	*crc = net_order_32( *crc );
 	return true;
+#undef BSIZE
 }
 
 /**

@@ -8,6 +8,10 @@
 #include <assert.h>
 #include <sys/syscall.h>
 #include <sys/resource.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #define CHECK_QUEUE_SIZE 500
 
@@ -128,14 +132,6 @@ static void* integrity_main(void * data UNUSED)
 			}
 			if ( image == NULL ) continue;
 			// We have the image. Call image_release() some time
-			// Make sure the image is open for reading (closeUnusedFd)
-			if ( !image_ensureOpen( image ) ) {
-				// TODO: Open new fd for file with O_DIRECT in case we do a full scan,
-				// so we don't thrash the whole fs cache
-				logadd( LOG_MINOR, "Cannot hash check block %d of %s -- no readFd", checkQueue[i].block, image->path );
-				image_release( image );
-				continue;
-			}
 			bool full = checkQueue[i].full;
 			bool foundCorrupted = false;
 			spin_lock( &image->lock );
@@ -153,27 +149,60 @@ static void* integrity_main(void * data UNUSED)
 				}
 				memcpy( buffer, image->crc32, required );
 				spin_unlock( &image->lock );
+				// Open for direct I/O if possible; this prevents polluting the fs cache
+				int fd = open( image->path, O_RDONLY | O_DIRECT );
+				bool direct = fd != -1;
+				if ( unlikely( !direct ) ) {
+					// Try unbuffered; flush to disk for that
+					logadd( LOG_DEBUG1, "O_DIRECT failed for %s", image->path );
+					image_ensureOpen( image );
+					fd = image->readFd;
+				}
 				int checkCount = full ? 5 : 1;
-				while ( blocks[0] < numHashBlocks ) {
-					bool complete = true;
-					if ( full ) {
-						// When checking full image, skip incomplete blocks, otherwise assume block is complete
-						spin_lock( &image->lock );
-						complete = image_isHashBlockComplete( image->cache_map, blocks[0], fileSize );
-						spin_unlock( &image->lock );
-					}
-					if ( complete && !image_checkBlocksCrc32( image->readFd, (uint32_t*)buffer, blocks, fileSize ) ) {
-						logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->name );
-						image_updateCachemap( image, blocks[0] * HASH_BLOCK_SIZE, (blocks[0] + 1) * HASH_BLOCK_SIZE, false );
-						// If this is not a full check, queue one
-						if ( !full ) {
-							logadd( LOG_INFO, "Queueing full check for %s", image->name );
-							integrity_check( image, -1 );
+				if ( fd != -1 ) {
+					while ( blocks[0] < numHashBlocks && !_shutdown ) {
+						const uint64_t start = blocks[0] * HASH_BLOCK_SIZE;
+						const uint64_t end = MIN( (uint64_t)(blocks[0] + 1) * HASH_BLOCK_SIZE, image->virtualFilesize );
+						bool complete = true;
+						if ( full ) {
+							// When checking full image, skip incomplete blocks, otherwise assume block is complete
+							spin_lock( &image->lock );
+							complete = image_isHashBlockComplete( image->cache_map, blocks[0], fileSize );
+							spin_unlock( &image->lock );
 						}
-						foundCorrupted = true;
+						if ( fsync( fd ) == -1 ) {
+							logadd( LOG_ERROR, "Cannot flush %s for integrity check", image->path );
+							exit( 1 );
+						}
+						// Use direct I/O only if read length is multiple of 4096 to be on the safe side
+						int tfd;
+						if ( direct && ( end % DNBD3_BLOCK_SIZE ) == 0 ) {
+							// Suitable for direct io
+							tfd = fd;
+						} else if ( !image_ensureOpen( image ) ) {
+							logadd( LOG_WARNING, "Cannot open %s for reading", image->path );
+							break;
+						} else {
+							tfd = image->readFd;
+							// Evict from cache so we have to re-read, making sure data was properly stored
+							posix_fadvise( fd, start, end - start, POSIX_FADV_DONTNEED );
+						}
+						if ( complete && !image_checkBlocksCrc32( tfd, (uint32_t*)buffer, blocks, fileSize ) ) {
+							logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->name );
+							image_updateCachemap( image, start, end, false );
+							// If this is not a full check, queue one
+							if ( !full ) {
+								logadd( LOG_INFO, "Queueing full check for %s", image->name );
+								integrity_check( image, -1 );
+							}
+							foundCorrupted = true;
+						}
+						if ( complete && --checkCount == 0 ) break;
+						blocks[0]++;
 					}
-					if ( complete && --checkCount == 0 ) break;
-					blocks[0]++;
+					if ( direct ) {
+						close( fd );
+					}
 				}
 				pthread_mutex_lock( &integrityQueueLock );
 				if ( full ) {
