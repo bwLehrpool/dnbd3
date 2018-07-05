@@ -555,7 +555,7 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
  */
 static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 {
-	if ( !_backgroundReplication ) return; // Don't do background replication
+	if ( !_backgroundReplication || link->cacheFd == -1 ) return; // Don't do background replication
 	if ( link == NULL || link->fd == -1 ) return;
 	dnbd3_image_t * const image = link->image;
 	if ( image->realFilesize < DNBD3_BLOCK_SIZE ) return;
@@ -738,6 +738,10 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		if ( start == link->replicationHandle ) {
 			// Was our background replication
 			link->replicationHandle = 0;
+			// Try to remove from fs cache if no client was interested in this data
+			if ( !served && link->cacheFd != -1 ) {
+				posix_fadvise( link->cacheFd, start, inReply.size, POSIX_FADV_DONTNEED );
+			}
 		} else {
 			// Was some client -- reset idle counter
 			link->idleCount = 0;
