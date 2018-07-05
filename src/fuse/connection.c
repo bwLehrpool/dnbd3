@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <inttypes.h>
 
 /* Constants */
 static const size_t SHORTBUF = 100;
@@ -547,6 +548,22 @@ static void probeAltServers()
 	bool doSwitch;
 	const bool panic = connection.sockFd == -1;
 
+	uint64_t testOffset = 0;
+	uint32_t testLength = RTT_BLOCK_SIZE;
+	dnbd3_async_t *request = NULL;
+	if ( panic ) {
+		pthread_spin_lock( &requests.lock );
+		if ( requests.head != NULL ) {
+			request = requests.head;
+			testOffset = requests.head->offset;
+			testLength = requests.head->length;
+		}
+		pthread_spin_unlock( &requests.lock );
+		if ( testOffset != 0 ) {
+			logadd( LOG_DEBUG1, "Panic with pending %" PRIu64 ":%" PRIu32, testOffset, testLength );
+		}
+	}
+
 	for ( int altIndex = 0; altIndex < (panic ? MAX_ALTS : MAX_ALTS_ACTIVE); ++altIndex ) {
 		alt_server_t * const srv = &altservers[altIndex];
 		if ( srv->host.type == 0 )
@@ -586,16 +603,37 @@ static void probeAltServers()
 			srv->consecutiveFails += 10;
 			goto fail;
 		}
-		if ( !dnbd3_get_block( sock, 0, RTT_BLOCK_SIZE, 0, 0 ) ) {
+		if ( !dnbd3_get_block( sock, testOffset, testLength, 0, 0 ) ) {
 			logadd( LOG_DEBUG1, "-> block request fail" );
 			goto fail;
 		}
-		int a = 111, b = 111;
-		if ( !(a = dnbd3_get_reply( sock, &reply )) || reply.size != RTT_BLOCK_SIZE
-				|| !(b = throwDataAway( sock, RTT_BLOCK_SIZE )) ) {
-			logadd( LOG_DEBUG1, "<- block payload fail %d %d %d", a, (int)reply.size, b );
+		int a = 111;
+		if ( !(a = dnbd3_get_reply( sock, &reply )) || reply.size != testLength ) {
+			logadd( LOG_DEBUG1, "<- get block reply fail %d %d", a, (int)reply.size );
 			goto fail;
 		}
+		if ( request != NULL && removeRequest( request ) != NULL ) {
+			// Request successfully removed from queue
+			const ssize_t ret = sock_recv( sock, request->buffer, request->length );
+			if ( ret != (ssize_t)request->length ) {
+				logadd( LOG_DEBUG1, "[RTT] receiving payload for a block reply failed" );
+				// Failure, add to queue again
+				connection_read( request );
+				goto fail;
+			}
+			// Success, wake up caller
+			logadd( LOG_DEBUG1, "[RTT] Successful direct probe" );
+			request->success = true;
+			request->finished = true;
+			signal_call( request->signal );
+		} else {
+			// Wasn't a request that's in our request queue
+			if ( !throwDataAway( sock, testLength ) ) {
+				logadd( LOG_DEBUG1, "<- get block reply payload fail" );
+				goto fail;
+			}
+		}
+
 		// Yay, success
 		// Panic mode? Just switch to server
 		if ( panic ) {
