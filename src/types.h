@@ -50,7 +50,6 @@
 
 #ifdef __linux__
 #define HAVE_THREAD_NAMES
-#define HAVE_FDATASYNC
 #endif
 
 #ifdef __FreeBSD__

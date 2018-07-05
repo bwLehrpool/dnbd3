@@ -14,12 +14,6 @@
 #include <poll.h>
 #include <unistd.h>
 
-#ifdef HAVE_FDATASYNC
-#define dnbd3_fdatasync fdatasync
-#else
-#define dnbd3_fdatasync fsync
-#endif
-
 static uint64_t totalBytesReceived = 0;
 static pthread_spinlock_t statisticsReceivedLock;
 
@@ -851,7 +845,7 @@ static bool uplink_saveCacheMap(dnbd3_connection_t *link)
 	assert( image != NULL );
 
 	if ( link->cacheFd != -1 ) {
-		if ( dnbd3_fdatasync( link->cacheFd ) == -1 ) {
+		if ( fsync( link->cacheFd ) == -1 ) {
 			// A failing fsync means we have no guarantee that any data
 			// since the last fsync (or open if none) has been saved. Apart
 			// from keeping the cache_map from the last successful fsync
@@ -905,7 +899,7 @@ static bool uplink_saveCacheMap(dnbd3_connection_t *link)
 		}
 		done += (size_t)ret;
 	}
-	if ( dnbd3_fdatasync( fd ) == -1 ) {
+	if ( fsync( fd ) == -1 ) {
 		logadd( LOG_WARNING, "fsync() on image map %s failed with errno %d", mapfile, errno );
 	}
 	close( fd );
