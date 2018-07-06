@@ -9,7 +9,6 @@ IF (CMAKE_BUILD_TYPE STREQUAL "")
 ENDIF()
 
 SET(CMAKE_INSTALL_PREFIX "/usr/local" CACHE PATH "Path prefix for system installation")
-OPTION(BUILD_KERNEL_MODULE "Build the dnbd3 Linux kernel module" ON)
 OPTION(BUILD_FUSE_CLIENT "Build dnbd3 fuse client" ON)
 OPTION(BUILD_SERVER "Build dnbd3 server" ON)
 OPTION(BUILD_STRESSTEST "Build dnbd3 stress testing tool" OFF)
@@ -27,12 +26,11 @@ endif()
 
 message( "Build Type selected: ${CMAKE_BUILD_TYPE}" )
 
-SET(MAKE_KERNEL_MODULE True)
 IF(CMAKE_SYSTEM_NAME MATCHES "BSD")
 	message("Detected *BSD System: disable build of Kernel Module.")
-	SET(MAKE_KERNEL_MODULE False)
-ELSEIF(NOT BUILD_KERNEL_MODULE)
-	SET(MAKE_KERNEL_MODULE False)
+	SET(BUILD_KERNEL_MODULE False)
+ELSE()
+	OPTION(BUILD_KERNEL_MODULE "Build the dnbd3 Linux kernel module" ON)
 ENDIF()
 
 if(CMAKE_C_COMPILER MATCHES "clang")
@@ -195,7 +193,10 @@ IF(BUILD_KERNEL_MODULE)
 	FILE(GLOB MODULE_SOURCE_FILES src/kernel/*.c src/serialize.c)
 	FILE(GLOB MODULE_HEADER_FILES src/kernel/*.h)
 
-	SET(KERNEL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build")
+	SET(KERNEL_DIR "" CACHE PATH "Path to kernel sources to compile against")
+	IF(KERNEL_DIR STREQUAL "")
+		SET(KERNEL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build")
+	ENDIF()
 
 	SET(KBUILD_COMMAND ${CMAKE_MAKE_PROGRAM} -C ${KERNEL_DIR}
 		M=${CMAKE_BINARY_DIR} modules
