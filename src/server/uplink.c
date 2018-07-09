@@ -950,7 +950,7 @@ static bool uplink_saveCacheMap(dnbd3_connection_t *link)
 	}
 
 	if ( image->cache_map == NULL ) return true;
-	logadd( LOG_DEBUG1, "Saving cache map of %s:%d", image->name, (int)image->rid );
+	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
 	spin_lock( &image->lock );
 	// Lock and get a copy of the cache map, as it could be freed by another thread that is just about to
 	// figure out that this image's cache copy is complete
