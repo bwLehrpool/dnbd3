@@ -79,7 +79,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 		if ( errno == EINTR && ++fails < 10 ) continue;
 		if ( ret >= 0 || ++fails > SOCKET_TIMEOUT_CLIENT_RETRIES ) return false;
 		if ( errno == EAGAIN ) continue;
-		logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)\n", (int)ret, (int)sizeof(*request), errno );
+		logadd( LOG_DEBUG2, "Error receiving request: Could not read message header (%d/%d, e=%d)\n", (int)ret, (int)sizeof(*request), errno );
 		return false;
 	}
 	// Make sure all bytes are in the right order (endianness)
@@ -488,7 +488,6 @@ void* net_handleNewConnection(void *clientPtr)
 						}
 						done += sent;
 					}
-					logadd( LOG_DEBUG2, "Send %i to %s", (int)realBytes, client->hostName );
 					if ( request.size > (uint32_t)realBytes ) {
 						if ( !sendPadding( client->sock, request.size - (uint32_t)realBytes ) ) {
 							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
