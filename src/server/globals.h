@@ -67,6 +67,7 @@ struct _dnbd3_connection
 	bool replicatedLastBlock;   // bool telling if the last block has been replicated yet
 	bool cycleDetected;         // connection cycle between proxies detected for current remote server
 	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
+	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
 	uint64_t replicationHandle; // Handle of pending replication request
 	uint64_t bytesReceived;     // Number of bytes received by the connection.
 	uint64_t lastBytesReceived; // Number of bytes received last time we updated the global counter.
@@ -205,7 +206,10 @@ extern bool _closeUnusedFd;
  * Should we replicate incomplete images in the background?
  * Otherwise, only blocks that were explicitly requested will be cached.
  */
-extern bool _backgroundReplication;
+extern int _backgroundReplication;
+#define BGR_DISABLED (0)
+#define BGR_FULL (1)
+#define BGR_HASHBLOCK (2)
 
 /**
  * Minimum connected clients for background replication to kick in
