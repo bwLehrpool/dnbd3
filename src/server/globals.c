@@ -9,29 +9,36 @@
 #include <errno.h>
 
 char *_configDir = NULL;
-volatile bool _shutdown = false;
+atomic_bool _shutdown = false;
 // [dnbd3]
-int _listenPort = PORT;
+atomic_int _listenPort = PORT;
 char *_basePath = NULL;
-int _serverPenalty = 0;
-int _clientPenalty = 0;
-bool _isProxy = false;
-int _backgroundReplication = BGR_FULL;
-int _bgrMinClients = 0;
-bool _lookupMissingForProxy = true;
-bool _sparseFiles = false;
-bool _removeMissingImages = true;
-int _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
-int _clientTimeout = SOCKET_TIMEOUT_CLIENT;
-bool _closeUnusedFd = false;
-bool _vmdkLegacyMode = false;
+atomic_int _serverPenalty = 0;
+atomic_int _clientPenalty = 0;
+atomic_bool _isProxy = false;
+atomic_int _backgroundReplication = BGR_FULL;
+atomic_int _bgrMinClients = 0;
+atomic_bool _lookupMissingForProxy = true;
+atomic_bool _sparseFiles = false;
+atomic_bool _removeMissingImages = true;
+atomic_int _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
+atomic_int _clientTimeout = SOCKET_TIMEOUT_CLIENT;
+atomic_bool _closeUnusedFd = false;
+atomic_bool _vmdkLegacyMode = false;
 // Not really needed anymore since we have '+' and '-' in alt-servers
-bool _proxyPrivateOnly = false;
+atomic_bool _proxyPrivateOnly = false;
 // [limits]
-int _maxClients = SERVER_MAX_CLIENTS;
-int _maxImages = SERVER_MAX_IMAGES;
-int _maxPayload = 9000000; // 9MB
-uint64_t _maxReplicationSize = (uint64_t)100000000000LL;
+atomic_int _maxClients = SERVER_MAX_CLIENTS;
+atomic_int _maxImages = SERVER_MAX_IMAGES;
+atomic_int _maxPayload = 9000000; // 9MB
+atomic_uint_fast64_t _maxReplicationSize = (uint64_t)100000000000LL;
+
+/**
+ * True when loading config the first time. Consecutive loads will
+ * ignore certain values which cannot be changed safely at runtime.
+ */
+static atomic_bool initialLoad = true;
+static pthread_mutex_t loadLock = PTHREAD_MUTEX_INITIALIZER;
 
 #define IS_TRUE(value) (atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "TRUE") == 0)
 #define SAVE_TO_VAR_STR(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) { if (_ ## kk != NULL) free(_ ## kk); _ ## kk = strdup(value); } } while (0)
@@ -40,19 +47,26 @@ uint64_t _maxReplicationSize = (uint64_t)100000000000LL;
 #define SAVE_TO_VAR_UINT(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) parse32u(value, &_ ## kk, #ss); } while (0)
 #define SAVE_TO_VAR_UINT64(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) parse64u(value, &_ ## kk, #ss); } while (0)
 
+static void sanitizeFixedConfig();
+
 static void handleMaskString( const char *value, void(*func)(logmask_t) );
 
 static const char* units = "KMGTPEZY";
 
-static bool parse64(const char *in, int64_t *out, const char *optname);
-static bool parse64u(const char *in, uint64_t *out, const char *optname);
-static bool parse32(const char *in, int *out, const char *optname) UNUSED;
-static bool parse32u(const char *in, int *out, const char *optname);
+static bool parse64(const char *in, atomic_int_fast64_t *out, const char *optname);
+static bool parse64u(const char *in, atomic_uint_fast64_t *out, const char *optname);
+static bool parse32(const char *in, atomic_int *out, const char *optname) UNUSED;
+static bool parse32u(const char *in, atomic_int *out, const char *optname);
 
 static int ini_handler(void *custom UNUSED, const char* section, const char* key, const char* value)
 {
-	if ( _basePath == NULL ) SAVE_TO_VAR_STR( dnbd3, basePath );
-	SAVE_TO_VAR_BOOL( dnbd3, vmdkLegacyMode );
+	if ( initialLoad ) {
+		if ( _basePath == NULL ) SAVE_TO_VAR_STR( dnbd3, basePath );
+		SAVE_TO_VAR_BOOL( dnbd3, vmdkLegacyMode );
+		SAVE_TO_VAR_UINT( dnbd3, listenPort );
+		SAVE_TO_VAR_UINT( limits, maxClients );
+		SAVE_TO_VAR_UINT( limits, maxImages );
+	}
 	SAVE_TO_VAR_BOOL( dnbd3, isProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_INT( dnbd3, bgrMinClients );
@@ -64,9 +78,6 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_UINT( dnbd3, clientPenalty );
 	SAVE_TO_VAR_UINT( dnbd3, uplinkTimeout );
 	SAVE_TO_VAR_UINT( dnbd3, clientTimeout );
-	SAVE_TO_VAR_UINT( dnbd3, listenPort );
-	SAVE_TO_VAR_UINT( limits, maxClients );
-	SAVE_TO_VAR_UINT( limits, maxImages );
 	SAVE_TO_VAR_UINT( limits, maxPayload );
 	SAVE_TO_VAR_UINT64( limits, maxReplicationSize );
 	if ( strcmp( section, "dnbd3" ) == 0 && strcmp( key, "backgroundReplication" ) == 0 ) {
@@ -97,8 +108,29 @@ void globals_loadConfig()
 	char *name = NULL;
 	asprintf( &name, "%s/%s", _configDir, CONFIG_FILENAME );
 	if ( name == NULL ) return;
+	if ( pthread_mutex_trylock( &loadLock ) != 0 ) {
+		logadd( LOG_INFO, "Ignoring config reload request due to already running reload" );
+		return;
+	}
 	ini_parse( name, &ini_handler, NULL );
 	free( name );
+	if ( initialLoad ) {
+		sanitizeFixedConfig();
+	}
+	if ( _backgroundReplication == BGR_FULL && _sparseFiles && _bgrMinClients < 5 ) {
+		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true and bgrMinClients is too low" );
+		_sparseFiles = false;
+	}
+	// Dump config as interpreted
+	char buffer[2000];
+	globals_dumpConfig( buffer, sizeof(buffer) );
+	logadd( LOG_DEBUG1, "Effective configuration:\n%s", buffer );
+	initialLoad = false;
+	pthread_mutex_unlock( &loadLock );
+}
+
+static void sanitizeFixedConfig()
+{
 	// Validate settings after loading:
 	// base path for images valid?
 	if ( _basePath == NULL || _basePath[0] == '\0' ) {
@@ -160,14 +192,6 @@ void globals_loadConfig()
 			}
 		}
 	}
-	if ( _backgroundReplication == BGR_FULL && _sparseFiles && _bgrMinClients < 5 ) {
-		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true and bgrMinClients is too low" );
-		_sparseFiles = false;
-	}
-	// Dump config as interpreted
-	char buffer[2000];
-	globals_dumpConfig( buffer, sizeof(buffer) );
-	logadd( LOG_DEBUG1, "Effective configuration:\n%s", buffer );
 }
 
 #define SETLOGBIT(name) do { if ( strstr( value, #name ) != NULL ) mask |= LOG_ ## name; } while (0)
@@ -183,7 +207,7 @@ static void handleMaskString( const char *value, void(*func)(logmask_t) )
 	(*func)( mask );
 }
 
-static bool parse64(const char *in, int64_t *out, const char *optname)
+static bool parse64(const char *in, atomic_int_fast64_t *out, const char *optname)
 {
 	if ( *in == '\0' ) {
 		logadd( LOG_WARNING, "Ignoring empty numeric setting '%s'", optname );
@@ -212,43 +236,43 @@ static bool parse64(const char *in, int64_t *out, const char *optname)
 		}
 	}
 	while ( exp-- > 0 ) num *= base;
-	*out = (int64_t)num;
+	*out = (atomic_int_fast64_t)num;
 	return true;
 }
 
-static bool parse64u(const char *in, uint64_t *out, const char *optname)
+static bool parse64u(const char *in, atomic_uint_fast64_t *out, const char *optname)
 {
-	int64_t v;
+	atomic_int_fast64_t v;
 	if ( !parse64( in, &v, optname ) ) return false;
 	if ( v < 0 ) {
 		logadd( LOG_WARNING, "Ignoring value '%s' for '%s': Cannot be negative", in, optname );
 		return false;
 	}
-	*out = (uint64_t)v;
+	*out = (atomic_uint_fast64_t)v;
 	return true;
 }
 
-static bool parse32(const char *in, int *out, const char *optname)
+static bool parse32(const char *in, atomic_int *out, const char *optname)
 {
-	int64_t v;
+	atomic_int_fast64_t v;
 	if ( !parse64( in, &v, optname ) ) return false;
 	if ( v < INT_MIN || v > INT_MAX ) {
 		logadd( LOG_WARNING, "'%s' must be between %d and %d, but is '%s'", optname, (int)INT_MIN, (int)INT_MAX, in );
 		return false;
 	}
-	*out = (int)v;
+	*out = (atomic_int)v;
 	return true;
 }
 
-static bool parse32u(const char *in, int *out, const char *optname)
+static bool parse32u(const char *in, atomic_int *out, const char *optname)
 {
-	int64_t v;
+	atomic_int_fast64_t v;
 	if ( !parse64( in, &v, optname ) ) return false;
 	if ( v < 0 || v > INT_MAX ) {
 		logadd( LOG_WARNING, "'%s' must be between %d and %d, but is '%s'", optname, (int)0, (int)INT_MAX, in );
 		return false;
 	}
-	*out = (int)v;
+	*out = (atomic_int)v;
 	return true;
 }
 
@@ -258,10 +282,10 @@ static bool parse32u(const char *in, int *out, const char *optname)
 	rem -= r; \
 	buffer += r; \
 } while (0)
-#define PVAR(var,type) P_ARG(#var "=%" type "\n", _ ## var)
-#define PINT(var) PVAR(var, "d")
-#define PUINT64(var) PVAR(var, PRIu64)
-#define PSTR(var) PVAR(var, "s")
+#define PVAR(var,type,cast) P_ARG(#var "=%" type "\n", (cast) _ ## var)
+#define PINT(var) PVAR(var, "d", int)
+#define PUINT64(var) PVAR(var, PRIu64, uint64_t)
+#define PSTR(var) PVAR(var, "s", const char*)
 #define PBOOL(var) P_ARG(#var "=%s\n", _ ## var ? "true" : "false")
 
 size_t globals_dumpConfig(char *buffer, size_t size)

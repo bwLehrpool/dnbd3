@@ -488,6 +488,7 @@ uint32_t dnbd3_serverUptime()
 static void* server_asyncImageListLoad(void *data UNUSED)
 {
 	setThreadName( "img-list-loader" );
+	globals_loadConfig();
 	image_loadAll( NULL );
 	return NULL;
 }

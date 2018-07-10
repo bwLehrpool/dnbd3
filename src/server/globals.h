@@ -5,6 +5,7 @@
 #include "../shared/fdsignal.h"
 #include "../serverconfig.h"
 #include <stdint.h>
+#include <stdatomic.h>
 #include <time.h>
 #include <pthread.h>
 
@@ -154,59 +155,59 @@ extern char *_basePath;
 /**
  * Whether or not simple *.vmdk files should be treated as revision 1
  */
-extern bool _vmdkLegacyMode;
+extern atomic_bool _vmdkLegacyMode;
 
 /**
  * How much artificial delay should we add when a server connects to us?
  */
-extern int _serverPenalty;
+extern atomic_int _serverPenalty;
 
 /**
  * How much artificial delay should we add when a client connects to us?
  */
-extern int _clientPenalty;
+extern atomic_int _clientPenalty;
 
 /**
  * Is server shutting down?
  */
-extern volatile bool _shutdown;
+extern atomic_bool _shutdown;
 
 /**
  * Is server allowed to provide images in proxy mode?
  */
-extern bool _isProxy;
+extern atomic_bool _isProxy;
 
 /**
  * Only use servers as upstream proxy which are private?
  */
-extern bool _proxyPrivateOnly;
+extern atomic_bool _proxyPrivateOnly;
 
 /**
  * Whether to remove missing images from image list on SIGHUP
  */
-extern bool _removeMissingImages;
+extern atomic_bool _removeMissingImages;
 
 /**
  * Read timeout when waiting for or sending data on an uplink
  */
-extern int _uplinkTimeout;
+extern atomic_int _uplinkTimeout;
 
 /**
  * Read timeout when waiting for or sending data from/to client
  */
-extern int _clientTimeout;
+extern atomic_int _clientTimeout;
 
 /**
  * If true, images with no active client will have their fd closed after some
  * idle time.
  */
-extern bool _closeUnusedFd;
+extern atomic_bool _closeUnusedFd;
 
 /**
  * Should we replicate incomplete images in the background?
  * Otherwise, only blocks that were explicitly requested will be cached.
  */
-extern int _backgroundReplication;
+extern atomic_int _backgroundReplication;
 #define BGR_DISABLED (0)
 #define BGR_FULL (1)
 #define BGR_HASHBLOCK (2)
@@ -214,14 +215,14 @@ extern int _backgroundReplication;
 /**
  * Minimum connected clients for background replication to kick in
  */
-extern int _bgrMinClients;
+extern atomic_int _bgrMinClients;
 
 /**
  * (In proxy mode): If connecting client is a proxy, and the requested image
  * is not known locally, should we ask our known alt servers for it?
  * Otherwise the request is rejected.
  */
-extern bool _lookupMissingForProxy;
+extern atomic_bool _lookupMissingForProxy;
 
 /**
  * Should we preallocate proxied images right at the start to make
@@ -235,22 +236,22 @@ extern bool _lookupMissingForProxy;
  * This setting will have no effect if background replication is
  * turned on.
  */
-extern bool _sparseFiles;
+extern atomic_bool _sparseFiles;
 
 /**
  * Port to listen on (default: #define PORT (5003))
  */
-extern int _listenPort;
+extern atomic_int _listenPort;
 
 /**
  * Max number of DNBD3 clients we accept
  */
-extern int _maxClients;
+extern atomic_int _maxClients;
 
 /**
  * Max number of Images we support (in baseDir)
  */
-extern int _maxImages;
+extern atomic_int _maxImages;
 
 /**
  * Maximum payload length we accept on uplinks and thus indirectly
@@ -258,13 +259,13 @@ extern int _maxImages;
  * Usually this isn't even a megabyte for "real" clients (blockdev
  * or fuse).
  */
-extern int _maxPayload;
+extern atomic_int _maxPayload;
 
 /**
  * If in proxy mode, don't replicate images that are
  * larger than this according to the uplink server.
  */
-extern uint64_t _maxReplicationSize;
+extern atomic_uint_fast64_t _maxReplicationSize;
 
 /**
  * Load the server configuration.
