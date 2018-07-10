@@ -432,7 +432,7 @@ static void* uplink_mainloop(void *data)
 				} else {
 					// Not complete - do measurement
 					altservers_findUplink( link ); // This will set RTT_INPROGRESS (synchronous)
-					if ( _backgroundReplication == BGR_FULL && link->nextReplicationIndex == REP_NONE ) {
+					if ( _backgroundReplication == BGR_FULL && link->nextReplicationIndex == -1 ) {
 						link->nextReplicationIndex = 0;
 					}
 				}
