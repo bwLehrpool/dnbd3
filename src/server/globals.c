@@ -236,7 +236,7 @@ static bool parse64(const char *in, atomic_int_fast64_t *out, const char *optnam
 		}
 	}
 	while ( exp-- > 0 ) num *= base;
-	*out = (atomic_int_fast64_t)num;
+	*out = (int64_t)num;
 	return true;
 }
 
@@ -248,7 +248,7 @@ static bool parse64u(const char *in, atomic_uint_fast64_t *out, const char *optn
 		logadd( LOG_WARNING, "Ignoring value '%s' for '%s': Cannot be negative", in, optname );
 		return false;
 	}
-	*out = (atomic_uint_fast64_t)v;
+	*out = (uint64_t)v;
 	return true;
 }
 
@@ -260,7 +260,7 @@ static bool parse32(const char *in, atomic_int *out, const char *optname)
 		logadd( LOG_WARNING, "'%s' must be between %d and %d, but is '%s'", optname, (int)INT_MIN, (int)INT_MAX, in );
 		return false;
 	}
-	*out = (atomic_int)v;
+	*out = (int)v;
 	return true;
 }
 
@@ -272,7 +272,7 @@ static bool parse32u(const char *in, atomic_int *out, const char *optname)
 		logadd( LOG_WARNING, "'%s' must be between %d and %d, but is '%s'", optname, (int)0, (int)INT_MAX, in );
 		return false;
 	}
-	*out = (atomic_int)v;
+	*out = (int)v;
 	return true;
 }
 
