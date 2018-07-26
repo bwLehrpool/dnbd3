@@ -888,7 +888,7 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	const size_t len = strlen( uplink->image->path ) + 30;
 	char path[len];
 	snprintf( path, len, "%s.crc", uplink->image->path );
-	const int fd = open( path, O_WRONLY | O_CREAT, 0640 );
+	const int fd = open( path, O_WRONLY | O_CREAT, 0644 );
 	if ( fd >= 0 ) {
 		write( fd, &masterCrc, sizeof(uint32_t) );
 		write( fd, buffer, bytes );
@@ -922,7 +922,7 @@ static bool uplink_reopenCacheFd(dnbd3_connection_t *link, const bool force)
 		if ( !force ) return true;
 		close( link->cacheFd );
 	}
-	link->cacheFd = open( link->image->path, O_WRONLY | O_CREAT );
+	link->cacheFd = open( link->image->path, O_WRONLY | O_CREAT, 0644 );
 	return link->cacheFd != -1;
 }
 
