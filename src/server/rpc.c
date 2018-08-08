@@ -289,18 +289,17 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	if ( altservers && !(permissions & ACL_ALTSERVERS) ) {
 		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access altservers", -1, keepAlive );
 	}
-	// Call this first because it will update the total bytes sent counter
-	json_t *jsonClients = NULL;
-	if ( stats || clients ) {
-		jsonClients = net_clientsToJson( clients );
-	}
+
 	json_t *statisticsJson;
 	if ( stats ) {
+		int clientCount;
+		uint64_t bytesSent;
 		const uint64_t bytesReceived = uplink_getTotalBytesReceived();
-		const uint64_t bytesSent = net_getTotalBytesSent();
-		statisticsJson = json_pack( "{sIsIsIsI}",
+		net_getStats( &clientCount, &bytesSent );
+		statisticsJson = json_pack( "{sIsIsisIsI}",
 				"bytesReceived", (json_int_t) bytesReceived,
 				"bytesSent", (json_int_t) bytesSent,
+				"clientCount", clientCount,
 				"uptime", (json_int_t) dnbd3_serverUptime(),
 				"runId", randomRunId );
 	} else {
@@ -313,12 +312,8 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 		json_object_set_new( statisticsJson, "spaceTotal", json_integer( spaceTotal ) );
 		json_object_set_new( statisticsJson, "spaceFree", json_integer( spaceAvail ) );
 	}
-	if ( jsonClients != NULL ) {
-		if ( clients ) {
-			json_object_set_new( statisticsJson, "clients", jsonClients );
-		} else if ( stats ) {
-			json_object_set_new( statisticsJson, "clientCount", jsonClients );
-		}
+	if ( clients ) {
+		json_object_set_new( statisticsJson, "clients", net_getListAsJson() );
 	}
 	if ( images ) {
 		json_object_set_new( statisticsJson, "images", image_getListAsJson() );

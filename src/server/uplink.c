@@ -802,12 +802,10 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 						bytesSent = (size_t)sent - sizeof outReply;
 					}
 				}
-				spin_lock( &client->statsLock );
 				pthread_mutex_unlock( &client->sendMutex );
 				if ( bytesSent != 0 ) {
 					client->bytesSent += bytesSent;
 				}
-				spin_unlock( &client->statsLock );
 				spin_lock( &link->queueLock );
 			}
 			if ( req->status == ULR_FREE && i == link->queueLen - 1 ) link->queueLen--;

@@ -42,6 +42,7 @@
 #endif
 #include <jansson.h>
 #include <inttypes.h>
+#include <stdatomic.h>
 
 static dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 static int _num_clients = 0;
@@ -49,24 +50,12 @@ static pthread_spinlock_t _clients_lock;
 
 static char nullbytes[500];
 
-static uint64_t totalBytesSent = 0;
-static pthread_spinlock_t statisticsSentLock;
+static atomic_uint_fast64_t totalBytesSent = 0;
 
 // Adding and removing clients -- list management
 static bool addToList(dnbd3_client_t *client);
 static void removeFromList(dnbd3_client_t *client);
 static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client);
-
-/**
- * Update global sent stats. Hold client's statsLock when calling.
- */
-void net_updateGlobalSentStatsFromClient(dnbd3_client_t * const client)
-{
-	spin_lock( &statisticsSentLock );
-	totalBytesSent += ( client->bytesSent - client->lastBytesSent );
-	spin_unlock( &statisticsSentLock );
-	client->lastBytesSent = client->bytesSent;
-}
 
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
@@ -154,19 +143,9 @@ static inline bool sendPadding( const int fd, uint32_t bytes )
 	return sock_sendAll( fd, nullbytes, bytes, 2 ) == (ssize_t)bytes;
 }
 
-uint64_t net_getTotalBytesSent()
-{
-	// reads and writes to 64bit ints are not atomic on x86, so let's be safe and use locking
-	spin_lock( &statisticsSentLock );
-	const uint64_t tmp = totalBytesSent;
-	spin_unlock( &statisticsSentLock );
-	return tmp;
-}
-
 void net_init()
 {
 	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
-	spin_init( &statisticsSentLock, PTHREAD_PROCESS_PRIVATE );
 }
 
 void* net_handleNewConnection(void *clientPtr)
@@ -208,17 +187,13 @@ void* net_handleNewConnection(void *clientPtr)
 	} while (0);
 	// Fully init client struct
 	spin_init( &client->lock, PTHREAD_PROCESS_PRIVATE );
-	spin_init( &client->statsLock, PTHREAD_PROCESS_PRIVATE );
 	pthread_mutex_init( &client->sendMutex, NULL );
 
 	spin_lock( &client->lock );
 	host_to_string( &client->host, client->hostName, HOSTNAMELEN );
 	client->hostName[HOSTNAMELEN-1] = '\0';
 	spin_unlock( &client->lock );
-	spin_lock( &client->statsLock );
 	client->bytesSent = 0;
-	client->lastBytesSent = 0;
-	spin_unlock( &client->statsLock );
 
 	if ( !addToList( client ) ) {
 		freeClientStruct( client );
@@ -496,10 +471,8 @@ void* net_handleNewConnection(void *clientPtr)
 					}
 				}
 				if ( lock ) pthread_mutex_unlock( &client->sendMutex );
-				spin_lock( &client->statsLock );
 				// Global per-client counter
 				client->bytesSent += request.size; // Increase counter for statistics.
-				spin_unlock( &client->statsLock );
 				break;
 
 			case CMD_GET_SERVERS:
@@ -557,9 +530,8 @@ set_name: ;
 	}
 exit_client_cleanup: ;
 	removeFromList( client );
-	spin_lock( &client->statsLock ); // Make TSAN happy
-	net_updateGlobalSentStatsFromClient( client );
-	spin_unlock( &client->statsLock );
+	// First remove from list, then add to counter to prevent race condition
+	totalBytesSent += client->bytesSent;
 	freeClientStruct( client ); // This will also call image_release on client->image
 	return NULL ;
 fail_preadd: ;
@@ -569,63 +541,67 @@ fail_preadd: ;
 }
 
 /**
- * Get list of all clients and update the global stats counter while we're at it.
- * This method sucks since it has a param that tells it not to generate the list
- * but only update the global counter, which is a horrible relic from refactoring.
- * Hopfully I'll fix it soon by splitting this up or something.
+ * Get list of all clients.
  */
-json_t* net_clientsToJson(const bool fullList)
+struct json_t* net_getListAsJson()
 {
-	json_t *jsonClients = fullList ? json_array() : NULL;
+	json_t *jsonClients = json_array();
 	json_t *clientStats;
-	int i;
 	int imgId;
 	uint64_t bytesSent;
 	char host[HOSTNAMELEN];
 	host[HOSTNAMELEN-1] = '\0';
-	json_int_t counter = 0;
 
 	spin_lock( &_clients_lock );
-	for ( i = 0; i < _num_clients; ++i ) {
-		if ( _clients[i] == NULL ) {
-			continue;
-		}
+	for ( int i = 0; i < _num_clients; ++i ) {
 		dnbd3_client_t * const client = _clients[i];
+		if ( client == NULL || client->image == NULL )
+			continue;
 		spin_lock( &client->lock );
-		spin_unlock( &_clients_lock );
 		// Unlock so we give other threads a chance to access the client list.
 		// We might not get an atomic snapshot of the currently connected clients,
 		// but that doesn't really make a difference anyways.
-		if ( client->image == NULL ) {
-			spin_unlock( &client->lock );
-			imgId = -1;
-		} else {
-			if ( fullList ) {
-				strncpy( host, client->hostName, HOSTNAMELEN - 1 );
-				imgId = client->image->id;
-			} else {
-				counter++;
-			}
-			spin_lock( &client->statsLock );
-			spin_unlock( &client->lock );
-			bytesSent = client->bytesSent;
-			net_updateGlobalSentStatsFromClient( client ); // Do this since we read the totalBytesSent counter later
-			spin_unlock( &client->statsLock );
-		}
-		if ( fullList && imgId != -1 ) {
-			clientStats = json_pack( "{sssisI}",
-					"address", host,
-					"imageId", imgId,
-					"bytesSent", (json_int_t)bytesSent );
-			json_array_append_new( jsonClients, clientStats );
-		}
+		spin_unlock( &_clients_lock );
+		strncpy( host, client->hostName, HOSTNAMELEN - 1 );
+		imgId = client->image->id;
+		bytesSent = client->bytesSent;
+		spin_unlock( &client->lock );
+		clientStats = json_pack( "{sssisI}",
+				"address", host,
+				"imageId", imgId,
+				"bytesSent", (json_int_t)bytesSent );
+		json_array_append_new( jsonClients, clientStats );
 		spin_lock( &_clients_lock );
 	}
 	spin_unlock( &_clients_lock );
-	if ( fullList ) {
-		return jsonClients;
+	return jsonClients;
+}
+
+/**
+ * Get number of clients connected, total bytes sent, or both.
+ * we don't unlock the list while iterating or we might get an
+ * incorrect result if a client is disconnecting while iterating.
+ */
+void net_getStats(int *clientCount, uint64_t *bytesSent)
+{
+	int cc = 0;
+	uint64_t bs = 0;
+
+	spin_lock( &_clients_lock );
+	for ( int i = 0; i < _num_clients; ++i ) {
+		const dnbd3_client_t * const client = _clients[i];
+		if ( client == NULL || client->image == NULL )
+			continue;
+		cc += 1;
+		bs += client->bytesSent;
 	}
-	return json_integer( counter );
+	spin_unlock( &_clients_lock );
+	if ( clientCount != NULL ) {
+		*clientCount = cc;
+	}
+	if ( bytesSent != NULL ) {
+		*bytesSent = totalBytesSent + bs;
+	}
 }
 
 void net_disconnectAll()
@@ -697,8 +673,6 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 	if ( client->sock != -1 ) close( client->sock );
 	client->sock = -1;
 	pthread_mutex_unlock( &client->sendMutex );
-	spin_lock( &client->statsLock );
-	spin_unlock( &client->statsLock );
 	if ( client->image != NULL ) {
 		spin_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
@@ -707,7 +681,6 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 	}
 	spin_unlock( &client->lock );
 	spin_destroy( &client->lock );
-	spin_destroy( &client->statsLock );
 	pthread_mutex_destroy( &client->sendMutex );
 	free( client );
 	return NULL ;
