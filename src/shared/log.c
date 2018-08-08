@@ -31,8 +31,8 @@
 #define LINE_LEN (800)
 
 static pthread_mutex_t logLock = PTHREAD_MUTEX_INITIALIZER;
-static logmask_t maskFile = 31;
-static logmask_t maskCon  = 15;
+static _Atomic logmask_t maskFile = 31;
+static _Atomic logmask_t maskCon  = 15;
 
 static char *logFile = NULL;
 static int logFd = -1;
