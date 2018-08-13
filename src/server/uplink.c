@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
+#include <stdatomic.h>
 
 #define FILE_BYTES_PER_MAP_BYTE ( DNBD3_BLOCK_SIZE * 8 )
 #define MAP_BYTES_PER_HASH_BLOCK (int)( HASH_BLOCK_SIZE / FILE_BYTES_PER_MAP_BYTE )
@@ -20,8 +21,7 @@
 
 #define REP_NONE ( (uint64_t)0xffffffffffffffff )
 
-static uint64_t totalBytesReceived = 0;
-static pthread_spinlock_t statisticsReceivedLock;
+static atomic_uint_fast64_t totalBytesReceived = 0;
 
 static void* uplink_mainloop(void *data);
 static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly);
@@ -30,7 +30,6 @@ static void uplink_handleReceive(dnbd3_connection_t *link);
 static int uplink_sendKeepalive(const int fd);
 static void uplink_addCrc32(dnbd3_connection_t *uplink);
 static void uplink_sendReplicationRequest(dnbd3_connection_t *link);
-static void uplink_updateGlobalReceivedCounter(dnbd3_connection_t *link);
 static bool uplink_reopenCacheFd(dnbd3_connection_t *link, const bool force);
 static bool uplink_saveCacheMap(dnbd3_connection_t *link);
 
@@ -38,15 +37,11 @@ static bool uplink_saveCacheMap(dnbd3_connection_t *link);
 
 void uplink_globalsInit()
 {
-	spin_init( &statisticsReceivedLock, PTHREAD_PROCESS_PRIVATE );
 }
 
 uint64_t uplink_getTotalBytesReceived()
 {
-	spin_lock( &statisticsReceivedLock );
-	uint64_t tmp = totalBytesReceived;
-	spin_unlock( &statisticsReceivedLock );
-	return tmp;
+	return (uint64_t)totalBytesReceived;
 }
 
 /**
@@ -74,7 +69,6 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	spin_init( &link->rttLock, PTHREAD_PROCESS_PRIVATE );
 	link->image = image;
 	link->bytesReceived = 0;
-	link->lastBytesReceived = 0;
 	link->idleCount = 0;
 	link->queueLen = 0;
 	link->fd = -1;
@@ -438,8 +432,6 @@ static void* uplink_mainloop(void *data)
 				}
 				altCheckInterval = MIN(altCheckInterval + 1, SERVER_RTT_DELAY_MAX);
 				timing_set( &nextAltCheck, &now, altCheckInterval );
-				// Use opportunity to update global byte counter
-				uplink_updateGlobalReceivedCounter( link );
 			}
 		} else if ( rttTestResult == RTT_NOT_REACHABLE ) {
 			spin_lock( &link->rttLock );
@@ -506,7 +498,6 @@ static void* uplink_mainloop(void *data)
 	spin_destroy( &link->rttLock );
 	free( link->recvBuffer );
 	link->recvBuffer = NULL;
-	uplink_updateGlobalReceivedCounter( link );
 	if ( link->cacheFd != -1 ) {
 		close( link->cacheFd );
 	}
@@ -715,9 +706,8 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		struct iovec iov[2];
 		const uint64_t start = inReply.handle;
 		const uint64_t end = inReply.handle + inReply.size;
-		spin_lock( &link->image->lock );
+		totalBytesReceived += inReply.size;
 		link->bytesReceived += inReply.size;
-		spin_unlock( &link->image->lock );
 		// 1) Write to cache file
 		if ( unlikely( link->cacheFd == -1 ) ) {
 			uplink_reopenCacheFd( link, false );
@@ -892,18 +882,6 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 		write( fd, buffer, bytes );
 		close( fd );
 	}
-}
-
-/**
- * Only ever called from uplink thread, so only lock when updating global counter,
- * the lastBytesReceived field is ony accessed by us.
- */
-static void uplink_updateGlobalReceivedCounter(dnbd3_connection_t *link)
-{
-	spin_lock( &statisticsReceivedLock );
-	totalBytesReceived += ( link->bytesReceived - link->lastBytesReceived );
-	spin_unlock( &statisticsReceivedLock );
-	link->lastBytesReceived = link->bytesReceived;
 }
 
 /**

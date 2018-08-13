@@ -70,8 +70,7 @@ struct _dnbd3_connection
 	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
 	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
 	uint64_t replicationHandle; // Handle of pending replication request
-	uint64_t bytesReceived;     // Number of bytes received by the connection.
-	uint64_t lastBytesReceived; // Number of bytes received last time we updated the global counter.
+	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
 	int queueLen;               // length of queue
 	int idleCount;              // How many iterations of keepalive check connection was idle
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
