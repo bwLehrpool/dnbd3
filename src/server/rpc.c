@@ -292,14 +292,15 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 
 	json_t *statisticsJson;
 	if ( stats ) {
-		int clientCount;
+		int clientCount, serverCount;
 		uint64_t bytesSent;
 		const uint64_t bytesReceived = uplink_getTotalBytesReceived();
-		net_getStats( &clientCount, &bytesSent );
+		net_getStats( &clientCount, &serverCount, &bytesSent );
 		statisticsJson = json_pack( "{sIsIsisIsI}",
 				"bytesReceived", (json_int_t) bytesReceived,
 				"bytesSent", (json_int_t) bytesSent,
 				"clientCount", clientCount,
+				"serverCount", serverCount,
 				"uptime", (json_int_t) dnbd3_serverUptime(),
 				"runId", randomRunId );
 	} else {

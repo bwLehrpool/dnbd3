@@ -547,7 +547,7 @@ struct json_t* net_getListAsJson()
 {
 	json_t *jsonClients = json_array();
 	json_t *clientStats;
-	int imgId;
+	int imgId, isServer;
 	uint64_t bytesSent;
 	char host[HOSTNAMELEN];
 	host[HOSTNAMELEN-1] = '\0';
@@ -564,11 +564,13 @@ struct json_t* net_getListAsJson()
 		spin_unlock( &_clients_lock );
 		strncpy( host, client->hostName, HOSTNAMELEN - 1 );
 		imgId = client->image->id;
+		isServer = (int)client->isServer;
 		bytesSent = client->bytesSent;
 		spin_unlock( &client->lock );
-		clientStats = json_pack( "{sssisI}",
+		clientStats = json_pack( "{sssisisI}",
 				"address", host,
 				"imageId", imgId,
+				"isServer", isServer,
 				"bytesSent", (json_int_t)bytesSent );
 		json_array_append_new( jsonClients, clientStats );
 		spin_lock( &_clients_lock );
@@ -582,9 +584,9 @@ struct json_t* net_getListAsJson()
  * we don't unlock the list while iterating or we might get an
  * incorrect result if a client is disconnecting while iterating.
  */
-void net_getStats(int *clientCount, uint64_t *bytesSent)
+void net_getStats(int *clientCount, int *serverCount, uint64_t *bytesSent)
 {
-	int cc = 0;
+	int cc = 0, sc = 0;
 	uint64_t bs = 0;
 
 	spin_lock( &_clients_lock );
@@ -592,12 +594,19 @@ void net_getStats(int *clientCount, uint64_t *bytesSent)
 		const dnbd3_client_t * const client = _clients[i];
 		if ( client == NULL || client->image == NULL )
 			continue;
-		cc += 1;
+		if ( client->isServer ) {
+			sc += 1;
+		} else {
+			cc += 1;
+		}
 		bs += client->bytesSent;
 	}
 	spin_unlock( &_clients_lock );
 	if ( clientCount != NULL ) {
 		*clientCount = cc;
+	}
+	if ( serverCount != NULL ) {
+		*serverCount = sc;
 	}
 	if ( bytesSent != NULL ) {
 		*bytesSent = totalBytesSent + bs;

@@ -31,7 +31,7 @@ void* net_handleNewConnection(void *clientPtr);
 
 struct json_t* net_getListAsJson();
 
-void net_getStats(int *clientCount, uint64_t *bytesSent);
+void net_getStats(int *clientCount, int *serverCount, uint64_t *bytesSent);
 
 void net_disconnectAll();
 
