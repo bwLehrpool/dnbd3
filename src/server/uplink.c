@@ -618,7 +618,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 
 /**
  * find next index into cache_map that corresponds to the beginning
- * if a hash block which is neither completely empty nor completely
+ * of a hash block which is neither completely empty nor completely
  * replicated yet. Returns -1 if no match.
  */
 static int uplink_findNextIncompleteHashBlock(dnbd3_connection_t *link, const int startMapIndex)
@@ -632,7 +632,9 @@ static int uplink_findNextIncompleteHashBlock(dnbd3_connection_t *link, const in
 		const int start = ( startMapIndex & MAP_INDEX_HASH_START_MASK );
 		for (j = 0; j < mapBytes; ++j) {
 			const int i = ( start + j ) % mapBytes;
-			if ( cache_map[i] != 0 && cache_map[i] != 0xff ) {
+			const bool isFull = cache_map[i] == 0xff || ( i + 1 == mapBytes && link->replicatedLastBlock );
+			const bool isEmpty = cache_map[i] == 0;
+			if ( !isEmpty && !isFull ) {
 				// Neither full nor empty, replicate
 				if ( retval == -1 ) {
 					retval = i;
@@ -641,13 +643,13 @@ static int uplink_findNextIncompleteHashBlock(dnbd3_connection_t *link, const in
 			}
 			if ( ( i & MAP_INDEX_HASH_START_MASK ) == i ) {
 				// Reset state if we just crossed into the next hash chunk
-				retval = ( cache_map[i] == 0 ) ? ( i ) : ( -1 );
-			} else if ( cache_map[i] == 0xff ) {
+				retval = ( isEmpty ) ? ( i ) : ( -1 );
+			} else if ( isFull ) {
 				if ( retval != -1 ) {
 					// It's a full one, previous one was empty -> replicate
 					break;
 				}
-			} else { // ( cache_map[i] == 0 )
+			} else if ( isEmpty ) {
 				if ( retval == -1 ) { // Previous one was full -> replicate
 					retval = i;
 					break;
