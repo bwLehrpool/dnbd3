@@ -323,9 +323,9 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	init_timer(&dev->hb_timer);
 	dev->hb_timer.data = (unsigned long)dev;
 	dev->hb_timer.function = dnbd3_net_heartbeat;
+#endif
 	dev->hb_timer.expires = jiffies + HZ;
 	add_timer(&dev->hb_timer);
-#endif
 	return 0;
 	error: ;
 	if (dev->sock)
