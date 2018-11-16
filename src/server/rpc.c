@@ -296,7 +296,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 		uint64_t bytesSent;
 		const uint64_t bytesReceived = uplink_getTotalBytesReceived();
 		net_getStats( &clientCount, &serverCount, &bytesSent );
-		statisticsJson = json_pack( "{sIsIsisIsI}",
+		statisticsJson = json_pack( "{sIsIsisisIsI}",
 				"bytesReceived", (json_int_t) bytesReceived,
 				"bytesSent", (json_int_t) bytesSent,
 				"clientCount", clientCount,
