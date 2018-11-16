@@ -239,7 +239,7 @@ void* net_handleNewConnection(void *clientPtr)
 			if ( !client->isServer || !_isProxy ) {
 				// Is a normal client, or we're not proxy
 				image = image_getOrLoad( image_name, rid );
-			} else if ( !_backgroundReplication && ( flags & FLAGS8_BG_REP ) ) {
+			} else if ( _backgroundReplication != BGR_FULL && ( flags & FLAGS8_BG_REP ) ) {
 				// We're a proxy, client is another proxy, we don't do BGR, but connecting proxy does...
 				// Reject, as this would basically force this proxy to do BGR too.
 				image = image_get( image_name, rid, true );
