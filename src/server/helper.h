@@ -8,7 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#define ERROR_GOTO(jumplabel, ...) do { logadd(LOG_ERROR, __VA_ARGS__); goto jumplabel; } while (0);
+#define LOG_GOTO(jumplabel, lvl, ...) do { logadd(lvl, __VA_ARGS__); goto jumplabel; } while (0);
+#define ERROR_GOTO(jumplabel, ...) LOG_GOTO(jumplabel, LOG_ERROR, __VA_ARGS__)
 
 bool parse_address(char *string, dnbd3_host_t *host);
 bool host_to_string(const dnbd3_host_t *host, char *target, size_t targetlen);

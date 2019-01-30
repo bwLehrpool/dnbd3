@@ -509,7 +509,7 @@ static void *altservers_main(void *data UNUSED)
 				if ( !dnbd3_get_reply( sock, &reply ) ) {
 					char buf[100] = { 0 };
 					host_to_string( &servers[itAlt], buf, 100 );
-					ERROR_GOTO( server_failed, "[RTT] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
+					LOG_GOTO( server_failed, LOG_DEBUG1, "[RTT] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
 							buf, image->name );
 				}
 				// check reply header
