@@ -72,7 +72,7 @@ struct _dnbd3_connection
 	uint64_t replicationHandle; // Handle of pending replication request
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
 	int queueLen;               // length of queue
-	int idleCount;              // How many iterations of keepalive check connection was idle
+	uint32_t idleTime;          // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
 };
 

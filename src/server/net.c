@@ -281,7 +281,10 @@ void* net_handleNewConnection(void *clientPtr)
 				if ( bOk ) {
 					spin_lock( &image->lock );
 					image_file = image->readFd;
-					timing_get( &image->atime );
+					if ( !client->isServer ) {
+						// Only update immediately if this is a client. Servers are handled on disconnect.
+						timing_get( &image->atime );
+					}
 					spin_unlock( &image->lock );
 					serializer_reset_write( &payload );
 					serializer_put_uint16( &payload, client_version < 3 ? client_version : PROTOCOL_VERSION ); // XXX: Since messed up fuse client was messed up before :(
@@ -492,9 +495,6 @@ void* net_handleNewConnection(void *clientPtr)
 				pthread_mutex_lock( &client->sendMutex );
 				send_reply( client->sock, &reply, NULL );
 				pthread_mutex_unlock( &client->sendMutex );
-				spin_lock( &image->lock );
-				timing_get( &image->atime );
-				spin_unlock( &image->lock );
 set_name: ;
 				if ( !hasName ) {
 					hasName = true;
@@ -529,9 +529,17 @@ set_name: ;
 		}
 	}
 exit_client_cleanup: ;
-	removeFromList( client );
 	// First remove from list, then add to counter to prevent race condition
+	removeFromList( client );
 	totalBytesSent += client->bytesSent;
+	// Access time, but only if client didn't just probe
+	if ( image != NULL ) {
+		spin_lock( &image->lock );
+		if ( client->bytesSent > DNBD3_BLOCK_SIZE * 10 ) {
+			timing_get( &image->atime );
+		}
+		spin_unlock( &image->lock );
+	}
 	freeClientStruct( client ); // This will also call image_release on client->image
 	return NULL ;
 fail_preadd: ;

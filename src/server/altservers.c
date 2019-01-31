@@ -380,7 +380,7 @@ void altservers_serverFailed(const dnbd3_host_t * const host)
 	// to prevent the counter from increasing rapidly if many images use the
 	// same uplink. If there's a network hickup, all uplinks will call this
 	// function and would increase the counter too quickly, disabling the server.
-	if ( foundIndex != -1 && timing_diff( &altServers[foundIndex].lastFail, &now ) > SERVER_RTT_DELAY_INIT ) {
+	if ( foundIndex != -1 && timing_diff( &altServers[foundIndex].lastFail, &now ) > SERVER_RTT_INTERVAL_INIT ) {
 		altServers[foundIndex].numFails += SERVER_UPLINK_FAIL_INCREASE;
 		altServers[foundIndex].lastFail = now;
 		if ( lastOk != -1 ) {

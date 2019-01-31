@@ -26,11 +26,15 @@
 // the timeout for cases where we wait for additional data or are actively sending a reply
 #define SOCKET_TIMEOUT_CLIENT_RETRIES 3
 
+#define SERVER_UPLINK_KEEPALIVE_INTERVAL 10 // (Seconds) Send keep-alive if nothing else is happening on the uplink
+#define SERVER_UPLINK_IDLE_TIMEOUT 1800 // (Seconds) Timeout after which we tear down an uplink connection if no blocks needed to be fetched
+
 // +++++ Other magic constants
-#define SERVER_RTT_PROBES 5
-#define SERVER_RTT_DELAY_INIT 5
-#define SERVER_RTT_DELAY_MAX 45
-#define SERVER_RTT_DELAY_FAILED 180
+#define SERVER_RTT_PROBES 5 // How many probes to average over
+#define SERVER_RTT_INTERVAL_INIT 5 // Initial interval between probes
+#define SERVER_RTT_INTERVAL_MAX 45 // Maximum interval between probes
+#define SERVER_RTT_BACKOFF_COUNT 5 // If we can't reach any uplink server this many times, consider the uplink bad
+#define SERVER_RTT_INTERVAL_FAILED 180 // Interval to use if no uplink server is reachable for above many times
 
 #define SERVER_REMOTE_IMAGE_CHECK_CACHETIME 120 // 2 minutes
 
