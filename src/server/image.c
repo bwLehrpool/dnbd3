@@ -1504,7 +1504,8 @@ json_t* image_getListAsJson()
 	int i;
 	char uplinkName[100] = { 0 };
 	uint64_t bytesReceived;
-	int users, completeness;
+	int users, completeness, idleTime;
+	declare_now;
 
 	spin_lock( &imageListLock );
 	for ( i = 0; i < _num_images; ++i ) {
@@ -1513,25 +1514,27 @@ json_t* image_getListAsJson()
 		spin_lock( &image->lock );
 		spin_unlock( &imageListLock );
 		users = image->users;
+		idleTime = (int)timing_diff( &image->atime, &now );
 		completeness = image_getCompletenessEstimate( image );
 		if ( image->uplink == NULL ) {
 			bytesReceived = 0;
 			uplinkName[0] = '\0';
 		} else {
 			bytesReceived = image->uplink->bytesReceived;
-			if ( !host_to_string( &image->uplink->currentServer, uplinkName, sizeof(uplinkName) ) ) {
+			if ( image->uplink->fd == -1 || !host_to_string( &image->uplink->currentServer, uplinkName, sizeof(uplinkName) ) ) {
 				uplinkName[0] = '\0';
 			}
 		}
 		image->users++; // Prevent freeing after we unlock
 		spin_unlock( &image->lock );
 
-		jsonImage = json_pack( "{sisssisisisI}",
+		jsonImage = json_pack( "{sisssisisisisI}",
 				"id", image->id, // id, name, rid never change, so access them without locking
 				"name", image->name,
 				"rid", (int) image->rid,
 				"users", users,
 				"complete",  completeness,
+				"idle", idleTime,
 				"size", (json_int_t)image->virtualFilesize );
 		if ( bytesReceived != 0 ) {
 			json_object_set_new( jsonImage, "bytesReceived", json_integer( (json_int_t) bytesReceived ) );
