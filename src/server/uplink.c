@@ -163,6 +163,10 @@ void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
 bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint32_t length, uint8_t hops)
 {
 	if ( client == NULL || client->image == NULL ) return false;
+	if ( length > (uint32_t)_maxPayload ) {
+		logadd( LOG_WARNING, "Cannot relay request by client; length of %" PRIu32 " exceeds maximum payload", length );
+		return false;
+	}
 	spin_lock( &client->image->lock );
 	if ( client->image->uplink == NULL ) {
 		spin_unlock( &client->image->lock );
