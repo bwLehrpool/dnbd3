@@ -10,6 +10,10 @@
 #include <inttypes.h>
 #include <jansson.h>
 
+#define LOG(lvl, msg, ...) logadd(lvl, msg " (%s:%d)", __VA_ARGS__, image->name, (int)image->rid)
+#define LOG_GOTO(jumplabel, lvl, ...) do { LOG(lvl, __VA_ARGS__); goto jumplabel; } while (0);
+#define ERROR_GOTO(jumplabel, ...) LOG_GOTO(jumplabel, LOG_ERROR, __VA_ARGS__)
+
 static dnbd3_connection_t *pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static pthread_spinlock_t pendingLockWrite; // Lock for adding something to pending. (NULL -> nonNULL)
 static pthread_mutex_t pendingLockConsume = PTHREAD_MUTEX_INITIALIZER; // Lock for removing something (nonNULL -> NULL)
@@ -449,10 +453,10 @@ static void *altservers_main(void *data UNUSED)
 				pending[itLink] = NULL;
 				spin_unlock( &pendingLockWrite );
 				pthread_mutex_unlock( &pendingLockConsume );
-				logadd( LOG_DEBUG1, "Image has gone away that was queued for RTT measurement\n" );
+				logadd( LOG_DEBUG1, "Image has gone away that was queued for RTT measurement" );
 				continue;
 			}
-			logadd( LOG_DEBUG2, "Running altcheck for '%s:%d'", image->name, (int)image->rid );
+			LOG( LOG_DEBUG2, "[%d] Running alt check", itLink );
 			assert( uplink->rttTestResult == RTT_INPROGRESS );
 			// Now get 4 alt servers
 			numAlts = altservers_getListForUplink( servers, ALTS, uplink->fd == -1 );
@@ -491,34 +495,28 @@ static void *altservers_main(void *data UNUSED)
 				}
 				if ( protocolVersion < MIN_SUPPORTED_SERVER ) goto server_failed;
 				if ( name == NULL || strcmp( name, image->name ) != 0 ) {
-					ERROR_GOTO( server_failed, "[RTT] Server offers image '%s', requested '%s'", name, image->name );
+					ERROR_GOTO( server_failed, "[RTT] Server offers image '%s'", name );
 				}
 				if ( rid != image->rid ) {
-					ERROR_GOTO( server_failed, "[RTT] Server provides rid %d, requested was %d (%s)",
-							(int)rid, (int)image->rid, image->name );
+					ERROR_GOTO( server_failed, "[RTT] Server provides rid %d", (int)rid );
 				}
 				if ( imageSize != image->virtualFilesize ) {
-					ERROR_GOTO( server_failed, "[RTT] Remote size: %" PRIu64 ", expected: %" PRIu64 " (%s)",
-							imageSize, image->virtualFilesize, image->name );
+					ERROR_GOTO( server_failed, "[RTT] Remote size: %" PRIu64 ", expected: %" PRIu64, imageSize, image->virtualFilesize );
 				}
 				// Request first block (NOT random!) ++++++++++++++++++++++++++++++
 				if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0, COND_HOPCOUNT( protocolVersion, 1 ) ) ) {
-					ERROR_GOTO( server_failed, "[RTT] Could not request first block for %s", image->name );
+					LOG_GOTO( server_failed, LOG_DEBUG1, "[RTT%d] Could not request first block", itLink );
 				}
 				// See if requesting the block succeeded ++++++++++++++++++++++
 				if ( !dnbd3_get_reply( sock, &reply ) ) {
-					char buf[100] = { 0 };
-					host_to_string( &servers[itAlt], buf, 100 );
-					LOG_GOTO( server_failed, LOG_DEBUG1, "[RTT] Received corrupted reply header (%s) after CMD_GET_BLOCK (%s)",
-							buf, image->name );
+					LOG_GOTO( server_failed, LOG_DEBUG1, "[RTT%d] Received corrupted reply header after CMD_GET_BLOCK", itLink );
 				}
 				// check reply header
 				if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO( server_failed, "[RTT] Reply to first block request is %d bytes for %s",
-							reply.size, image->name );
+					ERROR_GOTO( server_failed, "[RTT] Reply to first block request is %" PRIu32 " bytes", reply.size );
 				}
 				if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
-					ERROR_GOTO( server_failed, "[RTT] Could not read first block payload for %s", image->name );
+					ERROR_GOTO( server_failed, "[RTT%d] Could not read first block payload", itLink );
 				}
 				clock_gettime( BEST_CLOCK_SOURCE, &end );
 				// Measurement done - everything fine so far
@@ -561,7 +559,11 @@ static void *altservers_main(void *data UNUSED)
 			// Done testing all servers. See if we should switch
 			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
-				logadd( LOG_DEBUG1, "Change @ %s - best: %luµs, current: %luµs\n", image->name, bestRtt, currentRtt );
+				if ( currentRtt > 10000000 || uplink->fd == -1 ) {
+					LOG( LOG_DEBUG1, "Change - best: %luµs, current: -", bestRtt );
+				} else {
+					LOG( LOG_DEBUG1, "Change - best: %luµs, current: %luµs", bestRtt, currentRtt );
+				}
 				sock_setTimeout( bestSock, _uplinkTimeout );
 				spin_lock( &uplink->rttLock );
 				uplink->betterFd = bestSock;
@@ -584,7 +586,7 @@ static void *altservers_main(void *data UNUSED)
 				spin_unlock( &uplink->rttLock );
 				if ( !image->working ) {
 					image->working = true;
-					logadd( LOG_DEBUG1, "No better alt server found, enabling '%s:%d' again.", image->name, (int)image->rid );
+					LOG( LOG_DEBUG1, "[%d] No better alt server found, enabling again", itLink );
 				}
 			}
 			image_release( image );
