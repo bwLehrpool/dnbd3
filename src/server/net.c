@@ -162,9 +162,9 @@ void* net_handleNewConnection(void *clientPtr)
 		const int ret = (int)recv( client->sock, &request, sizeof(request), MSG_WAITALL );
 #endif
 		// It's expected to be a real dnbd3 client
-		// Check request for validity. This implicitly dictates that all HTTP requests are more than 16 bytes...
+		// Check request for validity. This implicitly dictates that all HTTP requests are more than 24 bytes...
 		if ( ret != (int)sizeof(request) ) {
-			logadd( LOG_DEBUG1, "Error receiving request: Could not read message header (%d/%d, e=%d)", (int)ret, (int)sizeof(request), errno );
+			logadd( LOG_DEBUG2, "Error receiving request: Could not read message header (%d/%d, e=%d)", (int)ret, (int)sizeof(request), errno );
 			goto fail_preadd;
 		}
 
