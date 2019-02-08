@@ -7,6 +7,13 @@ Take very good care of locking order if you have lots
 of functions that call each other. You might lose
 track of what's going on. ;)
 
+===== FUSE =====
+mutexInit
+newAltLock
+altLock
+connection.sendMutex
+requests.lock
+
 ===== SERVER =====
 This is a list of used locks, in the order they
 have to be aquired if you must hold multiple locks:

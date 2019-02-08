@@ -10,10 +10,11 @@ struct _dnbd3_async;
 
 typedef struct _dnbd3_async {
 	struct _dnbd3_async *next; // Next in this linked list (provate field, not set by caller)
+	dnbd3_signal_t* signal; // Used to signal the caller
 	char* buffer;      // Caller-provided buffer to be filled
+	uint64_t time; // When request was put on wire, 0 if not measuring
 	uint64_t offset;
 	uint32_t length;
-	dnbd3_signal_t* signal; // Used to signal the caller
 	bool finished;     // Will be set to true if the request has been handled
 	bool success;      // Will be set to true if the request succeeded
 } dnbd3_async_t;
