@@ -66,6 +66,12 @@ static inline void timing_gets(ticks* retval, int32_t addSeconds)
 	retval->tv_sec += addSeconds;
 }
 
+static inline void timing_addSeconds(ticks* retval, ticks* base, int32_t addSeconds)
+{
+	retval->tv_sec = base->tv_sec + addSeconds;
+	retval->tv_nsec = base->tv_nsec;
+}
+
 /**
  * Check whether given timeout is reached.
  * Might trigger up to one second early.
@@ -131,6 +137,23 @@ static inline uint64_t timing_diffMs(const ticks *start, const ticks *end)
 		diff -= (start->tv_nsec - end->tv_nsec) / 1000000;
 	} else {
 		diff += (end->tv_nsec - start->tv_nsec) / 1000000;
+	}
+	return diff;
+}
+
+/**
+ * Get difference between two ticks, rounded down to microseconds.
+ * Same as above; passing arguments in reverse will always return 0.
+ */
+static inline uint64_t timing_diffUs(const ticks *start, const ticks *end)
+{
+	if ( end->tv_sec < start->tv_sec ) return 0;
+	uint64_t diff = (uint64_t)( end->tv_sec - start->tv_sec ) * 1000000;
+	if ( start->tv_nsec >= end->tv_nsec ) {
+		if ( diff == 0 ) return 0;
+		diff -= ( start->tv_nsec - end->tv_nsec ) / 1000;
+	} else {
+		diff += ( end->tv_nsec - start->tv_nsec ) / 1000;
 	}
 	return diff;
 }
