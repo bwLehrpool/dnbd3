@@ -7,7 +7,16 @@ SELF="$(readlink -f "${ARG0}")"
 ROOT_DIR="$(dirname "${SELF}")"
 cd "$ROOT_DIR"
 
-[ -n "$(git diff)" ] && MODDED='+MOD'
+if [ -d .git ]; then
+	[ -n "$(git diff)" ] && MODDED='+MOD'
+	echo $(git describe)$MODDED, branch $(git rev-parse --abbrev-ref HEAD), built "$(date +%Y-%m-%d)"
+	exit 0
+fi
 
-echo $(git describe)$MODDED, branch $(git rev-parse --abbrev-ref HEAD), built "$(date +%Y-%m-%d)"
+if [ -f "version.txt" ]; then
+	cat "version.txt"
+	exit 0
+fi
+
+echo "-unknown-"
 
