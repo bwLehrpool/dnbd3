@@ -104,7 +104,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	blk_queue_max_segment_size(disk->queue, ONE_MEG);
 	blk_queue_max_segments(disk->queue, 0xffff);
 	blk_queue_max_hw_sectors(disk->queue, ONE_MEG / DNBD3_BLOCK_SIZE);
-	disk->queue->limits.max_sectors = 512;
+	disk->queue->limits.max_sectors = 256;
 	dev->disk = disk;
 #undef ONE_MEG
 
