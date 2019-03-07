@@ -20,7 +20,7 @@ typedef struct _dnbd3_async {
 	bool success;      // Will be set to true if the request succeeded
 } dnbd3_async_t;
 
-bool connection_init(const char *hosts, const char *image, const uint16_t rid);
+bool connection_init(const char *hosts, const char *image, const uint16_t rid, const bool learnNewServers);
 
 bool connection_initThreads();
 

@@ -277,11 +277,12 @@ static void printUsage(char *argv0, int exitCode)
 	printf( "   -l --log        Write log to given location\n" );
 	printf( "   -o --option     Mount options to pass to libfuse\n" );
 	printf( "   -r --rid        Revision to use (omit or pass 0 for latest)\n" );
+	printf( "   -S --sticky     Use only servers from command line (no learning from servers)\n" );
 	printf( "   -s              Single threaded mode\n" );
 	exit( exitCode );
 }
 
-static const char *optString = "dfHh:i:l:o:r:sVv";
+static const char *optString = "dfHh:i:l:o:r:SsVv";
 static const struct option longOpts[] = {
         { "debug", no_argument, NULL, 'd' },
         { "help", no_argument, NULL, 'H' },
@@ -290,6 +291,7 @@ static const struct option longOpts[] = {
         { "log", required_argument, NULL, 'l' },
         { "option", required_argument, NULL, 'o' },
         { "rid", required_argument, NULL, 'r' },
+        { "sticky", no_argument, NULL, 'S' },
         { "version", no_argument, NULL, 'v' },
         { 0, 0, 0, 0 }
 };
@@ -303,6 +305,7 @@ int main(int argc, char *argv[])
 	char **newArgv;
 	int newArgc;
 	int opt, lidx;
+	bool learnNewServers = true;
 
 	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
 		printUsage( argv[0], 0 );
@@ -358,6 +361,9 @@ int main(int argc, char *argv[])
 		case 's':
 			newArgv[newArgc++] = "-s";
 			break;
+		case 'S':
+			learnNewServers = false;
+			break;
 		case 'f':
 			newArgv[newArgc++] = "-f";
 			break;
@@ -380,7 +386,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if ( !connection_init( server_address, image_Name, rid ) ) {
+	if ( !connection_init( server_address, image_Name, rid, learnNewServers ) ) {
 		logadd( LOG_ERROR, "Could not connect to any server. Bye.\n" );
 		return EXIT_FAILURE;
 	}

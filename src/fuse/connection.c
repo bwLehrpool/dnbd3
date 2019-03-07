@@ -31,6 +31,7 @@ static bool connectionInitDone = false;
 static bool threadInitDone = false;
 static pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
 static bool keepRunning = true;
+static bool learnNewServers;
 
 // List of pending requests
 static struct {
@@ -95,7 +96,7 @@ static bool throwDataAway(int sockFd, uint32_t amount);
 static void enqueueRequest(dnbd3_async_t *request);
 static dnbd3_async_t* removeRequest(dnbd3_async_t *request);
 
-bool connection_init(const char *hosts, const char *lowerImage, const uint16_t rid)
+bool connection_init(const char *hosts, const char *lowerImage, const uint16_t rid, const bool doLearnNew)
 {
 	int sock = -1;
 	char host[SHORTBUF];
@@ -114,6 +115,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 		dnbd3_host_t tempHosts[MAX_HOSTS_PER_ADDRESS];
 		const char *current, *end;
 		int altIndex = 0;
+		learnNewServers = doLearnNew;
 		memset( altservers, 0, sizeof altservers );
 		connection.sockFd = -1;
 		current = hosts;
@@ -453,7 +455,9 @@ static void* connection_backgroundThread(void *something UNUSED)
 		const bool panic = connection.sockFd == -1;
 		// Check alt servers
 		if ( panic || timing_reachedPrecise( &nextRttCheck, &now ) ) {
-			addAltServers();
+			if ( learnNewServers ) {
+				addAltServers();
+			}
 			sortAltServers();
 			probeAltServers();
 			if ( panic || timing_diff( &connection.startupTime, &now ) <= STARTUP_MODE_DURATION ) {
@@ -853,7 +857,7 @@ static void switchConnection(int sockFd, alt_server_t *srv)
  */
 static void requestAltServers()
 {
-	if ( connection.sockFd == -1 )
+	if ( connection.sockFd == -1 || !learnNewServers )
 		return;
 	dnbd3_request_t request = { 0 };
 	request.magic = dnbd3_packet_magic;
