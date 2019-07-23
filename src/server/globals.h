@@ -53,6 +53,7 @@ struct _dnbd3_connection
 	int version;                // remote server protocol version
 	dnbd3_signal_t* signal;     // used to wake up the process
 	pthread_t thread;           // thread holding the connection
+	pthread_mutex_t sendMutex;  // For locking socket while sending
 	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	dnbd3_host_t currentServer; // Current server we're connected to
