@@ -266,6 +266,13 @@ extern atomic_int _maxPayload;
 extern atomic_uint_fast64_t _maxReplicationSize;
 
 /**
+ * Pretend to be a client when talking to others servers,
+ * effectively not setting the server bit during connection
+ * setup. Useful for local caching.
+ */
+extern atomic_bool _pretendClient;
+
+/**
  * Load the server configuration.
  */
 void globals_loadConfig();

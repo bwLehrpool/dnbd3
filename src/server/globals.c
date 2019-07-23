@@ -32,6 +32,7 @@ atomic_int _maxClients = SERVER_MAX_CLIENTS;
 atomic_int _maxImages = SERVER_MAX_IMAGES;
 atomic_int _maxPayload = 9000000; // 9MB
 atomic_uint_fast64_t _maxReplicationSize = (uint64_t)100000000000LL;
+atomic_bool _pretendClient = false;
 
 /**
  * True when loading config the first time. Consecutive loads will
@@ -80,6 +81,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_UINT( dnbd3, clientTimeout );
 	SAVE_TO_VAR_UINT( limits, maxPayload );
 	SAVE_TO_VAR_UINT64( limits, maxReplicationSize );
+	SAVE_TO_VAR_BOOL( dnbd3, pretendClient );
 	if ( strcmp( section, "dnbd3" ) == 0 && strcmp( key, "backgroundReplication" ) == 0 ) {
 		if ( strcmp( value, "hashblock" ) == 0 ) {
 			_backgroundReplication = BGR_HASHBLOCK;
