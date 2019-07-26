@@ -72,10 +72,10 @@ static inline bool iequals(struct string *cmpMixed, struct string *cmpLower)
 static int aclCount = 0;
 static dnbd3_access_rule_t aclRules[MAX_ACLS];
 static json_int_t randomRunId;
-static pthread_spinlock_t aclLock;
+static pthread_mutex_t aclLock;
 #define MAX_CLIENTS 50
 #define CUTOFF_START 40
-static pthread_spinlock_t statusLock;
+static pthread_mutex_t statusLock;
 static struct {
 	int count;
 	bool overloaded;
@@ -91,8 +91,8 @@ static void loadAcl();
 
 void rpc_init()
 {
-	spin_init( &aclLock, PTHREAD_PROCESS_PRIVATE );
-	spin_init( &statusLock, PTHREAD_PROCESS_PRIVATE );
+	mutex_init( &aclLock );
+	mutex_init( &statusLock );
 	randomRunId = (((json_int_t)getpid()) << 16) | (json_int_t)time(NULL);
 	// </guard>
 	if ( sizeof(randomRunId) > 4 ) {
@@ -123,10 +123,10 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		return;
 	}
 	do {
-		spin_lock( &statusLock );
+		mutex_lock( &statusLock );
 		const int curCount = ++status.count;
 		UPDATE_LOADSTATE( curCount );
-		spin_unlock( &statusLock );
+		mutex_unlock( &statusLock );
 		if ( curCount > MAX_CLIENTS ) {
 			sendReply( sock, "503 Service Temporarily Unavailable", "text/plain", "Too many HTTP clients", -1, HTTP_CLOSE );
 			goto func_return;
@@ -198,9 +198,9 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			if ( minorVersion == 0 || hasHeaderValue( headers, numHeaders, &STR_CONNECTION, &STR_CLOSE ) ) {
 				keepAlive = HTTP_CLOSE;
 			} else { // And if there aren't too many active HTTP sessions
-				spin_lock( &statusLock );
+				mutex_lock( &statusLock );
 				if ( status.overloaded ) keepAlive = HTTP_CLOSE;
-				spin_unlock( &statusLock );
+				mutex_unlock( &statusLock );
 			}
 		}
 		if ( method.s != NULL && path.s != NULL ) {
@@ -234,10 +234,10 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	} while (true);
 func_return:;
 	do {
-		spin_lock( &statusLock );
+		mutex_lock( &statusLock );
 		const int curCount = --status.count;
 		UPDATE_LOADSTATE( curCount );
-		spin_unlock( &statusLock );
+		mutex_unlock( &statusLock );
 	} while (0);
 }
 
@@ -422,7 +422,7 @@ static int getacl(dnbd3_host_t *host)
 static void addacl(int argc, char **argv, void *data UNUSED)
 {
 	if ( argv[0][0] == '#' ) return;
-	spin_lock( &aclLock );
+	mutex_lock( &aclLock );
 	if ( aclCount >= MAX_ACLS ) {
 		logadd( LOG_WARNING, "Too many ACL rules, ignoring %s", argv[0] );
 		goto unlock_end;
@@ -478,7 +478,7 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 	// in .bitMask, and compate it, otherwise, a simple memcmp will do.
 	aclCount++;
 unlock_end:;
-	spin_unlock( &aclLock );
+	mutex_unlock( &aclLock );
 }
 
 static void loadAcl()
@@ -486,18 +486,18 @@ static void loadAcl()
 	static bool inProgress = false;
 	char *fn;
 	if ( asprintf( &fn, "%s/%s", _configDir, "rpc.acl" ) == -1 ) return;
-	spin_lock( &aclLock );
+	mutex_lock( &aclLock );
 	if ( inProgress ) {
-		spin_unlock( &aclLock );
+		mutex_unlock( &aclLock );
 		return;
 	}
 	aclCount = 0;
 	inProgress = true;
-	spin_unlock( &aclLock );
+	mutex_unlock( &aclLock );
 	file_loadLineBased( fn, 1, 20, &addacl, NULL );
-	spin_lock( &aclLock );
+	mutex_lock( &aclLock );
 	inProgress = false;
-	spin_unlock( &aclLock );
+	mutex_unlock( &aclLock );
 	free( fn );
 	logadd( LOG_INFO, "%d HTTPRPC ACL rules loaded", (int)aclCount );
 }

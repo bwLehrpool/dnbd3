@@ -17,12 +17,12 @@ static pthread_attr_t threadAttrs;
 
 static int maxIdleThreads = -1;
 static entry_t *pool = NULL;
-static pthread_spinlock_t poolLock;
+static pthread_mutex_t poolLock;
 
 bool threadpool_init(int maxIdle)
 {
 	if ( maxIdle < 0 || maxIdleThreads >= 0 ) return false;
-	spin_init( &poolLock, PTHREAD_PROCESS_PRIVATE );
+	mutex_init( &poolLock );
 	maxIdleThreads = maxIdle;
 	pthread_attr_init( &threadAttrs );
 	pthread_attr_setdetachstate( &threadAttrs, PTHREAD_CREATE_DETACHED );
@@ -33,7 +33,7 @@ void threadpool_close()
 {
 	_shutdown = true;
 	if ( maxIdleThreads < 0 ) return;
-	spin_lock( &poolLock );
+	mutex_lock( &poolLock );
 	maxIdleThreads = -1;
 	entry_t *ptr = pool;
 	while ( ptr != NULL ) {
@@ -41,16 +41,16 @@ void threadpool_close()
 		ptr = ptr->next;
 		signal_call( current->signal );
 	}
-	spin_unlock( &poolLock );
-	spin_destroy( &poolLock );
+	mutex_unlock( &poolLock );
+	mutex_destroy( &poolLock );
 }
 
 bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 {
-	spin_lock( &poolLock );
+	mutex_lock( &poolLock );
 	entry_t *entry = pool;
 	if ( entry != NULL ) pool = entry->next;
-	spin_unlock( &poolLock );
+	mutex_unlock( &poolLock );
 	if ( entry == NULL ) {
 		entry = (entry_t*)malloc( sizeof(entry_t) );
 		if ( entry == NULL ) {
@@ -101,19 +101,19 @@ static void *threadpool_worker(void *entryPtr)
 			if ( _shutdown ) break;
 			// Put thread back into pool if there are less than maxIdleThreds threads, just die otherwise
 			int threadCount = 0;
-			spin_lock( &poolLock );
+			mutex_lock( &poolLock );
 			entry_t *ptr = pool;
 			while ( ptr != NULL ) {
 				threadCount++;
 				ptr = ptr->next;
 			}
 			if ( threadCount >= maxIdleThreads ) {
-				spin_unlock( &poolLock );
+				mutex_unlock( &poolLock );
 				break;
 			}
 			entry->next = pool;
 			pool = entry;
-			spin_unlock( &poolLock );
+			mutex_unlock( &poolLock );
 			setThreadName( "[pool]" );
 		} else {
 			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!", ret );

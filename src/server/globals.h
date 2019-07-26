@@ -54,10 +54,10 @@ struct _dnbd3_connection
 	dnbd3_signal_t* signal;     // used to wake up the process
 	pthread_t thread;           // thread holding the connection
 	pthread_mutex_t sendMutex;  // For locking socket while sending
-	pthread_spinlock_t queueLock; // lock for synchronization on request queue etc.
+	pthread_mutex_t queueLock;  // lock for synchronization on request queue etc.
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	dnbd3_host_t currentServer; // Current server we're connected to
-	pthread_spinlock_t rttLock; // When accessing rttTestResult, betterFd or betterServer
+	pthread_mutex_t rttLock;    // When accessing rttTestResult, betterFd or betterServer
 	int rttTestResult;          // RTT_*
 	int cacheFd;                // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	int betterVersion;          // protocol version of better server
@@ -121,7 +121,7 @@ struct _dnbd3_image
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
 	bool working;          // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	uint16_t rid;          // revision of image
-	pthread_spinlock_t lock;
+	pthread_mutex_t lock;
 };
 
 struct _dnbd3_client
@@ -134,7 +134,7 @@ struct _dnbd3_client
 	dnbd3_host_t host;
 	char hostName[HOSTNAMELEN];       // inet_ntop version of host
 	pthread_mutex_t sendMutex;        // Held while writing to sock if image is incomplete (since uplink uses socket too)
-	pthread_spinlock_t lock;
+	pthread_mutex_t lock;
 };
 
 // #######################################################

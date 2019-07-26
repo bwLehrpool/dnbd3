@@ -8,28 +8,31 @@
 
 #ifdef _DEBUG
 
-#define spin_init( lock, type ) debug_spin_init( #lock, __FILE__, __LINE__, lock, type)
-#define spin_lock( lock ) debug_spin_lock( #lock, __FILE__, __LINE__, lock)
-#define spin_trylock( lock ) debug_spin_trylock( #lock, __FILE__, __LINE__, lock)
-#define spin_unlock( lock ) debug_spin_unlock( #lock, __FILE__, __LINE__, lock)
-#define spin_destroy( lock ) debug_spin_destroy( #lock, __FILE__, __LINE__, lock)
+#define mutex_init( lock ) debug_mutex_init( #lock, __FILE__, __LINE__, lock)
+#define mutex_lock( lock ) debug_mutex_lock( #lock, __FILE__, __LINE__, lock)
+#define mutex_trylock( lock ) debug_mutex_trylock( #lock, __FILE__, __LINE__, lock)
+#define mutex_unlock( lock ) debug_mutex_unlock( #lock, __FILE__, __LINE__, lock)
+#define mutex_cond_wait( cond, lock ) debug_mutex_cond_wait( #lock, __FILE__, __LINE__, cond, lock)
+#define mutex_destroy( lock ) debug_mutex_destroy( #lock, __FILE__, __LINE__, lock)
 
-int debug_spin_init(const char *name, const char *file, int line, pthread_spinlock_t *lock, int shared);
-int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlock_t *lock);
-int debug_spin_trylock(const char *name, const char *file, int line, pthread_spinlock_t *lock);
-int debug_spin_unlock(const char *name, const char *file, int line, pthread_spinlock_t *lock);
-int debug_spin_destroy(const char *name, const char *file, int line, pthread_spinlock_t *lock);
+int debug_mutex_init(const char *name, const char *file, int line, pthread_mutex_t *lock);
+int debug_mutex_lock(const char *name, const char *file, int line, pthread_mutex_t *lock);
+int debug_mutex_trylock(const char *name, const char *file, int line, pthread_mutex_t *lock);
+int debug_mutex_unlock(const char *name, const char *file, int line, pthread_mutex_t *lock);
+int debug_mutex_cond_wait(const char *name, const char *file, int line, pthread_cond_t *restrict cond, pthread_mutex_t *restrict lock);
+int debug_mutex_destroy(const char *name, const char *file, int line, pthread_mutex_t *lock);
 
 void debug_dump_lock_stats();
 
 
 #else
 
-#define spin_init( lock, type ) pthread_spin_init(lock, type)
-#define spin_lock( lock ) pthread_spin_lock(lock)
-#define spin_trylock( lock ) pthread_spin_trylock(lock)
-#define spin_unlock( lock ) pthread_spin_unlock(lock)
-#define spin_destroy( lock ) pthread_spin_destroy(lock)
+#define mutex_init( lock ) pthread_mutex_init(lock, NULL)
+#define mutex_lock( lock ) pthread_mutex_lock(lock)
+#define mutex_trylock( lock ) pthread_mutex_trylock(lock)
+#define mutex_unlock( lock ) pthread_mutex_unlock(lock)
+#define mutex_cond_wait( lock ) pthread_cond_wait(cond, lock)
+#define mutex_destroy( lock ) pthread_mutex_destroy(lock)
 
 #endif
 

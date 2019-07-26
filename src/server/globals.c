@@ -1,5 +1,6 @@
 #include "globals.h"
 #include "ini.h"
+#include "locks.h"
 #include "../shared/log.h"
 #include <string.h>
 #include <stdlib.h>
@@ -39,7 +40,7 @@ atomic_bool _pretendClient = false;
  * ignore certain values which cannot be changed safely at runtime.
  */
 static atomic_bool initialLoad = true;
-static pthread_mutex_t loadLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t loadLock;
 
 #define IS_TRUE(value) (atoi(value) != 0 || strcmp(value, "true") == 0 || strcmp(value, "True") == 0 || strcmp(value, "TRUE") == 0)
 #define SAVE_TO_VAR_STR(ss, kk) do { if (strcmp(section, #ss) == 0 && strcmp(key, #kk) == 0) { if (_ ## kk != NULL) free(_ ## kk); _ ## kk = strdup(value); } } while (0)
@@ -110,7 +111,10 @@ void globals_loadConfig()
 	char *name = NULL;
 	asprintf( &name, "%s/%s", _configDir, CONFIG_FILENAME );
 	if ( name == NULL ) return;
-	if ( pthread_mutex_trylock( &loadLock ) != 0 ) {
+	if ( initialLoad ) {
+		mutex_init( &loadLock );
+	}
+	if ( mutex_trylock( &loadLock ) != 0 ) {
 		logadd( LOG_INFO, "Ignoring config reload request due to already running reload" );
 		return;
 	}
@@ -128,7 +132,7 @@ void globals_loadConfig()
 	globals_dumpConfig( buffer, sizeof(buffer) );
 	logadd( LOG_DEBUG1, "Effective configuration:\n%s", buffer );
 	initialLoad = false;
-	pthread_mutex_unlock( &loadLock );
+	mutex_unlock( &loadLock );
 }
 
 static void sanitizeFixedConfig()

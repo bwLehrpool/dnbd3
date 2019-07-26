@@ -38,23 +38,23 @@ int debugThreadCount = 0;
 static debug_lock_t locks[MAXLOCKS];
 static debug_thread_t threads[MAXTHREADS];
 static int init_done = 0;
-static pthread_spinlock_t initdestory;
+static pthread_mutex_t initdestory;
 static int lockId = 0;
 static pthread_t watchdog = 0;
 static dnbd3_signal_t* watchdogSignal = NULL;
 
 static void *debug_thread_watchdog(void *something);
 
-int debug_spin_init(const char *name, const char *file, int line, pthread_spinlock_t *lock, int shared)
+int debug_mutex_init(const char *name, const char *file, int line, pthread_mutex_t *lock)
 {
 	if ( !init_done ) {
 		memset( locks, 0, MAXLOCKS * sizeof(debug_lock_t) );
 		memset( threads, 0, MAXTHREADS * sizeof(debug_thread_t) );
-		pthread_spin_init( &initdestory, PTHREAD_PROCESS_PRIVATE );
+		pthread_mutex_init( &initdestory, NULL );
 		init_done = 1;
 	}
 	int first = -1;
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == lock ) {
 			logadd( LOG_ERROR, "Lock %p (%s) already initialized (%s:%d)\n", (void*)lock, name, file, line );
@@ -64,7 +64,7 @@ int debug_spin_init(const char *name, const char *file, int line, pthread_spinlo
 	}
 	if ( first == -1 ) {
 		logadd( LOG_ERROR, "No more free debug locks (%s:%d)\n", file, line );
-		pthread_spin_unlock( &initdestory );
+		pthread_mutex_unlock( &initdestory );
 		debug_dump_lock_stats();
 		exit( 4 );
 	}
@@ -72,28 +72,28 @@ int debug_spin_init(const char *name, const char *file, int line, pthread_spinlo
 	locks[first].locked = 0;
 	snprintf( locks[first].name, LOCKLEN, "%s", name );
 	snprintf( locks[first].where, LOCKLEN, "I %s:%d", file, line );
-	pthread_spin_unlock( &initdestory );
-	return pthread_spin_init( lock, shared );
+	pthread_mutex_unlock( &initdestory );
+	return pthread_mutex_init( lock, NULL );
 }
 
-int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlock_t *lock)
+int debug_mutex_lock(const char *name, const char *file, int line, pthread_mutex_t *lock)
 {
 	debug_lock_t *l = NULL;
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == lock ) {
 			l = &locks[i];
 			break;
 		}
 	}
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	if ( l == NULL ) {
 		logadd( LOG_ERROR, "Tried to lock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		debug_dump_lock_stats();
 		exit( 4 );
 	}
 	debug_thread_t *t = NULL;
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	for (int i = 0; i < MAXTHREADS; ++i) {
 		if ( threads[i].tid != 0 ) continue;
 		threads[i].tid = pthread_self();
@@ -103,15 +103,15 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 		t = &threads[i];
 		break;
 	}
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	if ( t == NULL ) {
 		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads for lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
-	const int retval = pthread_spin_lock( lock );
-	pthread_spin_lock( &initdestory );
+	const int retval = pthread_mutex_lock( lock );
+	pthread_mutex_lock( &initdestory );
 	t->tid = 0;
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	if ( l->locked ) {
 		logadd( LOG_ERROR, "Lock sanity check: lock %p (%s) already locked at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
@@ -120,30 +120,30 @@ int debug_spin_lock(const char *name, const char *file, int line, pthread_spinlo
 	timing_get( &l->locktime );
 	l->thread = pthread_self();
 	snprintf( l->where, LOCKLEN, "L %s:%d", file, line );
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	l->lockId = ++lockId;
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	return retval;
 }
 
-int debug_spin_trylock(const char *name, const char *file, int line, pthread_spinlock_t *lock)
+int debug_mutex_trylock(const char *name, const char *file, int line, pthread_mutex_t *lock)
 {
 	debug_lock_t *l = NULL;
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == lock ) {
 			l = &locks[i];
 			break;
 		}
 	}
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	if ( l == NULL ) {
 		logadd( LOG_ERROR, "Tried to lock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		debug_dump_lock_stats();
 		exit( 4 );
 	}
 	debug_thread_t *t = NULL;
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	for (int i = 0; i < MAXTHREADS; ++i) {
 		if ( threads[i].tid != 0 ) continue;
 		threads[i].tid = pthread_self();
@@ -153,15 +153,15 @@ int debug_spin_trylock(const char *name, const char *file, int line, pthread_spi
 		t = &threads[i];
 		break;
 	}
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	if ( t == NULL ) {
 		logadd( LOG_ERROR, "Lock sanity check: Too many waiting threads for %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
 	}
-	const int retval = pthread_spin_trylock( lock );
-	pthread_spin_lock( &initdestory );
+	const int retval = pthread_mutex_trylock( lock );
+	pthread_mutex_lock( &initdestory );
 	t->tid = 0;
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	if ( retval == 0 ) {
 		if ( l->locked ) {
 			logadd( LOG_ERROR, "Lock sanity check: lock %p (%s) already locked at %s:%d\n", (void*)lock, name, file, line );
@@ -171,24 +171,24 @@ int debug_spin_trylock(const char *name, const char *file, int line, pthread_spi
 		timing_get( &l->locktime );
 		l->thread = pthread_self();
 		snprintf( l->where, LOCKLEN, "L %s:%d", file, line );
-		pthread_spin_lock( &initdestory );
+		pthread_mutex_lock( &initdestory );
 		l->lockId = ++lockId;
-		pthread_spin_unlock( &initdestory );
+		pthread_mutex_unlock( &initdestory );
 	}
 	return retval;
 }
 
-int debug_spin_unlock(const char *name, const char *file, int line, pthread_spinlock_t *lock)
+int debug_mutex_unlock(const char *name, const char *file, int line, pthread_mutex_t *lock)
 {
 	debug_lock_t *l = NULL;
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == lock ) {
 			l = &locks[i];
 			break;
 		}
 	}
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	if ( l == NULL ) {
 		logadd( LOG_ERROR, "Tried to unlock uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
 		exit( 4 );
@@ -200,13 +200,58 @@ int debug_spin_unlock(const char *name, const char *file, int line, pthread_spin
 	l->locked = 0;
 	l->thread = 0;
 	snprintf( l->where, LOCKLEN, "U %s:%d", file, line );
-	int retval = pthread_spin_unlock( lock );
+	int retval = pthread_mutex_unlock( lock );
 	return retval;
 }
 
-int debug_spin_destroy(const char *name, const char *file, int line, pthread_spinlock_t *lock)
+int debug_mutex_cond_wait(const char *name, const char *file, int line, pthread_cond_t *restrict cond, pthread_mutex_t *restrict lock)
 {
-	pthread_spin_lock( &initdestory );
+	debug_lock_t *l = NULL;
+	pthread_mutex_lock( &initdestory );
+	for (int i = 0; i < MAXLOCKS; ++i) {
+		if ( locks[i].lock == lock ) {
+			l = &locks[i];
+			break;
+		}
+	}
+	pthread_mutex_unlock( &initdestory );
+	if ( l == NULL ) {
+		logadd( LOG_ERROR, "Tried to cond_wait on uninitialized lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
+		exit( 4 );
+	}
+	if ( !l->locked ) {
+		logadd( LOG_ERROR, "Cond_wait sanity check: lock %p (%s) not locked at %s:%d\n", (void*)lock, name, file, line );
+		exit( 4 );
+	}
+	pthread_t self = pthread_self();
+	if ( l->thread != self ) {
+		logadd( LOG_ERROR, "Cond_wait called from non-owning thread for %p (%s) at %s:%d\n", (void*)lock, name, file, line );
+		exit( 4 );
+	}
+	l->locked = 0;
+	l->thread = 0;
+	snprintf( l->where, LOCKLEN, "CW %s:%d", file, line );
+	int retval = pthread_cond_wait( cond, lock );
+	if ( retval != 0 ) {
+		logadd( LOG_ERROR, "pthread_cond_wait returned %d for lock %p (%s) at %s:%d\n", retval, (void*)lock, name, file, line );
+		exit( 4 );
+	}
+	if ( l->locked != 0 || l->thread != 0 ) {
+		logadd( LOG_ERROR, "Lock is not free after returning from pthread_cond_wait for %p (%s) at %s:%d\n", (void*)lock, name, file, line );
+		exit( 4 );
+	}
+	l->locked = 1;
+	l->thread = self;
+	timing_get( &l->locktime );
+	pthread_mutex_lock( &initdestory );
+	l->lockId = ++lockId;
+	pthread_mutex_unlock( &initdestory );
+	return retval;
+}
+
+int debug_mutex_destroy(const char *name, const char *file, int line, pthread_mutex_t *lock)
+{
+	pthread_mutex_lock( &initdestory );
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == lock ) {
 			if ( locks[i].locked ) {
@@ -215,8 +260,8 @@ int debug_spin_destroy(const char *name, const char *file, int line, pthread_spi
 			}
 			locks[i].lock = NULL;
 			snprintf( locks[i].where, LOCKLEN, "D %s:%d", file, line );
-			pthread_spin_unlock( &initdestory );
-			return pthread_spin_destroy( lock );
+			pthread_mutex_unlock( &initdestory );
+			return pthread_mutex_destroy( lock );
 		}
 	}
 	logadd( LOG_ERROR, "Tried to destroy non-existent lock %p (%s) at %s:%d\n", (void*)lock, name, file, line );
@@ -226,7 +271,7 @@ int debug_spin_destroy(const char *name, const char *file, int line, pthread_spi
 void debug_dump_lock_stats()
 {
 	declare_now;
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	printf( "\n **** LOCKS ****\n\n" );
 	for (int i = 0; i < MAXLOCKS; ++i) {
 		if ( locks[i].lock == NULL ) continue;
@@ -252,7 +297,7 @@ void debug_dump_lock_stats()
 				"* Where: %s\n"
 				"* How long: %d secs\n", (int)threads[i].tid, threads[i].name, threads[i].where, (int)timing_diff( &threads[i].time, &now ) );
 	}
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 }
 
 static void *debug_thread_watchdog(void *something UNUSED)
@@ -261,18 +306,18 @@ static void *debug_thread_watchdog(void *something UNUSED)
 	while ( !_shutdown ) {
 		if ( init_done ) {
 			declare_now;
-			pthread_spin_lock( &initdestory );
+			pthread_mutex_lock( &initdestory );
 			for (int i = 0; i < MAXTHREADS; ++i) {
 				if ( threads[i].tid == 0 ) continue;
 				const uint32_t diff = timing_diff( &threads[i].time, &now );
 				if ( diff > 6 && diff < 100000 ) {
 					printf( "\n\n +++++++++ DEADLOCK ++++++++++++\n\n" );
-					pthread_spin_unlock( &initdestory );
+					pthread_mutex_unlock( &initdestory );
 					debug_dump_lock_stats();
 					exit( 99 );
 				}
 			}
-			pthread_spin_unlock( &initdestory );
+			pthread_mutex_unlock( &initdestory );
 		}
 		if ( watchdogSignal == NULL || signal_wait( watchdogSignal, 5000 ) == SIGNAL_ERROR ) sleep( 5 );
 	}
@@ -297,9 +342,9 @@ void debug_locks_stop_watchdog()
 #ifdef _DEBUG
 	_shutdown = true;
 	printf( "Killing debug watchdog...\n" );
-	pthread_spin_lock( &initdestory );
+	pthread_mutex_lock( &initdestory );
 	signal_call( watchdogSignal );
-	pthread_spin_unlock( &initdestory );
+	pthread_mutex_unlock( &initdestory );
 	thread_join( watchdog, NULL );
 	signal_close( watchdogSignal );
 #endif

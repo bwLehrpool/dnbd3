@@ -56,9 +56,9 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	if ( !_isProxy || _shutdown ) return false;
 	dnbd3_connection_t *link = NULL;
 	assert( image != NULL );
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	if ( image->uplink != NULL && !image->uplink->shutdown ) {
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		if ( sock >= 0 ) close( sock );
 		return true; // There's already an uplink, so should we consider this success or failure?
 	}
@@ -67,20 +67,20 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 		goto failure;
 	}
 	link = image->uplink = calloc( 1, sizeof(dnbd3_connection_t) );
-	spin_init( &link->queueLock, PTHREAD_PROCESS_PRIVATE );
-	spin_init( &link->rttLock, PTHREAD_PROCESS_PRIVATE );
-	pthread_mutex_init( &link->sendMutex, NULL );
+	mutex_init( &link->queueLock );
+	mutex_init( &link->rttLock );
+	mutex_init( &link->sendMutex );
 	link->image = image;
 	link->bytesReceived = 0;
 	link->idleTime = 0;
 	link->queueLen = 0;
-	pthread_mutex_lock( &link->sendMutex );
+	mutex_lock( &link->sendMutex );
 	link->fd = -1;
-	pthread_mutex_unlock( &link->sendMutex );
+	mutex_unlock( &link->sendMutex );
 	link->cacheFd = -1;
 	link->signal = NULL;
 	link->replicationHandle = REP_NONE;
-	spin_lock( &link->rttLock );
+	mutex_lock( &link->rttLock );
 	link->cycleDetected = false;
 	if ( sock >= 0 ) {
 		link->betterFd = sock;
@@ -91,21 +91,21 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 		link->betterFd = -1;
 		link->rttTestResult = RTT_IDLE;
 	}
-	spin_unlock( &link->rttLock );
+	mutex_unlock( &link->rttLock );
 	link->recvBufferLen = 0;
 	link->shutdown = false;
 	if ( 0 != thread_create( &(link->thread), NULL, &uplink_mainloop, (void *)link ) ) {
 		logadd( LOG_ERROR, "Could not start thread for new uplink." );
 		goto failure;
 	}
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	return true;
 failure: ;
 	if ( link != NULL ) {
 		free( link );
 		link = image->uplink = NULL;
 	}
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	return false;
 }
 
@@ -119,28 +119,28 @@ void uplink_shutdown(dnbd3_image_t *image)
 	bool join = false;
 	pthread_t thread;
 	assert( image != NULL );
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	if ( image->uplink == NULL ) {
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		return;
 	}
 	dnbd3_connection_t * const uplink = image->uplink;
-	spin_lock( &uplink->queueLock );
+	mutex_lock( &uplink->queueLock );
 	if ( !uplink->shutdown ) {
 		uplink->shutdown = true;
 		signal_call( uplink->signal );
 		thread = uplink->thread;
 		join = true;
 	}
-	spin_unlock( &uplink->queueLock );
+	mutex_unlock( &uplink->queueLock );
 	bool wait = image->uplink != NULL;
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	if ( join ) thread_join( thread, NULL );
 	while ( wait ) {
 		usleep( 5000 );
-		spin_lock( &image->lock );
+		mutex_lock( &image->lock );
 		wait = image->uplink != NULL && image->uplink->shutdown;
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 	}
 }
 
@@ -150,7 +150,7 @@ void uplink_shutdown(dnbd3_image_t *image)
  */
 void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
 {
-	spin_lock( &uplink->queueLock );
+	mutex_lock( &uplink->queueLock );
 	for (int i = uplink->queueLen - 1; i >= 0; --i) {
 		if ( uplink->queue[i].client == client ) {
 			uplink->queue[i].client = NULL;
@@ -158,7 +158,7 @@ void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
 		}
 		if ( uplink->queue[i].client == NULL && uplink->queueLen == i + 1 ) uplink->queueLen--;
 	}
-	spin_unlock( &uplink->queueLock );
+	mutex_unlock( &uplink->queueLock );
 }
 
 /**
@@ -172,26 +172,26 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 		logadd( LOG_WARNING, "Cannot relay request by client; length of %" PRIu32 " exceeds maximum payload", length );
 		return false;
 	}
-	spin_lock( &client->image->lock );
+	mutex_lock( &client->image->lock );
 	if ( client->image->uplink == NULL ) {
-		spin_unlock( &client->image->lock );
+		mutex_unlock( &client->image->lock );
 		logadd( LOG_DEBUG1, "Uplink request for image with no uplink" );
 		return false;
 	}
 	dnbd3_connection_t * const uplink = client->image->uplink;
 	if ( uplink->shutdown ) {
-		spin_unlock( &client->image->lock );
+		mutex_unlock( &client->image->lock );
 		logadd( LOG_DEBUG1, "Uplink request for image with uplink shutting down" );
 		return false;
 	}
 	// Check if the client is the same host as the uplink. If so assume this is a circular proxy chain
 	// This might be a false positive if there are multiple instances running on the same host (IP)
 	if ( hops != 0 && isSameAddress( &uplink->currentServer, &client->host ) ) {
-		spin_unlock( &client->image->lock );
+		mutex_unlock( &client->image->lock );
 		logadd( LOG_WARNING, "Proxy cycle detected (same host)." );
-		spin_lock( &uplink->rttLock );
+		mutex_lock( &uplink->rttLock );
 		uplink->cycleDetected = true;
-		spin_unlock( &uplink->rttLock );
+		mutex_unlock( &uplink->rttLock );
 		signal_call( uplink->signal );
 		return false;
 	}
@@ -203,8 +203,8 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	bool requestLoop = false;
 	const uint64_t end = start + length;
 
-	spin_lock( &uplink->queueLock );
-	spin_unlock( &client->image->lock );
+	mutex_lock( &uplink->queueLock );
+	mutex_unlock( &client->image->lock );
 	for (i = 0; i < uplink->queueLen; ++i) {
 		if ( freeSlot == -1 && uplink->queue[i].status == ULR_FREE ) {
 			freeSlot = i;
@@ -224,17 +224,17 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 		}
 	}
 	if ( requestLoop ) {
-		spin_unlock( &uplink->queueLock );
+		mutex_unlock( &uplink->queueLock );
 		logadd( LOG_WARNING, "Rejecting relay of request to upstream proxy because of possible cyclic proxy chain. Incoming hop-count is %" PRIu8 ".", hops );
-		spin_lock( &uplink->rttLock );
+		mutex_lock( &uplink->rttLock );
 		uplink->cycleDetected = true;
-		spin_unlock( &uplink->rttLock );
+		mutex_unlock( &uplink->rttLock );
 		signal_call( uplink->signal );
 		return false;
 	}
 	if ( freeSlot == -1 ) {
 		if ( uplink->queueLen >= SERVER_MAX_UPLINK_QUEUE ) {
-			spin_unlock( &uplink->queueLock );
+			mutex_unlock( &uplink->queueLock );
 			logadd( LOG_WARNING, "Uplink queue is full, consider increasing SERVER_MAX_UPLINK_QUEUE. Dropping client..." );
 			return false;
 		}
@@ -268,35 +268,35 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 	timing_get( &uplink->queue[freeSlot].entered );
 	//logadd( LOG_DEBUG2 %p] Inserting request at slot %d, was %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 "\n", (void*)uplink, freeSlot, old, uplink->queue[freeSlot].status, uplink->queue[freeSlot, ".handle, start, end );
 #endif
-	spin_unlock( &uplink->queueLock );
+	mutex_unlock( &uplink->queueLock );
 
 	if ( foundExisting != -1 )
 		return true; // Attached to pending request, do nothing
 
 	// See if we can fire away the request
-	if ( pthread_mutex_trylock( &uplink->sendMutex ) != 0 ) {
+	if ( mutex_trylock( &uplink->sendMutex ) != 0 ) {
 		logadd( LOG_DEBUG2, "Could not trylock send mutex, queueing uplink request" );
 	} else {
 		if ( uplink->fd == -1 ) {
-			pthread_mutex_unlock( &uplink->sendMutex );
+			mutex_unlock( &uplink->sendMutex );
 			logadd( LOG_DEBUG2, "Cannot do direct uplink request: No socket open" );
 		} else {
 			const uint64_t reqStart = uplink->queue[freeSlot].from & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 			const uint32_t reqSize = (uint32_t)(((uplink->queue[freeSlot].to + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1)) - reqStart);
 			if ( hops < 200 ) ++hops;
 			const bool ret = dnbd3_get_block( uplink->fd, reqStart, reqSize, reqStart, COND_HOPCOUNT( uplink->version, hops ) );
-			pthread_mutex_unlock( &uplink->sendMutex );
+			mutex_unlock( &uplink->sendMutex );
 			if ( !ret ) {
 				logadd( LOG_DEBUG2, "Could not send out direct uplink request, queueing" );
 			} else {
-				spin_lock( &uplink->queueLock );
+				mutex_lock( &uplink->queueLock );
 				if ( uplink->queue[freeSlot].handle == handle && uplink->queue[freeSlot].client == client && uplink->queue[freeSlot].status == ULR_NEW ) {
 					uplink->queue[freeSlot].status = ULR_PENDING;
 					logadd( LOG_DEBUG2, "Succesful direct uplink request" );
 				} else {
 					logadd( LOG_DEBUG2, "Weird queue update fail for direct uplink request" );
 				}
-				spin_unlock( &uplink->queueLock );
+				mutex_unlock( &uplink->queueLock );
 				return true;
 			}
 			// Fall through to waking up sender thread
@@ -351,9 +351,9 @@ static void* uplink_mainloop(void *data)
 	events[EV_SOCKET].fd = -1;
 	while ( !_shutdown && !link->shutdown ) {
 		// poll()
-		spin_lock( &link->rttLock );
+		mutex_lock( &link->rttLock );
 		waitTime = link->rttTestResult == RTT_DOCHANGE ? 0 : -1;
-		spin_unlock( &link->rttLock );
+		mutex_unlock( &link->rttLock );
 		if ( waitTime == 0 ) {
 			// Nothing
 		} else if ( link->fd == -1 && !uplink_connectionShouldShutdown( link ) ) {
@@ -374,22 +374,22 @@ static void* uplink_mainloop(void *data)
 			continue;
 		}
 		// Check if server switch is in order
-		spin_lock( &link->rttLock );
+		mutex_lock( &link->rttLock );
 		if ( link->rttTestResult != RTT_DOCHANGE ) {
-			spin_unlock( &link->rttLock );
+			mutex_unlock( &link->rttLock );
 		} else {
 			link->rttTestResult = RTT_IDLE;
 			// The rttTest worker thread has finished our request.
 			// And says it's better to switch to another server
 			const int fd = link->fd;
-			pthread_mutex_lock( &link->sendMutex );
+			mutex_lock( &link->sendMutex );
 			link->fd = link->betterFd;
-			pthread_mutex_unlock( &link->sendMutex );
+			mutex_unlock( &link->sendMutex );
 			link->betterFd = -1;
 			link->currentServer = link->betterServer;
 			link->version = link->betterVersion;
 			link->cycleDetected = false;
-			spin_unlock( &link->rttLock );
+			mutex_unlock( &link->rttLock );
 			discoverFailCount = 0;
 			if ( fd != -1 ) close( fd );
 			link->replicationHandle = REP_NONE;
@@ -463,10 +463,10 @@ static void* uplink_mainloop(void *data)
 			}
 			// Don't keep link established if we're idle for too much
 			if ( link->fd != -1 && uplink_connectionShouldShutdown( link ) ) {
-				pthread_mutex_lock( &link->sendMutex );
+				mutex_lock( &link->sendMutex );
 				close( link->fd );
 				link->fd = events[EV_SOCKET].fd = -1;
-				pthread_mutex_unlock( &link->sendMutex );
+				mutex_unlock( &link->sendMutex );
 				link->cycleDetected = false;
 				if ( link->recvBufferLen != 0 ) {
 					link->recvBufferLen = 0;
@@ -478,9 +478,9 @@ static void* uplink_mainloop(void *data)
 			}
 		}
 		// See if we should trigger an RTT measurement
-		spin_lock( &link->rttLock );
+		mutex_lock( &link->rttLock );
 		const int rttTestResult = link->rttTestResult;
-		spin_unlock( &link->rttLock );
+		mutex_unlock( &link->rttLock );
 		if ( rttTestResult == RTT_IDLE || rttTestResult == RTT_DONTCHANGE ) {
 			if ( timing_reached( &nextAltCheck, &now ) || ( link->fd == -1 && !uplink_connectionShouldShutdown( link ) ) || link->cycleDetected ) {
 				// It seems it's time for a check
@@ -500,9 +500,9 @@ static void* uplink_mainloop(void *data)
 				timing_set( &nextAltCheck, &now, altCheckInterval );
 			}
 		} else if ( rttTestResult == RTT_NOT_REACHABLE ) {
-			spin_lock( &link->rttLock );
+			mutex_lock( &link->rttLock );
 			link->rttTestResult = RTT_IDLE;
-			spin_unlock( &link->rttLock );
+			mutex_unlock( &link->rttLock );
 			discoverFailCount++;
 			timing_set( &nextAltCheck, &now, (discoverFailCount < SERVER_RTT_BACKOFF_COUNT ? altCheckInterval : SERVER_RTT_INTERVAL_FAILED) );
 		}
@@ -511,7 +511,7 @@ static void* uplink_mainloop(void *data)
 			bool resend = false;
 			ticks deadline;
 			timing_set( &deadline, &now, -10 );
-			spin_lock( &link->queueLock );
+			mutex_lock( &link->queueLock );
 			for (i = 0; i < link->queueLen; ++i) {
 				if ( link->queue[i].status != ULR_FREE && timing_reached( &link->queue[i].entered, &deadline ) ) {
 					snprintf( buffer, sizeof(buffer), "[DEBUG %p] Starving request slot %d detected:\n"
@@ -522,12 +522,12 @@ static void* uplink_mainloop(void *data)
 					link->queue[i].status = ULR_NEW;
 					resend = true;
 #endif
-					spin_unlock( &link->queueLock );
+					mutex_unlock( &link->queueLock );
 					logadd( LOG_WARNING, "%s", buffer );
-					spin_lock( &link->queueLock );
+					mutex_lock( &link->queueLock );
 				}
 			}
-			spin_unlock( &link->queueLock );
+			mutex_unlock( &link->queueLock );
 			if ( resend )
 				uplink_sendRequests( link, true );
 		}
@@ -536,16 +536,16 @@ static void* uplink_mainloop(void *data)
 	cleanup: ;
 	altservers_removeUplink( link );
 	uplink_saveCacheMap( link );
-	spin_lock( &link->image->lock );
+	mutex_lock( &link->image->lock );
 	if ( link->image->uplink == link ) {
 		link->image->uplink = NULL;
 	}
-	spin_lock( &link->queueLock );
+	mutex_lock( &link->queueLock );
 	const int fd = link->fd;
 	const dnbd3_signal_t* signal = link->signal;
-	pthread_mutex_lock( &link->sendMutex );
+	mutex_lock( &link->sendMutex );
 	link->fd = -1;
-	pthread_mutex_unlock( &link->sendMutex );
+	mutex_unlock( &link->sendMutex );
 	link->signal = NULL;
 	if ( !link->shutdown ) {
 		link->shutdown = true;
@@ -554,8 +554,8 @@ static void* uplink_mainloop(void *data)
 	// Do not access link->image after unlocking, since we set
 	// image->uplink to NULL. Acquire with image_lock first,
 	// like done below when checking whether to re-init uplink
-	spin_unlock( &link->image->lock );
-	spin_unlock( &link->queueLock );
+	mutex_unlock( &link->image->lock );
+	mutex_unlock( &link->queueLock );
 	if ( fd != -1 ) close( fd );
 	if ( signal != NULL ) signal_close( signal );
 	// Wait for the RTT check to finish/fail if it's in progress
@@ -564,9 +564,9 @@ static void* uplink_mainloop(void *data)
 	if ( link->betterFd != -1 ) {
 		close( link->betterFd );
 	}
-	spin_destroy( &link->queueLock );
-	spin_destroy( &link->rttLock );
-	pthread_mutex_destroy( &link->sendMutex );
+	mutex_destroy( &link->queueLock );
+	mutex_destroy( &link->rttLock );
+	mutex_destroy( &link->sendMutex );
 	free( link->recvBuffer );
 	link->recvBuffer = NULL;
 	if ( link->cacheFd != -1 ) {
@@ -588,7 +588,7 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 {
 	// Scan for new requests
 	int j;
-	spin_lock( &link->queueLock );
+	mutex_lock( &link->queueLock );
 	for (j = 0; j < link->queueLen; ++j) {
 		if ( link->queue[j].status != ULR_NEW && (newOnly || link->queue[j].status != ULR_PENDING) ) continue;
 		link->queue[j].status = ULR_PENDING;
@@ -599,11 +599,11 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 		logadd( LOG_DEBUG2, "[%p] Sending slot %d, now %d, handle %" PRIu64 ", Range: %" PRIu64 "-%" PRIu64 " (%" PRIu64 "-%" PRIu64 ")",
 				(void*)link, j, link->queue[j].status, link->queue[j].handle, link->queue[j].from, link->queue[j].to, reqStart, reqStart+reqSize );
 		*/
-		spin_unlock( &link->queueLock );
+		mutex_unlock( &link->queueLock );
 		if ( hops < 200 ) ++hops;
-		pthread_mutex_lock( &link->sendMutex );
+		mutex_lock( &link->sendMutex );
 		const bool ret = dnbd3_get_block( link->fd, reqStart, reqSize, reqStart, COND_HOPCOUNT( link->version, hops ) );
-		pthread_mutex_unlock( &link->sendMutex );
+		mutex_unlock( &link->sendMutex );
 		if ( !ret ) {
 			// Non-critical - if the connection dropped or the server was changed
 			// the thread will re-send this request as soon as the connection
@@ -612,9 +612,9 @@ static void uplink_sendRequests(dnbd3_connection_t *link, bool newOnly)
 			altservers_serverFailed( &link->currentServer );
 			return;
 		}
-		spin_lock( &link->queueLock );
+		mutex_lock( &link->queueLock );
 	}
-	spin_unlock( &link->queueLock );
+	mutex_unlock( &link->queueLock );
 }
 
 /**
@@ -635,10 +635,10 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 		return;
 	dnbd3_image_t * const image = link->image;
 	if ( image->virtualFilesize < DNBD3_BLOCK_SIZE ) return;
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	if ( image == NULL || image->cache_map == NULL || image->users < _bgrMinClients ) {
 		// No cache map (=image complete), or replication pending, or not enough users, do nothing
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		return;
 	}
 	const int mapBytes = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
@@ -661,7 +661,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 			break;
 		}
 	}
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	if ( replicationIndex == -1 && _backgroundReplication == BGR_HASHBLOCK ) {
 		// Nothing left in current block, find next one
 		replicationIndex = uplink_findNextIncompleteHashBlock( link, endByte );
@@ -674,9 +674,9 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 	const uint64_t offset = (uint64_t)replicationIndex * FILE_BYTES_PER_MAP_BYTE;
 	link->replicationHandle = offset;
 	const uint32_t size = (uint32_t)MIN( image->virtualFilesize - offset, FILE_BYTES_PER_MAP_BYTE );
-	pthread_mutex_lock( &link->sendMutex );
+	mutex_lock( &link->sendMutex );
 	bool sendOk = dnbd3_get_block( link->fd, offset, size, link->replicationHandle, COND_HOPCOUNT( link->version, 1 ) );
-	pthread_mutex_unlock( &link->sendMutex );
+	mutex_unlock( &link->sendMutex );
 	if ( !sendOk ) {
 		logadd( LOG_DEBUG1, "Error sending background replication request to uplink server!\n" );
 		return;
@@ -700,7 +700,7 @@ static void uplink_sendReplicationRequest(dnbd3_connection_t *link)
 static int uplink_findNextIncompleteHashBlock(dnbd3_connection_t *link, const int startMapIndex)
 {
 	int retval = -1;
-	spin_lock( &link->image->lock );
+	mutex_lock( &link->image->lock );
 	const int mapBytes = IMGSIZE_TO_MAPBYTES( link->image->virtualFilesize );
 	const uint8_t *cache_map = link->image->cache_map;
 	if ( cache_map != NULL ) {
@@ -736,7 +736,7 @@ static int uplink_findNextIncompleteHashBlock(dnbd3_connection_t *link, const in
 			retval = -1;
 		}
 	}
-	spin_unlock( &link->image->lock );
+	mutex_unlock( &link->image->lock );
 	return retval;
 }
 
@@ -834,7 +834,7 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 			}
 		}
 		// 2) Figure out which clients are interested in it
-		spin_lock( &link->queueLock );
+		mutex_lock( &link->queueLock );
 		for (i = 0; i < link->queueLen; ++i) {
 			dnbd3_queued_request_t * const req = &link->queue[i];
 			assert( req->status != ULR_PROCESSING );
@@ -866,23 +866,23 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 				req->status = ULR_FREE;
 				req->client = NULL;
 				served = true;
-				pthread_mutex_lock( &client->sendMutex );
-				spin_unlock( &link->queueLock );
+				mutex_lock( &client->sendMutex );
+				mutex_unlock( &link->queueLock );
 				if ( client->sock != -1 ) {
 					ssize_t sent = writev( client->sock, iov, 2 );
 					if ( sent > (ssize_t)sizeof outReply ) {
 						bytesSent = (size_t)sent - sizeof outReply;
 					}
 				}
-				pthread_mutex_unlock( &client->sendMutex );
+				mutex_unlock( &client->sendMutex );
 				if ( bytesSent != 0 ) {
 					client->bytesSent += bytesSent;
 				}
-				spin_lock( &link->queueLock );
+				mutex_lock( &link->queueLock );
 			}
 			if ( req->status == ULR_FREE && i == link->queueLen - 1 ) link->queueLen--;
 		}
-		spin_unlock( &link->queueLock );
+		mutex_unlock( &link->queueLock );
 #ifdef _DEBUG
 		if ( !served && start != link->replicationHandle ) {
 			logadd( LOG_DEBUG2, "%p, %s -- Unmatched reply: %" PRIu64 " to %" PRIu64, (void*)link, link->image->name, start, end );
@@ -906,9 +906,9 @@ static void uplink_handleReceive(dnbd3_connection_t *link)
 		}
 	}
 	if ( link->replicationHandle == REP_NONE ) {
-		spin_lock( &link->queueLock );
+		mutex_lock( &link->queueLock );
 		const bool rep = ( link->queueLen == 0 );
-		spin_unlock( &link->queueLock );
+		mutex_unlock( &link->queueLock );
 		if ( rep ) uplink_sendReplicationRequest( link );
 	}
 	return;
@@ -922,19 +922,19 @@ static void uplink_connectionFailed(dnbd3_connection_t *link, bool findNew)
 	if ( link->fd == -1 )
 		return;
 	altservers_serverFailed( &link->currentServer );
-	pthread_mutex_lock( &link->sendMutex );
+	mutex_lock( &link->sendMutex );
 	close( link->fd );
 	link->fd = -1;
-	pthread_mutex_unlock( &link->sendMutex );
+	mutex_unlock( &link->sendMutex );
 	link->replicationHandle = REP_NONE;
 	if ( _backgroundReplication == BGR_FULL && link->nextReplicationIndex == -1 ) {
 		link->nextReplicationIndex = 0;
 	}
 	if ( !findNew )
 		return;
-	spin_lock( &link->rttLock );
+	mutex_lock( &link->rttLock );
 	bool bail = link->rttTestResult == RTT_INPROGRESS || link->betterFd != -1;
-	spin_unlock( &link->rttLock );
+	mutex_unlock( &link->rttLock );
 	if ( bail )
 		return;
 	altservers_findUplink( link );
@@ -961,9 +961,9 @@ static void uplink_addCrc32(dnbd3_connection_t *uplink)
 	size_t bytes = IMGSIZE_TO_HASHBLOCKS( image->virtualFilesize ) * sizeof(uint32_t);
 	uint32_t masterCrc;
 	uint32_t *buffer = malloc( bytes );
-	pthread_mutex_lock( &uplink->sendMutex );
+	mutex_lock( &uplink->sendMutex );
 	bool sendOk = dnbd3_get_crc32( uplink->fd, &masterCrc, buffer, &bytes );
-	pthread_mutex_unlock( &uplink->sendMutex );
+	mutex_unlock( &uplink->sendMutex );
 	if ( !sendOk || bytes == 0 ) {
 		free( buffer );
 		return;
@@ -1032,11 +1032,11 @@ static bool uplink_saveCacheMap(dnbd3_connection_t *link)
 
 	if ( image->cache_map == NULL ) return true;
 	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	// Lock and get a copy of the cache map, as it could be freed by another thread that is just about to
 	// figure out that this image's cache copy is complete
 	if ( image->cache_map == NULL || image->virtualFilesize < DNBD3_BLOCK_SIZE ) {
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		return true;
 	}
 	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
@@ -1044,7 +1044,7 @@ static bool uplink_saveCacheMap(dnbd3_connection_t *link)
 	memcpy( map, image->cache_map, size );
 	// Unlock. Use path and cacheFd without locking. path should never change after initialization of the image,
 	// cacheFd is owned by the uplink thread and we don't want to hold a spinlock during I/O
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	assert( image->path != NULL );
 	char mapfile[strlen( image->path ) + 4 + 1];
 	strcpy( mapfile, image->path );

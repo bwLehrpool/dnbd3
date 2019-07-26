@@ -46,7 +46,7 @@
 
 static dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 static int _num_clients = 0;
-static pthread_spinlock_t _clients_lock;
+static pthread_mutex_t _clients_lock;
 
 static char nullbytes[500];
 
@@ -145,7 +145,7 @@ static inline bool sendPadding( const int fd, uint32_t bytes )
 
 void net_init()
 {
-	spin_init( &_clients_lock, PTHREAD_PROCESS_PRIVATE );
+	mutex_init( &_clients_lock );
 }
 
 void* net_handleNewConnection(void *clientPtr)
@@ -186,13 +186,13 @@ void* net_handleNewConnection(void *clientPtr)
 		}
 	} while (0);
 	// Fully init client struct
-	spin_init( &client->lock, PTHREAD_PROCESS_PRIVATE );
-	pthread_mutex_init( &client->sendMutex, NULL );
+	mutex_init( &client->lock );
+	mutex_init( &client->sendMutex );
 
-	spin_lock( &client->lock );
+	mutex_lock( &client->lock );
 	host_to_string( &client->host, client->hostName, HOSTNAMELEN );
 	client->hostName[HOSTNAMELEN-1] = '\0';
-	spin_unlock( &client->lock );
+	mutex_unlock( &client->lock );
 	client->bytesSent = 0;
 
 	if ( !addToList( client ) ) {
@@ -255,9 +255,9 @@ void* net_handleNewConnection(void *clientPtr)
 				// No BGR mismatch, but don't lookup if image is unknown locally
 				image = image_get( image_name, rid, true );
 			}
-			spin_lock( &client->lock );
+			mutex_lock( &client->lock );
 			client->image = image;
-			spin_unlock( &client->lock );
+			mutex_unlock( &client->lock );
 			if ( image == NULL ) {
 				//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 			} else if ( !image->working ) {
@@ -268,24 +268,24 @@ void* net_handleNewConnection(void *clientPtr)
 				// Image is fine so far, but occasionally drop a client if the uplink for the image is clogged or unavailable
 				bOk = true;
 				if ( image->cache_map != NULL ) {
-					spin_lock( &image->lock );
+					mutex_lock( &image->lock );
 					if ( image->uplink == NULL || image->uplink->cacheFd == -1 || image->uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
 						bOk = ( rand() % 4 ) == 1;
 					}
 					penalty = bOk && image->uplink != NULL && image->uplink->cacheFd == -1;
-					spin_unlock( &image->lock );
+					mutex_unlock( &image->lock );
 					if ( penalty ) { // Wait 100ms if local caching is not working so this
 						usleep( 100000 ); // server gets a penalty and is less likely to be selected
 					}
 				}
 				if ( bOk ) {
-					spin_lock( &image->lock );
+					mutex_lock( &image->lock );
 					image_file = image->readFd;
 					if ( !client->isServer ) {
 						// Only update immediately if this is a client. Servers are handled on disconnect.
 						timing_get( &image->atime );
 					}
-					spin_unlock( &image->lock );
+					mutex_unlock( &image->lock );
 					serializer_reset_write( &payload );
 					serializer_put_uint16( &payload, client_version < 3 ? client_version : PROTOCOL_VERSION ); // XXX: Since messed up fuse client was messed up before :(
 					serializer_put_string( &payload, image->name );
@@ -337,7 +337,7 @@ void* net_handleNewConnection(void *clientPtr)
 					start = offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					end = (offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					bool isCached = true;
-					spin_lock( &image->lock );
+					mutex_lock( &image->lock );
 					// Check again as we only aquired the lock just now
 					if ( image->cache_map != NULL ) {
 						const uint64_t firstByteInMap = start >> 15;
@@ -382,7 +382,7 @@ void* net_handleNewConnection(void *clientPtr)
 							}
 						}
 					}
-					spin_unlock( &image->lock );
+					mutex_unlock( &image->lock );
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, offset, request.size, request.hops ) ) {
 							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy, disabling image %s:%d",
@@ -400,10 +400,10 @@ void* net_handleNewConnection(void *clientPtr)
 
 				fixup_reply( reply );
 				const bool lock = image->uplink != NULL;
-				if ( lock ) pthread_mutex_lock( &client->sendMutex );
+				if ( lock ) mutex_lock( &client->sendMutex );
 				// Send reply header
 				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
-					if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+					if ( lock ) mutex_unlock( &client->sendMutex );
 					logadd( LOG_DEBUG1, "Sending CMD_GET_BLOCK reply header to %s failed", client->hostName );
 					goto exit_client_cleanup;
 				}
@@ -450,7 +450,7 @@ void* net_handleNewConnection(void *clientPtr)
 								sent = -1;
 							}
 #endif
-							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+							if ( lock ) mutex_unlock( &client->sendMutex );
 							if ( sent == -1 ) {
 								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
 										&& err != EAGAIN && err != EWOULDBLOCK ) {
@@ -468,12 +468,12 @@ void* net_handleNewConnection(void *clientPtr)
 					}
 					if ( request.size > (uint32_t)realBytes ) {
 						if ( !sendPadding( client->sock, request.size - (uint32_t)realBytes ) ) {
-							if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+							if ( lock ) mutex_unlock( &client->sendMutex );
 							goto exit_client_cleanup;
 						}
 					}
 				}
-				if ( lock ) pthread_mutex_unlock( &client->sendMutex );
+				if ( lock ) mutex_unlock( &client->sendMutex );
 				// Global per-client counter
 				client->bytesSent += request.size; // Increase counter for statistics.
 				break;
@@ -483,18 +483,18 @@ void* net_handleNewConnection(void *clientPtr)
 				num = altservers_getListForClient( &client->host, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
 				reply.size = (uint32_t)( num * sizeof(dnbd3_server_entry_t) );
-				pthread_mutex_lock( &client->sendMutex );
+				mutex_lock( &client->sendMutex );
 				send_reply( client->sock, &reply, server_list );
-				pthread_mutex_unlock( &client->sendMutex );
+				mutex_unlock( &client->sendMutex );
 				goto set_name;
 				break;
 
 			case CMD_KEEPALIVE:
 				reply.cmd = CMD_KEEPALIVE;
 				reply.size = 0;
-				pthread_mutex_lock( &client->sendMutex );
+				mutex_lock( &client->sendMutex );
 				send_reply( client->sock, &reply, NULL );
-				pthread_mutex_unlock( &client->sendMutex );
+				mutex_unlock( &client->sendMutex );
 set_name: ;
 				if ( !hasName ) {
 					hasName = true;
@@ -508,7 +508,7 @@ set_name: ;
 
 			case CMD_GET_CRC32:
 				reply.cmd = CMD_GET_CRC32;
-				pthread_mutex_lock( &client->sendMutex );
+				mutex_lock( &client->sendMutex );
 				if ( image->crc32 == NULL ) {
 					reply.size = 0;
 					send_reply( client->sock, &reply, NULL );
@@ -518,7 +518,7 @@ set_name: ;
 					send( client->sock, &image->masterCrc32, sizeof(uint32_t), MSG_MORE );
 					send( client->sock, image->crc32, size - sizeof(uint32_t), 0 );
 				}
-				pthread_mutex_unlock( &client->sendMutex );
+				mutex_unlock( &client->sendMutex );
 				break;
 
 			default:
@@ -534,11 +534,11 @@ exit_client_cleanup: ;
 	totalBytesSent += client->bytesSent;
 	// Access time, but only if client didn't just probe
 	if ( image != NULL ) {
-		spin_lock( &image->lock );
+		mutex_lock( &image->lock );
 		if ( client->bytesSent > DNBD3_BLOCK_SIZE * 10 ) {
 			timing_get( &image->atime );
 		}
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 	}
 	freeClientStruct( client ); // This will also call image_release on client->image
 	return NULL ;
@@ -560,30 +560,30 @@ struct json_t* net_getListAsJson()
 	char host[HOSTNAMELEN];
 	host[HOSTNAMELEN-1] = '\0';
 
-	spin_lock( &_clients_lock );
+	mutex_lock( &_clients_lock );
 	for ( int i = 0; i < _num_clients; ++i ) {
 		dnbd3_client_t * const client = _clients[i];
 		if ( client == NULL || client->image == NULL )
 			continue;
-		spin_lock( &client->lock );
+		mutex_lock( &client->lock );
 		// Unlock so we give other threads a chance to access the client list.
 		// We might not get an atomic snapshot of the currently connected clients,
 		// but that doesn't really make a difference anyways.
-		spin_unlock( &_clients_lock );
+		mutex_unlock( &_clients_lock );
 		strncpy( host, client->hostName, HOSTNAMELEN - 1 );
 		imgId = client->image->id;
 		isServer = (int)client->isServer;
 		bytesSent = client->bytesSent;
-		spin_unlock( &client->lock );
+		mutex_unlock( &client->lock );
 		clientStats = json_pack( "{sssisisI}",
 				"address", host,
 				"imageId", imgId,
 				"isServer", isServer,
 				"bytesSent", (json_int_t)bytesSent );
 		json_array_append_new( jsonClients, clientStats );
-		spin_lock( &_clients_lock );
+		mutex_lock( &_clients_lock );
 	}
-	spin_unlock( &_clients_lock );
+	mutex_unlock( &_clients_lock );
 	return jsonClients;
 }
 
@@ -597,7 +597,7 @@ void net_getStats(int *clientCount, int *serverCount, uint64_t *bytesSent)
 	int cc = 0, sc = 0;
 	uint64_t bs = 0;
 
-	spin_lock( &_clients_lock );
+	mutex_lock( &_clients_lock );
 	for ( int i = 0; i < _num_clients; ++i ) {
 		const dnbd3_client_t * const client = _clients[i];
 		if ( client == NULL || client->image == NULL )
@@ -609,7 +609,7 @@ void net_getStats(int *clientCount, int *serverCount, uint64_t *bytesSent)
 		}
 		bs += client->bytesSent;
 	}
-	spin_unlock( &_clients_lock );
+	mutex_unlock( &_clients_lock );
 	if ( clientCount != NULL ) {
 		*clientCount = cc;
 	}
@@ -624,15 +624,15 @@ void net_getStats(int *clientCount, int *serverCount, uint64_t *bytesSent)
 void net_disconnectAll()
 {
 	int i;
-	spin_lock( &_clients_lock );
+	mutex_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
 		if ( _clients[i] == NULL ) continue;
 		dnbd3_client_t * const client = _clients[i];
-		spin_lock( &client->lock );
+		mutex_lock( &client->lock );
 		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
-		spin_unlock( &client->lock );
+		mutex_unlock( &client->lock );
 	}
-	spin_unlock( &_clients_lock );
+	mutex_unlock( &_clients_lock );
 }
 
 void net_waitForAllDisconnected()
@@ -640,12 +640,12 @@ void net_waitForAllDisconnected()
 	int retries = 10, count, i;
 	do {
 		count = 0;
-		spin_lock( &_clients_lock );
+		mutex_lock( &_clients_lock );
 		for (i = 0; i < _num_clients; ++i) {
 			if ( _clients[i] == NULL ) continue;
 			count++;
 		}
-		spin_unlock( &_clients_lock );
+		mutex_unlock( &_clients_lock );
 		if ( count != 0 ) {
 			logadd( LOG_INFO, "%d clients still active...\n", count );
 			sleep( 1 );
@@ -667,14 +667,14 @@ void net_waitForAllDisconnected()
 static void removeFromList(dnbd3_client_t *client)
 {
 	int i;
-	spin_lock( &_clients_lock );
+	mutex_lock( &_clients_lock );
 	for ( i = _num_clients - 1; i >= 0; --i ) {
 		if ( _clients[i] == client ) {
 			_clients[i] = NULL;
 		}
 		if ( _clients[i] == NULL && i + 1 == _num_clients ) --_num_clients;
 	}
-	spin_unlock( &_clients_lock );
+	mutex_unlock( &_clients_lock );
 }
 
 /**
@@ -685,20 +685,20 @@ static void removeFromList(dnbd3_client_t *client)
  */
 static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 {
-	spin_lock( &client->lock );
-	pthread_mutex_lock( &client->sendMutex );
+	mutex_lock( &client->lock );
+	mutex_lock( &client->sendMutex );
 	if ( client->sock != -1 ) close( client->sock );
 	client->sock = -1;
-	pthread_mutex_unlock( &client->sendMutex );
+	mutex_unlock( &client->sendMutex );
 	if ( client->image != NULL ) {
-		spin_lock( &client->image->lock );
+		mutex_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
-		spin_unlock( &client->image->lock );
+		mutex_unlock( &client->image->lock );
 		client->image = image_release( client->image );
 	}
-	spin_unlock( &client->lock );
-	spin_destroy( &client->lock );
-	pthread_mutex_destroy( &client->sendMutex );
+	mutex_unlock( &client->lock );
+	mutex_destroy( &client->lock );
+	mutex_destroy( &client->sendMutex );
 	free( client );
 	return NULL ;
 }
@@ -712,20 +712,20 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 static bool addToList(dnbd3_client_t *client)
 {
 	int i;
-	spin_lock( &_clients_lock );
+	mutex_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
 		if ( _clients[i] != NULL ) continue;
 		_clients[i] = client;
-		spin_unlock( &_clients_lock );
+		mutex_unlock( &_clients_lock );
 		return true;
 	}
 	if ( _num_clients >= _maxClients ) {
-		spin_unlock( &_clients_lock );
+		mutex_unlock( &_clients_lock );
 		logadd( LOG_ERROR, "Maximum number of clients reached!" );
 		return false;
 	}
 	_clients[_num_clients++] = client;
-	spin_unlock( &_clients_lock );
+	mutex_unlock( &_clients_lock );
 	return true;
 }
 

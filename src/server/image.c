@@ -25,9 +25,9 @@
 static dnbd3_image_t *_images[SERVER_MAX_IMAGES];
 static int _num_images = 0;
 
-static pthread_spinlock_t imageListLock;
-static pthread_mutex_t remoteCloneLock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t reloadLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t imageListLock;
+static pthread_mutex_t remoteCloneLock;
+static pthread_mutex_t reloadLock;
 #define NAMELEN  500
 #define CACHELEN 20
 typedef struct
@@ -59,7 +59,9 @@ static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t 
 void image_serverStartup()
 {
 	srand( (unsigned int)time( NULL ) );
-	spin_init( &imageListLock, PTHREAD_PROCESS_PRIVATE );
+	mutex_init( &imageListLock );
+	mutex_init( &remoteCloneLock );
+	mutex_init( &reloadLock );
 }
 
 /**
@@ -87,12 +89,12 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		return;
 	bool setNewBlocks = false;
 	uint64_t pos = start;
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	if ( image->cache_map == NULL ) {
 		// Image seems already complete
 		if ( set ) {
 			// This makes no sense
-			spin_unlock( &image->lock );
+			mutex_unlock( &image->lock );
 			logadd( LOG_DEBUG1, "image_updateCachemap(true) with no cache_map: %s", image->path );
 			return;
 		}
@@ -125,14 +127,14 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 			if ( image->cache_map == NULL ) break;
 			const int block = (int)( pos / HASH_BLOCK_SIZE );
 			if ( image_isHashBlockComplete( image->cache_map, block, image->realFilesize ) ) {
-				spin_unlock( &image->lock );
+				mutex_unlock( &image->lock );
 				integrity_check( image, block );
-				spin_lock( &image->lock );
+				mutex_lock( &image->lock );
 			}
 			pos += HASH_BLOCK_SIZE;
 		}
 	}
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 }
 
 /**
@@ -144,13 +146,13 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 bool image_isComplete(dnbd3_image_t *image)
 {
 	assert( image != NULL );
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	if ( image->virtualFilesize == 0 ) {
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		return false;
 	}
 	if ( image->cache_map == NULL ) {
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		return true;
 	}
 	bool complete = true;
@@ -175,14 +177,14 @@ bool image_isComplete(dnbd3_image_t *image)
 		complete = ((image->cache_map[map_len_bytes - 1] & last_byte) == last_byte);
 	}
 	if ( !complete ) {
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		return false;
 	}
 	char mapfile[PATHLEN] = "";
 	free( image->cache_map );
 	image->cache_map = NULL;
 	snprintf( mapfile, PATHLEN, "%s.map", image->path );
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	unlink( mapfile );
 	return true;
 }
@@ -215,18 +217,18 @@ bool image_ensureOpen(dnbd3_image_t *image)
 		}
 	}
 	if ( newFd == -1 ) {
-		spin_lock( &image->lock );
+		mutex_lock( &image->lock );
 		image->working = false;
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		return false;
 	}
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	if ( image->readFd == -1 ) {
 		image->readFd = newFd;
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 	} else {
 		// There was a race while opening the file (happens cause not locked cause blocking), we lost the race so close new fd and proceed
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		close( newFd );
 	}
 	return image->readFd != -1;
@@ -247,7 +249,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	const size_t slen = strlen( name );
 	if ( slen == 0 || name[slen - 1] == '/' || name[0] == '/' ) return NULL ;
 	// Go through array
-	spin_lock( &imageListLock );
+	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t * const image = _images[i];
 		if ( image == NULL || strcmp( image->name, name ) != 0 ) continue;
@@ -261,14 +263,14 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 
 	// Not found
 	if ( candidate == NULL ) {
-		spin_unlock( &imageListLock );
+		mutex_unlock( &imageListLock );
 		return NULL ;
 	}
 
-	spin_lock( &candidate->lock );
-	spin_unlock( &imageListLock );
+	mutex_lock( &candidate->lock );
+	mutex_unlock( &imageListLock );
 	candidate->users++;
-	spin_unlock( &candidate->lock );
+	mutex_unlock( &candidate->lock );
 
 	// Found, see if it works
 // TODO: Also make sure a non-working image still has old fd open but created a new one and removed itself from the list
@@ -276,9 +278,9 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	if ( candidate->working || checkIfWorking ) {
 		// Is marked working, but might not have an fd open
 		if ( !image_ensureOpen( candidate ) ) {
-			spin_lock( &candidate->lock );
+			mutex_lock( &candidate->lock );
 			timing_get( &candidate->lastWorkCheck );
-			spin_unlock( &candidate->lock );
+			mutex_unlock( &candidate->lock );
 			if ( _removeMissingImages ) {
 				candidate = image_remove( candidate ); // No release here, the image is still returned and should be released by caller
 			}
@@ -291,14 +293,14 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	// ...not working...
 
 	// Don't re-check too often
-	spin_lock( &candidate->lock );
+	mutex_lock( &candidate->lock );
 	bool check;
 	declare_now;
 	check = timing_diff( &candidate->lastWorkCheck, &now ) > NONWORKING_RECHECK_INTERVAL_SECONDS;
 	if ( check ) {
 		candidate->lastWorkCheck = now;
 	}
-	spin_unlock( &candidate->lock );
+	mutex_unlock( &candidate->lock );
 	if ( !check ) {
 		return candidate;
 	}
@@ -347,19 +349,19 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		img->rid = candidate->rid;
 		img->users = 1;
 		img->working = false;
-		spin_init( &img->lock, PTHREAD_PROCESS_PRIVATE );
+		mutex_init( &img->lock );
 		if ( candidate->crc32 != NULL ) {
 			const size_t mb = IMGSIZE_TO_HASHBLOCKS( candidate->virtualFilesize ) * sizeof(uint32_t);
 			img->crc32 = malloc( mb );
 			memcpy( img->crc32, candidate->crc32, mb );
 		}
-		spin_lock( &candidate->lock );
+		mutex_lock( &candidate->lock );
 		if ( candidate->cache_map != NULL ) {
 			const size_t mb = IMGSIZE_TO_MAPBYTES( candidate->virtualFilesize );
 			img->cache_map = malloc( mb );
 			memcpy( img->cache_map, candidate->cache_map, mb );
 		}
-		spin_unlock( &candidate->lock );
+		mutex_unlock( &candidate->lock );
 		if ( image_addToList( img ) ) {
 			image_release( candidate );
 			candidate = img;
@@ -393,17 +395,17 @@ dnbd3_image_t* image_lock(dnbd3_image_t *image) // TODO: get rid, fix places tha
 {
 	if ( image == NULL ) return NULL ;
 	int i;
-	spin_lock( &imageListLock );
+	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) {
-			spin_lock( &image->lock );
-			spin_unlock( &imageListLock );
+			mutex_lock( &image->lock );
+			mutex_unlock( &imageListLock );
 			image->users++;
-			spin_unlock( &image->lock );
+			mutex_unlock( &image->lock );
 			return image;
 		}
 	}
-	spin_unlock( &imageListLock );
+	mutex_unlock( &imageListLock );
 	return NULL ;
 }
 
@@ -416,14 +418,14 @@ dnbd3_image_t* image_lock(dnbd3_image_t *image) // TODO: get rid, fix places tha
 dnbd3_image_t* image_release(dnbd3_image_t *image)
 {
 	if ( image == NULL ) return NULL;
-	spin_lock( &imageListLock );
-	spin_lock( &image->lock );
+	mutex_lock( &imageListLock );
+	mutex_lock( &image->lock );
 	assert( image->users > 0 );
 	image->users--;
 	bool inUse = image->users != 0;
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	if ( inUse ) { // Still in use, do nothing
-		spin_unlock( &imageListLock );
+		mutex_unlock( &imageListLock );
 		return NULL;
 	}
 	// Getting here means we decreased the usage counter to zero
@@ -431,11 +433,11 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 	// responsible for freeing it
 	for (int i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) { // Found, do nothing
-			spin_unlock( &imageListLock );
+			mutex_unlock( &imageListLock );
 			return NULL;
 		}
 	}
-	spin_unlock( &imageListLock );
+	mutex_unlock( &imageListLock );
 	// So it wasn't in the images list anymore either, get rid of it
 	if ( !inUse ) image = image_free( image );
 	return NULL;
@@ -467,8 +469,8 @@ static bool isForbiddenExtension(const char* name)
 static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 {
 	bool mustFree = false;
-	spin_lock( &imageListLock );
-	spin_lock( &image->lock );
+	mutex_lock( &imageListLock );
+	mutex_lock( &image->lock );
 	for ( int i = _num_images - 1; i >= 0; --i ) {
 		if ( _images[i] == image ) {
 			_images[i] = NULL;
@@ -476,8 +478,8 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 		}
 		if ( _images[i] == NULL && i + 1 == _num_images ) _num_images--;
 	}
-	spin_unlock( &image->lock );
-	spin_unlock( &imageListLock );
+	mutex_unlock( &image->lock );
+	mutex_unlock( &imageListLock );
 	if ( mustFree ) image = image_free( image );
 	return image;
 }
@@ -488,22 +490,22 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 void image_killUplinks()
 {
 	int i;
-	spin_lock( &imageListLock );
+	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
-		spin_lock( &_images[i]->lock );
+		mutex_lock( &_images[i]->lock );
 		if ( _images[i]->uplink != NULL ) {
-			spin_lock( &_images[i]->uplink->queueLock );
+			mutex_lock( &_images[i]->uplink->queueLock );
 			if ( !_images[i]->uplink->shutdown ) {
 				thread_detach( _images[i]->uplink->thread );
 				_images[i]->uplink->shutdown = true;
 			}
-			spin_unlock( &_images[i]->uplink->queueLock );
+			mutex_unlock( &_images[i]->uplink->queueLock );
 			signal_call( _images[i]->uplink->signal );
 		}
-		spin_unlock( &_images[i]->lock );
+		mutex_unlock( &_images[i]->lock );
 	}
-	spin_unlock( &imageListLock );
+	mutex_unlock( &imageListLock );
 }
 
 /**
@@ -518,14 +520,14 @@ bool image_loadAll(char *path)
 	dnbd3_image_t *imgHandle;
 
 	if ( path == NULL ) path = _basePath;
-	if ( pthread_mutex_trylock( &reloadLock ) != 0 ) {
+	if ( mutex_trylock( &reloadLock ) != 0 ) {
 		logadd( LOG_MINOR, "Could not (re)load image list, already in progress." );
 		return false;
 	}
 	if ( _removeMissingImages ) {
 		// Check if all loaded images still exist on disk
 		logadd( LOG_INFO, "Checking for vanished images" );
-		spin_lock( &imageListLock );
+		mutex_lock( &imageListLock );
 		for ( int i = _num_images - 1; i >= 0; --i ) {
 			if ( _shutdown ) break;
 			if ( _images[i] == NULL ) {
@@ -534,38 +536,38 @@ bool image_loadAll(char *path)
 			}
 			imgId = _images[i]->id;
 			snprintf( imgPath, PATHLEN, "%s", _images[i]->path );
-			spin_unlock( &imageListLock ); // isReadable hits the fs; unlock
+			mutex_unlock( &imageListLock ); // isReadable hits the fs; unlock
 			// Check if fill can still be opened for reading
 			ret = file_isReadable( imgPath );
 			// Lock again, see if image is still there, free if required
-			spin_lock( &imageListLock );
+			mutex_lock( &imageListLock );
 			if ( ret || i >= _num_images || _images[i] == NULL || _images[i]->id != imgId ) continue;
 			// Image needs to be removed
 			imgHandle = _images[i];
 			_images[i] = NULL;
 			if ( i + 1 == _num_images ) _num_images--;
-			spin_lock( &imgHandle->lock );
+			mutex_lock( &imgHandle->lock );
 			const bool freeImg = ( imgHandle->users == 0 );
-			spin_unlock( &imgHandle->lock );
+			mutex_unlock( &imgHandle->lock );
 			// We unlocked, but the image has been removed from the list already, so
 			// there's no way the users-counter can increase at this point.
 			if ( freeImg ) {
 				// Image is not in use anymore, free the dangling entry immediately
-				spin_unlock( &imageListLock ); // image_free might do several fs operations; unlock
+				mutex_unlock( &imageListLock ); // image_free might do several fs operations; unlock
 				image_free( imgHandle );
-				spin_lock( &imageListLock );
+				mutex_lock( &imageListLock );
 			}
 		}
-		spin_unlock( &imageListLock );
+		mutex_unlock( &imageListLock );
 		if ( _shutdown ) {
-			pthread_mutex_unlock( &reloadLock );
+			mutex_unlock( &reloadLock );
 			return true;
 		}
 	}
 	// Now scan for new images
 	logadd( LOG_INFO, "Scanning for new or modified images" );
 	ret = image_load_all_internal( path, path );
-	pthread_mutex_unlock( &reloadLock );
+	mutex_unlock( &reloadLock );
 	logadd( LOG_INFO, "Finished scanning %s", path );
 	return ret;
 }
@@ -577,18 +579,18 @@ bool image_loadAll(char *path)
  */
 bool image_tryFreeAll()
 {
-	spin_lock( &imageListLock );
+	mutex_lock( &imageListLock );
 	for (int i = _num_images - 1; i >= 0; --i) {
 		if ( _images[i] != NULL && _images[i]->users == 0 ) { // XXX Data race...
 			dnbd3_image_t *image = _images[i];
 			_images[i] = NULL;
-			spin_unlock( &imageListLock );
+			mutex_unlock( &imageListLock );
 			image = image_free( image );
-			spin_lock( &imageListLock );
+			mutex_lock( &imageListLock );
 		}
 		if ( i + 1 == _num_images && _images[i] == NULL ) _num_images--;
 	}
-	spin_unlock( &imageListLock );
+	mutex_unlock( &imageListLock );
 	return _num_images == 0;
 }
 
@@ -604,7 +606,7 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	}
 	//
 	uplink_shutdown( image );
-	spin_lock( &image->lock );
+	mutex_lock( &image->lock );
 	free( image->cache_map );
 	free( image->crc32 );
 	free( image->path );
@@ -613,9 +615,9 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	image->crc32 = NULL;
 	image->path = NULL;
 	image->name = NULL;
-	spin_unlock( &image->lock );
+	mutex_unlock( &image->lock );
 	if ( image->readFd != -1 ) close( image->readFd );
-	spin_destroy( &image->lock );
+	mutex_destroy( &image->lock );
 	//
 	memset( image, 0, sizeof(*image) );
 	free( image );
@@ -700,7 +702,7 @@ static bool image_addToList(dnbd3_image_t *image)
 {
 	int i;
 	static int imgIdCounter = 0; // Used to assign unique numeric IDs to images
-	spin_lock( &imageListLock );
+	mutex_lock( &imageListLock );
 	// Now we're locked, assign unique ID to image (unique for this running server instance!)
 	image->id = ++imgIdCounter;
 	for ( i = 0; i < _num_images; ++i ) {
@@ -710,12 +712,12 @@ static bool image_addToList(dnbd3_image_t *image)
 	}
 	if ( i >= _num_images ) {
 		if ( _num_images >= _maxImages ) {
-			spin_unlock( &imageListLock );
+			mutex_unlock( &imageListLock );
 			return false;
 		}
 		_images[_num_images++] = image;
 	}
-	spin_unlock( &imageListLock );
+	mutex_unlock( &imageListLock );
 	return true;
 }
 
@@ -880,7 +882,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->working = (image->cache_map == NULL );
 	timing_get( &image->nextCompletenessEstimate );
 	image->completenessEstimate = -1;
-	spin_init( &image->lock, PTHREAD_PROCESS_PRIVATE );
+	mutex_init( &image->lock );
 	int32_t offset;
 	if ( stat( path, &st ) == 0 ) {
 		// Negatively offset atime by file modification time
@@ -1152,12 +1154,12 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	char *cmpname = name;
 	int useIndex = -1, fallbackIndex = 0;
 	if ( len >= NAMELEN ) cmpname += 1 + len - NAMELEN;
-	pthread_mutex_lock( &remoteCloneLock );
+	mutex_lock( &remoteCloneLock );
 	for (int i = 0; i < CACHELEN; ++i) {
 		if ( remoteCloneCache[i].rid == revision && strcmp( cmpname, remoteCloneCache[i].name ) == 0 ) {
 			useIndex = i;
 			if ( timing_reached( &remoteCloneCache[i].deadline, &now ) ) break;
-			pthread_mutex_unlock( &remoteCloneLock ); // Was recently checked...
+			mutex_unlock( &remoteCloneLock ); // Was recently checked...
 			return image;
 		}
 		if ( timing_1le2( &remoteCloneCache[i].deadline, &remoteCloneCache[fallbackIndex].deadline ) ) {
@@ -1169,7 +1171,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	if ( revision != 0 ) {
 		if ( image == NULL ) image = image_get( name, revision, true );
 		if ( image != NULL ) {
-			pthread_mutex_unlock( &remoteCloneLock );
+			mutex_unlock( &remoteCloneLock );
 			return image;
 		}
 	}
@@ -1182,7 +1184,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	timing_set( &remoteCloneCache[useIndex].deadline, &now, SERVER_REMOTE_IMAGE_CHECK_CACHETIME );
 	snprintf( remoteCloneCache[useIndex].name, NAMELEN, "%s", cmpname );
 	remoteCloneCache[useIndex].rid = revision;
-	pthread_mutex_unlock( &remoteCloneLock );
+	mutex_unlock( &remoteCloneLock );
 
 	// Get some alt servers and try to get the image from there
 #define REP_NUM_SRV (8)
@@ -1229,7 +1231,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 			logadd( LOG_MINOR, "Won't proxy '%s:%d': Larger than maxReplicationSize", name, (int)revision );
 			goto server_fail;
 		}
-		pthread_mutex_lock( &reloadLock );
+		mutex_lock( &reloadLock );
 		// Ensure disk space entirely if not using sparse files, otherwise just make sure we have some room at least
 		if ( _sparseFiles ) {
 			ok = image_ensureDiskSpace( 2ull * 1024 * 1024 * 1024, false ); // 2GiB, maybe configurable one day
@@ -1237,7 +1239,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 			ok = image_ensureDiskSpace( remoteImageSize + ( 10 * 1024 * 1024 ), false ); // some extra space for cache map etc.
 		}
 		ok = ok && image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img
-		pthread_mutex_unlock( &reloadLock );
+		mutex_unlock( &reloadLock );
 		if ( !ok ) goto server_fail;
 
 		// Cloning worked :-)
@@ -1343,18 +1345,18 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 	}
 
 	// Now lock on the loading mutex, then check again if the image exists (we're multi-threaded)
-	pthread_mutex_lock( &reloadLock );
+	mutex_lock( &reloadLock );
 	dnbd3_image_t* image = image_get( name, detectedRid, true );
 	if ( image != NULL ) {
 		// The image magically appeared in the meantime
 		logadd( LOG_DEBUG2, "Magically appeared" );
-		pthread_mutex_unlock( &reloadLock );
+		mutex_unlock( &reloadLock );
 		return image;
 	}
 	// Still not loaded, let's try to do so
 	logadd( LOG_DEBUG2, "Calling load" );
 	image_load( _basePath, imageFile, false );
-	pthread_mutex_unlock( &reloadLock );
+	mutex_unlock( &reloadLock );
 	// If loading succeeded, this will return the image
 	logadd( LOG_DEBUG2, "Calling get" );
 	return image_get( name, requestedRid, true );
@@ -1507,12 +1509,12 @@ json_t* image_getListAsJson()
 	int users, completeness, idleTime;
 	declare_now;
 
-	spin_lock( &imageListLock );
+	mutex_lock( &imageListLock );
 	for ( i = 0; i < _num_images; ++i ) {
 		if ( _images[i] == NULL ) continue;
 		dnbd3_image_t *image = _images[i];
-		spin_lock( &image->lock );
-		spin_unlock( &imageListLock );
+		mutex_lock( &image->lock );
+		mutex_unlock( &imageListLock );
 		users = image->users;
 		idleTime = (int)timing_diff( &image->atime, &now );
 		completeness = image_getCompletenessEstimate( image );
@@ -1526,7 +1528,7 @@ json_t* image_getListAsJson()
 			}
 		}
 		image->users++; // Prevent freeing after we unlock
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 
 		jsonImage = json_pack( "{sisssisisisisI}",
 				"id", image->id, // id, name, rid never change, so access them without locking
@@ -1545,9 +1547,9 @@ json_t* image_getListAsJson()
 		json_array_append_new( imagesJson, jsonImage );
 
 		image = image_release( image ); // Since we did image->users++;
-		spin_lock( &imageListLock );
+		mutex_lock( &imageListLock );
 	}
-	spin_unlock( &imageListLock );
+	mutex_unlock( &imageListLock );
 	return imagesJson;
 }
 
@@ -1655,9 +1657,9 @@ static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_
 bool image_ensureDiskSpaceLocked(uint64_t size, bool force)
 {
 	bool ret;
-	pthread_mutex_lock( &reloadLock );
+	mutex_lock( &reloadLock );
 	ret = image_ensureDiskSpace( size, force );
-	pthread_mutex_unlock( &reloadLock );
+	mutex_unlock( &reloadLock );
 	return ret;
 }
 
@@ -1739,13 +1741,13 @@ void image_closeUnusedFd()
 	ticks deadline;
 	timing_gets( &deadline, -UNUSED_FD_TIMEOUT );
 	char imgstr[300];
-	spin_lock( &imageListLock );
+	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		dnbd3_image_t * const image = _images[i];
 		if ( image == NULL )
 			continue;
-		spin_lock( &image->lock );
-		spin_unlock( &imageListLock );
+		mutex_lock( &image->lock );
+		mutex_unlock( &imageListLock );
 		if ( image->users == 0 && image->uplink == NULL && timing_reached( &image->atime, &deadline ) ) {
 			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
 			fd = image->readFd;
@@ -1753,14 +1755,14 @@ void image_closeUnusedFd()
 		} else {
 			fd = -1;
 		}
-		spin_unlock( &image->lock );
+		mutex_unlock( &image->lock );
 		if ( fd != -1 ) {
 			close( fd );
 			logadd( LOG_DEBUG1, "Inactive fd closed for %s", imgstr );
 		}
-		spin_lock( &imageListLock );
+		mutex_lock( &imageListLock );
 	}
-	spin_unlock( &imageListLock );
+	mutex_unlock( &imageListLock );
 }
 
 /*

@@ -39,11 +39,11 @@ static void* integrity_main(void *data);
 void integrity_init()
 {
 	assert( queueLen == -1 );
-	pthread_mutex_init( &integrityQueueLock, NULL );
+	mutex_init( &integrityQueueLock );
 	pthread_cond_init( &queueSignal, NULL );
-	pthread_mutex_lock( &integrityQueueLock );
+	mutex_lock( &integrityQueueLock );
 	queueLen = 0;
-	pthread_mutex_unlock( &integrityQueueLock );
+	mutex_unlock( &integrityQueueLock );
 	bRunning = true;
 	if ( 0 != thread_create( &thread, NULL, &integrity_main, (void *)NULL ) ) {
 		bRunning = false;
@@ -56,13 +56,13 @@ void integrity_shutdown()
 {
 	assert( queueLen != -1 );
 	logadd( LOG_DEBUG1, "Shutting down integrity checker...\n" );
-	pthread_mutex_lock( &integrityQueueLock );
+	mutex_lock( &integrityQueueLock );
 	pthread_cond_signal( &queueSignal );
-	pthread_mutex_unlock( &integrityQueueLock );
+	mutex_unlock( &integrityQueueLock );
 	thread_join( thread, NULL );
 	while ( bRunning )
 		usleep( 10000 );
-	pthread_mutex_destroy( &integrityQueueLock );
+	mutex_destroy( &integrityQueueLock );
 	pthread_cond_destroy( &queueSignal );
 	logadd( LOG_DEBUG1, "Integrity checker exited normally.\n" );
 }
@@ -80,7 +80,7 @@ void integrity_check(dnbd3_image_t *image, int block)
 		return;
 	}
 	int i, freeSlot = -1;
-	pthread_mutex_lock( &integrityQueueLock );
+	mutex_lock( &integrityQueueLock );
 	for (i = 0; i < queueLen; ++i) {
 		if ( freeSlot == -1 && checkQueue[i].image == NULL ) {
 			freeSlot = i;
@@ -92,13 +92,13 @@ void integrity_check(dnbd3_image_t *image, int block)
 				checkQueue[i].count += 1;
 			}
 			logadd( LOG_DEBUG2, "Attaching to existing check request (%d/%d) (%d +%d)", i, queueLen, checkQueue[i].block, checkQueue[i].count );
-			pthread_mutex_unlock( &integrityQueueLock );
+			mutex_unlock( &integrityQueueLock );
 			return;
 		}
 	}
 	if ( freeSlot == -1 ) {
 		if ( queueLen >= CHECK_QUEUE_SIZE ) {
-			pthread_mutex_unlock( &integrityQueueLock );
+			mutex_unlock( &integrityQueueLock );
 			logadd( LOG_INFO, "Check queue full, discarding check request...\n" );
 			return;
 		}
@@ -113,7 +113,7 @@ void integrity_check(dnbd3_image_t *image, int block)
 		checkQueue[freeSlot].count = 1;
 	}
 	pthread_cond_signal( &queueSignal );
-	pthread_mutex_unlock( &integrityQueueLock );
+	mutex_unlock( &integrityQueueLock );
 }
 
 static void* integrity_main(void * data UNUSED)
@@ -130,10 +130,10 @@ static void* integrity_main(void * data UNUSED)
 	pid_t tid = (pid_t)syscall( SYS_gettid );
 	setpriority( PRIO_PROCESS, tid, 10 );
 #endif
-	pthread_mutex_lock( &integrityQueueLock );
+	mutex_lock( &integrityQueueLock );
 	while ( !_shutdown ) {
 		if ( queueLen == 0 ) {
-			pthread_cond_wait( &queueSignal, &integrityQueueLock );
+			mutex_cond_wait( &queueSignal, &integrityQueueLock );
 		}
 		for (i = queueLen - 1; i >= 0; --i) {
 			if ( _shutdown ) break;
@@ -146,10 +146,10 @@ static void* integrity_main(void * data UNUSED)
 			// We have the image. Call image_release() some time
 			const int qCount = checkQueue[i].count;
 			bool foundCorrupted = false;
-			spin_lock( &image->lock );
+			mutex_lock( &image->lock );
 			if ( image->crc32 != NULL && image->realFilesize != 0 ) {
 				int blocks[2] = { checkQueue[i].block, -1 };
-				pthread_mutex_unlock( &integrityQueueLock );
+				mutex_unlock( &integrityQueueLock );
 				// Make copy of crc32 list as it might go away
 				const uint64_t fileSize = image->realFilesize;
 				const int numHashBlocks = IMGSIZE_TO_HASHBLOCKS(fileSize);
@@ -160,7 +160,7 @@ static void* integrity_main(void * data UNUSED)
 					buffer = malloc( bufferSize );
 				}
 				memcpy( buffer, image->crc32, required );
-				spin_unlock( &image->lock );
+				mutex_unlock( &image->lock );
 				// Open for direct I/O if possible; this prevents polluting the fs cache
 				int fd = open( image->path, O_RDONLY | O_DIRECT );
 				bool direct = fd != -1;
@@ -178,9 +178,9 @@ static void* integrity_main(void * data UNUSED)
 						bool complete = true;
 						if ( qCount == CHECK_ALL ) {
 							// When checking full image, skip incomplete blocks, otherwise assume block is complete
-							spin_lock( &image->lock );
+							mutex_lock( &image->lock );
 							complete = image_isHashBlockComplete( image->cache_map, blocks[0], fileSize );
-							spin_unlock( &image->lock );
+							mutex_unlock( &image->lock );
 						}
 #if defined(linux) || defined(__linux)
 						if ( sync_file_range( fd, start, end - start, SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER ) == -1 ) {
@@ -220,7 +220,7 @@ static void* integrity_main(void * data UNUSED)
 						close( fd );
 					}
 				}
-				pthread_mutex_lock( &integrityQueueLock );
+				mutex_lock( &integrityQueueLock );
 				assert( checkQueue[i].image == image );
 				if ( qCount != CHECK_ALL ) {
 					// Not a full check; update the counter
@@ -238,25 +238,25 @@ static void* integrity_main(void * data UNUSED)
 					if ( i + 1 == queueLen ) queueLen--;
 					// Mark as working again if applicable
 					if ( !foundCorrupted ) {
-						spin_lock( &image->lock );
+						mutex_lock( &image->lock );
 						if ( image->uplink != NULL ) { // TODO: image_determineWorkingState() helper?
 							image->working = image->uplink->fd != -1 && image->readFd != -1;
 						}
-						spin_unlock( &image->lock );
+						mutex_unlock( &image->lock );
 					}
 				} else {
 					// Still more blocks to go...
 					checkQueue[i].block = blocks[0];
 				}
 			} else {
-				spin_unlock( &image->lock );
+				mutex_unlock( &image->lock );
 			}
 			if ( foundCorrupted ) {
 				// Something was fishy, make sure uplink exists
-				spin_lock( &image->lock );
+				mutex_lock( &image->lock );
 				image->working = false;
 				bool restart = image->uplink == NULL || image->uplink->shutdown;
-				spin_unlock( &image->lock );
+				mutex_unlock( &image->lock );
 				if ( restart ) {
 					uplink_shutdown( image );
 					uplink_init( image, -1, NULL, -1 );
@@ -266,7 +266,7 @@ static void* integrity_main(void * data UNUSED)
 			image_release( image );
 		}
 	}
-	pthread_mutex_unlock( &integrityQueueLock );
+	mutex_unlock( &integrityQueueLock );
 	if ( buffer != NULL ) free( buffer );
 	bRunning = false;
 	return NULL;
