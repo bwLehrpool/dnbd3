@@ -117,7 +117,7 @@ struct _dnbd3_image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
 	int completenessEstimate; // Completeness estimate in percent
-	int users;             // clients currently using this image
+	atomic_int users;      // clients currently using this image. XXX Lock on imageListLock when modifying and checking whether the image should be freed. Reading it elsewhere is fine without the lock.
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
 	bool working;          // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	uint16_t rid;          // revision of image

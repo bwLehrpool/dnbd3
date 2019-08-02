@@ -267,14 +267,12 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		return NULL ;
 	}
 
-	mutex_lock( &candidate->lock );
-	mutex_unlock( &imageListLock );
 	candidate->users++;
-	mutex_unlock( &candidate->lock );
+	mutex_unlock( &imageListLock );
 
 	// Found, see if it works
-// TODO: Also make sure a non-working image still has old fd open but created a new one and removed itself from the list
-// TODO: But remember size-changed images forever
+	// TODO: Also make sure a non-working image still has old fd open but created a new one and removed itself from the list
+	// TODO: But remember size-changed images forever
 	if ( candidate->working || checkIfWorking ) {
 		// Is marked working, but might not have an fd open
 		if ( !image_ensureOpen( candidate ) ) {
@@ -391,17 +389,15 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
  * Every call to image_lock() needs to be followed by a call to image_release() at some point.
  * Locks on: imageListLock, _images[].lock
  */
-dnbd3_image_t* image_lock(dnbd3_image_t *image) // TODO: get rid, fix places that do image->users--
+dnbd3_image_t* image_lock(dnbd3_image_t *image)
 {
 	if ( image == NULL ) return NULL ;
 	int i;
 	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) {
-			mutex_lock( &image->lock );
-			mutex_unlock( &imageListLock );
 			image->users++;
-			mutex_unlock( &image->lock );
+			mutex_unlock( &imageListLock );
 			return image;
 		}
 	}
@@ -419,12 +415,9 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 {
 	if ( image == NULL ) return NULL;
 	mutex_lock( &imageListLock );
-	mutex_lock( &image->lock );
 	assert( image->users > 0 );
-	image->users--;
-	bool inUse = image->users != 0;
-	mutex_unlock( &image->lock );
-	if ( inUse ) { // Still in use, do nothing
+	// Decrement and check for 0
+	if ( --image->users != 0 ) { // Still in use, do nothing
 		mutex_unlock( &imageListLock );
 		return NULL;
 	}
@@ -439,7 +432,7 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 	}
 	mutex_unlock( &imageListLock );
 	// So it wasn't in the images list anymore either, get rid of it
-	if ( !inUse ) image = image_free( image );
+	image = image_free( image );
 	return NULL;
 }
 
@@ -470,7 +463,6 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 {
 	bool mustFree = false;
 	mutex_lock( &imageListLock );
-	mutex_lock( &image->lock );
 	for ( int i = _num_images - 1; i >= 0; --i ) {
 		if ( _images[i] == image ) {
 			_images[i] = NULL;
@@ -478,7 +470,6 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 		}
 		if ( _images[i] == NULL && i + 1 == _num_images ) _num_images--;
 	}
-	mutex_unlock( &image->lock );
 	mutex_unlock( &imageListLock );
 	if ( mustFree ) image = image_free( image );
 	return image;
@@ -542,18 +533,14 @@ bool image_loadAll(char *path)
 			// Lock again, see if image is still there, free if required
 			mutex_lock( &imageListLock );
 			if ( ret || i >= _num_images || _images[i] == NULL || _images[i]->id != imgId ) continue;
-			// Image needs to be removed
+			// File not readable but still in list -- needs to be removed
 			imgHandle = _images[i];
 			_images[i] = NULL;
 			if ( i + 1 == _num_images ) _num_images--;
-			mutex_lock( &imgHandle->lock );
-			const bool freeImg = ( imgHandle->users == 0 );
-			mutex_unlock( &imgHandle->lock );
-			// We unlocked, but the image has been removed from the list already, so
-			// there's no way the users-counter can increase at this point.
-			if ( freeImg ) {
+			if ( imgHandle->users == 0 ) {
 				// Image is not in use anymore, free the dangling entry immediately
-				mutex_unlock( &imageListLock ); // image_free might do several fs operations; unlock
+				mutex_unlock( &imageListLock ); // image_free locks on this, and
+				// might do several fs operations; unlock
 				image_free( imgHandle );
 				mutex_lock( &imageListLock );
 			}
@@ -581,7 +568,7 @@ bool image_tryFreeAll()
 {
 	mutex_lock( &imageListLock );
 	for (int i = _num_images - 1; i >= 0; --i) {
-		if ( _images[i] != NULL && _images[i]->users == 0 ) { // XXX Data race...
+		if ( _images[i] != NULL && _images[i]->users == 0 ) {
 			dnbd3_image_t *image = _images[i];
 			_images[i] = NULL;
 			mutex_unlock( &imageListLock );
@@ -1506,7 +1493,7 @@ json_t* image_getListAsJson()
 	int i;
 	char uplinkName[100] = { 0 };
 	uint64_t bytesReceived;
-	int users, completeness, idleTime;
+	int completeness, idleTime;
 	declare_now;
 
 	mutex_lock( &imageListLock );
@@ -1514,8 +1501,6 @@ json_t* image_getListAsJson()
 		if ( _images[i] == NULL ) continue;
 		dnbd3_image_t *image = _images[i];
 		mutex_lock( &image->lock );
-		mutex_unlock( &imageListLock );
-		users = image->users;
 		idleTime = (int)timing_diff( &image->atime, &now );
 		completeness = image_getCompletenessEstimate( image );
 		if ( image->uplink == NULL ) {
@@ -1527,14 +1512,13 @@ json_t* image_getListAsJson()
 				uplinkName[0] = '\0';
 			}
 		}
-		image->users++; // Prevent freeing after we unlock
 		mutex_unlock( &image->lock );
 
 		jsonImage = json_pack( "{sisssisisisisI}",
 				"id", image->id, // id, name, rid never change, so access them without locking
 				"name", image->name,
 				"rid", (int) image->rid,
-				"users", users,
+				"users", image->users,
 				"complete",  completeness,
 				"idle", idleTime,
 				"size", (json_int_t)image->virtualFilesize );
@@ -1546,8 +1530,6 @@ json_t* image_getListAsJson()
 		}
 		json_array_append_new( imagesJson, jsonImage );
 
-		image = image_release( image ); // Since we did image->users++;
-		mutex_lock( &imageListLock );
 	}
 	mutex_unlock( &imageListLock );
 	return imagesJson;
@@ -1669,7 +1651,7 @@ bool image_ensureDiskSpaceLocked(uint64_t size, bool force)
  * TODO: Store last access time of images. Currently the
  * last access time is reset to the file modification time
  * on server restart. Thus it will
- * currently only delete images if server uptime is > 10 hours.
+ * currently only delete images if server uptime is > 24 hours.
  * This can be overridden by setting force to true, in case
  * free space is desperately needed.
  * Return true iff enough space is available. false in random other cases
@@ -1693,34 +1675,39 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 				(int)(size / (1024 * 1024)) );
 		// Find least recently used image
 		dnbd3_image_t *oldest = NULL;
-		int i; // XXX improve locking
+		int i;
+		mutex_lock( &imageListLock );
 		for (i = 0; i < _num_images; ++i) {
-			if ( _images[i] == NULL ) continue;
-			dnbd3_image_t *current = image_lock( _images[i] );
+			dnbd3_image_t *current = _images[i];
 			if ( current == NULL ) continue;
-			if ( current->users == 1 ) { // Just from the lock above
+			if ( current->users == 0 ) { // Not in use :-)
 				if ( oldest == NULL || timing_1le2( &current->atime, &oldest->atime ) ) {
 					// Oldest access time so far
 					oldest = current;
 				}
 			}
-			current = image_release( current );
 		}
-		declare_now;
-		if ( oldest == NULL || ( !_sparseFiles && timing_diff( &oldest->atime, &now ) < 86400 ) ) {
-			if ( oldest == NULL ) {
-				logadd( LOG_INFO, "All images are currently in use :-(" );
-			} else {
-				logadd( LOG_INFO, "Won't free any image, all have been in use in the past 24 hours :-(" );
-			}
+		if ( oldest != NULL ) {
+			oldest->users++;
+		}
+		mutex_unlock( &imageListLock );
+		if ( oldest == NULL ) {
+			logadd( LOG_INFO, "All images are currently in use :-(" );
 			return false;
 		}
-		oldest = image_lock( oldest );
-		if ( oldest == NULL ) continue; // Image freed in the meantime? Try again
+		declare_now;
+		if ( !_sparseFiles && timing_diff( &oldest->atime, &now ) < 86400 ) {
+			logadd( LOG_INFO, "Won't free any image, all have been in use in the past 24 hours :-(" );
+			image_release( oldest ); // We did users++ above; image might have to be freed entirely
+			return false;
+		}
 		logadd( LOG_INFO, "'%s:%d' has to go!", oldest->name, (int)oldest->rid );
-		char *filename = strdup( oldest->path );
-		oldest = image_remove( oldest );
-		oldest = image_release( oldest );
+		char *filename = strdup( oldest->path ); // Copy name as we remove the image first
+		oldest = image_remove( oldest ); // Remove from list first...
+		oldest = image_release( oldest ); // Decrease users counter; if it falls to 0, image will be freed
+		// Technically the image might have been grabbed again, but chances for
+		// this should be close to zero anyways since the image went unused for more than 24 hours..
+		// Proper fix would be a "delete" flag in the image struct that will be checked in image_free
 		unlink( filename );
 		size_t len = strlen( filename ) + 10;
 		char buffer[len];
@@ -1747,7 +1734,6 @@ void image_closeUnusedFd()
 		if ( image == NULL )
 			continue;
 		mutex_lock( &image->lock );
-		mutex_unlock( &imageListLock );
 		if ( image->users == 0 && image->uplink == NULL && timing_reached( &image->atime, &deadline ) ) {
 			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
 			fd = image->readFd;
@@ -1757,10 +1743,11 @@ void image_closeUnusedFd()
 		}
 		mutex_unlock( &image->lock );
 		if ( fd != -1 ) {
+			mutex_unlock( &imageListLock );
 			close( fd );
 			logadd( LOG_DEBUG1, "Inactive fd closed for %s", imgstr );
+			mutex_lock( &imageListLock );
 		}
-		mutex_lock( &imageListLock );
 	}
 	mutex_unlock( &imageListLock );
 }
