@@ -31,7 +31,7 @@ void debug_dump_lock_stats();
 #define mutex_lock( lock ) pthread_mutex_lock(lock)
 #define mutex_trylock( lock ) pthread_mutex_trylock(lock)
 #define mutex_unlock( lock ) pthread_mutex_unlock(lock)
-#define mutex_cond_wait( lock ) pthread_cond_wait(cond, lock)
+#define mutex_cond_wait( cond, lock ) pthread_cond_wait(cond, lock)
 #define mutex_destroy( lock ) pthread_mutex_destroy(lock)
 
 #endif
