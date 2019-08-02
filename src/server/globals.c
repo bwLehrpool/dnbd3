@@ -317,6 +317,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PBOOL(closeUnusedFd);
 	PBOOL(vmdkLegacyMode);
 	PBOOL(proxyPrivateOnly);
+	PBOOL(pretendClient);
 	P_ARG("[limits]\n");
 	PINT(maxClients);
 	PINT(maxImages);
