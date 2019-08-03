@@ -29,7 +29,7 @@ static queue_entry checkQueue[CHECK_QUEUE_SIZE];
 static pthread_mutex_t integrityQueueLock;
 static pthread_cond_t queueSignal;
 static int queueLen = -1;
-static volatile bool bRunning = false;
+static atomic_bool bRunning = false;
 
 static void* integrity_main(void *data);
 
