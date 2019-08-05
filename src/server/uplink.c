@@ -1082,6 +1082,7 @@ static bool uplink_saveCacheMap(dnbd3_connection_t *link)
 
 static bool uplink_connectionShouldShutdown(dnbd3_connection_t *link)
 {
-	return ( link->idleTime > SERVER_UPLINK_IDLE_TIMEOUT && _backgroundReplication != BGR_FULL );
+	return ( link->idleTime > SERVER_UPLINK_IDLE_TIMEOUT
+			&& ( _backgroundReplication != BGR_FULL || _bgrMinClients > link->image->users ) );
 }
 
