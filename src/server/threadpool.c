@@ -50,6 +50,10 @@ void threadpool_close()
 
 bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 {
+	if ( startRoutine == NULL ) {
+		logadd( LOG_ERROR, "Trying to queue work for thread pool with NULL startRoutine" );
+		return false; // Or bail out!?
+	}
 	pthread_spin_lock( &poolLock );
 	entry_t *entry = pool;
 	if ( entry != NULL ) {
