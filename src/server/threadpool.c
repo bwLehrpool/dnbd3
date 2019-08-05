@@ -16,13 +16,14 @@ static void *threadpool_worker(void *entryPtr);
 static pthread_attr_t threadAttrs;
 
 static int maxIdleThreads = -1;
+static atomic_int currentIdleThreads = 0;
 static entry_t *pool = NULL;
-static pthread_mutex_t poolLock;
+static pthread_spinlock_t poolLock;
 
 bool threadpool_init(int maxIdle)
 {
 	if ( maxIdle < 0 || maxIdleThreads >= 0 ) return false;
-	mutex_init( &poolLock );
+	pthread_spin_init( &poolLock, PTHREAD_PROCESS_PRIVATE );
 	maxIdleThreads = maxIdle;
 	pthread_attr_init( &threadAttrs );
 	pthread_attr_setdetachstate( &threadAttrs, PTHREAD_CREATE_DETACHED );
@@ -33,24 +34,29 @@ void threadpool_close()
 {
 	_shutdown = true;
 	if ( maxIdleThreads < 0 ) return;
-	mutex_lock( &poolLock );
+	pthread_spin_lock( &poolLock );
 	maxIdleThreads = -1;
 	entry_t *ptr = pool;
+	pool = NULL;
+	currentIdleThreads = 0;
+	pthread_spin_unlock( &poolLock );
 	while ( ptr != NULL ) {
 		entry_t *current = ptr;
 		ptr = ptr->next;
 		signal_call( current->signal );
 	}
-	mutex_unlock( &poolLock );
-	mutex_destroy( &poolLock );
+	pthread_spin_destroy( &poolLock );
 }
 
 bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 {
-	mutex_lock( &poolLock );
+	pthread_spin_lock( &poolLock );
 	entry_t *entry = pool;
-	if ( entry != NULL ) pool = entry->next;
-	mutex_unlock( &poolLock );
+	if ( entry != NULL ) {
+		pool = entry->next;
+		currentIdleThreads--;
+	}
+	pthread_spin_unlock( &poolLock );
 	if ( entry == NULL ) {
 		entry = (entry_t*)malloc( sizeof(entry_t) );
 		if ( entry == NULL ) {
@@ -90,8 +96,8 @@ static void *threadpool_worker(void *entryPtr)
 		if ( _shutdown ) break;
 		if ( ret > 0 ) {
 			if ( entry->startRoutine == NULL ) {
-				logadd( LOG_DEBUG1, "Worker woke up but has no work to do!" );
-				continue;
+				logadd( LOG_ERROR, "Worker woke up but has no work to do!" );
+				exit( 1 );
 			}
 			// Start assigned work
 			(*entry->startRoutine)( entry->arg );
@@ -100,21 +106,16 @@ static void *threadpool_worker(void *entryPtr)
 			entry->arg = NULL;
 			if ( _shutdown ) break;
 			// Put thread back into pool if there are less than maxIdleThreds threads, just die otherwise
-			int threadCount = 0;
-			mutex_lock( &poolLock );
-			entry_t *ptr = pool;
-			while ( ptr != NULL ) {
-				threadCount++;
-				ptr = ptr->next;
-			}
-			if ( threadCount >= maxIdleThreads ) {
-				mutex_unlock( &poolLock );
+			if ( currentIdleThreads >= maxIdleThreads )
 				break;
-			}
+			// Race condition as we checked before locking, but worst case we have a couple
+			// too many threads idling around. At least the count stays accurate.
+			setThreadName( "[pool]" );
+			pthread_spin_lock( &poolLock );
+			currentIdleThreads++;
 			entry->next = pool;
 			pool = entry;
-			mutex_unlock( &poolLock );
-			setThreadName( "[pool]" );
+			pthread_spin_unlock( &poolLock );
 		} else {
 			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!", ret );
 		}
