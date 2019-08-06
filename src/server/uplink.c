@@ -153,6 +153,9 @@ void uplink_removeClient(dnbd3_connection_t *uplink, dnbd3_client_t *client)
 	mutex_lock( &uplink->queueLock );
 	for (int i = uplink->queueLen - 1; i >= 0; --i) {
 		if ( uplink->queue[i].client == client ) {
+			// Make sure client doesn't get destroyed while we're sending it data
+			mutex_lock( &client->sendMutex );
+			mutex_unlock( &client->sendMutex );
 			uplink->queue[i].client = NULL;
 			uplink->queue[i].status = ULR_FREE;
 		}
