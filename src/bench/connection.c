@@ -82,10 +82,10 @@ bool connection_init_n_times(
 				continue;
 			// Try to connect
 			dnbd3_reply_t reply;
-			sock = sock_connect( &altservers[i].host, 500, SOCKET_KEEPALIVE_TIMEOUT * 1000 );
+			sock = sock_connect( &altservers[i].host, 3500, 10000 );
 			if ( sock == -1 ) {
 				counters->fails++;
-				logadd( LOG_ERROR, "Could not connect to host" );
+				logadd( LOG_ERROR, "Could not connect to host (errno=%d)", errno );
 			} else if ( !dnbd3_select_image( sock, lowerImage, rid, 0 ) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "Could not send select image" );
@@ -101,7 +101,7 @@ bool connection_init_n_times(
 			} else if ( !dnbd3_get_reply( sock, &reply ) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "recv: get block header failed" );
-			} else if ( recv( sock, trash, sizeof(trash), 0 ) != sizeof(trash) ) {
+			} else if ( recv( sock, trash, sizeof(trash), MSG_WAITALL|MSG_NOSIGNAL ) != sizeof(trash) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "recv: get block payload failed" );
 			} else {
