@@ -17,18 +17,6 @@ typedef struct _dnbd3_connection dnbd3_connection_t;
 typedef struct _dnbd3_image dnbd3_image_t;
 typedef struct _dnbd3_client dnbd3_client_t;
 
-// Slot is free, can be used.
-// Must only be set in uplink_handle_receive() or uplink_remove_client()
-#define ULR_FREE 0
-// Slot has been filled with a request that hasn't been sent to the upstream server yet, matching request can safely rely on reuse.
-// Must only be set in uplink_request()
-#define ULR_NEW 1
-// Slot is occupied, reply has not yet been received, matching request can safely rely on reuse.
-// Must only be set in uplink_mainloop() or uplink_request()
-#define ULR_PENDING 2
-// Slot is being processed, do not consider for hop on.
-// Must only be set in uplink_handle_receive()
-#define ULR_PROCESSING 3
 typedef struct
 {
 	uint64_t handle;  // Client defined handle to pass back in reply
