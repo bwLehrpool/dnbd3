@@ -31,8 +31,6 @@ static void printUsage(char *argv0, int exitCode)
 	printf( "   -n --runs       Number of connection attempts per thread\n" );
 	printf( "   -t --threads    number of threads\n" );
 	printf( "   -l --log        Write log to given location\n" );
-	printf( "   -d --debug      Don't fork and print debug output (fuse > stderr, dnbd3 > stdout)\n" );
-	// // fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
 	exit( exitCode );
 }
 
@@ -41,8 +39,8 @@ static const struct option longOpts[] = {
         { "host", required_argument, NULL, 'h' },
         { "image", required_argument, NULL, 'i' },
         { "nruns", optional_argument, NULL, 'n' },
-        { "threads", optional_argument, NULL, 't' },
-        { "help", optional_argument, NULL, 'H' },
+        { "threads", required_argument, NULL, 't' },
+        { "help", required_argument, NULL, 'H' },
         { "version", no_argument, NULL, 'v' },
         { 0, 0, 0, 0 }
 };
@@ -59,11 +57,10 @@ void* runBenchThread(void* t) {
 	BenchThreadData* data = t;
 	connection_init_n_times(
 			data->server_address,
-			data->server_address,
+			data->image_name,
 			0,
 			data->runs,
-			data->counter,
-			data->closeSockets);
+			data->counter);
 	printf("Thread #%d finished\n", data->threadNumber);
 	return NULL;
 }
@@ -85,10 +82,10 @@ int main(int argc, char *argv[])
 	while ( ( opt = getopt_long( argc, argv, optString, longOpts, &lidx ) ) != -1 ) {
 		switch ( opt ) {
 		case 'h':
-			server_address = optarg;
+			server_address = strdup(optarg);
 			break;
 		case 'i':
-			image_Name = optarg;
+			image_Name = strdup(optarg);
 			break;
 		case 'n':
 			n_runs = atoi(optarg);
