@@ -256,6 +256,7 @@ int debug_mutex_destroy(const char *name, const char *file, int line, pthread_mu
 		if ( locks[i].lock == lock ) {
 			if ( locks[i].locked ) {
 				logadd( LOG_ERROR, "Tried to destroy lock %p (%s) at %s:%d when it is still locked\n", (void*)lock, name, file, line );
+				logadd( LOG_ERROR, "Currently locked by: %s", locks[i].where );
 				exit( 4 );
 			}
 			locks[i].lock = NULL;
