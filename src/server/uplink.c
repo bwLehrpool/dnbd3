@@ -583,6 +583,10 @@ static void* uplink_mainloop(void *data)
 #endif
 	}
 	cleanup: ;
+	if ( !link->shutdown ) {
+		link->shutdown = true;
+		thread_detach( link->thread );
+	}
 	altservers_removeUplink( link );
 	uplink_saveCacheMap( link );
 	mutex_lock( &link->image->lock );
@@ -596,10 +600,6 @@ static void* uplink_mainloop(void *data)
 	link->fd = -1;
 	mutex_unlock( &link->sendMutex );
 	link->signal = NULL;
-	if ( !link->shutdown ) {
-		link->shutdown = true;
-		thread_detach( link->thread );
-	}
 	// Do not access link->image after unlocking, since we set
 	// image->uplink to NULL. Acquire with image_lock first,
 	// like done below when checking whether to re-init uplink
