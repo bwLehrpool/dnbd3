@@ -60,7 +60,7 @@ struct _dnbd3_connection
 	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
 	uint64_t replicationHandle; // Handle of pending replication request
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
-	int queueLen;               // length of queue
+	atomic_int queueLen;        // length of queue
 	uint32_t idleTime;          // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
 };
@@ -107,7 +107,7 @@ struct _dnbd3_image
 	int completenessEstimate; // Completeness estimate in percent
 	atomic_int users;      // clients currently using this image. XXX Lock on imageListLock when modifying and checking whether the image should be freed. Reading it elsewhere is fine without the lock.
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
-	bool working;          // true if image exists and completeness is == 100% or a working upstream proxy is connected
+	atomic_bool working;   // true if image exists and completeness is == 100% or a working upstream proxy is connected
 	uint16_t rid;          // revision of image
 	pthread_mutex_t lock;
 };
@@ -116,7 +116,7 @@ struct _dnbd3_client
 {
 #define HOSTNAMELEN (48)
 	atomic_uint_fast64_t bytesSent;   // Byte counter for this client.
-	dnbd3_image_t *image;             // Image in use by this client, or NULL during handshake
+	dnbd3_image_t * _Atomic image;    // Image in use by this client, or NULL during handshake
 	int sock;
 	bool isServer;                    // true if a server in proxy mode, false if real client
 	dnbd3_host_t host;

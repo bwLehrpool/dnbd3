@@ -255,9 +255,8 @@ void* net_handleNewConnection(void *clientPtr)
 				// No BGR mismatch, but don't lookup if image is unknown locally
 				image = image_get( image_name, rid, true );
 			}
-			mutex_lock( &client->lock );
 			client->image = image;
-			mutex_unlock( &client->lock );
+			atomic_thread_fence( memory_order_release );
 			if ( image == NULL ) {
 				//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
 			} else if ( !image->working ) {
