@@ -609,15 +609,18 @@ void net_getStats(int *clientCount, int *serverCount, uint64_t *bytesSent)
 		}
 		bs += client->bytesSent;
 	}
+	// Do this before unlocking the list, otherwise we might
+	// account for a client twice if it would disconnect after
+	// unlocking but before we add the count here.
+	if ( bytesSent != NULL ) {
+		*bytesSent = totalBytesSent + bs;
+	}
 	mutex_unlock( &_clients_lock );
 	if ( clientCount != NULL ) {
 		*clientCount = cc;
 	}
 	if ( serverCount != NULL ) {
 		*serverCount = sc;
-	}
-	if ( bytesSent != NULL ) {
-		*bytesSent = totalBytesSent + bs;
 	}
 }
 
@@ -694,9 +697,9 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 		mutex_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
 		mutex_unlock( &client->image->lock );
-		client->image = image_release( client->image );
 	}
 	mutex_unlock( &client->lock );
+	client->image = image_release( client->image );
 	mutex_destroy( &client->lock );
 	mutex_destroy( &client->sendMutex );
 	free( client );
