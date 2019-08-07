@@ -5,19 +5,38 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+
+// Lock priority
+
+#define LOCK_RELOAD 90
+#define LOCK_LOAD_CONFIG 100
+#define LOCK_REMOTE_CLONE 110
+#define LOCK_CLIENT_LIST 120
+#define LOCK_CLIENT 130
+#define LOCK_INTEGRITY_QUEUE 140
+#define LOCK_IMAGE_LIST 150
+#define LOCK_IMAGE 160
+#define LOCK_UPLINK_QUEUE 170
+#define LOCK_ALT_SERVER_LIST 180
+#define LOCK_CLIENT_SEND 190
+#define LOCK_UPLINK_RTT 200
+#define LOCK_UPLINK_SEND 210
+#define LOCK_RPC_ACL 220
+
+//
 
 #ifdef _DEBUG
 
-#define mutex_init( lock ) debug_mutex_init( #lock, __FILE__, __LINE__, lock)
-#define mutex_lock( lock ) debug_mutex_lock( #lock, __FILE__, __LINE__, lock)
-#define mutex_trylock( lock ) debug_mutex_trylock( #lock, __FILE__, __LINE__, lock)
+#define mutex_init( lock, prio ) debug_mutex_init( #lock, __FILE__, __LINE__, lock, prio)
+#define mutex_lock( lock ) debug_mutex_lock( #lock, __FILE__, __LINE__, lock, false)
+#define mutex_trylock( lock ) debug_mutex_lock( #lock, __FILE__, __LINE__, lock, true)
 #define mutex_unlock( lock ) debug_mutex_unlock( #lock, __FILE__, __LINE__, lock)
 #define mutex_cond_wait( cond, lock ) debug_mutex_cond_wait( #lock, __FILE__, __LINE__, cond, lock)
 #define mutex_destroy( lock ) debug_mutex_destroy( #lock, __FILE__, __LINE__, lock)
 
-int debug_mutex_init(const char *name, const char *file, int line, pthread_mutex_t *lock);
-int debug_mutex_lock(const char *name, const char *file, int line, pthread_mutex_t *lock);
-int debug_mutex_trylock(const char *name, const char *file, int line, pthread_mutex_t *lock);
+int debug_mutex_init(const char *name, const char *file, int line, pthread_mutex_t *lock, int priority);
+int debug_mutex_lock(const char *name, const char *file, int line, pthread_mutex_t *lock, bool try);
 int debug_mutex_unlock(const char *name, const char *file, int line, pthread_mutex_t *lock);
 int debug_mutex_cond_wait(const char *name, const char *file, int line, pthread_cond_t *restrict cond, pthread_mutex_t *restrict lock);
 int debug_mutex_destroy(const char *name, const char *file, int line, pthread_mutex_t *lock);
@@ -27,7 +46,7 @@ void debug_dump_lock_stats();
 
 #else
 
-#define mutex_init( lock ) pthread_mutex_init(lock, NULL)
+#define mutex_init( lock, prio ) pthread_mutex_init(lock, NULL)
 #define mutex_lock( lock ) pthread_mutex_lock(lock)
 #define mutex_trylock( lock ) pthread_mutex_trylock(lock)
 #define mutex_unlock( lock ) pthread_mutex_unlock(lock)
@@ -81,8 +100,5 @@ static inline int debug_thread_join(pthread_t thread, void **value_ptr)
 #define thread_join(thread,value) pthread_join( thread, value )
 
 #endif
-
-void debug_locks_start_watchdog();
-void debug_locks_stop_watchdog();
 
 #endif /* LOCKS_H_ */

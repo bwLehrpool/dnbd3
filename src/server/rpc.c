@@ -75,10 +75,9 @@ static json_int_t randomRunId;
 static pthread_mutex_t aclLock;
 #define MAX_CLIENTS 50
 #define CUTOFF_START 40
-static pthread_mutex_t statusLock;
 static struct {
-	int count;
-	bool overloaded;
+	atomic_int count;
+	atomic_bool overloaded;
 } status;
 
 static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive);
@@ -91,8 +90,7 @@ static void loadAcl();
 
 void rpc_init()
 {
-	mutex_init( &aclLock );
-	mutex_init( &statusLock );
+	mutex_init( &aclLock, LOCK_RPC_ACL );
 	randomRunId = (((json_int_t)getpid()) << 16) | (json_int_t)time(NULL);
 	// </guard>
 	if ( sizeof(randomRunId) > 4 ) {
@@ -123,10 +121,8 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		return;
 	}
 	do {
-		mutex_lock( &statusLock );
 		const int curCount = ++status.count;
 		UPDATE_LOADSTATE( curCount );
-		mutex_unlock( &statusLock );
 		if ( curCount > MAX_CLIENTS ) {
 			sendReply( sock, "503 Service Temporarily Unavailable", "text/plain", "Too many HTTP clients", -1, HTTP_CLOSE );
 			goto func_return;
@@ -198,9 +194,7 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			if ( minorVersion == 0 || hasHeaderValue( headers, numHeaders, &STR_CONNECTION, &STR_CLOSE ) ) {
 				keepAlive = HTTP_CLOSE;
 			} else { // And if there aren't too many active HTTP sessions
-				mutex_lock( &statusLock );
 				if ( status.overloaded ) keepAlive = HTTP_CLOSE;
-				mutex_unlock( &statusLock );
 			}
 		}
 		if ( method.s != NULL && path.s != NULL ) {
@@ -234,10 +228,8 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	} while (true);
 func_return:;
 	do {
-		mutex_lock( &statusLock );
 		const int curCount = --status.count;
 		UPDATE_LOADSTATE( curCount );
-		mutex_unlock( &statusLock );
 	} while (0);
 }
 

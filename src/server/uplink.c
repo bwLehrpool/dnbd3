@@ -89,9 +89,9 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 		goto failure;
 	}
 	link = image->uplink = calloc( 1, sizeof(dnbd3_connection_t) );
-	mutex_init( &link->queueLock );
-	mutex_init( &link->rttLock );
-	mutex_init( &link->sendMutex );
+	mutex_init( &link->queueLock, LOCK_UPLINK_QUEUE );
+	mutex_init( &link->rttLock, LOCK_UPLINK_RTT );
+	mutex_init( &link->sendMutex, LOCK_UPLINK_SEND );
 	link->image = image;
 	link->bytesReceived = 0;
 	link->idleTime = 0;

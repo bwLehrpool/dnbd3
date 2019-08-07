@@ -145,7 +145,7 @@ static inline bool sendPadding( const int fd, uint32_t bytes )
 
 void net_init()
 {
-	mutex_init( &_clients_lock );
+	mutex_init( &_clients_lock, LOCK_CLIENT_LIST );
 }
 
 void* net_handleNewConnection(void *clientPtr)
@@ -186,8 +186,8 @@ void* net_handleNewConnection(void *clientPtr)
 		}
 	} while (0);
 	// Fully init client struct
-	mutex_init( &client->lock );
-	mutex_init( &client->sendMutex );
+	mutex_init( &client->lock, LOCK_CLIENT );
+	mutex_init( &client->sendMutex, LOCK_CLIENT_SEND );
 
 	mutex_lock( &client->lock );
 	host_to_string( &client->host, client->hostName, HOSTNAMELEN );

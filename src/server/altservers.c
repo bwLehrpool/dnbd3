@@ -30,7 +30,7 @@ void altservers_init()
 {
 	srand( (unsigned int)time( NULL ) );
 	// Init spinlock
-	mutex_init( &altServersLock );
+	mutex_init( &altServersLock, LOCK_ALT_SERVER_LIST );
 	// Init signal
 	runSignal = signal_new();
 	if ( runSignal == NULL ) {
@@ -326,13 +326,13 @@ json_t* altservers_toJson()
 }
 
 /**
- * Update rtt history of given server - returns the new average for that server
+ * Update rtt history of given server - returns the new average for that server.
+ * XXX HOLD altServersLock WHEN CALLING THIS!
  */
 static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const unsigned int rtt)
 {
 	unsigned int avg = rtt;
 	int i;
-	mutex_lock( &altServersLock );
 	for (i = 0; i < numAltServers; ++i) {
 		if ( !isSameAddressPort( host, &altServers[i].host ) ) continue;
 		altServers[i].rtt[++altServers[i].rttIndex % SERVER_RTT_PROBES] = rtt;
@@ -353,7 +353,6 @@ static unsigned int altservers_updateRtt(const dnbd3_host_t * const host, const 
 		}
 		break;
 	}
-	mutex_unlock( &altServersLock );
 	return avg;
 }
 
@@ -529,6 +528,7 @@ static void *altservers_main(void *data UNUSED)
 				}
 				clock_gettime( BEST_CLOCK_SOURCE, &end );
 				// Measurement done - everything fine so far
+				mutex_lock( &altServersLock );
 				mutex_lock( &uplink->rttLock );
 				const bool isCurrent = isSameAddressPort( &servers[itAlt], &uplink->currentServer );
 				// Penaltize rtt if this was a cycle; this will treat this server with lower priority
@@ -538,6 +538,7 @@ static void *altservers_main(void *data UNUSED)
 						+ (end.tv_nsec - start.tv_nsec) / 1000
 						+ ( (isCurrent && uplink->cycleDetected) ? 1000000 : 0 )); // µs
 				unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
+				mutex_unlock( &altServersLock );
 				// If a cycle was detected, or we lost connection to the current (last) server, penaltize it one time
 				if ( ( uplink->cycleDetected || uplink->fd == -1 ) && isCurrent ) avg = (avg * 2) + 50000;
 				mutex_unlock( &uplink->rttLock );

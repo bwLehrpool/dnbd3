@@ -59,9 +59,9 @@ static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t 
 void image_serverStartup()
 {
 	srand( (unsigned int)time( NULL ) );
-	mutex_init( &imageListLock );
-	mutex_init( &remoteCloneLock );
-	mutex_init( &reloadLock );
+	mutex_init( &imageListLock, LOCK_IMAGE_LIST );
+	mutex_init( &remoteCloneLock, LOCK_REMOTE_CLONE );
+	mutex_init( &reloadLock, LOCK_RELOAD );
 }
 
 /**
@@ -347,7 +347,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		img->rid = candidate->rid;
 		img->users = 1;
 		img->working = false;
-		mutex_init( &img->lock );
+		mutex_init( &img->lock, LOCK_IMAGE );
 		if ( candidate->crc32 != NULL ) {
 			const size_t mb = IMGSIZE_TO_HASHBLOCKS( candidate->virtualFilesize ) * sizeof(uint32_t);
 			img->crc32 = malloc( mb );
@@ -869,7 +869,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->working = (image->cache_map == NULL );
 	timing_get( &image->nextCompletenessEstimate );
 	image->completenessEstimate = -1;
-	mutex_init( &image->lock );
+	mutex_init( &image->lock, LOCK_IMAGE );
 	int32_t offset;
 	if ( stat( path, &st ) == 0 ) {
 		// Negatively offset atime by file modification time

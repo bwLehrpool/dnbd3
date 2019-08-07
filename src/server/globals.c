@@ -112,7 +112,7 @@ void globals_loadConfig()
 	asprintf( &name, "%s/%s", _configDir, CONFIG_FILENAME );
 	if ( name == NULL ) return;
 	if ( initialLoad ) {
-		mutex_init( &loadLock );
+		mutex_init( &loadLock, LOCK_LOAD_CONFIG );
 	}
 	if ( mutex_trylock( &loadLock ) != 0 ) {
 		logadd( LOG_INFO, "Ignoring config reload request due to already running reload" );

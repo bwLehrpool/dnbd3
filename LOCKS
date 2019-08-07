@@ -16,23 +16,22 @@ requests.lock
 
 ===== SERVER =====
 This is a list of used locks, in the order they
-have to be aquired if you must hold multiple locks:
-remoteCloneLock | reloadLock
+have to be aquired if you must hold multiple locks.
+Note this list might be out of date, take a look at the
+defines in lock.h for the effective order.
+reloadLock
+remoteCloneLock
 _clients_lock
 _clients[].lock
 integrityQueueLock
 _images_lock
 _images[].lock
-pendingLockConsume
-pendingLockProduce
 uplink.queueLock
 altServersLock
 client.sendMutex
-client.statsLock
-statisticsSentLock
-statisticsReceivedLock
 uplink.rttLock
 uplink.sendMutex
+aclLock
 
 If you need to lock multiple clients/images/... at once,
 lock the client with the lowest array index first.

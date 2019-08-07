@@ -133,9 +133,6 @@ void dnbd3_cleanup()
 	// Wait for clients to disconnect
 	net_waitForAllDisconnected();
 
-	// Watchdog not needed anymore
-	debug_locks_stop_watchdog();
-
 	// Clean up images
 	retries = 5;
 	while ( !image_tryFreeAll() && --retries > 0 ) {
@@ -302,10 +299,6 @@ int main(int argc, char *argv[])
 	if ( altservers_load() < 0 ) {
 		logadd( LOG_WARNING, "Could not load alt-servers. Does the file exist in %s?", _configDir );
 	}
-
-#ifdef _DEBUG
-	debug_locks_start_watchdog();
-#endif
 
 	// setup signal handler
 	struct sigaction sa;

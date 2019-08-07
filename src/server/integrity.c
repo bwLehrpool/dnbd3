@@ -39,7 +39,7 @@ static void* integrity_main(void *data);
 void integrity_init()
 {
 	assert( queueLen == -1 );
-	mutex_init( &integrityQueueLock );
+	mutex_init( &integrityQueueLock, LOCK_INTEGRITY_QUEUE );
 	pthread_cond_init( &queueSignal, NULL );
 	mutex_lock( &integrityQueueLock );
 	queueLen = 0;
