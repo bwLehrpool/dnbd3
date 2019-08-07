@@ -17,10 +17,6 @@
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
 
-/* Debug/Benchmark variables */
-static bool useDebug = false;
-
-
 static void printUsage(char *argv0, int exitCode)
 {
 	printf( "Usage: %s [--debug] --host <serverAddress(es)> --image <imageName> [--rid revision]\n", argv0 );
@@ -30,17 +26,18 @@ static void printUsage(char *argv0, int exitCode)
 	printf( "   -r --rid        Revision to use (omit or pass 0 for latest)\n" );
 	printf( "   -n --runs       Number of connection attempts per thread\n" );
 	printf( "   -t --threads    number of threads\n" );
-	printf( "   -l --log        Write log to given location\n" );
+	printf( "   -b --blocksize  Size of blocks to request (def. 4096)\n" );
 	exit( exitCode );
 }
 
-static const char *optString = "h:i:n:t:HvVd";
+static const char *optString = "b:h:i:n:t:Hv";
 static const struct option longOpts[] = {
         { "host", required_argument, NULL, 'h' },
         { "image", required_argument, NULL, 'i' },
         { "nruns", optional_argument, NULL, 'n' },
         { "threads", required_argument, NULL, 't' },
-        { "help", required_argument, NULL, 'H' },
+        { "blocksize", required_argument, NULL, 'b' },
+        { "help", no_argument, NULL, 'H' },
         { "version", no_argument, NULL, 'v' },
         { 0, 0, 0, 0 }
 };
@@ -60,6 +57,7 @@ void* runBenchThread(void* t) {
 			data->image_name,
 			0,
 			data->runs,
+			data->bs,
 			data->counter);
 	printf("Thread #%d finished\n", data->threadNumber);
 	return NULL;
@@ -74,6 +72,7 @@ int main(int argc, char *argv[])
 	bool closeSockets = false;
 	int n_runs = 100;
 	int n_threads = 1;
+	int bs = 4096;
 
 	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
 		printUsage( argv[0], 0 );
@@ -93,14 +92,14 @@ int main(int argc, char *argv[])
 		case 't':
 			n_threads = atoi(optarg);
 			break;
+		case 'b':
+			bs = atoi(optarg);
+			break;
 		case 'c':
 			closeSockets = true;
 			break;
 		case 'H':
 			printUsage( argv[0], 0 );
-			break;
-		case 'd':
-			useDebug = true;
 			break;
 		default:
 			printUsage( argv[0], EXIT_FAILURE );
@@ -123,6 +122,7 @@ int main(int argc, char *argv[])
 			server_address,
 			image_Name,
 			n_runs,
+			bs,
 			i,
 			closeSockets};
 		threadData[i] = tmp2;

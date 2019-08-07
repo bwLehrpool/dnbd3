@@ -41,6 +41,7 @@ bool connection_init_n_times(
 		const char *lowerImage,
 		const uint16_t rid,
 		int ntimes,
+		int blockSize,
 		BenchCounters* counters
 		) {
 	for (int run_i = 0; run_i < ntimes; ++run_i) {
@@ -95,20 +96,31 @@ bool connection_init_n_times(
 			} else if ( rid != 0 && rid != remoteRid ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "rid mismatch" );
-			} else if ( !dnbd3_get_block( sock, run_i * 4096, 4096, 0, 0 ) ) {
+			} else if ( !dnbd3_get_block( sock, run_i * blockSize, blockSize, 0, 0 ) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "send: get block failed" );
 			} else if ( !dnbd3_get_reply( sock, &reply ) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "recv: get block header failed" );
-			} else if ( recv( sock, trash, sizeof(trash), MSG_WAITALL|MSG_NOSIGNAL ) != sizeof(trash) ) {
-				counters->fails++;
-				logadd( LOG_ERROR, "recv: get block payload failed" );
 			} else {
-				counters->success++;
-				close( sock );
-				sock = -1;
-				continue;
+				int rv, togo = blockSize;
+				do {
+					rv = recv( sock, trash, MIN( sizeof(trash), togo ), MSG_WAITALL|MSG_NOSIGNAL );
+					if ( rv == -1 && errno == EINTR )
+						continue;
+					if ( rv <= 0 )
+						break;
+					togo -= rv;
+				} while ( togo > 0 );
+				if ( togo != 0 ) {
+					counters->fails++;
+					logadd( LOG_ERROR, "recv: get block payload failed (remaining %d)", togo );
+				} else {
+					counters->success++;
+					close( sock );
+					sock = -1;
+					continue;
+				}
 			}
 			// Failed
 			if ( sock != -1 ) {
