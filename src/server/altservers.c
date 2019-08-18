@@ -18,7 +18,7 @@ static dnbd3_connection_t * _Atomic pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static dnbd3_signal_t * _Atomic runSignal = NULL;
 
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
-static int numAltServers = 0;
+static atomic_int numAltServers = 0;
 static pthread_mutex_t altServersLock;
 
 static pthread_t altThread;
@@ -124,6 +124,8 @@ bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate
 void altservers_findUplink(dnbd3_connection_t *uplink)
 {
 	if ( uplink->shutdown )
+		return;
+	if ( uplink->fd != -1 && numAltServers <= 1 )
 		return;
 	int i;
 	// if betterFd != -1 it means the uplink is supposed to switch to another
@@ -454,6 +456,13 @@ static void *altservers_main(void *data UNUSED)
 			dnbd3_connection_t * const uplink = pending[itLink];
 			if ( uplink == NULL )
 				continue;
+			// First, get 4 alt servers
+			numAlts = altservers_getListForUplink( servers, ALTS, uplink->fd == -1 );
+			// If we're already connected and only got one server anyways, there isn't much to do
+			if ( numAlts <= 1 && uplink->fd != -1 ) {
+				uplink->rttTestResult = RTT_DONTCHANGE;
+				continue;
+			}
 			dnbd3_image_t * const image = image_lock( uplink->image );
 			if ( image == NULL ) { // Check again after locking
 				mutex_lock( &uplink->rttLock );
@@ -461,13 +470,11 @@ static void *altservers_main(void *data UNUSED)
 				assert( pending[itLink] == uplink );
 				pending[itLink] = NULL;
 				mutex_unlock( &uplink->rttLock );
-				logadd( LOG_DEBUG1, "Image has gone away that was queued for RTT measurement" );
+				logadd( LOG_WARNING, "Image has gone away that was queued for RTT measurement" );
 				continue;
 			}
 			LOG( LOG_DEBUG2, "[%d] Running alt check", itLink );
 			assert( uplink->rttTestResult == RTT_INPROGRESS );
-			// Now get 4 alt servers
-			numAlts = altservers_getListForUplink( servers, ALTS, uplink->fd == -1 );
 			if ( uplink->fd != -1 ) {
 				// Add current server if not already in list
 				found = false;
