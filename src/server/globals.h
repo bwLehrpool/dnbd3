@@ -13,7 +13,7 @@ typedef struct timespec ticks;
 
 // ######### All structs/types used by the server ########
 
-typedef struct _dnbd3_connection dnbd3_connection_t;
+typedef struct _dnbd3_uplink dnbd3_uplink_t;
 typedef struct _dnbd3_image dnbd3_image_t;
 typedef struct _dnbd3_client dnbd3_client_t;
 
@@ -30,12 +30,18 @@ typedef struct
 	uint8_t hopCount;      // How many hops this request has already taken across proxies
 } dnbd3_queued_request_t;
 
+typedef struct {
+	int fd;
+	int version;
+	dnbd3_host_t host;
+} dnbd3_server_connection_t;
+
 #define RTT_IDLE 0 // Not in progress
 #define RTT_INPROGRESS 1 // In progess, not finished
 #define RTT_DONTCHANGE 2 // Finished, but no better alternative found
 #define RTT_DOCHANGE 3 // Finished, better alternative written to .betterServer + .betterFd
 #define RTT_NOT_REACHABLE 4 // No uplink was reachable
-struct _dnbd3_connection
+struct _dnbd3_uplink
 {
 	int fd;                     // socket fd to remote server
 	int version;                // remote server protocol version
@@ -94,7 +100,7 @@ struct _dnbd3_image
 {
 	char *path;            // absolute path of the image
 	char *name;            // public name of the image (usually relative path minus revision ID)
-	dnbd3_connection_t *uplink; // pointer to a server connection
+	dnbd3_uplink_t *uplink; // pointer to a server connection
 	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
 	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
 	uint64_t realFilesize;      // actual file size on disk

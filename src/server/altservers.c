@@ -14,7 +14,7 @@
 #define LOG_GOTO(jumplabel, lvl, ...) do { LOG(lvl, __VA_ARGS__); goto jumplabel; } while (0);
 #define ERROR_GOTO(jumplabel, ...) LOG_GOTO(jumplabel, LOG_ERROR, __VA_ARGS__)
 
-static dnbd3_connection_t * _Atomic pending[SERVER_MAX_PENDING_ALT_CHECKS];
+static dnbd3_uplink_t * _Atomic pending[SERVER_MAX_PENDING_ALT_CHECKS];
 static dnbd3_signal_t * _Atomic runSignal = NULL;
 
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
@@ -121,7 +121,7 @@ bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate
 /**
  * ONLY called from the passed uplink's main thread
  */
-void altservers_findUplink(dnbd3_connection_t *uplink)
+void altservers_findUplink(dnbd3_uplink_t *uplink)
 {
 	if ( uplink->shutdown )
 		return;
@@ -149,7 +149,7 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
 	uplink->rttTestResult = RTT_INPROGRESS;
 	for (i = 0; i < SERVER_MAX_PENDING_ALT_CHECKS; ++i) {
 		if ( pending[i] != NULL ) continue;
-		dnbd3_connection_t *null = NULL;
+		dnbd3_uplink_t *null = NULL;
 		if ( atomic_compare_exchange_strong( &pending[i], &null, uplink ) ) {
 			mutex_unlock( &uplink->rttLock );
 			atomic_thread_fence( memory_order_release );
@@ -167,7 +167,7 @@ void altservers_findUplink(dnbd3_connection_t *uplink)
  * The given uplink is about to disappear,
  * wait until any pending RTT check is done.
  */
-void altservers_removeUplink(dnbd3_connection_t *uplink)
+void altservers_removeUplink(dnbd3_uplink_t *uplink)
 {
 	assert( uplink != NULL );
 	assert( uplink->shutdown );
@@ -453,7 +453,7 @@ static void *altservers_main(void *data UNUSED)
 		// Work your way through the queue
 		atomic_thread_fence( memory_order_acquire );
 		for (itLink = 0; itLink < SERVER_MAX_PENDING_ALT_CHECKS; ++itLink) {
-			dnbd3_connection_t * const uplink = pending[itLink];
+			dnbd3_uplink_t * const uplink = pending[itLink];
 			if ( uplink == NULL )
 				continue;
 			// First, get 4 alt servers
