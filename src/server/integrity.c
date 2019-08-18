@@ -240,7 +240,7 @@ static void* integrity_main(void * data UNUSED)
 					if ( !foundCorrupted ) {
 						mutex_lock( &image->lock );
 						if ( image->uplink != NULL ) { // TODO: image_determineWorkingState() helper?
-							image->working = image->uplink->fd != -1 && image->readFd != -1;
+							image->working = image->uplink->current.fd != -1 && image->readFd != -1;
 						}
 						mutex_unlock( &image->lock );
 					}

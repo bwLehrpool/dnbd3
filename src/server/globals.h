@@ -31,9 +31,9 @@ typedef struct
 } dnbd3_queued_request_t;
 
 typedef struct {
-	int fd;
-	int version;
-	dnbd3_host_t host;
+	int fd;             // Socket fd for this connection
+	int version;        // Protocol version of remote server
+	dnbd3_host_t host;  // IP/Port of remote server
 } dnbd3_server_connection_t;
 
 #define RTT_IDLE 0 // Not in progress
@@ -43,20 +43,16 @@ typedef struct {
 #define RTT_NOT_REACHABLE 4 // No uplink was reachable
 struct _dnbd3_uplink
 {
-	int fd;                     // socket fd to remote server
-	int version;                // remote server protocol version
+	dnbd3_server_connection_t current; // Currently active connection; fd == -1 means disconnected
+	dnbd3_server_connection_t better; // Better connection as found by altserver worker; fd == -1 means none
 	dnbd3_signal_t* signal;     // used to wake up the process
 	pthread_t thread;           // thread holding the connection
 	pthread_mutex_t sendMutex;  // For locking socket while sending
 	pthread_mutex_t queueLock;  // lock for synchronization on request queue etc.
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
-	dnbd3_host_t currentServer; // Current server we're connected to
 	pthread_mutex_t rttLock;    // When accessing rttTestResult, betterFd or betterServer
 	int rttTestResult;          // RTT_*
 	int cacheFd;                // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
-	int betterVersion;          // protocol version of better server
-	int betterFd;               // Active connection to better server, ready to use
-	dnbd3_host_t betterServer;  // The better server
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	uint32_t recvBufferLen;     // Len of ^^
 	atomic_bool shutdown;       // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()

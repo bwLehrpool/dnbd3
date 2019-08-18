@@ -1508,7 +1508,7 @@ json_t* image_getListAsJson()
 			uplinkName[0] = '\0';
 		} else {
 			bytesReceived = image->uplink->bytesReceived;
-			if ( image->uplink->fd == -1 || !host_to_string( &image->uplink->currentServer, uplinkName, sizeof(uplinkName) ) ) {
+			if ( image->uplink->current.fd == -1 || !host_to_string( &image->uplink->current.host, uplinkName, sizeof(uplinkName) ) ) {
 				uplinkName[0] = '\0';
 			}
 		}

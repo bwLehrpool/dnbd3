@@ -125,14 +125,14 @@ void altservers_findUplink(dnbd3_uplink_t *uplink)
 {
 	if ( uplink->shutdown )
 		return;
-	if ( uplink->fd != -1 && numAltServers <= 1 )
+	if ( uplink->current.fd != -1 && numAltServers <= 1 )
 		return;
 	int i;
 	// if betterFd != -1 it means the uplink is supposed to switch to another
 	// server. As this function here is called by the uplink thread, it can
 	// never be that the uplink is supposed to switch, but instead calls
 	// this function.
-	assert( uplink->betterFd == -1 );
+	assert( uplink->better.fd == -1 );
 	// it is however possible that an RTT measurement is currently in progress,
 	// so check for that case and do nothing if one is in progress
 	// XXX As this function is only ever called by the image's uplink thread,
@@ -457,9 +457,9 @@ static void *altservers_main(void *data UNUSED)
 			if ( uplink == NULL )
 				continue;
 			// First, get 4 alt servers
-			numAlts = altservers_getListForUplink( servers, ALTS, uplink->fd == -1 );
+			numAlts = altservers_getListForUplink( servers, ALTS, uplink->current.fd == -1 );
 			// If we're already connected and only got one server anyways, there isn't much to do
-			if ( numAlts <= 1 && uplink->fd != -1 ) {
+			if ( numAlts <= 1 && uplink->current.fd != -1 ) {
 				uplink->rttTestResult = RTT_DONTCHANGE;
 				continue;
 			}
@@ -475,15 +475,15 @@ static void *altservers_main(void *data UNUSED)
 			}
 			LOG( LOG_DEBUG2, "[%d] Running alt check", itLink );
 			assert( uplink->rttTestResult == RTT_INPROGRESS );
-			if ( uplink->fd != -1 ) {
+			if ( uplink->current.fd != -1 ) {
 				// Add current server if not already in list
 				found = false;
 				for (itAlt = 0; itAlt < numAlts; ++itAlt) {
-					if ( !isSameAddressPort( &uplink->currentServer, &servers[itAlt] ) ) continue;
+					if ( !isSameAddressPort( &uplink->current.host, &servers[itAlt] ) ) continue;
 					found = true;
 					break;
 				}
-				if ( !found ) servers[numAlts++] = uplink->currentServer;
+				if ( !found ) servers[numAlts++] = uplink->current.host;
 			}
 			// Test them all
 			int bestSock = -1;
@@ -537,7 +537,7 @@ static void *altservers_main(void *data UNUSED)
 				// Measurement done - everything fine so far
 				mutex_lock( &altServersLock );
 				mutex_lock( &uplink->rttLock );
-				const bool isCurrent = isSameAddressPort( &servers[itAlt], &uplink->currentServer );
+				const bool isCurrent = isSameAddressPort( &servers[itAlt], &uplink->current.host );
 				// Penaltize rtt if this was a cycle; this will treat this server with lower priority
 				// in the near future too, so we prevent alternating between two servers that are both
 				// part of a cycle and have the lowest latency.
@@ -547,9 +547,9 @@ static void *altservers_main(void *data UNUSED)
 				unsigned int avg = altservers_updateRtt( &servers[itAlt], rtt );
 				mutex_unlock( &altServersLock );
 				// If a cycle was detected, or we lost connection to the current (last) server, penaltize it one time
-				if ( ( uplink->cycleDetected || uplink->fd == -1 ) && isCurrent ) avg = (avg * 2) + 50000;
+				if ( ( uplink->cycleDetected || uplink->current.fd == -1 ) && isCurrent ) avg = (avg * 2) + 50000;
 				mutex_unlock( &uplink->rttLock );
-				if ( uplink->fd != -1 && isCurrent ) {
+				if ( uplink->current.fd != -1 && isCurrent ) {
 					// Was measuring current server
 					currentRtt = avg;
 					close( sock );
@@ -574,18 +574,18 @@ static void *altservers_main(void *data UNUSED)
 				close( sock );
 			}
 			// Done testing all servers. See if we should switch
-			if ( bestSock != -1 && (uplink->fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
+			if ( bestSock != -1 && (uplink->current.fd == -1 || (bestRtt < 10000000 && RTT_THRESHOLD_FACTOR(currentRtt) > bestRtt)) ) {
 				// yep
-				if ( currentRtt > 10000000 || uplink->fd == -1 ) {
+				if ( currentRtt > 10000000 || uplink->current.fd == -1 ) {
 					LOG( LOG_DEBUG1, "Change - best: %luµs, current: -", bestRtt );
 				} else {
 					LOG( LOG_DEBUG1, "Change - best: %luµs, current: %luµs", bestRtt, currentRtt );
 				}
 				sock_setTimeout( bestSock, _uplinkTimeout );
 				mutex_lock( &uplink->rttLock );
-				uplink->betterFd = bestSock;
-				uplink->betterServer = servers[bestIndex];
-				uplink->betterVersion = bestProtocolVersion;
+				uplink->better.fd = bestSock;
+				uplink->better.host = servers[bestIndex];
+				uplink->better.version = bestProtocolVersion;
 				uplink->rttTestResult = RTT_DOCHANGE;
 				mutex_unlock( &uplink->rttLock );
 				signal_call( uplink->signal );
