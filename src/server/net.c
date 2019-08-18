@@ -532,16 +532,15 @@ exit_client_cleanup: ;
 	removeFromList( client );
 	totalBytesSent += client->bytesSent;
 	// Access time, but only if client didn't just probe
-	if ( image != NULL ) {
+	if ( image != NULL && client->bytesSent > DNBD3_BLOCK_SIZE * 10 ) {
 		mutex_lock( &image->lock );
-		if ( client->bytesSent > DNBD3_BLOCK_SIZE * 10 ) {
-			timing_get( &image->atime );
-		}
+		timing_get( &image->atime );
 		mutex_unlock( &image->lock );
 	}
 	freeClientStruct( client ); // This will also call image_release on client->image
 	return NULL ;
 fail_preadd: ;
+	// This is before we even initialized any mutex
 	close( client->sock );
 	free( client );
 	return NULL;
@@ -688,15 +687,17 @@ static void removeFromList(dnbd3_client_t *client)
 static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 {
 	mutex_lock( &client->lock );
-	mutex_lock( &client->sendMutex );
-	if ( client->sock != -1 ) close( client->sock );
-	client->sock = -1;
-	mutex_unlock( &client->sendMutex );
 	if ( client->image != NULL ) {
 		mutex_lock( &client->image->lock );
 		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
 		mutex_unlock( &client->image->lock );
 	}
+	mutex_lock( &client->sendMutex );
+	if ( client->sock != -1 ) {
+		close( client->sock );
+	}
+	client->sock = -1;
+	mutex_unlock( &client->sendMutex );
 	mutex_unlock( &client->lock );
 	client->image = image_release( client->image );
 	mutex_destroy( &client->lock );
