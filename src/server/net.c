@@ -314,6 +314,7 @@ void* net_handleNewConnection(void *clientPtr)
 
 			case CMD_GET_BLOCK:;
 				const uint64_t offset = request.offset_small; // Copy to full uint64 to prevent repeated masking
+				reply.handle = request.handle;
 				if ( offset >= image->virtualFilesize ) {
 					// Sanity check
 					logadd( LOG_WARNING, "Client %s requested non-existent block", client->hostName );
@@ -395,7 +396,6 @@ void* net_handleNewConnection(void *clientPtr)
 
 				reply.cmd = CMD_GET_BLOCK;
 				reply.size = request.size;
-				reply.handle = request.handle;
 
 				fixup_reply( reply );
 				const bool lock = image->uplink != NULL;
