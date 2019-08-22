@@ -1178,7 +1178,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	dnbd3_host_t servers[REP_NUM_SRV];
 	int uplinkSock = -1;
 	dnbd3_host_t uplinkServer;
-	const int count = altservers_getListForUplink( servers, REP_NUM_SRV, false );
+	const int count = altservers_getHostListForReplication( servers, REP_NUM_SRV );
 	uint16_t remoteProtocolVersion;
 	uint16_t remoteRid = revision;
 	uint64_t remoteImageSize;
@@ -1491,7 +1491,7 @@ json_t* image_getListAsJson()
 	json_t *imagesJson = json_array();
 	json_t *jsonImage;
 	int i;
-	char uplinkName[100] = { 0 };
+	char uplinkName[100];
 	uint64_t bytesReceived;
 	int completeness, idleTime;
 	declare_now;
@@ -1508,7 +1508,7 @@ json_t* image_getListAsJson()
 			uplinkName[0] = '\0';
 		} else {
 			bytesReceived = image->uplink->bytesReceived;
-			if ( image->uplink->current.fd == -1 || !host_to_string( &image->uplink->current.host, uplinkName, sizeof(uplinkName) ) ) {
+			if ( !uplink_getHostString( image->uplink, uplinkName, sizeof(uplinkName) ) ) {
 				uplinkName[0] = '\0';
 			}
 		}

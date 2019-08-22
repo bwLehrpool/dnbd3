@@ -7,23 +7,27 @@ struct json_t;
 
 void altservers_init();
 
-void altservers_shutdown();
-
 int altservers_load();
 
 bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly);
 
-void altservers_findUplink(dnbd3_uplink_t *uplink);
+void altservers_findUplinkAsync(dnbd3_uplink_t *uplink);
 
-void altservers_removeUplink(dnbd3_uplink_t *uplink);
+void altservers_findUplink(dnbd3_uplink_t *uplink);
 
 int altservers_getListForClient(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size);
 
-int altservers_getListForUplink(dnbd3_host_t *output, int size, int emergency);
+int altservers_getHostListForReplication(dnbd3_host_t *servers, int size);
+
+bool altservers_toString(int server, char *buffer, size_t len);
 
 int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2);
 
-void altservers_serverFailed(const dnbd3_host_t * const host);
+void altservers_serverFailed(int server);
+
+int altservers_hostToIndex(dnbd3_host_t *host);
+
+const dnbd3_host_t* altservers_indexToHost(int server);
 
 struct json_t* altservers_toJson();
 

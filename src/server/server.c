@@ -121,9 +121,6 @@ void dnbd3_cleanup()
 	// Disable threadpool
 	threadpool_close();
 
-	// Terminate the altserver checking thread
-	altservers_shutdown();
-
 	// Terminate all uplinks
 	image_killUplinks();
 
@@ -198,6 +195,11 @@ int main(int argc, char *argv[])
 		case LONGOPT_CRC4:
 			return image_generateCrcFile( optarg ) ? 0 : EXIT_FAILURE;
 		case LONGOPT_ASSERT:
+			printf( "Testing use after free:\n" );
+			volatile char * volatile test = malloc( 10 );
+			test[0] = 1;
+			free( test );
+			test[1] = 2;
 			printf( "Testing a failing assertion:\n" );
 			assert( 4 == 5 );
 			printf( "Assertion 4 == 5 seems to hold. ;-)\n" );

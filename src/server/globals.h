@@ -30,10 +30,31 @@ typedef struct
 	uint8_t hopCount;      // How many hops this request has already taken across proxies
 } dnbd3_queued_request_t;
 
+typedef struct
+{
+	int fails;                    // Hard fail: Connection failed
+	int rttIndex;
+	uint32_t rtt[SERVER_RTT_PROBES];
+	bool isPrivate, isClientOnly;
+	bool blocked;                 // If true count down fails until 0 to enable again
+	ticks lastFail;               // Last hard fail
+	dnbd3_host_t host;
+	char comment[COMMENT_LENGTH];
+} dnbd3_alt_server_t;
+
+typedef struct
+{
+	int fails;                    // Soft fail: Image not found
+	int rttIndex;
+	uint32_t rtt[SERVER_RTT_PROBES];
+	bool blocked;                 // True if server is to be ignored and fails should be counted down
+	bool initDone;
+} dnbd3_alt_local_t;
+
 typedef struct {
-	int fd;             // Socket fd for this connection
-	int version;        // Protocol version of remote server
-	dnbd3_host_t host;  // IP/Port of remote server
+	int fd;            // Socket fd for this connection
+	int version;       // Protocol version of remote server
+	int index;         // Entry in uplinks list
 } dnbd3_server_connection_t;
 
 #define RTT_IDLE 0 // Not in progress
@@ -51,7 +72,7 @@ struct _dnbd3_uplink
 	pthread_mutex_t queueLock;  // lock for synchronization on request queue etc.
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	pthread_mutex_t rttLock;    // When accessing rttTestResult, betterFd or betterServer
-	int rttTestResult;          // RTT_*
+	atomic_int rttTestResult;   // RTT_*
 	int cacheFd;                // used to write to the image, in case it is relayed. ONLY USE FROM UPLINK THREAD!
 	uint8_t *recvBuffer;        // Buffer for receiving payload
 	uint32_t recvBufferLen;     // Len of ^^
@@ -65,18 +86,8 @@ struct _dnbd3_uplink
 	atomic_int queueLen;        // length of queue
 	uint32_t idleTime;          // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
+	dnbd3_alt_local_t altData[SERVER_MAX_ALTS];
 };
-
-typedef struct
-{
-	char comment[COMMENT_LENGTH];
-	dnbd3_host_t host;
-	unsigned int rtt[SERVER_RTT_PROBES];
-	unsigned int rttIndex;
-	bool isPrivate, isClientOnly;
-	ticks lastFail;
-	int numFails;
-} dnbd3_alt_server_t;
 
 typedef struct
 {

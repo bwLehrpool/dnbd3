@@ -669,11 +669,19 @@ static void removeFromList(dnbd3_client_t *client)
 {
 	int i;
 	mutex_lock( &_clients_lock );
-	for ( i = _num_clients - 1; i >= 0; --i ) {
-		if ( _clients[i] == client ) {
-			_clients[i] = NULL;
+	if ( _num_clients != 0 ) {
+		for ( i = _num_clients - 1; i >= 0; --i ) {
+			if ( _clients[i] == client ) {
+				_clients[i] = NULL;
+				break;
+			}
 		}
-		if ( _clients[i] == NULL && i + 1 == _num_clients ) --_num_clients;
+		if ( i != 0 && i + 1 == _num_clients ) {
+			do {
+				i--;
+			} while ( _clients[i] == NULL && i > 0 );
+			_num_clients = i + 1;
+		}
 	}
 	mutex_unlock( &_clients_lock );
 }
