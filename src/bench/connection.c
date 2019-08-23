@@ -102,6 +102,9 @@ bool connection_init_n_times(
 			} else if ( !dnbd3_get_reply( sock, &reply ) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "recv: get block header failed" );
+			} else if ( reply.cmd != CMD_GET_BLOCK ) {
+				counters->fails++;
+				logadd( LOG_ERROR, "recv: get block reply is not CMD_GET_BLOCK" );
 			} else {
 				int rv, togo = blockSize;
 				do {
