@@ -198,7 +198,7 @@ int main(int argc, char *argv[])
 			printf( "Testing use after free:\n" );
 			volatile char * volatile test = malloc( 10 );
 			test[0] = 1;
-			free( test );
+			free( (void*)test );
 			test[1] = 2;
 			printf( "Testing a failing assertion:\n" );
 			assert( 4 == 5 );

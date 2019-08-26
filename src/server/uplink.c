@@ -370,6 +370,7 @@ static void* uplink_mainloop(void *data)
 	dnbd3_uplink_t * const uplink = (dnbd3_uplink_t*)data;
 	int numSocks, i, waitTime;
 	int altCheckInterval = SERVER_RTT_INTERVAL_INIT;
+	int rttTestResult;
 	uint32_t discoverFailCount = 0;
 	uint32_t unsavedSeconds = 0;
 	ticks nextAltCheck, lastKeepalive;
@@ -397,11 +398,9 @@ static void* uplink_mainloop(void *data)
 	events[EV_SOCKET].fd = -1;
 	while ( !_shutdown && !uplink->shutdown ) {
 		// poll()
-		mutex_lock( &uplink->rttLock );
 		waitTime = uplink->rttTestResult == RTT_DOCHANGE ? 0 : -1;
-		mutex_unlock( &uplink->rttLock );
 		if ( waitTime == 0 ) {
-			// Nothing
+			// 0 means poll, since we're about to change the server
 		} else if ( uplink->current.fd == -1 && !uplink_connectionShouldShutdown( uplink ) ) {
 			waitTime = 1000;
 		} else {
@@ -420,10 +419,9 @@ static void* uplink_mainloop(void *data)
 			continue;
 		}
 		// Check if server switch is in order
-		mutex_lock( &uplink->rttLock );
-		if ( uplink->rttTestResult != RTT_DOCHANGE ) {
-			mutex_unlock( &uplink->rttLock );
-		} else {
+		if ( unlikely( uplink->rttTestResult == RTT_DOCHANGE ) ) {
+			mutex_lock( &uplink->rttLock );
+			assert( uplink->rttTestResult == RTT_DOCHANGE );
 			uplink->rttTestResult = RTT_IDLE;
 			// The rttTest worker thread has finished our request.
 			// And says it's better to switch to another server
@@ -476,7 +474,7 @@ static void* uplink_mainloop(void *data)
 		// Uplink socket
 		if ( (events[EV_SOCKET].revents & (POLLERR | POLLHUP | POLLRDHUP | POLLNVAL)) ) {
 			uplink_connectionFailed( uplink, true );
-			logadd( LOG_DEBUG1, "Uplink gone away, panic!\n" );
+			logadd( LOG_DEBUG1, "Uplink gone away, panic! (revents=%d)\n", (int)events[EV_SOCKET].revents );
 			setThreadName( "panic-uplink" );
 		} else if ( (events[EV_SOCKET].revents & POLLIN) ) {
 			uplink_handleReceive( uplink );
@@ -509,7 +507,7 @@ static void* uplink_mainloop(void *data)
 			if ( uplink->current.fd != -1 && uplink_connectionShouldShutdown( uplink ) ) {
 				mutex_lock( &uplink->sendMutex );
 				close( uplink->current.fd );
-				uplink->current.fd = events[EV_SOCKET].fd = -1;
+				uplink->current.fd = -1;
 				mutex_unlock( &uplink->sendMutex );
 				uplink->cycleDetected = false;
 				if ( uplink->recvBufferLen != 0 ) {
@@ -522,7 +520,7 @@ static void* uplink_mainloop(void *data)
 			}
 		}
 		// See if we should trigger an RTT measurement
-		int rttTestResult = uplink->rttTestResult;
+		rttTestResult = uplink->rttTestResult;
 		if ( rttTestResult == RTT_IDLE || rttTestResult == RTT_DONTCHANGE ) {
 			if ( timing_reached( &nextAltCheck, &now ) || ( uplink->current.fd == -1 && !uplink_connectionShouldShutdown( uplink ) ) || uplink->cycleDetected ) {
 				// It seems it's time for a check
@@ -964,6 +962,9 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 	uplink_connectionFailed( uplink, true );
 }
 
+/**
+ * Only call from uplink thread
+ */
 static void uplink_connectionFailed(dnbd3_uplink_t *uplink, bool findNew)
 {
 	if ( uplink->current.fd == -1 )
@@ -984,7 +985,7 @@ static void uplink_connectionFailed(dnbd3_uplink_t *uplink, bool findNew)
 	mutex_unlock( &uplink->rttLock );
 	if ( bail )
 		return;
-	altservers_findUplink( uplink );
+	altservers_findUplinkAsync( uplink );
 }
 
 /**
