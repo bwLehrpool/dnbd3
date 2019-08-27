@@ -960,7 +960,7 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 				mutex_unlock( &client->sendMutex );
 				mutex_lock( &uplink->queueLock );
 				if ( i > uplink->queueLen ) {
-					uplink->queueLen = i; // Might have been set to 0 by cancelAllRequests
+					i = uplink->queueLen; // Might have been set to 0 by cancelAllRequests
 				}
 			}
 			if ( req->status == ULR_FREE && i == uplink->queueLen - 1 ) uplink->queueLen--;
