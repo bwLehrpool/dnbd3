@@ -7,6 +7,8 @@
 #include "../shared/protocol.h"
 #include "../shared/timing.h"
 #include "../serverconfig.h"
+#include "reference.h"
+
 #include <assert.h>
 #include <inttypes.h>
 #include <jansson.h>
@@ -104,7 +106,6 @@ void altservers_findUplinkAsync(dnbd3_uplink_t *uplink)
 		return;
 	if ( uplink->current.fd != -1 && numAltServers <= 1 )
 		return;
-	int i;
 	// if betterFd != -1 it means the uplink is supposed to switch to another
 	// server. As this function here is called by the uplink thread, it can
 	// never be that the uplink is supposed to switch, but instead calls
@@ -112,11 +113,14 @@ void altservers_findUplinkAsync(dnbd3_uplink_t *uplink)
 	assert( uplink->better.fd == -1 );
 	// it is however possible that an RTT measurement is currently in progress,
 	// so check for that case and do nothing if one is in progress
-	mutex_lock( &uplink->rttLock );
 	if ( uplink->rttTestResult != RTT_INPROGRESS ) {
-		threadpool_run( &altservers_runCheck, uplink );
+		dnbd3_uplink_t *current = ref_get_uplink( &uplink->image->uplinkref );
+		if ( current == uplink ) {
+			threadpool_run( &altservers_runCheck, uplink );
+		} else if ( current != NULL ) {
+			ref_put( &current->reference );
+		}
 	}
-	mutex_unlock( &uplink->rttLock );
 }
 
 /**
@@ -375,6 +379,7 @@ static void *altservers_runCheck(void *data)
 	assert( uplink != NULL );
 	setThreadName( "altserver-check" );
 	altservers_findUplinkInternal( uplink );
+	ref_put( &uplink->reference ); // Acquired in findUplinkAsync
 	// Save cache maps of all images if applicable
 	// TODO: Has nothing to do with alt servers really, maybe move somewhere else?
 	declare_now;

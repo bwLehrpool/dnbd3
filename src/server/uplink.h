@@ -14,7 +14,7 @@ void uplink_removeClient(dnbd3_uplink_t *uplink, dnbd3_client_t *client);
 
 bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uint32_t length, uint8_t hopCount);
 
-void uplink_shutdown(dnbd3_image_t *image);
+bool uplink_shutdown(dnbd3_image_t *image);
 
 bool uplink_getHostString(dnbd3_uplink_t *uplink, char *buffer, size_t len);
 

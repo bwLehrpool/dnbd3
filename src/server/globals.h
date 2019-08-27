@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 #include <time.h>
 #include <pthread.h>
+#include "reftypes.h"
 
 typedef struct timespec ticks;
 
@@ -64,6 +65,7 @@ typedef struct {
 #define RTT_NOT_REACHABLE 4 // No uplink was reachable
 struct _dnbd3_uplink
 {
+	ref reference;
 	dnbd3_server_connection_t current; // Currently active connection; fd == -1 means disconnected
 	dnbd3_server_connection_t better; // Better connection as found by altserver worker; fd == -1 means none
 	dnbd3_signal_t* signal;     // used to wake up the process
@@ -107,7 +109,7 @@ struct _dnbd3_image
 {
 	char *path;            // absolute path of the image
 	char *name;            // public name of the image (usually relative path minus revision ID)
-	dnbd3_uplink_t *uplink; // pointer to a server connection
+	weakref uplinkref;     // pointer to a server connection
 	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
 	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
 	uint64_t realFilesize;      // actual file size on disk

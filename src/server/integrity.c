@@ -4,6 +4,7 @@
 #include "locks.h"
 #include "image.h"
 #include "uplink.h"
+#include "reference.h"
 
 #include <assert.h>
 #include <sys/syscall.h>
@@ -238,11 +239,13 @@ static void* integrity_main(void * data UNUSED)
 					if ( i + 1 == queueLen ) queueLen--;
 					// Mark as working again if applicable
 					if ( !foundCorrupted ) {
-						mutex_lock( &image->lock );
-						if ( image->uplink != NULL ) { // TODO: image_determineWorkingState() helper?
-							image->working = image->uplink->current.fd != -1 && image->readFd != -1;
+						dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
+						if ( uplink != NULL ) { // TODO: image_determineWorkingState() helper?
+							mutex_lock( &image->lock );
+							image->working = uplink->current.fd != -1 && image->readFd != -1;
+							mutex_unlock( &image->lock );
+							ref_put( &uplink->reference );
 						}
-						mutex_unlock( &image->lock );
 					}
 				} else {
 					// Still more blocks to go...
@@ -255,12 +258,8 @@ static void* integrity_main(void * data UNUSED)
 				// Something was fishy, make sure uplink exists
 				mutex_lock( &image->lock );
 				image->working = false;
-				bool restart = image->uplink == NULL || image->uplink->shutdown;
 				mutex_unlock( &image->lock );
-				if ( restart ) {
-					uplink_shutdown( image );
-					uplink_init( image, -1, NULL, -1 );
-				}
+				uplink_init( image, -1, NULL, -1 );
 			}
 			// Release :-)
 			image_release( image );

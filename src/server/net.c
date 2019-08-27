@@ -24,6 +24,7 @@
 #include "locks.h"
 #include "rpc.h"
 #include "altservers.h"
+#include "reference.h"
 
 #include "../shared/sockhelper.h"
 #include "../shared/timing.h"
@@ -229,7 +230,7 @@ void* net_handleNewConnection(void *clientPtr)
 		rid = serializer_get_uint16( &payload );
 		const uint8_t flags = serializer_get_uint8( &payload );
 		client->isServer = ( flags & FLAGS8_SERVER );
-		if ( request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT ) {
+		if ( unlikely( request.size < 3 || !image_name || client_version < MIN_SUPPORTED_CLIENT ) ) {
 			if ( client_version < MIN_SUPPORTED_CLIENT ) {
 				logadd( LOG_DEBUG1, "Client %s too old", client->hostName );
 			} else {
@@ -257,22 +258,25 @@ void* net_handleNewConnection(void *clientPtr)
 			}
 			client->image = image;
 			atomic_thread_fence( memory_order_release );
-			if ( image == NULL ) {
+			if ( unlikely( image == NULL ) ) {
 				//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
-			} else if ( !image->working ) {
+			} else if ( unlikely( !image->working ) ) {
 				logadd( LOG_DEBUG1, "Client %s requested non-working image '%s' (rid:%d), rejected\n",
 						client->hostName, image_name, (int)rid );
 			} else {
-				bool penalty;
 				// Image is fine so far, but occasionally drop a client if the uplink for the image is clogged or unavailable
 				bOk = true;
 				if ( image->cache_map != NULL ) {
-					mutex_lock( &image->lock );
-					if ( image->uplink == NULL || image->uplink->cacheFd == -1 || image->uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
+					dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
+					if ( uplink == NULL || uplink->cacheFd == -1 || uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
 						bOk = ( rand() % 4 ) == 1;
 					}
-					penalty = bOk && image->uplink != NULL && image->uplink->cacheFd == -1;
-					mutex_unlock( &image->lock );
+					bool penalty = bOk && ( uplink == NULL || uplink->cacheFd == -1 );
+					if ( uplink == NULL ) {
+						uplink_init( image, -1, NULL, 0 );
+					} else {
+						ref_put( &uplink->reference );
+					}
 					if ( penalty ) { // Wait 100ms if local caching is not working so this
 						usleep( 100000 ); // server gets a penalty and is less likely to be selected
 					}
@@ -300,7 +304,7 @@ void* net_handleNewConnection(void *clientPtr)
 		}
 	}
 
-	if ( bOk ) {
+	if ( likely( bOk ) ) {
 		// add artificial delay if applicable
 		if ( client->isServer && _serverPenalty != 0 ) {
 			usleep( _serverPenalty );
@@ -315,7 +319,7 @@ void* net_handleNewConnection(void *clientPtr)
 			case CMD_GET_BLOCK:;
 				const uint64_t offset = request.offset_small; // Copy to full uint64 to prevent repeated masking
 				reply.handle = request.handle;
-				if ( offset >= image->virtualFilesize ) {
+				if ( unlikely( offset >= image->virtualFilesize ) ) {
 					// Sanity check
 					logadd( LOG_WARNING, "Client %s requested non-existent block", client->hostName );
 					reply.size = 0;
@@ -323,7 +327,7 @@ void* net_handleNewConnection(void *clientPtr)
 					send_reply( client->sock, &reply, NULL );
 					break;
 				}
-				if ( offset + request.size > image->virtualFilesize ) {
+				if ( unlikely( offset + request.size > image->virtualFilesize ) ) {
 					// Sanity check
 					logadd( LOG_WARNING, "Client %s requested data block that extends beyond image size", client->hostName );
 					reply.size = 0;
@@ -398,7 +402,7 @@ void* net_handleNewConnection(void *clientPtr)
 				reply.size = request.size;
 
 				fixup_reply( reply );
-				const bool lock = image->uplink != NULL;
+				const bool lock = image->uplinkref != NULL;
 				if ( lock ) mutex_lock( &client->sendMutex );
 				// Send reply header
 				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
@@ -696,9 +700,11 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 {
 	mutex_lock( &client->lock );
 	if ( client->image != NULL ) {
-		mutex_lock( &client->image->lock );
-		if ( client->image->uplink != NULL ) uplink_removeClient( client->image->uplink, client );
-		mutex_unlock( &client->image->lock );
+		dnbd3_uplink_t *uplink = ref_get_uplink( &client->image->uplinkref );
+		if ( uplink != NULL ) {
+			uplink_removeClient( uplink, client );
+			ref_put( &uplink->reference );
+		}
 	}
 	mutex_lock( &client->sendMutex );
 	if ( client->sock != -1 ) {
@@ -738,5 +744,17 @@ static bool addToList(dnbd3_client_t *client)
 	_clients[_num_clients++] = client;
 	mutex_unlock( &_clients_lock );
 	return true;
+}
+
+void net_sendReply(dnbd3_client_t *client, uint16_t cmd, uint64_t handle)
+{
+	dnbd3_reply_t reply;
+	reply.magic = dnbd3_packet_magic;
+	reply.cmd = cmd;
+	reply.handle = handle;
+	reply.size = 0;
+	mutex_lock( &client->sendMutex );
+	send_reply( client->sock, &reply, NULL );
+	mutex_unlock( &client->sendMutex );
 }
 

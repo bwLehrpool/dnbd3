@@ -8,6 +8,7 @@
 #include "../shared/protocol.h"
 #include "../shared/timing.h"
 #include "../shared/crc32.h"
+#include "reference.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -375,9 +376,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 
 	// Check if image is incomplete, handle
 	if ( candidate->cache_map != NULL ) {
-		if ( candidate->uplink == NULL ) {
-			uplink_init( candidate, -1, NULL, -1 );
-		}
+		uplink_init( candidate, -1, NULL, -1 );
 	}
 
 	return candidate; // We did all we can, hopefully it's working
@@ -484,17 +483,7 @@ void image_killUplinks()
 	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
-		mutex_lock( &_images[i]->lock );
-		if ( _images[i]->uplink != NULL ) {
-			mutex_lock( &_images[i]->uplink->queueLock );
-			if ( !_images[i]->uplink->shutdown ) {
-				thread_detach( _images[i]->uplink->thread );
-				_images[i]->uplink->shutdown = true;
-			}
-			mutex_unlock( &_images[i]->uplink->queueLock );
-			signal_call( _images[i]->uplink->signal );
-		}
-		mutex_unlock( &_images[i]->lock );
+		uplink_shutdown( _images[i] );
 	}
 	mutex_unlock( &imageListLock );
 }
@@ -588,11 +577,15 @@ bool image_tryFreeAll()
 static dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
 	assert( image != NULL );
+	assert( image->users == 0 );
 	if ( !_shutdown ) {
 		logadd( LOG_INFO, "Freeing image %s:%d", image->name, (int)image->rid );
 	}
-	//
-	uplink_shutdown( image );
+	// uplink_shutdown might return false to tell us
+	// that the shutdown is in progress. Bail out since
+	// this will get called again when the uplink is done.
+	if ( !uplink_shutdown( image ) )
+		return NULL;
 	mutex_lock( &image->lock );
 	free( image->cache_map );
 	free( image->crc32 );
@@ -860,7 +853,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->cache_map = cache_map;
 	image->crc32 = crc32list;
 	image->masterCrc32 = masterCrc;
-	image->uplink = NULL;
+	image->uplinkref = NULL;
 	image->realFilesize = realFilesize;
 	image->virtualFilesize = virtualFilesize;
 	image->rid = (uint16_t)revision;
@@ -1503,16 +1496,18 @@ json_t* image_getListAsJson()
 		mutex_lock( &image->lock );
 		idleTime = (int)timing_diff( &image->atime, &now );
 		completeness = image_getCompletenessEstimate( image );
-		if ( image->uplink == NULL ) {
+		mutex_unlock( &image->lock );
+		dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
+		if ( uplink == NULL ) {
 			bytesReceived = 0;
 			uplinkName[0] = '\0';
 		} else {
-			bytesReceived = image->uplink->bytesReceived;
-			if ( !uplink_getHostString( image->uplink, uplinkName, sizeof(uplinkName) ) ) {
+			bytesReceived = uplink->bytesReceived;
+			if ( !uplink_getHostString( uplink, uplinkName, sizeof(uplinkName) ) ) {
 				uplinkName[0] = '\0';
 			}
+			ref_put( &uplink->reference );
 		}
-		mutex_unlock( &image->lock );
 
 		jsonImage = json_pack( "{sisssisisisisI}",
 				"id", image->id, // id, name, rid never change, so access them without locking
@@ -1734,7 +1729,7 @@ void image_closeUnusedFd()
 		if ( image == NULL )
 			continue;
 		mutex_lock( &image->lock );
-		if ( image->users == 0 && image->uplink == NULL && timing_reached( &image->atime, &deadline ) ) {
+		if ( image->users == 0 && image->uplinkref == NULL && timing_reached( &image->atime, &deadline ) ) {
 			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
 			fd = image->readFd;
 			image->readFd = -1;
