@@ -1725,8 +1725,10 @@ static void* closeUnusedFds(void* nix UNUSED)
 	mutex_lock( &imageListLock );
 	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
-		if ( image == NULL )
+		if ( image == NULL || image->readFd == -1 )
 			continue;
+		// TODO: Also close for idle uplinks (uplink_connectionShouldShutdown)
+		// TODO: And close writeFd for idle uplinks....
 		if ( image->users == 0 && image->uplinkref == NULL && timing_reached( &image->atime, &deadline ) ) {
 			logadd( LOG_DEBUG1, "Inactive fd closed for %s:%d", image->name, (int)image->rid );
 			fds[fdindex++] = image->readFd;
