@@ -54,6 +54,7 @@ static bool image_ensureDiskSpace(uint64_t size, bool force);
 static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
 static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list, uint8_t * const cache_map);
+static void* closeUnusedFds(void*);
 
 // ##########################################
 
@@ -63,6 +64,7 @@ void image_serverStartup()
 	mutex_init( &imageListLock, LOCK_IMAGE_LIST );
 	mutex_init( &remoteCloneLock, LOCK_REMOTE_CLONE );
 	mutex_init( &reloadLock, LOCK_RELOAD );
+	server_addJob( &closeUnusedFds, NULL, 10, 900 );
 }
 
 /**
@@ -1717,34 +1719,34 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 	return false;
 }
 
-void image_closeUnusedFd()
+#define FDCOUNT (400)
+static void* closeUnusedFds(void* nix UNUSED)
 {
-	int fd, i;
+	if ( !_closeUnusedFd )
+		return NULL;
 	ticks deadline;
 	timing_gets( &deadline, -UNUSED_FD_TIMEOUT );
-	char imgstr[300];
+	int fds[FDCOUNT];
+	int fdindex = 0;
 	mutex_lock( &imageListLock );
-	for (i = 0; i < _num_images; ++i) {
+	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
 		if ( image == NULL )
 			continue;
-		mutex_lock( &image->lock );
 		if ( image->users == 0 && image->uplinkref == NULL && timing_reached( &image->atime, &deadline ) ) {
-			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
-			fd = image->readFd;
-			image->readFd = -1;
-		} else {
-			fd = -1;
-		}
-		mutex_unlock( &image->lock );
-		if ( fd != -1 ) {
-			mutex_unlock( &imageListLock );
-			close( fd );
-			logadd( LOG_DEBUG1, "Inactive fd closed for %s", imgstr );
-			mutex_lock( &imageListLock );
+			logadd( LOG_DEBUG1, "Inactive fd closed for %s:%d", image->name, (int)image->rid );
+			fds[fdindex++] = image->readFd;
+			image->readFd = -1; // Not a race; image->users is 0 and to increase it you need imageListLock
+			if ( fdindex == FDCOUNT )
+				break;
 		}
 	}
 	mutex_unlock( &imageListLock );
+	// Do this after unlock since close might block
+	for ( int i = 0; i < fdindex; ++i ) {
+		close( fds[i] );
+	}
+	return NULL;
 }
 
 /*

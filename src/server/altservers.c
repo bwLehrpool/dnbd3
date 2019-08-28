@@ -20,7 +20,6 @@
 static dnbd3_alt_server_t altServers[SERVER_MAX_ALTS];
 static atomic_int numAltServers = 0;
 static pthread_mutex_t altServersLock;
-static ticks nextCloseUnusedFd; // TODO: Move away
 
 static void *altservers_runCheck(void *data);
 static int altservers_getListForUplink(dnbd3_uplink_t *uplink, int *servers, int size, int current);
@@ -380,13 +379,6 @@ static void *altservers_runCheck(void *data)
 	setThreadName( "altserver-check" );
 	altservers_findUplinkInternal( uplink );
 	ref_put( &uplink->reference ); // Acquired in findUplinkAsync
-	// Save cache maps of all images if applicable
-	// TODO: Has nothing to do with alt servers really, maybe move somewhere else?
-	declare_now;
-	if ( _closeUnusedFd && timing_reached( &nextCloseUnusedFd, &now ) ) {
-		timing_gets( &nextCloseUnusedFd, 900 );
-		image_closeUnusedFd();
-	}
 	return NULL;
 }
 
