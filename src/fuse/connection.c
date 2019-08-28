@@ -141,7 +141,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 			if ( i >= altIndex ) {
 				// Additional iteration - no corresponding slot in altservers, this
 				// is just so we can make a final calls with longer timeout
-				sock = sock_multiConnect( cons, NULL, 400, 1000 );
+				sock = sock_multiConnect( cons, NULL, 400, 3000 );
 				if ( sock == -2 ) {
 					logadd( LOG_ERROR, "Could not connect to any host" );
 					sock = -1;
@@ -151,7 +151,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 				if ( altservers[i].host.type == 0 )
 					continue;
 				// Try to connect - 100ms timeout
-				sock = sock_multiConnect( cons, &altservers[i].host, 100, 1000 );
+				sock = sock_multiConnect( cons, &altservers[i].host, 100, 3000 );
 			}
 			if ( sock == -2 || sock == -1 )
 				continue;
