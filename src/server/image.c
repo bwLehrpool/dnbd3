@@ -562,9 +562,7 @@ bool image_tryFreeAll()
 		if ( _images[i] != NULL && _images[i]->users == 0 ) {
 			dnbd3_image_t *image = _images[i];
 			_images[i] = NULL;
-			mutex_unlock( &imageListLock );
 			image = image_free( image );
-			mutex_lock( &imageListLock );
 		}
 		if ( i + 1 == _num_images && _images[i] == NULL ) _num_images--;
 	}
@@ -574,15 +572,13 @@ bool image_tryFreeAll()
 
 /**
  * Free image. DOES NOT check if it's in use.
- * Indirectly locks on imageListLock, image.lock, uplink.queueLock
+ * (Indirectly) locks on image.lock, uplink.queueLock
  */
 static dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
 	assert( image != NULL );
 	assert( image->users == 0 );
-	if ( !_shutdown ) {
-		logadd( LOG_INFO, "Freeing image %s:%d", image->name, (int)image->rid );
-	}
+	logadd( ( _shutdown ? LOG_DEBUG1 : LOG_INFO ), "Freeing image %s:%d", image->name, (int)image->rid );
 	// uplink_shutdown might return false to tell us
 	// that the shutdown is in progress. Bail out since
 	// this will get called again when the uplink is done.
@@ -600,8 +596,6 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	mutex_unlock( &image->lock );
 	if ( image->readFd != -1 ) close( image->readFd );
 	mutex_destroy( &image->lock );
-	//
-	memset( image, 0, sizeof(*image) );
 	free( image );
 	return NULL ;
 }

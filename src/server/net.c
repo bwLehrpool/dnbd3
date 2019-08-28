@@ -44,6 +44,7 @@
 #include <jansson.h>
 #include <inttypes.h>
 #include <stdatomic.h>
+#include <signal.h>
 
 static dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 static int _num_clients = 0;
@@ -153,6 +154,7 @@ void* net_handleNewConnection(void *clientPtr)
 {
 	dnbd3_client_t * const client = (dnbd3_client_t *)clientPtr;
 	dnbd3_request_t request;
+	client->thread = pthread_self();
 
 	// Await data from client. Since this is a fresh connection, we expect data right away
 	sock_setTimeout( client->sock, _clientTimeout );
@@ -631,11 +633,10 @@ void net_disconnectAll()
 	int i;
 	mutex_lock( &_clients_lock );
 	for (i = 0; i < _num_clients; ++i) {
-		if ( _clients[i] == NULL ) continue;
-		dnbd3_client_t * const client = _clients[i];
-		mutex_lock( &client->lock );
-		if ( client->sock >= 0 ) shutdown( client->sock, SHUT_RDWR );
-		mutex_unlock( &client->lock );
+		if ( _clients[i] == NULL )
+			continue;
+		shutdown( _clients[i]->sock, SHUT_RDWR );
+		pthread_kill( _clients[i]->thread, SIGINT );
 	}
 	mutex_unlock( &_clients_lock );
 }

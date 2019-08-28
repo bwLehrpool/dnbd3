@@ -137,13 +137,13 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	bool hasName = false;
 	bool ok;
 	int keepAlive = HTTP_KEEPALIVE;
-	do {
+	while ( !_shutdown ) {
 		// Read request from client
 		struct phr_header headers[100];
 		size_t numHeaders, prevLen = 0, consumed;
 		struct string method, path;
 		int minorVersion;
-		do {
+		while ( !_shutdown ) {
 			// Parse before calling recv, there might be a complete pipelined request in the buffer already
 			// If the request is incomplete, we allow exactly one additional recv() to complete it.
 			// This should suffice for real world scenarios as I don't know of any
@@ -188,7 +188,9 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 				sendReply( sock, "400 Bad Request", "text/plain", "Server cannot understand what you're trying to say", -1, HTTP_CLOSE );
 				goto func_return;
 			}
-		} while ( true );
+		} // Loop while request header incomplete
+		if ( _shutdown )
+			break;
 		if ( keepAlive == HTTP_KEEPALIVE ) {
 			// Only keep the connection alive (and indicate so) if the client seems to support this
 			if ( minorVersion == 0 || hasHeaderValue( headers, numHeaders, &STR_CONNECTION, &STR_CLOSE ) ) {
@@ -213,7 +215,8 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			} else {
 				ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, keepAlive );
 			}
-			if ( !ok ) break;
+			if ( !ok )
+				break;
 		}
 		// hoff might be beyond end if the client sent another request (burst)
 		const ssize_t extra = hoff - consumed;
@@ -225,7 +228,7 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			hasName = true;
 			setThreadName( "HTTP" );
 		}
-	} while (true);
+	} // Loop while more requests
 func_return:;
 	do {
 		const int curCount = --status.count;

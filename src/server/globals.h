@@ -138,6 +138,7 @@ struct _dnbd3_client
 	char hostName[HOSTNAMELEN];       // inet_ntop version of host
 	pthread_mutex_t sendMutex;        // Held while writing to sock if image is incomplete (since uplink uses socket too)
 	pthread_mutex_t lock;
+	pthread_t thread;
 };
 
 // #######################################################

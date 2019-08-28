@@ -184,13 +184,20 @@ static void* integrity_main(void * data UNUSED)
 							mutex_unlock( &image->lock );
 						}
 #if defined(linux) || defined(__linux)
-						if ( sync_file_range( fd, start, end - start, SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER ) == -1 ) {
+						while ( sync_file_range( fd, start, end - start, SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER ) == -1 )
 #else
-						if ( fsync( fd ) == -1 ) {
+						while ( fsync( fd ) == -1 )
 #endif
-							logadd( LOG_ERROR, "Cannot flush %s for integrity check", image->path );
+						{
+							if ( _shutdown )
+								break;
+							if ( errno == EINTR )
+								continue;
+							logadd( LOG_ERROR, "Cannot flush %s for integrity check (errno=%d)", image->path, errno );
 							exit( 1 );
 						}
+						if ( _shutdown )
+							break;
 						// Use direct I/O only if read length is multiple of 4096 to be on the safe side
 						int tfd;
 						if ( direct && ( end % DNBD3_BLOCK_SIZE ) == 0 ) {
@@ -266,7 +273,9 @@ static void* integrity_main(void * data UNUSED)
 		}
 	}
 	mutex_unlock( &integrityQueueLock );
-	if ( buffer != NULL ) free( buffer );
+	if ( buffer != NULL ) {
+		free( buffer );
+	}
 	bRunning = false;
 	return NULL;
 }

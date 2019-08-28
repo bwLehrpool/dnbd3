@@ -37,6 +37,8 @@
 #include <signal.h>
 #include <getopt.h>
 #include <assert.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define LONGOPT_CRC4       1000
 #define LONGOPT_ASSERT     1001
@@ -60,6 +62,7 @@ static _Atomic(job_t *) newJob;
 static bool hasTimerThread = false;
 static pthread_t timerThread;
 
+static pid_t mainPid;
 static pthread_t mainThread;
 
 #define DEFAULT_TIMER_TIMEOUT (60)
@@ -138,7 +141,7 @@ _Noreturn static void dnbd3_cleanup()
 	logadd( LOG_INFO, "Cleanup..." );
 
 	if ( hasTimerThread ) {
-		pthread_kill( timerThread, SIGHUP );
+		pthread_kill( timerThread, SIGINT );
 		thread_join( timerThread, NULL );
 	}
 
@@ -161,6 +164,8 @@ _Noreturn static void dnbd3_cleanup()
 
 	// Wait for clients to disconnect
 	net_waitForAllDisconnected();
+
+	threadpool_waitEmpty();
 
 	// Clean up images
 	retries = 5;
@@ -204,6 +209,7 @@ int main(int argc, char *argv[])
 			{ 0, 0, 0, 0 }
 	};
 
+	mainPid = getpid();
 	mainThread = pthread_self();
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
@@ -509,10 +515,16 @@ static void dnbd3_handleSignal(int signum)
 
 static void dnbd3_handleSignal2(int signum, siginfo_t *info, void *data UNUSED)
 {
-	if ( !pthread_equal( pthread_self(), mainThread ) )
-		return;
-	memcpy( &lastSignal, info, sizeof(siginfo_t) );
-	dnbd3_handleSignal( signum );
+	if ( info->si_pid != mainPid ) { // Source is not this process
+		memcpy( &lastSignal, info, sizeof(siginfo_t) ); // Copy signal info
+		if ( info->si_pid != 0 && !pthread_equal( pthread_self(), mainThread ) ) {
+			pthread_kill( mainThread, info->si_signo ); // And relay signal if we're not the main thread
+		}
+	}
+	if ( pthread_equal( pthread_self(), mainThread ) ) {
+		// Signal received by main thread -- handle
+		dnbd3_handleSignal( signum );
+	}
 }
 
 uint32_t dnbd3_serverUptime()
