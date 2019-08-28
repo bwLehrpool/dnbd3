@@ -13,6 +13,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 
 #define CHECK_QUEUE_SIZE 200
 
@@ -56,13 +58,14 @@ void integrity_init()
 void integrity_shutdown()
 {
 	assert( queueLen != -1 );
+	if ( !bRunning )
+		return;
 	logadd( LOG_DEBUG1, "Shutting down integrity checker...\n" );
+	pthread_kill( thread, SIGINT );
 	mutex_lock( &integrityQueueLock );
 	pthread_cond_signal( &queueSignal );
 	mutex_unlock( &integrityQueueLock );
 	thread_join( thread, NULL );
-	while ( bRunning )
-		usleep( 10000 );
 	mutex_destroy( &integrityQueueLock );
 	pthread_cond_destroy( &queueSignal );
 	logadd( LOG_DEBUG1, "Integrity checker exited normally.\n" );
