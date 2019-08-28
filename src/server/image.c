@@ -1748,33 +1748,3 @@ static void* closeUnusedFds(void* nix UNUSED)
 	}
 	return NULL;
 }
-
-/*
- void image_find_latest()
- {
- // Not in array or most recent rid is requested, try file system
- if (revision != 0) {
- // Easy case - specific RID
- char
- } else {
- // Determine base directory where the image in question has to reside.
- // Eg, the _basePath is "/srv/", requested image is "rz/ubuntu/default-13.04"
- // Then searchPath has to be set to "/srv/rz/ubuntu"
- char searchPath[strlen(_basePath) + len + 1];
- char *lastSlash = strrchr(name, '/');
- char *baseName; // Name of the image. In the example above, it will be "default-13.04"
- if ( lastSlash == NULL ) {
- *searchPath = '\0';
- baseName = name;
- } else {
- char *from = name, *to = searchPath;
- while (from < lastSlash) *to++ = *from++;
- *to = '\0';
- baseName = lastSlash + 1;
- }
- // Now we have the search path in our real file system and the expected image name.
- // The revision naming sceme is <IMAGENAME>.r<RID>, so if we're looking for revision 13,
- // our example image has to be named default-13.04.r13
- }
- }
- */

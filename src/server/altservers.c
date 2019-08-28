@@ -363,14 +363,6 @@ static void altservers_imageFailed(dnbd3_uplink_t *uplink, int server)
 	mutex_unlock( &altServersLock );
 }
 
-/**
- * Mainloop of this module. It will wait for requests by uplinks to find a
- * suitable uplink server for them. If found, it will tell the uplink about
- * the best server found. Currently the RTT history is kept per server and
- * not per uplink, so if many images use the same uplink server, the history
- * will update quite quickly. Needs to be improved some time, ie. by only
- * updating the rtt if the last update was at least X seconds ago.
- */
 static void *altservers_runCheck(void *data)
 {
 	dnbd3_uplink_t * const uplink = (dnbd3_uplink_t*)data;
