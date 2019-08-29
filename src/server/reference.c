@@ -13,7 +13,7 @@ void ref_init( ref *reference, void ( *freefun )( ref * ), long count )
 
 _Noreturn void _ref_error( const char *message )
 {
-	fprintf( stderr, "Reference counter overflow\n" );
+	fprintf( stderr, "%s\n", message );
 	abort();
 }
 

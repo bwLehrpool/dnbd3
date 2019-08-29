@@ -27,7 +27,7 @@ static inline ref *ref_get( weakref *weakref )
 	} while ( !atomic_compare_exchange_weak( weakref, (void **)&old_weakref, old_weakref + 1 ) );
 	struct _ref_ *ref = aligned_ref( old_weakref )->ref;
 	if ( unlikely( ++ref->count == -1 ) ) {
-		_ref_error( "Reference counter overflow. Aborting.\n" );
+		_ref_error( "Reference counter overflow. Aborting." );
 	}
 	char *cur_weakref = ( char * )*weakref;
 	do {
