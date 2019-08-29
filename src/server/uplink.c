@@ -258,10 +258,14 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 		logadd( LOG_WARNING, "Cannot relay request by client; length of %" PRIu32 " exceeds maximum payload", length );
 		return false;
 	}
-	dnbd3_uplink_t * const uplink = ref_get_uplink( &client->image->uplinkref );
-	if ( uplink == NULL ) {
-		logadd( LOG_DEBUG1, "Uplink request for image with no uplink" );
-		return false;
+	dnbd3_uplink_t * uplink = ref_get_uplink( &client->image->uplinkref );
+	if ( unlikely( uplink == NULL ) ) {
+		uplink_init( client->image, -1, NULL, -1 );
+		uplink = ref_get_uplink( &client->image->uplinkref );
+		if ( uplink == NULL ) {
+			logadd( LOG_DEBUG1, "Uplink request for image with no uplink" );
+			return false;
+		}
 	}
 	if ( uplink->shutdown ) {
 		logadd( LOG_DEBUG1, "Uplink request for image with uplink shutting down" );
@@ -460,12 +464,15 @@ static void* uplink_mainloop(void *data)
 	events[EV_SIGNAL].events = POLLIN;
 	events[EV_SIGNAL].fd = signal_getWaitFd( uplink->signal );
 	events[EV_SOCKET].fd = -1;
+	if ( uplink->rttTestResult != RTT_DOCHANGE ) {
+		altservers_findUplink( uplink ); // In case we didn't kickstart
+	}
 	while ( !_shutdown && !uplink->shutdown ) {
 		// poll()
 		waitTime = uplink->rttTestResult == RTT_DOCHANGE ? 0 : -1;
 		if ( waitTime == 0 ) {
 			// 0 means poll, since we're about to change the server
-		} else if ( uplink->current.fd == -1 && !uplink_connectionShouldShutdown( uplink ) ) {
+		} else if ( uplink->current.fd == -1 ) {
 			waitTime = 1000;
 		} else {
 			declare_now;
@@ -568,32 +575,22 @@ static void* uplink_mainloop(void *data)
 				}
 			}
 			// Don't keep uplink established if we're idle for too much
-			if ( uplink->current.fd != -1 && uplink_connectionShouldShutdown( uplink ) ) {
-				mutex_lock( &uplink->sendMutex );
-				close( uplink->current.fd );
-				uplink->current.fd = -1;
-				mutex_unlock( &uplink->sendMutex );
-				uplink->cycleDetected = false;
-				if ( uplink->recvBufferLen != 0 ) {
-					uplink->recvBufferLen = 0;
-					free( uplink->recvBuffer );
-					uplink->recvBuffer = NULL;
-				}
+			if ( uplink_connectionShouldShutdown( uplink ) ) {
 				logadd( LOG_DEBUG1, "Closing idle uplink for image %s:%d", uplink->image->name, (int)uplink->image->rid );
-				setThreadName( "idle-uplink" );
+				goto cleanup;
 			}
 		}
 		// See if we should trigger an RTT measurement
 		rttTestResult = uplink->rttTestResult;
 		if ( rttTestResult == RTT_IDLE || rttTestResult == RTT_DONTCHANGE ) {
-			if ( timing_reached( &nextAltCheck, &now ) || ( uplink->current.fd == -1 && !uplink_connectionShouldShutdown( uplink ) ) || uplink->cycleDetected ) {
+			if ( timing_reached( &nextAltCheck, &now ) || uplink->current.fd == -1 || uplink->cycleDetected ) {
 				// It seems it's time for a check
 				if ( image_isComplete( uplink->image ) ) {
 					// Quit work if image is complete
 					logadd( LOG_INFO, "Replication of %s complete.", uplink->image->name );
 					setThreadName( "finished-uplink" );
 					goto cleanup;
-				} else if ( !uplink_connectionShouldShutdown( uplink ) ) {
+				} else {
 					// Not complete - do measurement
 					altservers_findUplinkAsync( uplink ); // This will set RTT_INPROGRESS (synchronous)
 					if ( _backgroundReplication == BGR_FULL && uplink->nextReplicationIndex == -1 ) {
@@ -606,6 +603,9 @@ static void* uplink_mainloop(void *data)
 		} else if ( rttTestResult == RTT_NOT_REACHABLE ) {
 			atomic_compare_exchange_strong( &uplink->rttTestResult, &rttTestResult, RTT_IDLE );
 			discoverFailCount++;
+			if ( uplink->current.fd == -1 && discoverFailCount > (SERVER_RTT_MAX_UNREACH / 2) ) {
+				uplink->image->working = false;
+			}
 			timing_set( &nextAltCheck, &now, (discoverFailCount < SERVER_RTT_MAX_UNREACH ? altCheckInterval : SERVER_RTT_INTERVAL_FAILED) );
 		}
 #ifdef _DEBUG
@@ -1125,8 +1125,6 @@ static bool uplink_saveCacheMap(dnbd3_uplink_t *uplink)
 		return true;
 	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
 	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
-	// Unlock. Use path and cacheFd without locking. path should never change after initialization of the image,
-	// cacheFd is owned by the uplink thread and we don't want to hold a spinlock during I/O
 	assert( image->path != NULL );
 	char mapfile[strlen( image->path ) + 4 + 1];
 	strcpy( mapfile, image->path );

@@ -270,17 +270,14 @@ void* net_handleNewConnection(void *clientPtr)
 				bOk = true;
 				if ( image->ref_cacheMap != NULL ) {
 					dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
-					if ( uplink == NULL || uplink->cacheFd == -1 || uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
+					if ( uplink != NULL && ( uplink->cacheFd == -1 || uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) ) {
 						bOk = ( rand() % 4 ) == 1;
 					}
-					bool penalty = bOk && ( uplink == NULL || uplink->cacheFd == -1 );
-					if ( uplink == NULL ) {
-						uplink_init( image, -1, NULL, 0 );
-					} else {
-						ref_put( &uplink->reference );
-					}
-					if ( penalty ) { // Wait 100ms if local caching is not working so this
+					if ( bOk && uplink != NULL && uplink->cacheFd == -1 ) { // Wait 100ms if local caching is not working so this
 						usleep( 100000 ); // server gets a penalty and is less likely to be selected
+					}
+					if ( uplink != NULL ) {
+						ref_put( &uplink->reference );
 					}
 				}
 				if ( bOk ) {
