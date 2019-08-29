@@ -41,7 +41,7 @@ bool connection_init_n_times(
 		const char *lowerImage,
 		const uint16_t rid,
 		int ntimes,
-		int blockSize,
+		uint64_t blockSize,
 		BenchCounters* counters
 		) {
 	for (int run_i = 0; run_i < ntimes; ++run_i) {
@@ -96,7 +96,8 @@ bool connection_init_n_times(
 			} else if ( rid != 0 && rid != remoteRid ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "rid mismatch" );
-			} else if ( !dnbd3_get_block( sock, run_i * blockSize, blockSize, 0, 0 ) ) {
+			//} else if ( !dnbd3_get_block( sock, run_i * blockSize, blockSize, 0, 0 ) ) {
+			} else if ( !dnbd3_get_block( sock, (((uint64_t)rand()) << 16 + rand()) % (remoteSize - blockSize), blockSize, 0, 0 ) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "send: get block failed" );
 			} else if ( !dnbd3_get_reply( sock, &reply ) ) {

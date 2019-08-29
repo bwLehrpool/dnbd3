@@ -19,7 +19,7 @@ typedef struct _dnbd3_async {
 } dnbd3_async_t;
 
 
-bool connection_init_n_times(const char *hosts, const char *image, const uint16_t rid, int ntimes, int blockSize, BenchCounters* counters);
+bool connection_init_n_times(const char *hosts, const char *image, const uint16_t rid, int ntimes, uint64_t blockSize, BenchCounters* counters);
 
 bool connection_init(const char *hosts, const char *image, const uint16_t rid);
 
