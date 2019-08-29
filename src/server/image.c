@@ -51,10 +51,18 @@ static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageS
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc);
 static bool image_ensureDiskSpace(uint64_t size, bool force);
 
-static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
+static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
-static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list, uint8_t * const cache_map);
+static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list, atomic_uint_least8_t * const cache_map);
 static void* closeUnusedFds(void*);
+static void allocCacheMap(dnbd3_image_t *image, bool complete);
+
+static void cmfree(ref *ref)
+{
+	dnbd3_cache_map_t *cache = container_of(ref, dnbd3_cache_map_t, reference);
+	logadd( LOG_DEBUG2, "Freeing a cache map" );
+	free( cache );
+}
 
 // ##########################################
 
@@ -70,7 +78,6 @@ void image_serverStartup()
 /**
  * Update cache-map of given image for the given byte range
  * start (inclusive) - end (exclusive)
- * Locks on: images[].lock
  */
 void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const bool set)
 {
@@ -91,33 +98,55 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	if ( start >= end )
 		return;
 	bool setNewBlocks = false;
-	uint64_t pos = start;
-	mutex_lock( &image->lock );
-	if ( image->cache_map == NULL ) {
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL ) {
 		// Image seems already complete
 		if ( set ) {
 			// This makes no sense
-			mutex_unlock( &image->lock );
-			logadd( LOG_DEBUG1, "image_updateCachemap(true) with no cache_map: %s", image->path );
+			logadd( LOG_DEBUG1, "image_updateCachemap(true) with no cache map: %s", image->path );
 			return;
 		}
 		// Recreate a cache map, set it to all 1 initially as we assume the image was complete
-		const int byteSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
-		image->cache_map = malloc( byteSize );
-		memset( image->cache_map, 0xff, byteSize );
-	}
-	while ( pos < end ) {
-		const size_t map_y = (int)( pos >> 15 );
-		const int map_x = (int)( (pos >> 12) & 7 ); // mod 8
-		const int bit_mask = 1 << map_x;
-		if ( set ) {
-			if ( (image->cache_map[map_y] & bit_mask) == 0 ) setNewBlocks = true;
-			image->cache_map[map_y] |= (uint8_t)bit_mask;
-		} else {
-			image->cache_map[map_y] &= (uint8_t)~bit_mask;
+		allocCacheMap( image, true );
+		cache = ref_get_cachemap( image );
+		if ( cache == NULL ) {
+			logadd( LOG_WARNING, "WHAT!!!?!?!= No cache map right after alloc?! %s", image->path );
+			return;
 		}
-		pos += DNBD3_BLOCK_SIZE;
 	}
+	// Set/unset
+	const uint64_t firstByteInMap = start >> 15;
+	const uint64_t lastByteInMap = (end - 1) >> 15;
+	uint64_t pos;
+	// First byte
+	uint8_t fb = 0, lb = 0;
+	for ( pos = start; firstByteInMap == (pos >> 15) && pos < end; pos += DNBD3_BLOCK_SIZE ) {
+		const int map_x = (pos >> 12) & 7; // mod 8
+		const uint8_t bit_mask = (uint8_t)( 1 << map_x );
+		fb |= bit_mask;
+	}
+	// Last byte
+	for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
+		const int map_x = (pos >> 12) & 7; // mod 8
+		const uint8_t bit_mask = (uint8_t)( 1 << map_x );
+		lb |= bit_mask;
+	}
+	if ( set ) {
+		uint8_t fo = atomic_fetch_or_explicit( &cache->map[firstByteInMap], fb, memory_order_relaxed );
+		uint8_t lo = atomic_fetch_or_explicit( &cache->map[lastByteInMap], lb, memory_order_relaxed );
+		setNewBlocks = ( fo != cache->map[firstByteInMap] || lo != cache->map[lastByteInMap] );
+	} else {
+		atomic_fetch_and_explicit( &cache->map[firstByteInMap], (uint8_t)~fb, memory_order_relaxed );
+		atomic_fetch_and_explicit( &cache->map[lastByteInMap], (uint8_t)~lb, memory_order_relaxed );
+	}
+	const uint8_t nval = set ? 0xff : 0;
+	// Everything in between
+	for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
+		if ( atomic_exchange_explicit( &cache->map[pos], nval, memory_order_relaxed ) != nval && set ) {
+			setNewBlocks = true;
+		}
+	}
+	atomic_thread_fence( memory_order_release );
 	if ( setNewBlocks && image->crc32 != NULL ) {
 		// If setNewBlocks is set, at least one of the blocks was not cached before, so queue all hash blocks
 		// for checking, even though this might lead to checking some hash block again, if it was
@@ -125,19 +154,14 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		// First set start and end to borders of hash blocks
 		start &= ~(uint64_t)(HASH_BLOCK_SIZE - 1);
 		end = (end + HASH_BLOCK_SIZE - 1) & ~(uint64_t)(HASH_BLOCK_SIZE - 1);
-		pos = start;
-		while ( pos < end ) {
-			if ( image->cache_map == NULL ) break;
+		for ( pos = start; pos < end; pos += HASH_BLOCK_SIZE ) {
 			const int block = (int)( pos / HASH_BLOCK_SIZE );
-			if ( image_isHashBlockComplete( image->cache_map, block, image->realFilesize ) ) {
-				mutex_unlock( &image->lock );
+			if ( image_isHashBlockComplete( cache->map, block, image->realFilesize ) ) {
 				integrity_check( image, block );
-				mutex_lock( &image->lock );
 			}
-			pos += HASH_BLOCK_SIZE;
 		}
 	}
-	mutex_unlock( &image->lock );
+	ref_put( &cache->reference );
 }
 
 /**
@@ -149,20 +173,18 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 bool image_isComplete(dnbd3_image_t *image)
 {
 	assert( image != NULL );
-	mutex_lock( &image->lock );
 	if ( image->virtualFilesize == 0 ) {
-		mutex_unlock( &image->lock );
 		return false;
 	}
-	if ( image->cache_map == NULL ) {
-		mutex_unlock( &image->lock );
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL ) {
 		return true;
 	}
 	bool complete = true;
 	int j;
 	const int map_len_bytes = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
 	for (j = 0; j < map_len_bytes - 1; ++j) {
-		if ( image->cache_map[j] != 0xFF ) {
+		if ( cache->map[j] != 0xFF ) {
 			complete = false;
 			break;
 		}
@@ -177,18 +199,27 @@ bool image_isComplete(dnbd3_image_t *image)
 			for (j = 0; j < blocks_in_last_byte; ++j)
 				last_byte |= (uint8_t)(1 << j);
 		}
-		complete = ((image->cache_map[map_len_bytes - 1] & last_byte) == last_byte);
+		complete = ((cache->map[map_len_bytes - 1] & last_byte) == last_byte);
 	}
-	if ( !complete ) {
-		mutex_unlock( &image->lock );
+	ref_put( &cache->reference );
+	if ( !complete )
 		return false;
+	mutex_lock( &image->lock );
+	// Lock and make sure current cache map is still the one we saw complete
+	dnbd3_cache_map_t *current = ref_get_cachemap( image );
+	if ( current == cache ) {
+		// Set cache map NULL as it's complete
+		ref_setref( &image->ref_cacheMap, NULL );
 	}
-	char mapfile[PATHLEN] = "";
-	free( image->cache_map );
-	image->cache_map = NULL;
-	snprintf( mapfile, PATHLEN, "%s.map", image->path );
+	if ( current != NULL ) {
+		ref_put( &current->reference );
+	}
 	mutex_unlock( &image->lock );
-	unlink( mapfile );
+	if ( current == cache ) { // Successfully set cache map to NULL above
+		char mapfile[PATHLEN] = "";
+		snprintf( mapfile, PATHLEN, "%s.map", image->path );
+		unlink( mapfile );
+	}
 	return true;
 }
 
@@ -350,19 +381,18 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		img->rid = candidate->rid;
 		img->users = 1;
 		img->working = false;
+		img->ref_cacheMap = NULL;
 		mutex_init( &img->lock, LOCK_IMAGE );
 		if ( candidate->crc32 != NULL ) {
 			const size_t mb = IMGSIZE_TO_HASHBLOCKS( candidate->virtualFilesize ) * sizeof(uint32_t);
 			img->crc32 = malloc( mb );
 			memcpy( img->crc32, candidate->crc32, mb );
 		}
-		mutex_lock( &candidate->lock );
-		if ( candidate->cache_map != NULL ) {
-			const size_t mb = IMGSIZE_TO_MAPBYTES( candidate->virtualFilesize );
-			img->cache_map = malloc( mb );
-			memcpy( img->cache_map, candidate->cache_map, mb );
+		dnbd3_cache_map_t *cache = ref_get_cachemap( candidate );
+		if ( cache != NULL ) {
+			ref_setref( &img->ref_cacheMap, &cache->reference );
+			ref_put( &cache->reference );
 		}
-		mutex_unlock( &candidate->lock );
 		if ( image_addToList( img ) ) {
 			image_release( candidate );
 			candidate = img;
@@ -377,7 +407,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	}
 
 	// Check if image is incomplete, handle
-	if ( candidate->cache_map != NULL ) {
+	if ( candidate->ref_cacheMap != NULL ) {
 		uplink_init( candidate, -1, NULL, -1 );
 	}
 
@@ -585,11 +615,10 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	if ( !uplink_shutdown( image ) )
 		return NULL;
 	mutex_lock( &image->lock );
-	free( image->cache_map );
+	ref_setref( &image->ref_cacheMap, NULL );
 	free( image->crc32 );
 	free( image->path );
 	free( image->name );
-	image->cache_map = NULL;
 	image->crc32 = NULL;
 	image->path = NULL;
 	image->name = NULL;
@@ -600,7 +629,7 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	return NULL ;
 }
 
-bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
+bool image_isHashBlockComplete(atomic_uint_least8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
 {
 	if ( cacheMap == NULL ) return true;
 	const uint64_t end = (block + 1) * HASH_BLOCK_SIZE;
@@ -707,7 +736,7 @@ static bool image_load(char *base, char *path, int withUplink)
 {
 	int revision = -1;
 	struct stat st;
-	uint8_t *cache_map = NULL;
+	dnbd3_cache_map_t *cache = NULL;
 	uint32_t *crc32list = NULL;
 	dnbd3_image_t *existing = NULL;
 	int fdImage = -1;
@@ -790,7 +819,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	}
 
 	// 1. Allocate memory for the cache map if the image is incomplete
-	cache_map = image_loadCacheMap( path, virtualFilesize );
+	cache = image_loadCacheMap( path, virtualFilesize );
 
 	// XXX: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 
@@ -802,7 +831,7 @@ static bool image_load(char *base, char *path, int withUplink)
 
 	// Check CRC32
 	if ( crc32list != NULL ) {
-		if ( !image_checkRandomBlocks( 4, fdImage, realFilesize, crc32list, cache_map ) ) {
+		if ( !image_checkRandomBlocks( 4, fdImage, realFilesize, crc32list, cache != NULL ? cache->map : NULL ) ) {
 			logadd( LOG_ERROR, "quick crc32 check of %s failed. Data corruption?", path );
 			doFullCheck = true;
 		}
@@ -826,7 +855,7 @@ static bool image_load(char *base, char *path, int withUplink)
 			crc32list = NULL;
 			function_return = true;
 			goto load_error; // Keep existing
-		} else if ( existing->cache_map != NULL && cache_map == NULL ) {
+		} else if ( existing->ref_cacheMap != NULL && cache == NULL ) {
 			// Just ignore that fact, if replication is really complete the cache map will be removed anyways
 			logadd( LOG_INFO, "Image '%s:%d' has no cache map on disk!", existing->name, (int)existing->rid );
 			function_return = true;
@@ -846,7 +875,8 @@ static bool image_load(char *base, char *path, int withUplink)
 	dnbd3_image_t *image = calloc( 1, sizeof(dnbd3_image_t) );
 	image->path = strdup( path );
 	image->name = strdup( imgName );
-	image->cache_map = cache_map;
+	image->ref_cacheMap = NULL;
+	ref_setref( &image->ref_cacheMap, &cache->reference );
 	image->crc32 = crc32list;
 	image->masterCrc32 = masterCrc;
 	image->uplinkref = NULL;
@@ -855,7 +885,7 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->rid = (uint16_t)revision;
 	image->users = 0;
 	image->readFd = -1;
-	image->working = (image->cache_map == NULL );
+	image->working = ( cache == NULL );
 	timing_get( &image->nextCompletenessEstimate );
 	image->completenessEstimate = -1;
 	mutex_init( &image->lock, LOCK_IMAGE );
@@ -870,16 +900,16 @@ static bool image_load(char *base, char *path, int withUplink)
 	timing_gets( &image->atime, offset );
 
 	// Prevent freeing in cleanup
-	cache_map = NULL;
+	cache = NULL;
 	crc32list = NULL;
 
 	// Get rid of cache map if image is complete
-	if ( image->cache_map != NULL ) {
+	if ( image->ref_cacheMap != NULL ) {
 		image_isComplete( image );
 	}
 
 	// Image is definitely incomplete, initialize uplink worker
-	if ( image->cache_map != NULL ) {
+	if ( image->ref_cacheMap != NULL ) {
 		image->working = false;
 		if ( withUplink ) {
 			uplink_init( image, -1, NULL, -1 );
@@ -910,21 +940,22 @@ static bool image_load(char *base, char *path, int withUplink)
 load_error: ;
 	if ( existing != NULL ) existing = image_release( existing );
 	if ( crc32list != NULL ) free( crc32list );
-	if ( cache_map != NULL ) free( cache_map );
+	if ( cache != NULL ) free( cache );
 	if ( fdImage != -1 ) close( fdImage );
 	return function_return;
 }
 
-static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize)
+static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize)
 {
-	uint8_t *retval = NULL;
+	dnbd3_cache_map_t *retval = NULL;
 	char mapFile[strlen( imagePath ) + 10 + 1];
 	sprintf( mapFile, "%s.map", imagePath );
 	int fdMap = open( mapFile, O_RDONLY );
-	if ( fdMap >= 0 ) {
+	if ( fdMap != -1 ) {
 		const int map_size = IMGSIZE_TO_MAPBYTES( fileSize );
-		retval = calloc( 1, map_size );
-		const ssize_t rd = read( fdMap, retval, map_size );
+		retval = calloc( 1, sizeof(*retval) + map_size );
+		ref_init( &retval->reference, cmfree, 0 );
+		const ssize_t rd = read( fdMap, retval->map, map_size );
 		if ( map_size != rd ) {
 			logadd( LOG_WARNING, "Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, imagePath );
 			// Could not read complete map, that means the rest of the image file will be considered incomplete
@@ -985,7 +1016,7 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 	return retval;
 }
 
-static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t realFilesize, uint32_t * const crc32list, uint8_t * const cache_map)
+static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t realFilesize, uint32_t * const crc32list, atomic_uint_least8_t * const cache_map)
 {
 	// This checks the first block and (up to) count - 1 random blocks for corruption
 	// via the known crc32 list. This is very sloppy and is merely supposed to detect
@@ -1529,30 +1560,37 @@ json_t* image_getListAsJson()
 /**
  * Get completeness of an image in percent. Only estimated, not exact.
  * Returns: 0-100
- * DOES NOT LOCK, so make sure to do so before calling
  */
 int image_getCompletenessEstimate(dnbd3_image_t * const image)
 {
 	assert( image != NULL );
-	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL )
+		return image->working ? 100 : 0;
+	const int len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+	if ( unlikely( len == 0 ) ) {
+		ref_put( &cache->reference );
+		return 0;
+	}
 	declare_now;
 	if ( !timing_reached( &image->nextCompletenessEstimate, &now ) ) {
 		// Since this operation is relatively expensive, we cache the result for a while
+		ref_put( &cache->reference );
 		return image->completenessEstimate;
 	}
 	int i;
 	int percent = 0;
-	const int len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
-	if ( len == 0 ) return 0;
 	for ( i = 0; i < len; ++i ) {
-		if ( image->cache_map[i] == 0xff ) {
+		const uint8_t v = atomic_load_explicit( &cache->map[i], memory_order_relaxed );
+		if ( v == 0xff ) {
 			percent += 100;
-		} else if ( image->cache_map[i] != 0 ) {
+		} else if ( v != 0 ) {
 			percent += 50;
 		}
 	}
+	ref_put( &cache->reference );
 	image->completenessEstimate = percent / len;
-	timing_set( &image->nextCompletenessEstimate, &now, 8 + rand() % 32 );
+	timing_set( &image->nextCompletenessEstimate, &now, 4 + rand() % 16 );
 	return image->completenessEstimate;
 }
 
@@ -1744,3 +1782,21 @@ static void* closeUnusedFds(void* nix UNUSED)
 	}
 	return NULL;
 }
+
+static void allocCacheMap(dnbd3_image_t *image, bool complete)
+{
+	const uint8_t val = complete ? 0xff : 0;
+	const int byteSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+	dnbd3_cache_map_t *cache = malloc( sizeof(*cache) + byteSize );
+	ref_init( &cache->reference, cmfree, 0 );
+	memset( cache->map, val, byteSize );
+	mutex_lock( &image->lock );
+	if ( image->ref_cacheMap != NULL ) {
+		logadd( LOG_WARNING, "BUG: allocCacheMap called but there already is a cache map for %s:%d", image->name, (int)image->rid );
+		free( cache );
+	} else {
+		ref_setref( &image->ref_cacheMap, &cache->reference );
+	}
+	mutex_unlock( &image->lock );
+}
+

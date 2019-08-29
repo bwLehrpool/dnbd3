@@ -51,4 +51,9 @@ static inline void ref_put( ref *ref )
 	ref == NULL ? NULL : container_of(ref, dnbd3_uplink_t, reference); \
 })
 
+#define ref_get_cachemap(image) ({ \
+	ref* ref = ref_get( &(image)->ref_cacheMap ); \
+	ref == NULL ? NULL : container_of(ref, dnbd3_cache_map_t, reference); \
+})
+
 #endif

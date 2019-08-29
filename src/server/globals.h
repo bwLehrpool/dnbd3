@@ -99,6 +99,12 @@ typedef struct
 	int permissions;
 } dnbd3_access_rule_t;
 
+typedef struct
+{
+	ref reference;
+	atomic_uint_least8_t map[];
+} dnbd3_cache_map_t;
+
 /**
  * Image struct. An image path could be something like
  * /mnt/images/rz/zfs/Windows7 ZfS.vmdk.r1
@@ -110,7 +116,7 @@ struct _dnbd3_image
 	char *path;            // absolute path of the image
 	char *name;            // public name of the image (usually relative path minus revision ID)
 	weakref uplinkref;     // pointer to a server connection
-	uint8_t *cache_map;    // cache map telling which parts are locally cached, NULL if complete
+	weakref ref_cacheMap;  // cache map telling which parts are locally cached, NULL if complete
 	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
 	uint64_t realFilesize;      // actual file size on disk
 	ticks atime;                // last access time
@@ -119,7 +125,7 @@ struct _dnbd3_image
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
 	int readFd;            // used to read the image. Used from multiple threads, so use atomic operations (pread et al)
-	int completenessEstimate; // Completeness estimate in percent
+	atomic_int completenessEstimate; // Completeness estimate in percent
 	atomic_int users;      // clients currently using this image. XXX Lock on imageListLock when modifying and checking whether the image should be freed. Reading it elsewhere is fine without the lock.
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
 	atomic_bool working;   // true if image exists and completeness is == 100% or a working upstream proxy is connected

@@ -181,10 +181,12 @@ static void* integrity_main(void * data UNUSED)
 						const uint64_t end = MIN( (uint64_t)(blocks[0] + 1) * HASH_BLOCK_SIZE, image->virtualFilesize );
 						bool complete = true;
 						if ( qCount == CHECK_ALL ) {
-							// When checking full image, skip incomplete blocks, otherwise assume block is complete
-							mutex_lock( &image->lock );
-							complete = image_isHashBlockComplete( image->cache_map, blocks[0], fileSize );
-							mutex_unlock( &image->lock );
+							dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+							if ( cache != NULL ) {
+								// When checking full image, skip incomplete blocks, otherwise assume block is complete
+								complete = image_isHashBlockComplete( cache->map, blocks[0], fileSize );
+								ref_put( &cache->reference );
+							}
 						}
 #if defined(linux) || defined(__linux)
 						while ( sync_file_range( fd, start, end - start, SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER ) == -1 )

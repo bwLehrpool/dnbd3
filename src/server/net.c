@@ -246,7 +246,7 @@ void* net_handleNewConnection(void *clientPtr)
 				// We're a proxy, client is another proxy, we don't do BGR, but connecting proxy does...
 				// Reject, as this would basically force this proxy to do BGR too.
 				image = image_get( image_name, rid, true );
-				if ( image != NULL && image->cache_map != NULL ) {
+				if ( image != NULL && image->ref_cacheMap != NULL ) {
 					// Only exception is if the image is complete locally
 					image = image_release( image );
 				}
@@ -268,7 +268,7 @@ void* net_handleNewConnection(void *clientPtr)
 			} else {
 				// Image is fine so far, but occasionally drop a client if the uplink for the image is clogged or unavailable
 				bOk = true;
-				if ( image->cache_map != NULL ) {
+				if ( image->ref_cacheMap != NULL ) {
 					dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
 					if ( uplink == NULL || uplink->cacheFd == -1 || uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) {
 						bOk = ( rand() % 4 ) == 1;
@@ -338,57 +338,52 @@ void* net_handleNewConnection(void *clientPtr)
 					break;
 				}
 
-				if ( request.size != 0 && image->cache_map != NULL ) {
+				dnbd3_cache_map_t *cache;
+				if ( request.size != 0 && ( cache = ref_get_cachemap( image ) ) != NULL ) {
 					// This is a proxyed image, check if we need to relay the request...
 					start = offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					end = (offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					bool isCached = true;
-					mutex_lock( &image->lock );
-					// Check again as we only aquired the lock just now
-					if ( image->cache_map != NULL ) {
-						const uint64_t firstByteInMap = start >> 15;
-						const uint64_t lastByteInMap = (end - 1) >> 15;
-						uint64_t pos;
-						// Middle - quick checking
-						if ( isCached ) {
-							pos = firstByteInMap + 1;
-							while ( pos < lastByteInMap ) {
-								if ( image->cache_map[pos] != 0xff ) {
-									isCached = false;
-									break;
-								}
-								++pos;
-							}
-						}
-						// First byte
-						if ( isCached ) {
-							pos = start;
-							do {
-								const int map_x = (pos >> 12) & 7; // mod 8
-								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-								if ( (image->cache_map[firstByteInMap] & bit_mask) == 0 ) {
-									isCached = false;
-									break;
-								}
-								pos += DNBD3_BLOCK_SIZE;
-							} while ( firstByteInMap == (pos >> 15) && pos < end );
-						}
-						// Last byte - only check if request spans multiple bytes in cache map
-						if ( isCached && firstByteInMap != lastByteInMap ) {
-							pos = lastByteInMap << 15;
-							while ( pos < end ) {
-								assert( lastByteInMap == (pos >> 15) );
-								const int map_x = (pos >> 12) & 7; // mod 8
-								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-								if ( (image->cache_map[lastByteInMap] & bit_mask) == 0 ) {
-									isCached = false;
-									break;
-								}
-								pos += DNBD3_BLOCK_SIZE;
+					const uint64_t firstByteInMap = start >> 15;
+					const uint64_t lastByteInMap = (end - 1) >> 15;
+					uint64_t pos;
+					uint8_t b;
+					atomic_thread_fence( memory_order_acquire );
+					// Middle - quick checking
+					if ( isCached ) {
+						for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
+							if ( atomic_load_explicit( &cache->map[pos], memory_order_relaxed ) != 0xff ) {
+								isCached = false;
+								break;
 							}
 						}
 					}
-					mutex_unlock( &image->lock );
+					// First byte
+					if ( isCached ) {
+						b = atomic_load_explicit( &cache->map[firstByteInMap], memory_order_relaxed );
+						for ( pos = start; firstByteInMap == (pos >> 15) && pos < end; pos += DNBD3_BLOCK_SIZE ) {
+							const int map_x = (pos >> 12) & 7; // mod 8
+							const uint8_t bit_mask = (uint8_t)( 1 << map_x );
+							if ( (b & bit_mask) == 0 ) {
+								isCached = false;
+								break;
+							}
+						}
+					}
+					// Last byte - only check if request spans multiple bytes in cache map
+					if ( isCached && firstByteInMap != lastByteInMap ) {
+						b = atomic_load_explicit( &cache->map[lastByteInMap], memory_order_relaxed );
+						for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
+							assert( lastByteInMap == (pos >> 15) );
+							const int map_x = (pos >> 12) & 7; // mod 8
+							const uint8_t bit_mask = (uint8_t)( 1 << map_x );
+							if ( (b & bit_mask) == 0 ) {
+								isCached = false;
+								break;
+							}
+						}
+					}
+					ref_put( &cache->reference );
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, offset, request.size, request.hops ) ) {
 							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy, disabling image %s:%d",

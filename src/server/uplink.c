@@ -91,7 +91,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 		ref_put( &uplink->reference );
 		return true; // There's already an uplink, so should we consider this success or failure?
 	}
-	if ( image->cache_map == NULL ) {
+	if ( image->ref_cacheMap == NULL ) {
 		logadd( LOG_WARNING, "Uplink was requested for image %s, but it is already complete", image->name );
 		goto failure;
 	}
@@ -170,7 +170,7 @@ bool uplink_shutdown(dnbd3_image_t *image)
 	mutex_unlock( &uplink->queueLock );
 	bool retval = ( exp && image->users == 0 );
 	mutex_unlock( &image->lock );
-	return exp;
+	return retval;
 }
 
 /**
@@ -214,7 +214,7 @@ static void uplink_free(ref *ref)
 	dnbd3_image_t *image = image_lock( uplink->image );
 	if ( image != NULL ) {
 		// != NULL means image is still in list...
-		if ( !_shutdown && image->cache_map != NULL ) {
+		if ( !_shutdown && image->ref_cacheMap != NULL ) {
 			// Ingegrity checker must have found something in the meantime
 			uplink_init( image, -1, NULL, 0 );
 		}
@@ -707,13 +707,14 @@ static void uplink_sendReplicationRequest(dnbd3_uplink_t *uplink)
 	if ( uplink == NULL || uplink->current.fd == -1 ) return;
 	if ( _backgroundReplication == BGR_DISABLED || uplink->cacheFd == -1 ) return; // Don't do background replication
 	if ( uplink->nextReplicationIndex == -1 || uplink->replicationHandle != REP_NONE )
-		return;
+		return; // Already a replication request on the wire, or no more blocks to replicate
 	dnbd3_image_t * const image = uplink->image;
 	if ( image->virtualFilesize < DNBD3_BLOCK_SIZE ) return;
-	mutex_lock( &image->lock );
-	if ( image == NULL || image->cache_map == NULL || image->users < _bgrMinClients ) {
-		// No cache map (=image complete), or replication pending, or not enough users, do nothing
-		mutex_unlock( &image->lock );
+	if ( image->users < _bgrMinClients ) return; // Not enough active users
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL || image->users < _bgrMinClients ) {
+		// No cache map (=image complete)
+		ref_put( &cache->reference );
 		return;
 	}
 	const int mapBytes = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
@@ -727,16 +728,18 @@ static void uplink_sendReplicationRequest(dnbd3_uplink_t *uplink)
 			endByte = mapBytes;
 		}
 	}
+	atomic_thread_fence( memory_order_acquire );
 	int replicationIndex = -1;
 	for ( int j = uplink->nextReplicationIndex; j < endByte; ++j ) {
 		const int i = j % ( mapBytes ); // Wrap around for BGR_FULL
-		if ( image->cache_map[i] != 0xff && ( i != lastBlockIndex || !uplink->replicatedLastBlock ) ) {
+		if ( atomic_load_explicit( &cache->map[i], memory_order_relaxed ) != 0xff
+				&& ( i != lastBlockIndex || !uplink->replicatedLastBlock ) ) {
 			// Found incomplete one
 			replicationIndex = i;
 			break;
 		}
 	}
-	mutex_unlock( &image->lock );
+	ref_put( &cache->reference );
 	if ( replicationIndex == -1 && _backgroundReplication == BGR_HASHBLOCK ) {
 		// Nothing left in current block, find next one
 		replicationIndex = uplink_findNextIncompleteHashBlock( uplink, endByte );
@@ -768,23 +771,24 @@ static void uplink_sendReplicationRequest(dnbd3_uplink_t *uplink)
 }
 
 /**
- * find next index into cache_map that corresponds to the beginning
+ * find next index into cache map that corresponds to the beginning
  * of a hash block which is neither completely empty nor completely
  * replicated yet. Returns -1 if no match.
  */
 static int uplink_findNextIncompleteHashBlock(dnbd3_uplink_t *uplink, const int startMapIndex)
 {
 	int retval = -1;
-	mutex_lock( &uplink->image->lock );
-	const int mapBytes = IMGSIZE_TO_MAPBYTES( uplink->image->virtualFilesize );
-	const uint8_t *cache_map = uplink->image->cache_map;
-	if ( cache_map != NULL ) {
-		int j;
+	dnbd3_cache_map_t *cache = ref_get_cachemap( uplink->image );
+	if ( cache != NULL ) {
+		const int mapBytes = IMGSIZE_TO_MAPBYTES( uplink->image->virtualFilesize );
 		const int start = ( startMapIndex & MAP_INDEX_HASH_START_MASK );
+		atomic_thread_fence( memory_order_acquire );
+		int j;
 		for (j = 0; j < mapBytes; ++j) {
 			const int i = ( start + j ) % mapBytes;
-			const bool isFull = cache_map[i] == 0xff || ( i + 1 == mapBytes && uplink->replicatedLastBlock );
-			const bool isEmpty = cache_map[i] == 0;
+			const uint8_t b = atomic_load_explicit( &cache->map[i], memory_order_relaxed );
+			const bool isFull = b == 0xff || ( i + 1 == mapBytes && uplink->replicatedLastBlock );
+			const bool isEmpty = b == 0;
 			if ( !isEmpty && !isFull ) {
 				// Neither full nor empty, replicate
 				if ( retval == -1 ) {
@@ -811,7 +815,7 @@ static int uplink_findNextIncompleteHashBlock(dnbd3_uplink_t *uplink, const int 
 			retval = -1;
 		}
 	}
-	mutex_unlock( &uplink->image->lock );
+	ref_put( &cache->reference );
 	return retval;
 }
 
@@ -1107,7 +1111,7 @@ static bool uplink_saveCacheMap(dnbd3_uplink_t *uplink)
 		if ( fsync( uplink->cacheFd ) == -1 ) {
 			// A failing fsync means we have no guarantee that any data
 			// since the last fsync (or open if none) has been saved. Apart
-			// from keeping the cache_map from the last successful fsync
+			// from keeping the cache map from the last successful fsync
 			// around and restoring it there isn't much we can do to recover
 			// a consistent state. Bail out.
 			logadd( LOG_ERROR, "fsync() on image file %s failed with errno %d", image->path, errno );
@@ -1116,21 +1120,13 @@ static bool uplink_saveCacheMap(dnbd3_uplink_t *uplink)
 		}
 	}
 
-	if ( image->cache_map == NULL ) return true;
-	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
-	mutex_lock( &image->lock );
-	// Lock and get a copy of the cache map, as it could be freed by another thread that is just about to
-	// figure out that this image's cache copy is complete
-	if ( image->cache_map == NULL || image->virtualFilesize < DNBD3_BLOCK_SIZE ) {
-		mutex_unlock( &image->lock );
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL )
 		return true;
-	}
+	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
 	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
-	uint8_t *map = malloc( size );
-	memcpy( map, image->cache_map, size );
 	// Unlock. Use path and cacheFd without locking. path should never change after initialization of the image,
 	// cacheFd is owned by the uplink thread and we don't want to hold a spinlock during I/O
-	mutex_unlock( &image->lock );
 	assert( image->path != NULL );
 	char mapfile[strlen( image->path ) + 4 + 1];
 	strcpy( mapfile, image->path );
@@ -1139,14 +1135,14 @@ static bool uplink_saveCacheMap(dnbd3_uplink_t *uplink)
 	int fd = open( mapfile, O_WRONLY | O_CREAT, 0644 );
 	if ( fd == -1 ) {
 		const int err = errno;
-		free( map );
+		ref_put( &cache->reference );
 		logadd( LOG_WARNING, "Could not open file to write cache map to disk (errno=%d) file %s", err, mapfile );
 		return false;
 	}
 
 	size_t done = 0;
 	while ( done < size ) {
-		const ssize_t ret = write( fd, map, size - done );
+		const ssize_t ret = write( fd, cache->map + done, size - done );
 		if ( ret == -1 ) {
 			if ( errno == EINTR ) continue;
 			logadd( LOG_WARNING, "Could not write cache map (errno=%d) file %s", errno, mapfile );
@@ -1158,11 +1154,11 @@ static bool uplink_saveCacheMap(dnbd3_uplink_t *uplink)
 		}
 		done += (size_t)ret;
 	}
+	ref_put( &cache->reference );
 	if ( fsync( fd ) == -1 ) {
 		logadd( LOG_WARNING, "fsync() on image map %s failed with errno %d", mapfile, errno );
 	}
 	close( fd );
-	free( map );
 	return true;
 }
 
