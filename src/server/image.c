@@ -237,7 +237,9 @@ bool image_ensureOpen(dnbd3_image_t *image)
 {
 	if ( image->readFd != -1 ) return image;
 	int newFd = open( image->path, O_RDONLY );
-	if ( newFd != -1 ) {
+	if ( newFd == -1 ) {
+		logadd( LOG_WARNING, "Cannot open %s for reading", image->path );
+	} else {
 		// Check size
 		const off_t flen = lseek( newFd, 0, SEEK_END );
 		if ( flen == -1 ) {
@@ -349,14 +351,14 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		logadd( LOG_WARNING, "lseek() on %s failed (errno=%d)%s.", candidate->path, errno, removingText );
 		reload = true;
 	} else if ( (uint64_t)len != candidate->realFilesize ) {
-		logadd( LOG_DEBUG1, "Size of %s changed at runtime, keeping disabled! Expected: %" PRIu64 ", found: %" PRIu64
+		logadd( LOG_WARNING, "Size of %s changed at runtime, keeping disabled! Expected: %" PRIu64 ", found: %" PRIu64
 				". Try sending SIGHUP to server if you know what you're doing.",
 				candidate->path, candidate->realFilesize, (uint64_t)len );
 	} else {
 		// Seek worked, file size is same, now see if we can read from file
 		char buffer[100];
 		if ( pread( candidate->readFd, buffer, sizeof(buffer), 0 ) == -1 ) {
-			logadd( LOG_DEBUG2, "Reading first %d bytes from %s failed (errno=%d)%s.",
+			logadd( LOG_WARNING, "Reading first %d bytes from %s failed (errno=%d)%s.",
 					(int)sizeof(buffer), candidate->path, errno, removingText );
 			reload = true;
 		} else if ( !candidate->working ) {
@@ -370,6 +372,7 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		// Could not access the image with exising fd - mark for reload which will re-open the file.
 		// make a copy of the image struct but keep the old one around. If/When it's not being used
 		// anymore, it will be freed automatically.
+		logadd( LOG_DEBUG1, "Reloading image file %s", candidate->path );
 		dnbd3_image_t *img = calloc( sizeof(dnbd3_image_t), 1 );
 		img->path = strdup( candidate->path );
 		img->name = strdup( candidate->name );
@@ -400,15 +403,14 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			img->users = 0;
 			image_free( img );
 		}
+	// Check if image is incomplete, initialize uplink
+	if ( candidate->ref_cacheMap != NULL ) {
+		uplink_init( candidate, -1, NULL, -1 );
+	}
 		// readFd == -1 and working == FALSE at this point,
 		// this function needs some splitting up for handling as we need to run most
 		// of the above code again. for now we know that the next call for this
 		// name:rid will get ne newly inserted "img" and try to re-open the file.
-	}
-
-	// Check if image is incomplete, handle
-	if ( candidate->ref_cacheMap != NULL ) {
-		uplink_init( candidate, -1, NULL, -1 );
 	}
 
 	return candidate; // We did all we can, hopefully it's working
