@@ -472,11 +472,10 @@ static void* uplink_mainloop(void *data)
 		waitTime = uplink->rttTestResult == RTT_DOCHANGE ? 0 : -1;
 		if ( waitTime == 0 ) {
 			// 0 means poll, since we're about to change the server
-		} else if ( uplink->current.fd == -1 ) {
-			waitTime = 1000;
 		} else {
 			declare_now;
 			waitTime = (int)timing_diffMs( &now, &nextAltCheck );
+			logadd( LOG_DEBUG1, "Next  %d  for %s", waitTime / 1000, uplink->image->name );
 			if ( waitTime < 100 ) waitTime = 100;
 			if ( waitTime > 5000 ) waitTime = 5000;
 		}
@@ -601,13 +600,14 @@ static void* uplink_mainloop(void *data)
 				timing_set( &nextAltCheck, &now, altCheckInterval );
 			}
 		} else if ( rttTestResult == RTT_NOT_REACHABLE ) {
-			atomic_compare_exchange_strong( &uplink->rttTestResult, &rttTestResult, RTT_IDLE );
-			discoverFailCount++;
-			if ( uplink->current.fd == -1 && discoverFailCount > (SERVER_RTT_MAX_UNREACH / 2) ) {
-				logadd( LOG_DEBUG1, "Disabling %s:%d since no uplink is available", uplink->image->name, (int)uplink->image->rid );
-				uplink->image->working = false;
+			if ( atomic_compare_exchange_strong( &uplink->rttTestResult, &rttTestResult, RTT_IDLE ) ) {
+				discoverFailCount++;
+				if ( uplink->current.fd == -1 && discoverFailCount > (SERVER_RTT_MAX_UNREACH / 2) ) {
+					logadd( LOG_DEBUG1, "Disabling %s:%d since no uplink is available", uplink->image->name, (int)uplink->image->rid );
+					uplink->image->working = false;
+				}
 			}
-			timing_set( &nextAltCheck, &now, (discoverFailCount < SERVER_RTT_MAX_UNREACH ? altCheckInterval : SERVER_RTT_INTERVAL_FAILED) );
+			timing_set( &nextAltCheck, &now, (discoverFailCount < SERVER_RTT_MAX_UNREACH) ? altCheckInterval : SERVER_RTT_INTERVAL_FAILED );
 		}
 #ifdef _DEBUG
 		if ( uplink->current.fd != -1 && !uplink->shutdown ) {
