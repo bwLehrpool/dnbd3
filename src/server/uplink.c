@@ -475,9 +475,8 @@ static void* uplink_mainloop(void *data)
 		} else {
 			declare_now;
 			waitTime = (int)timing_diffMs( &now, &nextAltCheck );
-			logadd( LOG_DEBUG1, "Next  %d  for %s", waitTime / 1000, uplink->image->name );
 			if ( waitTime < 100 ) waitTime = 100;
-			if ( waitTime > 5000 ) waitTime = 5000;
+			if ( waitTime > 10000 ) waitTime = 10000;
 		}
 		events[EV_SOCKET].fd = uplink->current.fd;
 		numSocks = poll( events, EV_COUNT, waitTime );
@@ -582,7 +581,7 @@ static void* uplink_mainloop(void *data)
 		// See if we should trigger an RTT measurement
 		rttTestResult = uplink->rttTestResult;
 		if ( rttTestResult == RTT_IDLE || rttTestResult == RTT_DONTCHANGE ) {
-			if ( timing_reached( &nextAltCheck, &now ) || uplink->current.fd == -1 || uplink->cycleDetected ) {
+			if ( timing_reached( &nextAltCheck, &now ) || ( uplink->current.fd == -1 && discoverFailCount == 0 ) || uplink->cycleDetected ) {
 				// It seems it's time for a check
 				if ( image_isComplete( uplink->image ) ) {
 					// Quit work if image is complete
@@ -605,6 +604,9 @@ static void* uplink_mainloop(void *data)
 				if ( uplink->current.fd == -1 && discoverFailCount > (SERVER_RTT_MAX_UNREACH / 2) ) {
 					logadd( LOG_DEBUG1, "Disabling %s:%d since no uplink is available", uplink->image->name, (int)uplink->image->rid );
 					uplink->image->working = false;
+				}
+				if ( uplink->current.fd == -1 ) {
+					uplink->cycleDetected = false;
 				}
 			}
 			timing_set( &nextAltCheck, &now, (discoverFailCount < SERVER_RTT_MAX_UNREACH) ? altCheckInterval : SERVER_RTT_INTERVAL_FAILED );
