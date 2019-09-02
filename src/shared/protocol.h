@@ -20,7 +20,7 @@
 #define COND_HOPCOUNT(vers,hopcount) ( (vers) >= 3 ? (hopcount) : 0 )
 
 // 2017-11-02: Macro to set flags in select image message properly if we're a server, as BG_REP depends on global var
-#define SI_SERVER_FLAGS ( (_pretendClient ? 0 : FLAGS8_SERVER) | (_backgroundReplication == BGR_FULL ? FLAGS8_BG_REP : 0) )
+#define SI_SERVER_FLAGS ( (uint8_t)( (_pretendClient ? 0 : FLAGS8_SERVER) | (_backgroundReplication == BGR_FULL ? FLAGS8_BG_REP : 0) ) )
 
 #define REPLY_OK (0)
 #define REPLY_ERRNO (-1)

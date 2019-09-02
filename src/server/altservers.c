@@ -140,7 +140,7 @@ int altservers_getListForClient(dnbd3_host_t *host, dnbd3_server_entry_t *output
 		if ( altServers[i].host.type == 0 || altServers[i].isPrivate )
 			continue; // Slot is empty or uplink is for replication only
 		if ( host->type == altServers[i].host.type ) {
-			scores[i] = 10 + altservers_netCloseness( host, &altServers[i].host );
+			scores[i] = (uint16_t)( 10 + altservers_netCloseness( host, &altServers[i].host ) );
 		} else {
 			scores[i] = 1; // Wrong address family
 		}
@@ -400,7 +400,7 @@ const dnbd3_host_t* altservers_indexToHost(int server)
 static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 {
 	const int ALTS = 4;
-	int ret, itAlt, numAlts, current;
+	int itAlt, numAlts, current;
 	bool panic;
 	int servers[ALTS + 1];
 	struct timespec start, end;

@@ -46,12 +46,12 @@ static inline void ref_put( ref *ref )
 	}
 }
 
-#define ref_get_uplink(wr) ({ \
+#define ref_get_uplink(wr) __extension__({ \
 	ref* ref = ref_get( wr ); \
 	ref == NULL ? NULL : container_of(ref, dnbd3_uplink_t, reference); \
 })
 
-#define ref_get_cachemap(image) ({ \
+#define ref_get_cachemap(image) __extension__({ \
 	ref* ref = ref_get( &(image)->ref_cacheMap ); \
 	ref == NULL ? NULL : container_of(ref, dnbd3_cache_map_t, reference); \
 })
