@@ -106,7 +106,11 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	uplink->idleTime = 0;
 	uplink->queueLen = 0;
 	uplink->cacheFd = -1;
-	uplink->signal = NULL;
+	uplink->signal = signal_new();
+	if ( uplink->signal == NULL ) {
+		logadd( LOG_WARNING, "Error creating signal. Uplink unavailable." );
+		goto failure;
+	}
 	uplink->replicationHandle = REP_NONE;
 	mutex_lock( &uplink->rttLock );
 	mutex_lock( &uplink->sendMutex );
@@ -135,8 +139,8 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	return true;
 failure: ;
 	if ( uplink != NULL ) {
-		free( uplink );
-		uplink = NULL;
+		image->users++; // Expected by uplink_free()
+		ref_put( &uplink->reference ); // The ref for the uplink thread that never was
 	}
 	mutex_unlock( &image->lock );
 	return false;
@@ -193,7 +197,9 @@ static void uplink_free(ref *ref)
 	dnbd3_uplink_t *uplink = container_of(ref, dnbd3_uplink_t, reference);
 	logadd( LOG_DEBUG1, "Freeing uplink for '%s:%d'", uplink->image->name, (int)uplink->image->rid );
 	assert( uplink->queueLen == 0 );
-	signal_close( uplink->signal );
+	if ( uplink->signal != NULL ) {
+		signal_close( uplink->signal );
+	}
 	if ( uplink->current.fd != -1 ) {
 		close( uplink->current.fd );
 		uplink->current.fd = -1;
@@ -211,7 +217,7 @@ static void uplink_free(ref *ref)
 		close( uplink->cacheFd );
 	}
 	// Finally let go of image. It was acquired either in uplink_shutdown or in the cleanup code
-	// of the uplink thread, depending on who set the uplink->shutdown flag.
+	// of the uplink thread, depending on who set the uplink->shutdown flag. (Or uplink_init if that failed)
 	image_release( uplink->image );
 	free( uplink ); // !!!
 }
@@ -446,11 +452,6 @@ static void* uplink_mainloop(void *data)
 		logadd( LOG_WARNING, "Cannot open cache file %s for writing (errno=%d); will just proxy traffic without caching!", uplink->image->path, errno );
 	}
 	//
-	uplink->signal = signal_new();
-	if ( uplink->signal == NULL ) {
-		logadd( LOG_WARNING, "error creating signal. Uplink unavailable." );
-		goto cleanup;
-	}
 	events[EV_SIGNAL].events = POLLIN;
 	events[EV_SIGNAL].fd = signal_getWaitFd( uplink->signal );
 	events[EV_SOCKET].fd = -1;
