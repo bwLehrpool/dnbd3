@@ -89,7 +89,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 			close( sock );
 		}
 		ref_put( &uplink->reference );
-		return true; // There's already an uplink, so should we consider this success or failure?
+		return true; // There's already an uplink
 	}
 	if ( image->ref_cacheMap == NULL ) {
 		logadd( LOG_WARNING, "Uplink was requested for image %s, but it is already complete", image->name );
@@ -210,19 +210,9 @@ static void uplink_free(ref *ref)
 	if ( uplink->cacheFd != -1 ) {
 		close( uplink->cacheFd );
 	}
-	// TODO Requeue any requests
-	dnbd3_image_t *image = image_lock( uplink->image );
-	if ( image != NULL ) {
-		// != NULL means image is still in list...
-		if ( !_shutdown && image->ref_cacheMap != NULL ) {
-			// Ingegrity checker must have found something in the meantime
-			uplink_init( image, -1, NULL, 0 );
-		}
-		image_release( image );
-	}
 	// Finally let go of image. It was acquired either in uplink_shutdown or in the cleanup code
 	// of the uplink thread, depending on who set the uplink->shutdown flag.
-	image_release( image );
+	image_release( uplink->image );
 	free( uplink ); // !!!
 }
 
@@ -536,7 +526,7 @@ static void* uplink_mainloop(void *data)
 			if ( uplink->current.fd != -1 ) {
 				// Uplink seems fine, relay requests to it...
 				uplink_sendRequests( uplink, true );
-			} else { // No uplink; maybe it was shutdown since it was idle for too long
+			} else if ( uplink->queueLen != 0 ) { // No uplink; maybe it was shutdown since it was idle for too long
 				uplink->idleTime = 0;
 			}
 		}
