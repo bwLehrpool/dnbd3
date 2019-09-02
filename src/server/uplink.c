@@ -591,7 +591,7 @@ static void* uplink_mainloop(void *data)
 		} else if ( rttTestResult == RTT_NOT_REACHABLE ) {
 			if ( atomic_compare_exchange_strong( &uplink->rttTestResult, &rttTestResult, RTT_IDLE ) ) {
 				discoverFailCount++;
-				if ( uplink->current.fd == -1 && discoverFailCount > (SERVER_RTT_MAX_UNREACH / 2) ) {
+				if ( uplink->image->working && uplink->current.fd == -1 && discoverFailCount > (SERVER_RTT_MAX_UNREACH / 2) ) {
 					logadd( LOG_DEBUG1, "Disabling %s:%d since no uplink is available", uplink->image->name, (int)uplink->image->rid );
 					uplink->image->working = false;
 				}
