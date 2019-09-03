@@ -407,10 +407,10 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 			img->users = 0;
 			image_free( img );
 		}
-	// Check if image is incomplete, initialize uplink
-	if ( candidate->ref_cacheMap != NULL ) {
-		uplink_init( candidate, -1, NULL, -1 );
-	}
+		// Check if image is incomplete, initialize uplink
+		if ( candidate->ref_cacheMap != NULL ) {
+			uplink_init( candidate, -1, NULL, -1 );
+		}
 		// readFd == -1 and working == FALSE at this point,
 		// this function needs some splitting up for handling as we need to run most
 		// of the above code again. for now we know that the next call for this
