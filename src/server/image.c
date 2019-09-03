@@ -126,11 +126,15 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		fb |= bit_mask;
 	}
 	// Last byte
-	for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
-		const int map_x = (pos >> 12) & 7; // mod 8
-		const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-		lb |= bit_mask;
+	if ( lastByteInMap != firstByteInMap ) {
+		for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
+			assert( lastByteInMap == (pos >> 15) );
+			const int map_x = (pos >> 12) & 7; // mod 8
+			const uint8_t bit_mask = (uint8_t)( 1 << map_x );
+			lb |= bit_mask;
+		}
 	}
+	atomic_thread_fence( memory_order_acquire );
 	if ( set ) {
 		uint8_t fo = atomic_fetch_or_explicit( &cache->map[firstByteInMap], fb, memory_order_relaxed );
 		uint8_t lo = atomic_fetch_or_explicit( &cache->map[lastByteInMap], lb, memory_order_relaxed );
