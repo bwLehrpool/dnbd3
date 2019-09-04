@@ -15,9 +15,9 @@ void altservers_findUplinkAsync(dnbd3_uplink_t *uplink);
 
 void altservers_findUplink(dnbd3_uplink_t *uplink);
 
-int altservers_getListForClient(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size);
+int altservers_getListForClient(dnbd3_client_t *client, dnbd3_server_entry_t *output, int size);
 
-int altservers_getHostListForReplication(dnbd3_host_t *servers, int size);
+int altservers_getHostListForReplication(const char *image, dnbd3_host_t *servers, int size);
 
 bool altservers_toString(int server, char *buffer, size_t len);
 

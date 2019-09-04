@@ -1204,7 +1204,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	dnbd3_host_t servers[REP_NUM_SRV];
 	int uplinkSock = -1;
 	dnbd3_host_t uplinkServer;
-	const int count = altservers_getHostListForReplication( servers, REP_NUM_SRV );
+	const int count = altservers_getHostListForReplication( name, servers, REP_NUM_SRV );
 	uint16_t remoteProtocolVersion;
 	uint16_t remoteRid = revision;
 	uint64_t remoteImageSize;

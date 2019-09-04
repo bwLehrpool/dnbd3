@@ -477,7 +477,7 @@ void* net_handleNewConnection(void *clientPtr)
 
 			case CMD_GET_SERVERS:
 				// Build list of known working alt servers
-				num = altservers_getListForClient( &client->host, server_list, NUMBER_SERVERS );
+				num = altservers_getListForClient( client, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
 				reply.size = (uint32_t)( num * sizeof(dnbd3_server_entry_t) );
 				mutex_lock( &client->sendMutex );

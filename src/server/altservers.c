@@ -23,7 +23,7 @@ static atomic_int numAltServers = 0;
 static pthread_mutex_t altServersLock;
 
 static void *altservers_runCheck(void *data);
-static int altservers_getListForUplink(dnbd3_uplink_t *uplink, int *servers, int size, int current);
+static int altservers_getListForUplink(dnbd3_uplink_t *uplink, const char *image, int *servers, int size, int current);
 static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink);
 static uint32_t altservers_updateRtt(dnbd3_uplink_t *uplink, int index, uint32_t rtt);
 static void altservers_imageFailed(dnbd3_uplink_t *uplink, int server);
@@ -86,6 +86,13 @@ static int addAltFromIni(void *countptr, const char* section, const char* key, c
 		}
 	} else if ( strcmp( key, "comment" ) == 0 ) {
 		snprintf( altServers[index].comment, COMMENT_LENGTH, "%s", value );
+	} else if ( strcmp( key, "namespace" ) == 0 ) {
+		dnbd3_ns_t *elem = malloc( sizeof(*elem) );
+		elem->name = strdup( value );
+		elem->len = strlen( value );
+		do {
+			elem->next = altServers[index].nameSpaces;
+		} while ( !atomic_compare_exchange_weak( &altServers[index].nameSpaces, &elem->next, elem ) );
 	} else {
 		logadd( LOG_DEBUG1, "Unknown key in alt-servers section: '%s'", key );
 	}
@@ -139,6 +146,7 @@ bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate
 	altServers[freeSlot].host = *host;
 	altServers[freeSlot].isPrivate = isPrivate;
 	altServers[freeSlot].isClientOnly = isClientOnly;
+	altServers[freeSlot].nameSpaces = NULL;
 	if ( comment != NULL ) snprintf( altServers[freeSlot].comment, COMMENT_LENGTH, "%s", comment );
 	mutex_unlock( &altServersLock );
 	*index = freeSlot;
@@ -171,15 +179,28 @@ void altservers_findUplinkAsync(dnbd3_uplink_t *uplink)
 	}
 }
 
+static bool isImageAllowed(dnbd3_alt_server_t *alt, const char *image)
+{
+	if ( alt->nameSpaces == NULL )
+		return true;
+	for ( dnbd3_ns_t *it = alt->nameSpaces; it != NULL; it = it->next ) {
+		if ( strncmp( it->name, image, it->len ) == 0 )
+			return true;
+	}
+	return false;
+}
+
 /**
  * Get <size> known (working) alt servers, ordered by network closeness
  * (by finding the smallest possible subnet)
  * Private servers are excluded, so this is what you want to call to
  * get a list of servers you can tell a client about
  */
-int altservers_getListForClient(dnbd3_host_t *host, dnbd3_server_entry_t *output, int size)
+int altservers_getListForClient(dnbd3_client_t *client, dnbd3_server_entry_t *output, int size)
 {
-	if ( host == NULL || host->type == 0 || numAltServers == 0 || output == NULL || size <= 0 ) return 0;
+	dnbd3_host_t *host = &client->host;
+	if ( host->type == 0 || numAltServers == 0 || output == NULL || size <= 0 )
+		return 0;
 	int i, j;
 	int count = 0;
 	uint16_t scores[SERVER_MAX_ALTS] = { 0 };
@@ -188,11 +209,9 @@ int altservers_getListForClient(dnbd3_host_t *host, dnbd3_server_entry_t *output
 	for ( i = 0; i < numAltServers; ++i ) {
 		if ( altServers[i].host.type == 0 || altServers[i].isPrivate )
 			continue; // Slot is empty or uplink is for replication only
-		if ( host->type == altServers[i].host.type ) {
-			scores[i] = (uint16_t)( 10 + altservers_netCloseness( host, &altServers[i].host ) );
-		} else {
-			scores[i] = 1; // Wrong address family
-		}
+		if ( !isImageAllowed( &altServers[i], client->image->name ) )
+			continue;
+		scores[i] = (uint16_t)( 10 + altservers_netCloseness( host, &altServers[i].host ) );
 	}
 	while ( count < size ) {
 		i = -1;
@@ -244,10 +263,10 @@ static bool isUsableForUplink( dnbd3_uplink_t *uplink, int server, ticks *now )
 	return fails < SERVER_BAD_UPLINK_MIN || ( rand() % fails ) < SERVER_BAD_UPLINK_MIN;
 }
 
-int altservers_getHostListForReplication(dnbd3_host_t *servers, int size)
+int altservers_getHostListForReplication(const char *image, dnbd3_host_t *servers, int size)
 {
 	int idx[size];
-	int num = altservers_getListForUplink( NULL, idx, size, -1 );
+	int num = altservers_getListForUplink( NULL, image, idx, size, -1 );
 	for ( int i = 0; i < num; ++i ) {
 		servers[i] = altServers[i].host;
 	}
@@ -261,7 +280,7 @@ int altservers_getHostListForReplication(dnbd3_host_t *servers, int size)
  * it includes private servers and ignores any "client only" servers
  * @param current index of server for current connection, or -1 in panic mode
  */
-static int altservers_getListForUplink(dnbd3_uplink_t *uplink, int *servers, int size, int current)
+static int altservers_getListForUplink(dnbd3_uplink_t *uplink, const char *image, int *servers, int size, int current)
 {
 	if ( size <= 0 )
 		return 0;
@@ -272,7 +291,9 @@ static int altservers_getListForUplink(dnbd3_uplink_t *uplink, int *servers, int
 	if ( numAltServers <= size ) {
 		for ( int i = 0; i < numAltServers; ++i ) {
 			if ( current == -1 || i == current || isUsableForUplink( uplink, i, &now ) ) {
-				servers[count++] = i;
+				if ( isImageAllowed( &altServers[i], image ) ) {
+					servers[count++] = i;
+				}
 			}
 		}
 	} else {
@@ -286,7 +307,9 @@ static int altservers_getListForUplink(dnbd3_uplink_t *uplink, int *servers, int
 			int idx = rand() % numAltServers;
 			if ( state[idx] != 0 )
 				continue;
-			if ( isUsableForUplink( uplink, idx, &now ) ) {
+			if ( !isImageAllowed( &altServers[idx], image ) ) {
+				state[idx] = 2; // Mark as used without adding, so it will be ignored in panic loop
+			} else if ( isUsableForUplink( uplink, idx, &now ) ) {
 				servers[count++] = idx;
 				state[idx] = 2; // Used
 			} else {
@@ -469,7 +492,7 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 	current = uplink->current.index; // Current server index (or last one in panic mode)
 	mutex_unlock( &uplink->rttLock );
 	// First, get 4 alt servers
-	numAlts = altservers_getListForUplink( uplink, servers, ALTS, panic ? -1 : current );
+	numAlts = altservers_getListForUplink( uplink, uplink->image->name, servers, ALTS, panic ? -1 : current );
 	// If we're already connected and only got one server anyways, there isn't much to do
 	if ( numAlts == 0 || ( numAlts == 1 && !panic ) ) {
 		uplink->rttTestResult = RTT_DONTCHANGE;

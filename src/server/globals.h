@@ -31,6 +31,13 @@ typedef struct
 	uint8_t hopCount;      // How many hops this request has already taken across proxies
 } dnbd3_queued_request_t;
 
+typedef struct _ns
+{
+	struct _ns *next;
+	char *name;
+	size_t len;
+} dnbd3_ns_t;
+
 typedef struct
 {
 	int fails;                    // Hard fail: Connection failed
@@ -41,6 +48,7 @@ typedef struct
 	ticks lastFail;               // Last hard fail
 	dnbd3_host_t host;
 	char comment[COMMENT_LENGTH];
+	_Atomic(dnbd3_ns_t *) nameSpaces; // Linked list of name spaces
 } dnbd3_alt_server_t;
 
 typedef struct
