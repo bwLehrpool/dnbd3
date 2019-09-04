@@ -9,7 +9,7 @@ void altservers_init();
 
 int altservers_load();
 
-bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly);
+bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly, int *index);
 
 void altservers_findUplinkAsync(dnbd3_uplink_t *uplink);
 

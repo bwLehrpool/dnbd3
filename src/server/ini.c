@@ -110,7 +110,17 @@ int ini_parse_file(FILE* file, int (*handler)(void*, const char*, const char*, c
 #endif
 		else if ( *start == '[' ) {
 			/* A "[section]" line */
-			end = find_char_or_comment( start + 1, ']' );
+			int cnt = 0;
+			char *f = start, *sstart = start;
+			while ( *++f ) {
+				if ( *f == '[' ) cnt++;
+				if ( *f == ']' ) cnt--;
+				if ( cnt < 0 ) {
+					sstart = f - 1;
+					break;
+				}
+			}
+			end = find_char_or_comment( sstart + 1, ']' );
 			if ( *end == ']' ) {
 				*end = '\0';
 				strncpy0( section, start + 1, sizeof(section) );

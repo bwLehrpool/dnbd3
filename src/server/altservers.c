@@ -1,3 +1,4 @@
+#include "ini.h"
 #include "altservers.h"
 #include "locks.h"
 #include "threadpool.h"
@@ -34,7 +35,7 @@ void altservers_init()
 	mutex_init( &altServersLock, LOCK_ALT_SERVER_LIST );
 }
 
-static void addalt(int argc, char **argv, void *data)
+static void addAltFromLegacy(int argc, char **argv, void *data)
 {
 	char *shost;
 	dnbd3_host_t host;
@@ -52,9 +53,43 @@ static void addalt(int argc, char **argv, void *data)
 		return;
 	}
 	if ( argc == 1 ) argv[1] = "";
-	if ( altservers_add( &host, argv[1], isPrivate, isClientOnly ) ) {
+	if ( altservers_add( &host, argv[1], isPrivate, isClientOnly, NULL ) ) {
 		(*(int*)data)++;
 	}
+}
+
+static int addAltFromIni(void *countptr, const char* section, const char* key, const char* value)
+{
+	dnbd3_host_t host;
+	char *strhost = strdup( section );
+	if ( !parse_address( strhost, &host ) ) {
+		free( strhost );
+		logadd( LOG_WARNING, "Invalid host section in alt-servers file ignored: '%s'", section );
+		return 1;
+	}
+	free( strhost );
+	int index;
+	if ( altservers_add( &host, "", false, false, &index ) ) {
+		(*(int*)countptr)++;
+	}
+	if ( index == -1 )
+		return 1;
+	if ( strcmp( key, "for" ) == 0 ) {
+		if ( strncmp( value, "client", 6 ) == 0 ) {
+			altServers[index].isClientOnly = true;
+			altServers[index].isPrivate = false;
+		} else if ( strcmp( value, "replication" ) == 0 ) {
+			altServers[index].isClientOnly = false;
+			altServers[index].isPrivate = true;
+		} else {
+			logadd( LOG_WARNING, "Invalid value in alt-servers section %s for key %s: '%s'", section, key, value );
+		}
+	} else if ( strcmp( key, "comment" ) == 0 ) {
+		snprintf( altServers[index].comment, COMMENT_LENGTH, "%s", value );
+	} else {
+		logadd( LOG_DEBUG1, "Unknown key in alt-servers section: '%s'", key );
+	}
+	return 1;
 }
 
 int altservers_load()
@@ -62,19 +97,31 @@ int altservers_load()
 	int count = 0;
 	char *name;
 	if ( asprintf( &name, "%s/%s", _configDir, "alt-servers" ) == -1 ) return -1;
-	file_loadLineBased( name, 1, 2, &addalt, (void*)&count );
+	if ( !file_isReadable( name ) ) {
+		free( name );
+		return 0;
+	}
+	ini_parse( name, &addAltFromIni, &count );
+	if ( numAltServers == 0 ) {
+		logadd( LOG_INFO, "Could not parse %s as .ini file, trying to load as legacy format.", name );
+		file_loadLineBased( name, 1, 2, &addAltFromLegacy, (void*)&count );
+	}
 	free( name );
 	logadd( LOG_DEBUG1, "Added %d alt servers\n", count );
 	return count;
 }
 
-bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly)
+bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate, const int isClientOnly, int *index)
 {
 	int i, freeSlot = -1;
+	if ( index == NULL ) {
+		index = &freeSlot;
+	}
 	mutex_lock( &altServersLock );
 	for (i = 0; i < numAltServers; ++i) {
 		if ( isSameAddressPort( &altServers[i].host, host ) ) {
 			mutex_unlock( &altServersLock );
+			*index = i;
 			return false;
 		} else if ( freeSlot == -1 && altServers[i].host.type == 0 ) {
 			freeSlot = i;
@@ -84,6 +131,7 @@ bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate
 		if ( numAltServers >= SERVER_MAX_ALTS ) {
 			logadd( LOG_WARNING, "Cannot add another alt server, maximum of %d already reached.", (int)SERVER_MAX_ALTS );
 			mutex_unlock( &altServersLock );
+			*index = -1;
 			return false;
 		}
 		freeSlot = numAltServers++;
@@ -93,6 +141,7 @@ bool altservers_add(dnbd3_host_t *host, const char *comment, const int isPrivate
 	altServers[freeSlot].isClientOnly = isClientOnly;
 	if ( comment != NULL ) snprintf( altServers[freeSlot].comment, COMMENT_LENGTH, "%s", comment );
 	mutex_unlock( &altServersLock );
+	*index = freeSlot;
 	return true;
 }
 
@@ -156,6 +205,7 @@ int altservers_getListForClient(dnbd3_host_t *host, dnbd3_server_entry_t *output
 		}
 		if ( i == -1 )
 			break;
+		scores[i] = 0;
 		output[count].host = altServers[i].host;
 		output[count].failures = 0;
 		count++;
