@@ -28,6 +28,7 @@ atomic_bool _closeUnusedFd = false;
 atomic_bool _vmdkLegacyMode = false;
 // Not really needed anymore since we have '+' and '-' in alt-servers
 atomic_bool _proxyPrivateOnly = false;
+atomic_int _autoFreeDiskSpaceDelay = 3600 * 10;
 // [limits]
 atomic_int _maxClients = SERVER_MAX_CLIENTS;
 atomic_int _maxImages = SERVER_MAX_IMAGES;
@@ -83,6 +84,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_UINT( limits, maxPayload );
 	SAVE_TO_VAR_UINT64( limits, maxReplicationSize );
 	SAVE_TO_VAR_BOOL( dnbd3, pretendClient );
+	SAVE_TO_VAR_INT( dnbd3, autoFreeDiskSpaceDelay );
 	if ( strcmp( section, "dnbd3" ) == 0 && strcmp( key, "backgroundReplication" ) == 0 ) {
 		if ( strcmp( value, "hashblock" ) == 0 ) {
 			_backgroundReplication = BGR_HASHBLOCK;
@@ -229,6 +231,15 @@ static bool parse64(const char *in, atomic_int_fast64_t *out, const char *optnam
 	while ( *end == ' ' ) end++;
 	if ( *end == '\0' ) {
 		exp = 0;
+	} else if ( *end == 'm' ) {
+		exp = 1;
+		base = 60;
+	} else if ( *end == 'h' ) {
+		exp = 1;
+		base = 3600;
+	} else if ( *end == 'd' ) {
+		exp = 1;
+		base = 24 * 3600;
 	} else {
 		char *pos = strchr( units, *end > 'Z' ? (*end - 32) : *end );
 		if ( pos == NULL ) {
@@ -318,6 +329,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PBOOL(vmdkLegacyMode);
 	PBOOL(proxyPrivateOnly);
 	PBOOL(pretendClient);
+	PINT(autoFreeDiskSpaceDelay);
 	P_ARG("[limits]\n");
 	PINT(maxClients);
 	PINT(maxImages);

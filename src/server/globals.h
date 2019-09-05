@@ -291,6 +291,13 @@ extern atomic_uint_fast64_t _maxReplicationSize;
 extern atomic_bool _pretendClient;
 
 /**
+ * Minimum uptime in seconds before proxy starts deleting old
+ * images if running out of space. -1 disables automatic deletion.
+ * Only relevant in proxy mode.
+ */
+extern atomic_int _autoFreeDiskSpaceDelay;
+
+/**
  * Load the server configuration.
  */
 void globals_loadConfig();

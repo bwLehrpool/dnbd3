@@ -1696,14 +1696,16 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 	for ( int maxtries = 0; maxtries < 20; ++maxtries ) {
 		uint64_t available;
 		if ( !file_freeDiskSpace( _basePath, NULL, &available ) ) {
-			const int e = errno;
-			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", e );
+			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", errno );
 			return true;
 		}
-		if ( available > size ) return true;
-		if ( !force && dnbd3_serverUptime() < 10 * 3600 ) {
-			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024ll * 1024ll)),
-					(int)(size / (1024 * 1024)) );
+		if ( available > size )
+			return true; // Yay
+		if ( !_isProxy || _autoFreeDiskSpaceDelay == -1 )
+			return false; // If not in proxy mode at all, or explicitly disabled, never delete anything
+		if ( !force && dnbd3_serverUptime() < (uint32_t)_autoFreeDiskSpaceDelay ) {
+			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < %d minutes...", (int)(available / (1024ll * 1024ll)),
+					(int)(size / (1024 * 1024)), _autoFreeDiskSpaceDelay / 60 );
 			return false;
 		}
 		logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, freeing an image...", (int)(available / (1024ll * 1024ll)),
