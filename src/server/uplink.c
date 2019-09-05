@@ -876,7 +876,7 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 				ret = (int)pwrite( uplink->cacheFd, uplink->recvBuffer + done, inReply.size - done, start + done );
 				if ( unlikely( ret == -1 ) ) {
 					err = errno;
-					if ( err == EINTR ) continue;
+					if ( err == EINTR && !_shutdown ) continue;
 					if ( err == ENOSPC || err == EDQUOT ) {
 						// try to free 256MiB
 						if ( !tryAgain || !image_ensureDiskSpaceLocked( 256ull * 1024 * 1024, true ) ) break;
