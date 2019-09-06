@@ -9,6 +9,7 @@
 #include "fileutil.h"
 #include "picohttpparser/picohttpparser.h"
 #include "urldecode.h"
+#include "reference.h"
 
 #include <jansson.h>
 #include <sys/types.h>
@@ -43,7 +44,9 @@ _Static_assert( sizeof("test") == 5 && sizeof("test2") == 6, "Stringsize messup 
 DEFSTR(STR_CONNECTION, "connection")
 DEFSTR(STR_CLOSE, "close")
 DEFSTR(STR_QUERY, "/query")
+DEFSTR(STR_CACHEMAP, "/cachemap")
 DEFSTR(STR_Q, "q")
+DEFSTR(STR_ID, "id")
 
 static inline bool equals(struct string *s1,struct string *s2)
 {
@@ -81,6 +84,7 @@ static struct {
 } status;
 
 static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive);
+static bool handleCacheMap(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive);
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive);
 static void parsePath(struct string *path, struct string *file, struct field *getv, size_t *getc);
 static bool hasHeaderValue(struct phr_header *headers, size_t numHeaders, struct string *name, struct string *value);
@@ -212,6 +216,8 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			// Don't care if GET or POST
 			if ( equals( &file, &STR_QUERY ) ) {
 				ok = handleStatus( sock, permissions, getv, getc, keepAlive );
+			} else if ( equals( &file, &STR_CACHEMAP ) ) {
+				ok = handleCacheMap( sock, permissions, getv, getc, keepAlive );
 			} else {
 				ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, keepAlive );
 			}
@@ -339,6 +345,44 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	json_decref( statisticsJson );
 	ok = sendReply( sock, "200 OK", "application/json", jsonString, -1, keepAlive );
 	free( jsonString );
+	return ok;
+}
+
+static bool handleCacheMap(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive)
+{
+	if ( !(permissions & ACL_IMAGE_LIST) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, keepAlive );
+	}
+	int imgId = -1;
+	static const char one = 0xff;
+	for (size_t i = 0; i < fields_num; ++i) {
+		if ( equals( &fields[i].name, &STR_ID ) ) {
+			char *broken;
+			imgId = strtol( fields[i].value.s, &broken, 10 );
+			if ( broken != fields[i].value.s )
+				break;
+			imgId = -1;
+		}
+	}
+	if ( imgId == -1 )
+		return sendReply( sock, "400 Bad Request", "text/plain", "Missing parameter 'id'", -1, keepAlive );
+	dnbd3_image_t *image = image_byId( imgId );
+	if ( image == NULL )
+		return sendReply( sock, "404 Not found", "text/plain", "Image not found", -1, keepAlive );
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	image_release( image );
+	int len;
+	const char *map;
+	if ( cache == NULL ) {
+		map = &one;
+		len = 1;
+	} else {
+		_Static_assert( sizeof(const char) == sizeof(_Atomic uint8_t), "Atomic assumption exploded" );
+		map = (const char*)cache->map;
+		len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+	}
+	bool ok = sendReply( sock, "200 OK", "application/octet-stream", map, len, keepAlive );
+	ref_put( &cache->reference );
 	return ok;
 }
 

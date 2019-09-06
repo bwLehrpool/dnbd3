@@ -110,7 +110,7 @@ typedef struct
 typedef struct
 {
 	ref reference;
-	atomic_uint_least8_t map[];
+	_Atomic uint8_t map[];
 } dnbd3_cache_map_t;
 
 /**

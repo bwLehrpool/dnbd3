@@ -274,6 +274,22 @@ bool image_ensureOpen(dnbd3_image_t *image)
 	return image->readFd != -1;
 }
 
+dnbd3_image_t* image_byId(int imgId)
+{
+	int i;
+	mutex_lock( &imageListLock );
+	for (i = 0; i < _num_images; ++i) {
+		dnbd3_image_t * const image = _images[i];
+		if ( image != NULL && image->id == imgId ) {
+			image->users++;
+			mutex_unlock( &imageListLock );
+			return image;
+		}
+	}
+	mutex_unlock( &imageListLock );
+	return NULL;
+}
+
 /**
  * Get an image by name+rid. This function increases a reference counter,
  * so you HAVE TO CALL image_release for every image_get() call at some
