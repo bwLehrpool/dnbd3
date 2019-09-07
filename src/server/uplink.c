@@ -1029,12 +1029,7 @@ static void uplink_connectionFailed(dnbd3_uplink_t *uplink, bool findNew)
  */
 static int uplink_sendKeepalive(const int fd)
 {
-	static dnbd3_request_t request = { 0 };
-	if ( request.magic == 0 ) {
-		request.magic = dnbd3_packet_magic;
-		request.cmd = CMD_KEEPALIVE;
-		fixup_request( request );
-	}
+	static const dnbd3_request_t request = { .magic = dnbd3_packet_magic, .cmd = net_order_16( CMD_KEEPALIVE ) };
 	return send( fd, &request, sizeof(request), MSG_NOSIGNAL ) == sizeof(request);
 }
 
