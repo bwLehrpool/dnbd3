@@ -53,7 +53,7 @@ static bool image_ensureDiskSpace(uint64_t size, bool force);
 
 static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
-static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list, atomic_uint_least8_t * const cache_map);
+static void image_checkRandomBlocks(dnbd3_image_t *image, const int count);
 static void* closeUnusedFds(void*);
 static void allocCacheMap(dnbd3_image_t *image, bool complete);
 
@@ -161,7 +161,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		for ( pos = start; pos < end; pos += HASH_BLOCK_SIZE ) {
 			const int block = (int)( pos / HASH_BLOCK_SIZE );
 			if ( image_isHashBlockComplete( cache->map, block, image->realFilesize ) ) {
-				integrity_check( image, block );
+				integrity_check( image, block, false );
 			}
 		}
 	}
@@ -846,18 +846,9 @@ static bool image_load(char *base, char *path, int withUplink)
 	// XXX: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 
 	// 2. Load CRC-32 list of image
-	bool doFullCheck = false;
 	uint32_t masterCrc = 0;
 	const int hashBlockCount = IMGSIZE_TO_HASHBLOCKS( virtualFilesize );
 	crc32list = image_loadCrcList( path, virtualFilesize, &masterCrc );
-
-	// Check CRC32
-	if ( crc32list != NULL ) {
-		if ( !image_checkRandomBlocks( 4, fdImage, realFilesize, crc32list, cache != NULL ? cache->map : NULL ) ) {
-			logadd( LOG_ERROR, "quick crc32 check of %s failed. Data corruption?", path );
-			doFullCheck = true;
-		}
-	}
 
 	// Compare data just loaded to identical image we apparently already loaded
 	if ( existing != NULL ) {
@@ -943,6 +934,8 @@ static bool image_load(char *base, char *path, int withUplink)
 	if ( image_addToList( image ) ) {
 		// Keep fd for reading
 		fdImage = -1;
+		// Check CRC32
+		image_checkRandomBlocks( image, 4 );
 	} else {
 		logadd( LOG_ERROR, "Image list full: Could not add image %s", path );
 		image->readFd = -1; // Keep fdImage instead, will be closed below
@@ -950,12 +943,6 @@ static bool image_load(char *base, char *path, int withUplink)
 		goto load_error;
 	}
 	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->name, (int)image->rid );
-	// CRC errors found...
-	if ( doFullCheck ) {
-		logadd( LOG_INFO, "Queueing full CRC32 check for '%s:%d'\n", image->name, (int)image->rid );
-		integrity_check( image, -1 );
-	}
-
 	function_return = true;
 
 	// Clean exit:
@@ -1038,18 +1025,26 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 	return retval;
 }
 
-static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t realFilesize, uint32_t * const crc32list, atomic_uint_least8_t * const cache_map)
+static void image_checkRandomBlocks(dnbd3_image_t *image, const int count)
 {
+	if ( image->crc32 == NULL )
+		return;
 	// This checks the first block and (up to) count - 1 random blocks for corruption
 	// via the known crc32 list. This is very sloppy and is merely supposed to detect
 	// accidental corruption due to broken dnbd3-proxy functionality or file system
-	// corruption.
+	// corruption, or people replacing/updating images which is a very stupid thing.
 	assert( count > 0 );
-	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( realFilesize );
-	int blocks[count + 1];
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( image->virtualFilesize );
+	int blocks[count];
 	int index = 0, j;
 	int block;
-	if ( image_isHashBlockComplete( cache_map, 0, realFilesize ) ) blocks[index++] = 0;
+	if ( image_isHashBlockComplete( cache->map, 0, image->virtualFilesize ) ) {
+		blocks[index++] = 0;
+	}
+	if ( hashBlocks > 1 && image_isHashBlockComplete( cache->map, hashBlocks - 1, image->virtualFilesize ) ) {
+		blocks[index++] = hashBlocks - 1;
+	}
 	int tries = count * 5; // Try only so many times to find a non-duplicate complete block
 	while ( index + 1 < count && --tries > 0 ) {
 		block = rand() % hashBlocks; // Random block
@@ -1057,11 +1052,15 @@ static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t 
 			if ( blocks[j] == block ) goto while_end;
 		}
 		// Block complete? If yes, add to list
-		if ( image_isHashBlockComplete( cache_map, block, realFilesize ) ) blocks[index++] = block;
+		if ( image_isHashBlockComplete( cache->map, block, image->virtualFilesize ) ) {
+			blocks[index++] = block;
+		}
 while_end: ;
 	}
-	blocks[MIN(index, count)] = -1; // End of array has to be marked by a -1
-	return image_checkBlocksCrc32( fdImage, crc32list, blocks, realFilesize ); // Return result of check
+	ref_put( &cache->reference );
+	for ( int i = 0; i < index; ++i ) {
+		integrity_check( image, blocks[i], true );
+	}
 }
 
 /**

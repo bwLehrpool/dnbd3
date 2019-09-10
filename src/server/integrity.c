@@ -78,15 +78,17 @@ void integrity_shutdown()
  * make sure it is before calling, otherwise it will result in falsely
  * detected corruption.
  */
-void integrity_check(dnbd3_image_t *image, int block)
+void integrity_check(dnbd3_image_t *image, int block, bool blocking)
 {
+	int freeSlot;
 	if ( !bRunning ) {
 		logadd( LOG_MINOR, "Ignoring check request; thread not running..." );
 		return;
 	}
-	int i, freeSlot = -1;
+start_over:
+	freeSlot = -1;
 	mutex_lock( &integrityQueueLock );
-	for (i = 0; i < queueLen; ++i) {
+	for (int i = 0; i < queueLen; ++i) {
 		if ( freeSlot == -1 && checkQueue[i].image == NULL ) {
 			freeSlot = i;
 		} else if ( checkQueue[i].image == image && checkQueue[i].block <= block ) {
@@ -105,8 +107,13 @@ void integrity_check(dnbd3_image_t *image, int block)
 		}
 	}
 	if ( freeSlot == -1 ) {
-		if ( queueLen >= CHECK_QUEUE_SIZE ) {
+		if ( unlikely( queueLen >= CHECK_QUEUE_SIZE ) ) {
 			mutex_unlock( &integrityQueueLock );
+			if ( blocking ) {
+				logadd( LOG_INFO, "Check queue full, waiting a couple seconds...\n" );
+				sleep( 3 );
+				goto start_over;
+			}
 			logadd( LOG_INFO, "Check queue full, discarding check request...\n" );
 			return;
 		}
@@ -206,7 +213,7 @@ static void* integrity_main(void * data UNUSED)
 						// If this is not a full check, queue one
 						if ( qCount != CHECK_ALL ) {
 							logadd( LOG_INFO, "Queueing full check for %s", image->name );
-							integrity_check( image, -1 );
+							integrity_check( image, -1, false );
 						}
 						foundCorrupted = true;
 					}
