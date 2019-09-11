@@ -1643,7 +1643,7 @@ bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc)
 {
 	// Make buffer 4k aligned in case fd has O_DIRECT set
-#define BSIZE 262144
+#define BSIZE (512*1024)
 	char rawBuffer[BSIZE + DNBD3_BLOCK_SIZE];
 	char * const buffer = (char*)( ( (uintptr_t)rawBuffer + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) );
 	// How many bytes to read from the input file
