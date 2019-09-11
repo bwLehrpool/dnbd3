@@ -117,17 +117,14 @@ static const dnbd3_af HOST_NONE = (dnbd3_af)0;
 static const dnbd3_af HOST_IP4 = (dnbd3_af)2;
 static const dnbd3_af HOST_IP6 = (dnbd3_af)10;
 
-#pragma pack(1)
-typedef struct dnbd3_host_t
+typedef struct __attribute__((packed)) dnbd3_host_t
 {
 	uint8_t addr[16];    // 16byte (network representation, so it can be directly passed to socket functions)
 	uint16_t port;       // 2byte (network representation, so it can be directly passed to socket functions)
 	dnbd3_af type;        // 1byte (ip version. HOST_IP4 or HOST_IP6. 0 means this struct is empty and should be ignored)
 } dnbd3_host_t;
-#pragma pack(0)
 
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	uint16_t len;
 	dnbd3_host_t host;
@@ -137,7 +134,6 @@ typedef struct
 	int read_ahead_kb;
 	uint8_t use_server_provided_alts;
 } dnbd3_ioctl_t;
-#pragma pack(0)
 
 // network
 #define CMD_GET_BLOCK           1
@@ -150,8 +146,7 @@ typedef struct
 #define CMD_GET_CRC32           8
 
 #define DNBD3_REQUEST_SIZE     24
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	uint16_t magic;           // 2byte
 	uint16_t cmd;             // 2byte
@@ -170,27 +165,22 @@ typedef struct
 	};
 	uint64_t handle;          // 8byte
 } dnbd3_request_t;
-#pragma pack(0)
 _Static_assert( sizeof(dnbd3_request_t) == DNBD3_REQUEST_SIZE, "dnbd3_request_t is messed up" );
 
 #define DNBD3_REPLY_SIZE       16
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	uint16_t magic;		// 2byte
 	uint16_t cmd;		// 2byte
 	uint32_t size;		// 4byte
 	uint64_t handle;	// 8byte
 } dnbd3_reply_t;
-#pragma pack(0)
 _Static_assert( sizeof(dnbd3_reply_t) == DNBD3_REPLY_SIZE, "dnbd3_reply_t is messed up" );
 
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	dnbd3_host_t host;
 	uint8_t  failures;		// 1byte (number of times server has been consecutively unreachable)
 } dnbd3_server_entry_t;
-#pragma pack(0)
 
 #endif /* TYPES_H_ */
