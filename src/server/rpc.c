@@ -354,11 +354,11 @@ static bool handleCacheMap(int sock, int permissions, struct field *fields, size
 		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, keepAlive );
 	}
 	int imgId = -1;
-	static const char one = 0xff;
+	static const char one = (char)0xff;
 	for (size_t i = 0; i < fields_num; ++i) {
 		if ( equals( &fields[i].name, &STR_ID ) ) {
 			char *broken;
-			imgId = strtol( fields[i].value.s, &broken, 10 );
+			imgId = (int)strtol( fields[i].value.s, &broken, 10 );
 			if ( broken != fields[i].value.s )
 				break;
 			imgId = -1;
