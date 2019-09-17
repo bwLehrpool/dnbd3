@@ -136,7 +136,7 @@ static void* integrity_main(void * data UNUSED)
 	int i;
 	setThreadName( "image-check" );
 	blockNoncriticalSignals();
-#if defined(linux) || defined(__linux)
+#if defined(__linux__)
 	// Setting nice of this thread - this is not POSIX conforming, so check if other platforms support this.
 	// POSIX says that setpriority() should set the nice value of all threads belonging to the current process,
 	// but on linux you can do this per thread.
@@ -291,7 +291,7 @@ static void flushFileRange(dnbd3_image_t *image, uint64_t start, uint64_t end)
 	}
 	if ( flushFd == -1 )
 		return;
-#if defined(linux) || defined(__linux)
+#if defined(__linux__)
 	while ( sync_file_range( flushFd, start, end - start, SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER ) == -1 )
 #else
 	while ( fsync( flushFd ) == -1 ) // TODO: fdatasync() should be available since FreeBSD 12.0 ... Might be a tad bit faster
