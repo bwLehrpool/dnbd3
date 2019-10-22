@@ -13,10 +13,16 @@
 #include "../shared/log.h"
 
 #define FUSE_USE_VERSION 30
-#include <fuse.h>
+#include <config.h>
+#include <fuse_lowlevel.h>
+//#include </usr/local/include/fuse3/fuse.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <assert.h>
 /* for printing uint */
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
@@ -24,11 +30,15 @@
 #include <time.h>
 #include <signal.h>
 #include <pthread.h>
+#include "main.h"
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
+#define MODE 1
 
 static const char * const IMAGE_PATH = "/img";
 static const char * const STATS_PATH = "/status";
+static const char *IMAGE_NAME = "img";
+static const char *STATS_NAME = "status";
 
 static uint64_t imageSize;
 /* Debug/Benchmark variables */
@@ -36,50 +46,12 @@ static bool useDebug = false;
 static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
-static bool keepRunning = true;
+//static bool keepRunning = true;
 static void (*fuse_sigIntHandler)(int) = NULL;
 static void (*fuse_sigTermHandler)(int) = NULL;
-static struct fuse_operations dnbd3_fuse_no_operations;
+//static struct fuse_operations dnbd3_fuse_no_operations;
 
-#define SIGPOOLSIZE 6
-static pthread_spinlock_t sigLock;
-static dnbd3_signal_t *signalPool[SIGPOOLSIZE];
-static dnbd3_signal_t **sigEnd = signalPool + SIGPOOLSIZE;
-static void signalInit()
-{
-	pthread_spin_init( &sigLock, PTHREAD_PROCESS_PRIVATE );
-	for ( size_t i = 0; i < SIGPOOLSIZE; ++i ) {
-		signalPool[i] = NULL;
-	}
-}
-static inline dnbd3_signal_t *signalGet()
-{
-	pthread_spin_lock( &sigLock );
-	for ( dnbd3_signal_t **it = signalPool; it < sigEnd; ++it ) {
-		if ( *it != NULL ) {
-			dnbd3_signal_t *ret = *it;
-			*it = NULL;
-			pthread_spin_unlock( &sigLock );
-			return ret;
-		}
-	}
-	pthread_spin_unlock( &sigLock );
-	return signal_newBlocking();
-}
-static inline void signalPut(dnbd3_signal_t *signal)
-{
-	pthread_spin_lock( &sigLock );
-	for ( dnbd3_signal_t **it = signalPool; it < sigEnd; ++it ) {
-		if ( *it == NULL ) {
-			*it = signal;
-			pthread_spin_unlock( &sigLock );
-			return;
-		}
-	}
-	pthread_spin_unlock( &sigLock );
-	signal_close( signal );
-}
-
+/*
 static int image_getattr(const char *path, struct stat *stbuf)
 {
 	int res = 0;
@@ -103,7 +75,51 @@ static int image_getattr(const char *path, struct stat *stbuf)
 	}
 	return res;
 }
+*/
+static int image_stat(fuse_ino_t ino, struct stat *stbuf)
+{
+	stbuf->st_ctim = stbuf->st_atim = stbuf->st_mtim = startupTime;
+	stbuf->st_uid = owner;
+	stbuf->st_ino = ino;
+	switch (ino) {
+	case 1:
+		stbuf->st_mode = S_IFDIR | 0550;
+		stbuf->st_nlink = 2;
+		break;
 
+	case 2:
+		stbuf->st_mode = S_IFREG | 0440;
+		stbuf->st_nlink = 1;
+		stbuf->st_size = imageSize;
+		break;
+	case 3:
+		stbuf->st_mode = S_IFREG | 0440;
+		stbuf->st_nlink = 1;
+		stbuf->st_size = 4096;
+		clock_gettime( CLOCK_REALTIME, &stbuf->st_mtim );
+		break;
+
+	default:
+		return -1;
+	}
+	return 0;
+}
+
+static void image_ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+{
+	struct stat stbuf;
+
+	(void) fi;
+
+	memset(&stbuf, 0, sizeof(stbuf));
+	if (image_stat(ino, &stbuf) == -1)
+		fuse_reply_err(req, ENOENT);
+	else
+		fuse_reply_attr(req, &stbuf, 1.0); // 1.0 seconds validity timeout
+}
+
+
+/*
 static int image_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset UNUSED, struct fuse_file_info *fi UNUSED)
 {
 	if ( strcmp( path, "/" ) != 0 ) {
@@ -115,7 +131,70 @@ static int image_readdir(const char *path, void *buf, fuse_fill_dir_t filler, of
 	filler( buf, STATS_PATH + 1, NULL, 0 );
 	return 0;
 }
+*/
+static void image_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
+{
+	struct fuse_entry_param e;
 
+	if (strcmp(name, IMAGE_NAME) == 0 || strcmp(name, STATS_NAME) == 0) {
+		memset(&e, 0, sizeof(e));
+		if (strcmp(name, IMAGE_NAME) == 0) e.ino = 2;
+		else e.ino = 3;
+		e.attr_timeout = 1.0;
+		e.entry_timeout = 1.0;
+		image_stat(e.ino, &e.attr);
+
+		fuse_reply_entry(req, &e);
+	}
+	else fuse_reply_err(req, ENOENT);
+}
+
+struct dirbuf {
+	char *p;
+	size_t size;
+};
+
+static void dirbuf_add(fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino)
+{
+	struct stat stbuf;
+	size_t oldsize = b->size;
+	b->size += fuse_add_direntry(req, NULL, 0, name, NULL, 0);
+	b->p = (char *) realloc(b->p, b->size);
+	memset(&stbuf, 0, sizeof(stbuf));
+	stbuf.st_ino = ino;
+	fuse_add_direntry(req, b->p + oldsize, b->size - oldsize, name, &stbuf, b->size);
+	return;
+}
+
+#define min(x, y) ((x) < (y) ? (x) : (y))
+
+static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize)
+{
+	if (off < bufsize)
+		return fuse_reply_buf(req, buf + off, min(bufsize - off, maxsize));
+	else
+		return fuse_reply_buf(req, NULL, 0);
+}
+
+static void image_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi)
+{
+	(void) fi;
+
+	if (ino != 1)
+		fuse_reply_err(req, ENOTDIR);
+	else {
+		struct dirbuf b;
+
+		memset(&b, 0, sizeof(b));
+		dirbuf_add(req, &b, ".", 1);
+		dirbuf_add(req, &b, "..", 1);
+		dirbuf_add(req, &b, IMAGE_NAME, 2);
+		dirbuf_add(req, &b, STATS_NAME, 3);
+		reply_buf_limited(req, b.p, b.size, off, size);
+		free(b.p);
+	}
+}
+/*
 static int image_open(const char *path, struct fuse_file_info *fi)
 {
 	if ( strcmp( path, IMAGE_PATH ) != 0 && strcmp( path, STATS_PATH ) != 0 ) {
@@ -125,6 +204,16 @@ static int image_open(const char *path, struct fuse_file_info *fi)
 		return -EACCES;
 	}
 	return 0;
+}
+*/
+static void image_ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+{
+	if (ino != 2 && ino != 3)
+		fuse_reply_err(req, EISDIR);
+	else if ((fi->flags & 3) != O_RDONLY)
+		fuse_reply_err(req, EACCES);
+	else
+		fuse_reply_open(req, fi);
 }
 
 static int fillStatsFile(char *buf, size_t size, off_t offset) {
@@ -142,7 +231,7 @@ static int fillStatsFile(char *buf, size_t size, off_t offset) {
 	memcpy( buf, buffer + offset, len );
 	return len;
 }
-
+/*
 static int image_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
 {
 	if ( size > __INT_MAX__ ) {
@@ -166,7 +255,6 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 	}
 
 	if ( useDebug ) {
-		/* count the requested blocks */
 		uint64_t startBlock = offset / ( 4096 );
 		const uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
 
@@ -202,9 +290,72 @@ static int image_read(const char *path, char *buf, size_t size, off_t offset, st
 		return -EIO;
 	}
 }
+*/
+static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+	assert(ino == 2 || ino == 3);
+
+	(void)fi;
+	int len = 0;
+	char *buf = NULL;
+
+	if (size > __INT_MAX__)
+	{
+		// fuse docs say we MUST fill the buffer with exactly size bytes and return size,
+		// otherwise the buffer will we padded with zeros. Since the return value is just
+		// an int, we could not properly fulfill read requests > 2GB. Since there is no
+		// mention of a guarantee that this will never happen, better add a safety check.
+		// Way to go fuse.
+		// return -EIO;
+		fuse_reply_err(req, EIO);
+	}
+	if (ino == 3)
+	{
+		buf = (char *)malloc(4096); // they use 4096 byte buffer in fillStatsFile() for the status-file
+		len = fillStatsFile(buf, size, offset);
+		fuse_reply_buf(req, buf, len);
+		free(buf);
+		buf = NULL;
+	}
+
+	if ((uint64_t)offset >= imageSize)
+	{
+		fuse_reply_err(req, 0);
+	}
+
+	if (offset + size > imageSize)
+	{
+		size = imageSize - offset;
+	}
+	//debugf("\n OFFSET %d  SIZE %d  IMAGE %d  \n", offset, size, imageSize);
+	if (useDebug)
+	{
+		uint64_t startBlock = offset / (4096);
+		const uint64_t endBlock = (offset + size - 1) / (4096);
+
+		for (; startBlock <= endBlock; startBlock++)
+		{
+			++logInfo.blockRequestCount[startBlock];
+		}
+	}
+	if (ino == 2 && size != 0) // with size == 0 there is nothing to do
+	{
+		dnbd3_async_t *request = malloc(sizeof(dnbd3_async_t));
+		request->length = (uint32_t)size;
+		request->offset = offset;
+		request->fuse_req = req;
+		request->mode = MODE;
+
+		if (!connection_read(request)) fuse_reply_err(req, EINVAL);
+
+		//free(request->buffer);
+		//free(request->fuse_req);
+		//free(request);
+	}
+}
 
 static void image_sigHandler(int signum) {
-	keepRunning = false;
+	//keepRunning = false;
 	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
 		fuse_sigIntHandler(signum);
 	}
@@ -213,6 +364,7 @@ static void image_sigHandler(int signum) {
 	}
 }
 
+/*
 static void* image_init(struct fuse_conn_info *conn UNUSED)
 {
 	if ( !connection_initThreads() ) {
@@ -234,6 +386,95 @@ static void* image_init(struct fuse_conn_info *conn UNUSED)
 	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
 	return NULL;
 }
+*/
+static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
+{
+/*
+Zero copy data transfer ("splicing") will be used under the following circumstances:
+
+FUSE_CAP_SPLICE_WRITE is set in fuse_conn_info.want, and
+the kernel supports splicing from the fuse device (FUSE_CAP_SPLICE_WRITE is set in fuse_conn_info.capable), and
+flags does not contain FUSE_BUF_NO_SPLICE
+The amount of data that is provided in file-descriptor backed buffers (i.e., buffers for which bufv[n].flags == FUSE_BUF_FD) is at least twice the page size.
+In order for SPLICE_F_MOVE to be used, the following additional conditions have to be fulfilled:
+
+FUSE_CAP_SPLICE_MOVE is set in fuse_conn_info.want, and
+the kernel supports it (i.e, FUSE_CAP_SPLICE_MOVE is set in fuse_conn_info.capable), and
+flags contains FUSE_BUF_SPLICE_MOVE
+*/
+	(void) userdata;
+	
+	printf("Protocol version: %d.%d\n", conn->proto_major,
+	       conn->proto_minor);
+	printf("Capabilities:\n");
+	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
+		printf("\tFUSE_CAP_WRITEBACK_CACHE\n");
+	if(conn->capable & FUSE_CAP_ASYNC_READ)
+			printf("\tFUSE_CAP_ASYNC_READ\n");
+	if(conn->capable & FUSE_CAP_POSIX_LOCKS)
+			printf("\tFUSE_CAP_POSIX_LOCKS\n");
+	if(conn->capable & FUSE_CAP_ATOMIC_O_TRUNC)
+			printf("\tFUSE_CAP_ATOMIC_O_TRUNC\n");
+	if(conn->capable & FUSE_CAP_EXPORT_SUPPORT)
+			printf("\tFUSE_CAP_EXPORT_SUPPORT\n");
+	if(conn->capable & FUSE_CAP_DONT_MASK)
+			printf("\tFUSE_CAP_DONT_MASK\n");
+	if(conn->capable & FUSE_CAP_SPLICE_MOVE)
+			printf("\tFUSE_CAP_SPLICE_MOVE\n");
+	if(conn->capable & FUSE_CAP_SPLICE_READ)
+			printf("\tFUSE_CAP_SPLICE_READ\n");
+	if(conn->capable & FUSE_CAP_SPLICE_WRITE)
+			printf("\tFUSE_CAP_SPLICE_WRITE\n");
+	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
+			printf("\tFUSE_CAP_FLOCK_LOCKS\n");
+	if(conn->capable & FUSE_CAP_IOCTL_DIR)
+			printf("\tFUSE_CAP_IOCTL_DIR\n");
+	if(conn->capable & FUSE_CAP_IOCTL_DIR)
+			printf("\tFUSE_CAP_AUTO_INVAL_DATA\n");
+	if(conn->capable & FUSE_CAP_BIG_WRITES)
+			printf("\tFUSE_CAP_READDIRPLUS\n");
+	if(conn->capable & FUSE_CAP_BIG_WRITES)
+			printf("\tFUSE_CAP_READDIRPLUS_AUTO\n");
+	if(conn->capable & FUSE_CAP_ASYNC_READ)
+			printf("\tFUSE_CAP_ASYNC_DIO\n");
+	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
+			printf("\tFUSE_CAP_WRITEBACK_CACHE\n");
+	if(conn->capable & FUSE_CAP_EXPORT_SUPPORT)
+			printf("\tFUSE_CAP_NO_OPEN_SUPPORT\n");
+	if(conn->capable & FUSE_CAP_ASYNC_READ)
+			printf("\tFUSE_CAP_PARALLEL_DIROPS\n");
+	if(conn->capable & FUSE_CAP_POSIX_LOCKS)
+			printf("\tFUSE_CAP_POSIX_ACL\n");
+
+	conn->want |= FUSE_CAP_SPLICE_WRITE | FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_READ;
+	//printf("%d", conn->want);
+	if(conn->want & FUSE_CAP_SPLICE_WRITE)
+			printf("\tFUSE_CAP_SPLICE_WRITE on\n");
+	if(conn->capable & FUSE_CAP_SPLICE_MOVE)
+			printf("\tFUSE_CAP_SPLICE_MOVE on\n");
+	if(conn->capable & FUSE_CAP_SPLICE_READ)
+			printf("\tFUSE_CAP_SPLICE_READ on\n");
+
+
+	if ( !connection_initThreads() ) {
+		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
+		exit( EXIT_FAILURE );
+	}
+	// Prepare our handler
+	struct sigaction newHandler;
+	memset( &newHandler, 0, sizeof(newHandler) );
+	newHandler.sa_handler = &image_sigHandler;
+	sigemptyset( &newHandler.sa_mask );
+	struct sigaction oldHandler;
+	// Retrieve old handlers when setting
+	sigaction( SIGINT, &newHandler, &oldHandler );
+	fuse_sigIntHandler = oldHandler.sa_handler;
+	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
+	sigaction( SIGTERM, &newHandler, &oldHandler );
+	fuse_sigTermHandler = oldHandler.sa_handler;
+	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
+	//return NULL;
+}
 
 /* close the connection */
 static void image_destroy(void *private_data UNUSED)
@@ -246,12 +487,13 @@ static void image_destroy(void *private_data UNUSED)
 }
 
 /* map the implemented fuse operations */
-static struct fuse_operations image_oper = {
-	.getattr = image_getattr,
-	.readdir = image_readdir,
-	.open = image_open,
-	.read = image_read,
-	.init = image_init,
+static struct fuse_lowlevel_ops image_oper = {
+	.lookup = image_ll_lookup,
+	.getattr = image_ll_getattr,
+	.readdir = image_ll_readdir,
+	.open = image_ll_open,
+	.read = image_ll_read,
+	.init = image_ll_init,
 	.destroy = image_destroy,
 };
 
@@ -259,14 +501,14 @@ static void printVersion()
 {
 	char *arg[] = { "foo", "-V" };
 	printf( "DNBD3-Fuse Version 1.2.3.4, protocol version %d\n", (int)PROTOCOL_VERSION );
-	fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
+	//fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
 	exit( 0 );
 }
 
 static void printUsage(char *argv0, int exitCode)
 {
 	char *arg[] = { argv0, "-h" };
-	fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
+	//fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
 	printf( "\n" );
 	printf( "Usage: %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
 	printf( "Or:    %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
@@ -306,6 +548,11 @@ int main(int argc, char *argv[])
 	int newArgc;
 	int opt, lidx;
 	bool learnNewServers = true;
+//	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+	struct fuse_chan *ch;
+	char *mountpoint;
+	int err = -1;
+	mountpoint = argv[5];
 
 	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
 		printUsage( argv[0], 0 );
@@ -404,7 +651,8 @@ int main(int argc, char *argv[])
 
 	// Since dnbd3 is always read only and the remote image will not change
 	newArgv[newArgc++] = "-o";
-	newArgv[newArgc++] = "ro,auto_cache,default_permissions";
+	//newArgv[newArgc++] = "ro,auto_cache,default_permissions";
+	newArgv[newArgc++] = "ro,splice_read,default_permissions";
 	// Mount point goes last
 	newArgv[newArgc++] = argv[optind];
 
@@ -415,6 +663,26 @@ int main(int argc, char *argv[])
 	putchar('\n');
 	clock_gettime( CLOCK_REALTIME, &startupTime );
 	owner = getuid();
-	signalInit();
-	return fuse_main( newArgc, newArgv, &image_oper, NULL );
+
+	// LL partnewArgv[newArgc++]
+	struct fuse_args args = FUSE_ARGS_INIT(newArgc, newArgv);
+	if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 && (ch = fuse_mount(mountpoint, &args)) != NULL) {
+		struct fuse_session *se;
+
+		se = fuse_lowlevel_new(&args, &image_oper, sizeof(image_oper), NULL);
+		if (se != NULL) {
+			if (fuse_set_signal_handlers(se) != -1) {
+				fuse_session_add_chan(se, ch);
+				err = fuse_session_loop(se);
+				fuse_remove_signal_handlers(se);
+				fuse_session_remove_chan(ch);
+			}
+			fuse_session_destroy(se);
+		}
+		fuse_unmount(mountpoint, ch);
+	}
+	fuse_opt_free_args(&args);
+
+	return err ? 1 : 0;
+	// return fuse_main( newArgc, newArgv, &image_oper, NULL );
 }
