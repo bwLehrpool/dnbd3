@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
@@ -59,12 +60,12 @@ static struct {
 // Known alt servers
 typedef struct _alt_server {
 	dnbd3_host_t host;
-	int consecutiveFails;
-	int rtt;
+	atomic_int consecutiveFails;
+	atomic_int rtt;
 	int rtts[RTT_COUNT];
 	int rttIndex;
-	int bestCount;
-	int liveRtt;
+	atomic_int bestCount;
+	atomic_int liveRtt;
 } alt_server_t;
 
 static dnbd3_server_entry_t newservers[MAX_ALTS];
@@ -418,13 +419,8 @@ static void* connection_receiveThreadMain(void *sockPtr)
 				}
 				free(request->buffer);
 				request->buffer = NULL;
-				//free(request->fuse_req);
-				//request->fuse_req = NULL;
 				free(request);
-				// Success, wake up caller
-				//request->success = true;
-				//request->finished = true;
-				//signal_call( request->signal );
+				request = NULL;
 			}
 		} else if ( reply.cmd == CMD_GET_SERVERS ) {
 			// List of known alt servers

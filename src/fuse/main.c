@@ -5,6 +5,7 @@
  * See the file COPYING.
  *
  * Changed by Stephan Schwaer
+ * FUSE lowlevel by Alan Reichert
  * */
 
 #include "connection.h"
@@ -15,7 +16,6 @@
 #define FUSE_USE_VERSION 30
 #include <config.h>
 #include <fuse_lowlevel.h>
-//#include </usr/local/include/fuse3/fuse.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -30,7 +30,6 @@
 #include <time.h>
 #include <signal.h>
 #include <pthread.h>
-#include "main.h"
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 #define MODE 1
@@ -46,36 +45,9 @@ static bool useDebug = false;
 static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
-//static bool keepRunning = true;
 static void (*fuse_sigIntHandler)(int) = NULL;
 static void (*fuse_sigTermHandler)(int) = NULL;
-//static struct fuse_operations dnbd3_fuse_no_operations;
 
-/*
-static int image_getattr(const char *path, struct stat *stbuf)
-{
-	int res = 0;
-	memset( stbuf, 0, sizeof( struct stat ) );
-	stbuf->st_ctim = stbuf->st_atim = stbuf->st_mtim = startupTime;
-	stbuf->st_uid = owner;
-	if ( strcmp( path, "/" ) == 0 ) {
-		stbuf->st_mode = S_IFDIR | 0550;
-		stbuf->st_nlink = 2;
-	} else if ( strcmp( path, IMAGE_PATH ) == 0 ) {
-		stbuf->st_mode = S_IFREG | 0440;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = imageSize;
-	} else if ( strcmp( path, STATS_PATH ) == 0 ) {
-		stbuf->st_mode = S_IFREG | 0440;
-		stbuf->st_nlink = 1;
-		stbuf->st_size = 4096;
-		clock_gettime( CLOCK_REALTIME, &stbuf->st_mtim );
-	} else {
-		res = -ENOENT;
-	}
-	return res;
-}
-*/
 static int image_stat(fuse_ino_t ino, struct stat *stbuf)
 {
 	stbuf->st_ctim = stbuf->st_atim = stbuf->st_mtim = startupTime;
@@ -118,20 +90,6 @@ static void image_ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_in
 		fuse_reply_attr(req, &stbuf, 1.0); // 1.0 seconds validity timeout
 }
 
-
-/*
-static int image_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset UNUSED, struct fuse_file_info *fi UNUSED)
-{
-	if ( strcmp( path, "/" ) != 0 ) {
-		return -ENOENT;
-	}
-	filler( buf, ".", NULL, 0 );
-	filler( buf, "..", NULL, 0 );
-	filler( buf, IMAGE_PATH + 1, NULL, 0 );
-	filler( buf, STATS_PATH + 1, NULL, 0 );
-	return 0;
-}
-*/
 static void image_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	struct fuse_entry_param e;
@@ -194,18 +152,7 @@ static void image_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t 
 		free(b.p);
 	}
 }
-/*
-static int image_open(const char *path, struct fuse_file_info *fi)
-{
-	if ( strcmp( path, IMAGE_PATH ) != 0 && strcmp( path, STATS_PATH ) != 0 ) {
-		return -ENOENT;
-	}
-	if ( ( fi->flags & 3 ) != O_RDONLY ) {
-		return -EACCES;
-	}
-	return 0;
-}
-*/
+
 static void image_ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 {
 	if (ino != 2 && ino != 3)
@@ -231,66 +178,7 @@ static int fillStatsFile(char *buf, size_t size, off_t offset) {
 	memcpy( buf, buffer + offset, len );
 	return len;
 }
-/*
-static int image_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi UNUSED)
-{
-	if ( size > __INT_MAX__ ) {
-		// fuse docs say we MUST fill the buffer with exactly size bytes and return size,
-		// otherwise the buffer will we padded with zeros. Since the return value is just
-		// an int, we could not properly fulfill read requests > 2GB. Since there is no
-		// mention of a guarantee that this will never happen, better add a safety check.
-		// Way to go fuse.
-		return -EIO;
-	}
-	if ( path[1] == STATS_PATH[1] ) {
-		return fillStatsFile( buf, size, offset );
-	}
 
-	if ( (uint64_t)offset >= imageSize ) {
-		return 0;
-	}
-
-	if ( offset + size > imageSize ) {
-		size = imageSize - offset;
-	}
-
-	if ( useDebug ) {
-		uint64_t startBlock = offset / ( 4096 );
-		const uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
-
-		for ( ; startBlock <= endBlock; startBlock++ ) {
-			++logInfo.blockRequestCount[startBlock];
-		}
-	}
-
-	dnbd3_async_t request;
-	request.buffer = buf;
-	request.length = (uint32_t)size;
-	request.offset = offset;
-	request.signal = signalGet();
-
-	if ( !connection_read( &request ) ) {
-		signalPut( request.signal );
-		return -EINVAL;
-	}
-	while ( !request.finished ) {
-		int ret = signal_wait( request.signal, 5000 );
-		if ( !keepRunning ) {
-			connection_close();
-			break;
-		}
-		if ( ret < 0 ) {
-			debugf( "fuse_read signal wait returned %d", ret );
-		}
-	}
-	signalPut( request.signal );
-	if ( request.success ) {
-		return request.length;
-	} else {
-		return -EIO;
-	}
-}
-*/
 static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	assert(ino == 2 || ino == 3);
@@ -347,10 +235,6 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 		request->mode = MODE;
 
 		if (!connection_read(request)) fuse_reply_err(req, EINVAL);
-
-		//free(request->buffer);
-		//free(request->fuse_req);
-		//free(request);
 	}
 }
 
@@ -364,29 +248,6 @@ static void image_sigHandler(int signum) {
 	}
 }
 
-/*
-static void* image_init(struct fuse_conn_info *conn UNUSED)
-{
-	if ( !connection_initThreads() ) {
-		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
-		exit( EXIT_FAILURE );
-	}
-	// Prepare our handler
-	struct sigaction newHandler;
-	memset( &newHandler, 0, sizeof(newHandler) );
-	newHandler.sa_handler = &image_sigHandler;
-	sigemptyset( &newHandler.sa_mask );
-	struct sigaction oldHandler;
-	// Retrieve old handlers when setting
-	sigaction( SIGINT, &newHandler, &oldHandler );
-	fuse_sigIntHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
-	sigaction( SIGTERM, &newHandler, &oldHandler );
-	fuse_sigTermHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
-	return NULL;
-}
-*/
 static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
 {
 /*
@@ -408,7 +269,7 @@ flags contains FUSE_BUF_SPLICE_MOVE
 	       conn->proto_minor);
 	printf("Capabilities:\n");
 	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
-		printf("\tFUSE_CAP_WRITEBACK_CACHE\n");
+		printf("\tFUSE_CAP_FLOCK_LOCKS\n");
 	if(conn->capable & FUSE_CAP_ASYNC_READ)
 			printf("\tFUSE_CAP_ASYNC_READ\n");
 	if(conn->capable & FUSE_CAP_POSIX_LOCKS)
@@ -425,34 +286,27 @@ flags contains FUSE_BUF_SPLICE_MOVE
 			printf("\tFUSE_CAP_SPLICE_READ\n");
 	if(conn->capable & FUSE_CAP_SPLICE_WRITE)
 			printf("\tFUSE_CAP_SPLICE_WRITE\n");
-	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
-			printf("\tFUSE_CAP_FLOCK_LOCKS\n");
 	if(conn->capable & FUSE_CAP_IOCTL_DIR)
 			printf("\tFUSE_CAP_IOCTL_DIR\n");
-	if(conn->capable & FUSE_CAP_IOCTL_DIR)
-			printf("\tFUSE_CAP_AUTO_INVAL_DATA\n");
 	if(conn->capable & FUSE_CAP_BIG_WRITES)
-			printf("\tFUSE_CAP_READDIRPLUS\n");
-	if(conn->capable & FUSE_CAP_BIG_WRITES)
-			printf("\tFUSE_CAP_READDIRPLUS_AUTO\n");
+			printf("\tFUSE_CAP_BIG_WRITES\n");
 	if(conn->capable & FUSE_CAP_ASYNC_READ)
-			printf("\tFUSE_CAP_ASYNC_DIO\n");
+			printf("\tFUSE_CAP_ASYNC_READ\n");
 	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
-			printf("\tFUSE_CAP_WRITEBACK_CACHE\n");
+			printf("\tFUSE_CAP_FLOCK_LOCKS\n");
 	if(conn->capable & FUSE_CAP_EXPORT_SUPPORT)
-			printf("\tFUSE_CAP_NO_OPEN_SUPPORT\n");
+			printf("\tFUSE_CAP_EXPORT_SUPPORT\n");
 	if(conn->capable & FUSE_CAP_ASYNC_READ)
-			printf("\tFUSE_CAP_PARALLEL_DIROPS\n");
+			printf("\tFUSE_CAP_ASYNC_READ\n");
 	if(conn->capable & FUSE_CAP_POSIX_LOCKS)
-			printf("\tFUSE_CAP_POSIX_ACL\n");
+			printf("\tFUSE_CAP_POSIX_LOCKS\n");
 
 	conn->want |= FUSE_CAP_SPLICE_WRITE | FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_READ;
-	//printf("%d", conn->want);
 	if(conn->want & FUSE_CAP_SPLICE_WRITE)
 			printf("\tFUSE_CAP_SPLICE_WRITE on\n");
-	if(conn->capable & FUSE_CAP_SPLICE_MOVE)
+	if(conn->want & FUSE_CAP_SPLICE_MOVE)
 			printf("\tFUSE_CAP_SPLICE_MOVE on\n");
-	if(conn->capable & FUSE_CAP_SPLICE_READ)
+	if(conn->want & FUSE_CAP_SPLICE_READ)
 			printf("\tFUSE_CAP_SPLICE_READ on\n");
 
 
@@ -473,7 +327,6 @@ flags contains FUSE_BUF_SPLICE_MOVE
 	sigaction( SIGTERM, &newHandler, &oldHandler );
 	fuse_sigTermHandler = oldHandler.sa_handler;
 	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
-	//return NULL;
 }
 
 /* close the connection */
@@ -548,7 +401,6 @@ int main(int argc, char *argv[])
 	int newArgc;
 	int opt, lidx;
 	bool learnNewServers = true;
-//	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse_chan *ch;
 	char *mountpoint;
 	int err = -1;
@@ -684,5 +536,4 @@ int main(int argc, char *argv[])
 	fuse_opt_free_args(&args);
 
 	return err ? 1 : 0;
-	// return fuse_main( newArgc, newArgv, &image_oper, NULL );
 }
