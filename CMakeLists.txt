@@ -128,26 +128,18 @@ FILE(WRITE ${CMAKE_BINARY_DIR}/version.cmake
 ADD_CUSTOM_TARGET(
 	version
 	${CMAKE_COMMAND} -D SRC=${CMAKE_SOURCE_DIR}/src/version.c.in
-						-D DST=${CMAKE_BINARY_DIR}/version.c
+						-D DST=${CMAKE_BINARY_DIR}/generated/version.c
 						-D CMD=${CMAKE_SOURCE_DIR}/get-version.sh
 						-P ${CMAKE_BINARY_DIR}/version.cmake
 )
 
-## This is required if you're not building the kernel module
-## TODO: Find a nicer way to avoid parent includes,
-## especially the ../version.h -> version.c -> version.h cycle
-FILE(GLOB COMMON_HEADER_FILES src/*.h)
-FOREACH(COMMON_HEADER_FILE ${COMMON_HEADER_FILES})
-	CONFIGURE_FILE(${COMMON_HEADER_FILE} ${CMAKE_BINARY_DIR} COPYONLY)
-ENDFOREACH( COMMON_HEADER_FILE )
-
+INCLUDE_DIRECTORIES( ${CMAKE_BINARY_DIR}/generated )
 
 ################################################################################
 # CLIENT                                                                       #
 ################################################################################
 
 if(BUILD_KERNEL_MODULE)
-	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR})
 	FILE(GLOB_RECURSE CLIENT_SRCS src/client/*.c)
 	ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-client)
@@ -165,9 +157,9 @@ if(BUILD_SERVER)
 		message(" ######################## Building server for AFL mode - will be useless otherwise!")
 		ADD_DEFINITIONS(-DAFL_MODE)
 	ENDIF()
-	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${JANSSON_INCLUDE_DIR})
 	FILE(GLOB SERVER_SRCS src/server/*.c src/shared/*.c src/server/picohttpparser/*.c)
 	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
+	TARGET_INCLUDE_DIRECTORIES(dnbd3-server PRIVATE ${JANSSON_INCLUDE_DIR})
 	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${JANSSON_LIBRARIES})
 	if(UNIX AND NOT APPLE)
 		target_link_libraries(dnbd3-server rt)
@@ -183,9 +175,9 @@ endif()
 ################################################################################
 
 if(BUILD_FUSE_CLIENT)
-	INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${FUSE_INCLUDE_DIR})
 	FILE(GLOB FUSE_SRCS src/fuse/*.c src/shared/*.c)
 	ADD_EXECUTABLE(dnbd3-fuse ${FUSE_SRCS})
+	TARGET_INCLUDE_DIRECTORIES(dnbd3-fuse PRIVATE ${FUSE_INCLUDE_DIRS})
 	TARGET_LINK_LIBRARIES(dnbd3-fuse ${CMAKE_THREAD_LIBS_INIT} ${FUSE_LIBRARIES})
 	ADD_DEPENDENCIES(dnbd3-fuse version)
 	INSTALL(TARGETS dnbd3-fuse RUNTIME DESTINATION bin)
