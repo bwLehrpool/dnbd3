@@ -174,7 +174,7 @@ static void* integrity_main(void * data UNUSED)
 						dnbd3_cache_map_t *cache = ref_get_cachemap( image );
 						if ( cache != NULL ) {
 							// When checking full image, skip incomplete blocks, otherwise assume block is complete
-							complete = image_isHashBlockComplete( cache->map, blocks[0], fileSize );
+							complete = image_isHashBlockComplete( cache, blocks[0], fileSize );
 							ref_put( &cache->reference );
 						}
 					}
@@ -205,7 +205,7 @@ static void* integrity_main(void * data UNUSED)
 						bool iscomplete = true;
 						dnbd3_cache_map_t *cache = ref_get_cachemap( image );
 						if ( cache != NULL ) {
-							iscomplete = image_isHashBlockComplete( cache->map, blocks[0], fileSize );
+							iscomplete = image_isHashBlockComplete( cache, blocks[0], fileSize );
 							ref_put( &cache->reference );
 						}
 						logadd( LOG_WARNING, "Hash check for block %d of %s failed (complete: was: %d, is: %d)", blocks[0], image->name, (int)complete, (int)iscomplete );

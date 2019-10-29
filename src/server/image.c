@@ -160,7 +160,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		end = (end + HASH_BLOCK_SIZE - 1) & ~(uint64_t)(HASH_BLOCK_SIZE - 1);
 		for ( pos = start; pos < end; pos += HASH_BLOCK_SIZE ) {
 			const int block = (int)( pos / HASH_BLOCK_SIZE );
-			if ( image_isHashBlockComplete( cache->map, block, image->realFilesize ) ) {
+			if ( image_isHashBlockComplete( cache, block, image->realFilesize ) ) {
 				integrity_check( image, block, false );
 			}
 		}
@@ -651,9 +651,11 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	return NULL ;
 }
 
-bool image_isHashBlockComplete(atomic_uint_least8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
+bool image_isHashBlockComplete(dnbd3_cache_map_t * const cache, const uint64_t block, const uint64_t realFilesize)
 {
-	if ( cacheMap == NULL ) return true;
+	if ( cache == NULL )
+		return true;
+	const atomic_uint_least8_t *cacheMap = cache->map;
 	const uint64_t end = (block + 1) * HASH_BLOCK_SIZE;
 	if ( end <= realFilesize ) {
 		// Trivial case: block in question is not the last block (well, or image size is multiple of HASH_BLOCK_SIZE)
@@ -1039,10 +1041,10 @@ static void image_checkRandomBlocks(dnbd3_image_t *image, const int count)
 	int blocks[count];
 	int index = 0, j;
 	int block;
-	if ( image_isHashBlockComplete( cache->map, 0, image->virtualFilesize ) ) {
+	if ( image_isHashBlockComplete( cache, 0, image->virtualFilesize ) ) {
 		blocks[index++] = 0;
 	}
-	if ( hashBlocks > 1 && image_isHashBlockComplete( cache->map, hashBlocks - 1, image->virtualFilesize ) ) {
+	if ( hashBlocks > 1 && image_isHashBlockComplete( cache, hashBlocks - 1, image->virtualFilesize ) ) {
 		blocks[index++] = hashBlocks - 1;
 	}
 	int tries = count * 5; // Try only so many times to find a non-duplicate complete block
@@ -1052,12 +1054,14 @@ static void image_checkRandomBlocks(dnbd3_image_t *image, const int count)
 			if ( blocks[j] == block ) goto while_end;
 		}
 		// Block complete? If yes, add to list
-		if ( image_isHashBlockComplete( cache->map, block, image->virtualFilesize ) ) {
+		if ( image_isHashBlockComplete( cache, block, image->virtualFilesize ) ) {
 			blocks[index++] = block;
 		}
 while_end: ;
 	}
-	ref_put( &cache->reference );
+	if ( cache != NULL ) {
+		ref_put( &cache->reference );
+	}
 	for ( int i = 0; i < index; ++i ) {
 		integrity_check( image, blocks[i], true );
 	}
