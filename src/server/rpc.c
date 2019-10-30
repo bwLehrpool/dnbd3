@@ -382,7 +382,9 @@ static bool handleCacheMap(int sock, int permissions, struct field *fields, size
 		len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
 	}
 	bool ok = sendReply( sock, "200 OK", "application/octet-stream", map, len, keepAlive );
-	ref_put( &cache->reference );
+	if ( cache != NULL ) {
+		ref_put( &cache->reference );
+	}
 	return ok;
 }
 
