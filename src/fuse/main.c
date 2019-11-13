@@ -14,7 +14,7 @@
 #include "../shared/log.h"
 
 #define FUSE_USE_VERSION 30
-#include <config.h>
+#include "../config.h"
 #include <fuse_lowlevel.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,6 +47,19 @@ static struct timespec startupTime;
 static uid_t owner;
 static void (*fuse_sigIntHandler)(int) = NULL;
 static void (*fuse_sigTermHandler)(int) = NULL;
+
+static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize);
+static int fillStatsFile(char *buf, size_t size, off_t offset);
+static void image_destroy(void *private_data);
+static void image_ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
+static void image_ll_init(void *userdata, struct fuse_conn_info *conn);
+static void image_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
+static void image_ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
+static void image_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
+static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi);
+static int image_stat(fuse_ino_t ino, struct stat *stbuf);
+static void printUsage(char *argv0, int exitCode);
+static void printVersion();
 
 static int image_stat(fuse_ino_t ino, struct stat *stbuf)
 {
@@ -226,6 +239,7 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
+
 	if (ino == 2 && size != 0) // with size == 0 there is nothing to do
 	{
 		dnbd3_async_t *request = malloc(sizeof(dnbd3_async_t));
@@ -239,7 +253,10 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 }
 
 static void image_sigHandler(int signum) {
-	//keepRunning = false;
+	pthread_mutex_lock( &mutexInit );
+	keepRunning = false;
+	pthread_mutex_unlock( &mutexInit );
+	//printf("\n hallo222 %d", keepRunning);
 	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
 		fuse_sigIntHandler(signum);
 	}
@@ -318,8 +335,13 @@ flags contains FUSE_BUF_SPLICE_MOVE
 	struct sigaction newHandler;
 	memset( &newHandler, 0, sizeof(newHandler) );
 	newHandler.sa_handler = &image_sigHandler;
+	//newHandler.sa_flags &= ~SA_RESTART;
+	newHandler.sa_flags |= SA_RESETHAND;
 	sigemptyset( &newHandler.sa_mask );
+	//rt_sigaction(sa_flags=SA_RESTORER|SA_ONSTACK|SA_INTERRUPT|SA_NODEFER|SA_RESETHAND|SA_SIGINFO|SA_NOCLDSTOP|SA_NOCLDWAIT|0x3fffff8
 	struct sigaction oldHandler;
+	//oldHandler.sa_flags &= ~SA_RESTART;
+	//oldHandler.sa_flags |= SA_RESETHAND;
 	// Retrieve old handlers when setting
 	sigaction( SIGINT, &newHandler, &oldHandler );
 	fuse_sigIntHandler = oldHandler.sa_handler;

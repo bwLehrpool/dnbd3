@@ -12,7 +12,9 @@
 #define NO_SPLICE 0
 #define SPLICE 1
 
+extern volatile bool keepRunning;
 struct _dnbd3_async;
+extern pthread_mutex_t mutexInit;
 
 typedef struct _dnbd3_async {
 	struct _dnbd3_async *next; // Next in this linked list (provate field, not set by caller)
@@ -21,7 +23,7 @@ typedef struct _dnbd3_async {
 	uint64_t offset;
 	uint32_t length;
 	int mode;     // 0 splice off, 1 splice on, ...
-	fuse_req_t *fuse_req;
+	fuse_req_t fuse_req;
 } dnbd3_async_t;
 
 bool connection_init(const char *hosts, const char *image, const uint16_t rid, const bool learnNewServers);

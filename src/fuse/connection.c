@@ -31,8 +31,8 @@ static const int FAIL_BACKOFF_START_COUNT = 8;
 // Init guard
 static bool connectionInitDone = false;
 static bool threadInitDone = false;
-static pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
-static bool keepRunning = true;
+pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
+volatile bool keepRunning = true;
 static bool learnNewServers;
 
 // List of pending requests
@@ -113,7 +113,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 
 	timing_setBase();
 	pthread_mutex_lock( &mutexInit );
-	if ( !connectionInitDone && keepRunning ) {
+	if ( !connectionInitDone ) {
 		dnbd3_host_t tempHosts[MAX_HOSTS_PER_ADDRESS];
 		const char *current, *end;
 		int altIndex = 0;
@@ -209,7 +209,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 bool connection_initThreads()
 {
 	pthread_mutex_lock( &mutexInit );
-	if ( !keepRunning || !connectionInitDone || threadInitDone || connection.sockFd == -1 ) {
+	if ( !connectionInitDone || threadInitDone || connection.sockFd == -1 ) {
 		pthread_mutex_unlock( &mutexInit );
 		return false;
 	}
@@ -263,11 +263,11 @@ bool connection_read(dnbd3_async_t *request)
 
 void connection_close()
 {
-	if ( keepRunning ) {
+	if ( true ) {
 		logadd( LOG_INFO, "Tearing down dnbd3 connections and workers" );
 	}
 	pthread_mutex_lock( &mutexInit );
-	keepRunning = false;
+	//keepRunning = false;
 	if ( !connectionInitDone ) {
 		pthread_mutex_unlock( &mutexInit );
 		return;
@@ -278,6 +278,7 @@ void connection_close()
 		shutdown( connection.sockFd, SHUT_RDWR );
 	}
 	pthread_mutex_unlock( &connection.sendMutex );
+	logadd( LOG_DEBUG1, "Connection closed." );
 }
 
 size_t connection_printStats(char *buffer, const size_t len)
@@ -348,18 +349,21 @@ static void* connection_receiveThreadMain(void *sockPtr)
 	pthread_detach( pthread_self() );
 	
 
-	while ( keepRunning ) {
+	while ( true ) {
 		int ret;
 		struct fuse_bufvec splice_buf;
 		do {
 			ret = dnbd3_read_reply( sockFd, &reply, true );
+			printf("\n ret %d %d", ret);
 			if ( ret == REPLY_OK ) break;
 		} while ( ret == REPLY_INTR || ret == REPLY_AGAIN );
+		//printf("\n hallo %d", keepRunning);
 		if ( ret != REPLY_OK ) {
 			logadd( LOG_DEBUG1, "Error receiving reply on receiveThread (%d)", ret );
+			if (ret == REPLY_CLOSED) return NULL;
 			goto fail;
 		}
-
+		printf("\n Rep cmd %d", reply.cmd);
 		if ( reply.cmd == CMD_GET_BLOCK ) {
 			// Get block reply. find matching request
 			dnbd3_async_t *request = removeRequest( (dnbd3_async_t*)reply.handle );
@@ -402,7 +406,7 @@ static void* connection_receiveThreadMain(void *sockPtr)
 					}
 					unlock_rw( &altLock );
 				}
-				int rep = -errno;
+				int rep = -1;
 				if (request->mode == NO_SPLICE) {
 					rep = fuse_reply_buf(request->fuse_req, request->buffer, request->length);
 				}
@@ -410,7 +414,7 @@ static void* connection_receiveThreadMain(void *sockPtr)
 					rep = fuse_reply_data(request->fuse_req, &splice_buf, FUSE_BUF_FORCE_SPLICE);
 					// free(splice_buf);
 				}
-				if (rep != -errno) {
+				if (rep == 0) {
 					// no error
 				}
 				else {
@@ -466,7 +470,8 @@ static void* connection_backgroundThread(void *something UNUSED)
 
 	timing_get( &nextKeepalive );
 	nextRttCheck = nextKeepalive;
-	while ( keepRunning ) {
+	while ( true) {
+		//if ( !keepRunning ) break;
 		ticks now;
 		timing_get( &now );
 		uint32_t wt1 = timing_diffMs( &now, &nextKeepalive );
