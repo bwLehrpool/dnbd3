@@ -31,8 +31,8 @@ static const int FAIL_BACKOFF_START_COUNT = 8;
 // Init guard
 static bool connectionInitDone = false;
 static bool threadInitDone = false;
-pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
-volatile bool keepRunning = true;
+static pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
+extern bool keepRunning = true;
 static bool learnNewServers;
 
 // List of pending requests
@@ -267,7 +267,7 @@ void connection_close()
 		logadd( LOG_INFO, "Tearing down dnbd3 connections and workers" );
 	}
 	pthread_mutex_lock( &mutexInit );
-	//keepRunning = false;
+	keepRunning = false;
 	if ( !connectionInitDone ) {
 		pthread_mutex_unlock( &mutexInit );
 		return;
@@ -349,21 +349,17 @@ static void* connection_receiveThreadMain(void *sockPtr)
 	pthread_detach( pthread_self() );
 	
 
-	while ( true ) {
+	while ( keepRunning ) {
 		int ret;
 		struct fuse_bufvec splice_buf;
 		do {
 			ret = dnbd3_read_reply( sockFd, &reply, true );
-			printf("\n ret %d %d", ret);
 			if ( ret == REPLY_OK ) break;
 		} while ( ret == REPLY_INTR || ret == REPLY_AGAIN );
-		//printf("\n hallo %d", keepRunning);
 		if ( ret != REPLY_OK ) {
 			logadd( LOG_DEBUG1, "Error receiving reply on receiveThread (%d)", ret );
-			if (ret == REPLY_CLOSED) return NULL;
 			goto fail;
 		}
-		printf("\n Rep cmd %d", reply.cmd);
 		if ( reply.cmd == CMD_GET_BLOCK ) {
 			// Get block reply. find matching request
 			dnbd3_async_t *request = removeRequest( (dnbd3_async_t*)reply.handle );
@@ -447,6 +443,7 @@ static void* connection_receiveThreadMain(void *sockPtr)
 			}
 		}
 	}
+	if (!keepRunning) connection_close();
 	logadd( LOG_DEBUG1, "Aus der Schleife rausgeflogen! ARRRRRRRRRR" );
 fail:;
 	// Make sure noone is trying to use the socket for sending by locking,
@@ -470,8 +467,7 @@ static void* connection_backgroundThread(void *something UNUSED)
 
 	timing_get( &nextKeepalive );
 	nextRttCheck = nextKeepalive;
-	while ( true) {
-		//if ( !keepRunning ) break;
+	while ( keepRunning ) {
 		ticks now;
 		timing_get( &now );
 		uint32_t wt1 = timing_diffMs( &now, &nextKeepalive );
@@ -733,7 +729,7 @@ static void probeAltServers()
 		// Panic mode? Just switch to server
 		if ( panic ) {
 			unlock_rw( &altLock );
-			switchConnection( sock, srv );
+			if (keepRunning) switchConnection( sock, srv );
 			return;
 		}
 		// Non-panic mode:

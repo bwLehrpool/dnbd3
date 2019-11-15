@@ -32,7 +32,8 @@
 #include <pthread.h>
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
-#define MODE 1
+#define MODE 0
+
 
 static const char * const IMAGE_PATH = "/img";
 static const char * const STATS_PATH = "/status";
@@ -239,7 +240,7 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
-
+	if (!keepRunning) connection_close();
 	if (ino == 2 && size != 0) // with size == 0 there is nothing to do
 	{
 		dnbd3_async_t *request = malloc(sizeof(dnbd3_async_t));
@@ -253,10 +254,7 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 }
 
 static void image_sigHandler(int signum) {
-	pthread_mutex_lock( &mutexInit );
 	keepRunning = false;
-	pthread_mutex_unlock( &mutexInit );
-	//printf("\n hallo222 %d", keepRunning);
 	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
 		fuse_sigIntHandler(signum);
 	}
@@ -307,24 +305,18 @@ flags contains FUSE_BUF_SPLICE_MOVE
 			printf("\tFUSE_CAP_IOCTL_DIR\n");
 	if(conn->capable & FUSE_CAP_BIG_WRITES)
 			printf("\tFUSE_CAP_BIG_WRITES\n");
-	if(conn->capable & FUSE_CAP_ASYNC_READ)
-			printf("\tFUSE_CAP_ASYNC_READ\n");
-	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
-			printf("\tFUSE_CAP_FLOCK_LOCKS\n");
-	if(conn->capable & FUSE_CAP_EXPORT_SUPPORT)
-			printf("\tFUSE_CAP_EXPORT_SUPPORT\n");
-	if(conn->capable & FUSE_CAP_ASYNC_READ)
-			printf("\tFUSE_CAP_ASYNC_READ\n");
-	if(conn->capable & FUSE_CAP_POSIX_LOCKS)
-			printf("\tFUSE_CAP_POSIX_LOCKS\n");
 
-	conn->want |= FUSE_CAP_SPLICE_WRITE | FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_READ;
+	if ( MODE == NO_SPLICE ) conn->want &= ~FUSE_CAP_SPLICE_WRITE & ~FUSE_CAP_SPLICE_MOVE & ~FUSE_CAP_SPLICE_READ;
+	else if ( MODE == SPLICE ) conn->want |= FUSE_CAP_SPLICE_WRITE | FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_READ;
 	if(conn->want & FUSE_CAP_SPLICE_WRITE)
 			printf("\tFUSE_CAP_SPLICE_WRITE on\n");
+	else printf("\tFUSE_CAP_SPLICE_WRITE off\n");
 	if(conn->want & FUSE_CAP_SPLICE_MOVE)
 			printf("\tFUSE_CAP_SPLICE_MOVE on\n");
+	else printf("\tFUSE_CAP_SPLICE_MOVE off\n");
 	if(conn->want & FUSE_CAP_SPLICE_READ)
 			printf("\tFUSE_CAP_SPLICE_READ on\n");
+	else printf("\tFUSE_CAP_SPLICE_READ off\n");
 
 
 	if ( !connection_initThreads() ) {
@@ -336,7 +328,7 @@ flags contains FUSE_BUF_SPLICE_MOVE
 	memset( &newHandler, 0, sizeof(newHandler) );
 	newHandler.sa_handler = &image_sigHandler;
 	//newHandler.sa_flags &= ~SA_RESTART;
-	newHandler.sa_flags |= SA_RESETHAND;
+	newHandler.sa_flags |= SA_RESETHAND;  // allows SIGINT with SPLICE
 	sigemptyset( &newHandler.sa_mask );
 	//rt_sigaction(sa_flags=SA_RESTORER|SA_ONSTACK|SA_INTERRUPT|SA_NODEFER|SA_RESETHAND|SA_SIGINFO|SA_NOCLDSTOP|SA_NOCLDWAIT|0x3fffff8
 	struct sigaction oldHandler;
@@ -526,7 +518,7 @@ int main(int argc, char *argv[])
 	// Since dnbd3 is always read only and the remote image will not change
 	newArgv[newArgc++] = "-o";
 	//newArgv[newArgc++] = "ro,auto_cache,default_permissions";
-	newArgv[newArgc++] = "ro,splice_read,default_permissions";
+	newArgv[newArgc++] = "ro,default_permissions";
 	// Mount point goes last
 	newArgv[newArgc++] = argv[optind];
 

@@ -12,9 +12,8 @@
 #define NO_SPLICE 0
 #define SPLICE 1
 
-extern volatile bool keepRunning;
+extern bool keepRunning;
 struct _dnbd3_async;
-extern pthread_mutex_t mutexInit;
 
 typedef struct _dnbd3_async {
 	struct _dnbd3_async *next; // Next in this linked list (provate field, not set by caller)
