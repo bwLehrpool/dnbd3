@@ -32,11 +32,9 @@
 #include <pthread.h>
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
-#define MODE 0
 
 
 static const char * const IMAGE_PATH = "/img";
-static const char * const STATS_PATH = "/status";
 static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
 
@@ -48,6 +46,7 @@ static struct timespec startupTime;
 static uid_t owner;
 static void (*fuse_sigIntHandler)(int) = NULL;
 static void (*fuse_sigTermHandler)(int) = NULL;
+//static struct fuse_operations dnbd3_fuse_no_operations;
 
 static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize);
 static int fillStatsFile(char *buf, size_t size, off_t offset);
@@ -173,8 +172,11 @@ static void image_ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info 
 		fuse_reply_err(req, EISDIR);
 	else if ((fi->flags & 3) != O_RDONLY)
 		fuse_reply_err(req, EACCES);
-	else
+	else {
+		// auto caching
+		fi->keep_cache = 1;
 		fuse_reply_open(req, fi);
+	}
 }
 
 static int fillStatsFile(char *buf, size_t size, off_t offset) {
@@ -229,7 +231,7 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 	{
 		size = imageSize - offset;
 	}
-	//debugf("\n OFFSET %d  SIZE %d  IMAGE %d  \n", offset, size, imageSize);
+
 	if (useDebug)
 	{
 		uint64_t startBlock = offset / (4096);
@@ -247,78 +249,27 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 		request->length = (uint32_t)size;
 		request->offset = offset;
 		request->fuse_req = req;
-		request->mode = MODE;
 
 		if (!connection_read(request)) fuse_reply_err(req, EINVAL);
 	}
 }
 
 static void image_sigHandler(int signum) {
-	keepRunning = false;
+	int temp_errno = errno; // Threadsanitizer: don't spoil errno
 	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
+		keepRunning = false;
 		fuse_sigIntHandler(signum);
 	}
 	if ( signum == SIGTERM && fuse_sigTermHandler != NULL ) {
+		keepRunning = false;
 		fuse_sigTermHandler(signum);
 	}
+	errno = temp_errno;
 }
 
 static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
 {
-/*
-Zero copy data transfer ("splicing") will be used under the following circumstances:
-
-FUSE_CAP_SPLICE_WRITE is set in fuse_conn_info.want, and
-the kernel supports splicing from the fuse device (FUSE_CAP_SPLICE_WRITE is set in fuse_conn_info.capable), and
-flags does not contain FUSE_BUF_NO_SPLICE
-The amount of data that is provided in file-descriptor backed buffers (i.e., buffers for which bufv[n].flags == FUSE_BUF_FD) is at least twice the page size.
-In order for SPLICE_F_MOVE to be used, the following additional conditions have to be fulfilled:
-
-FUSE_CAP_SPLICE_MOVE is set in fuse_conn_info.want, and
-the kernel supports it (i.e, FUSE_CAP_SPLICE_MOVE is set in fuse_conn_info.capable), and
-flags contains FUSE_BUF_SPLICE_MOVE
-*/
 	(void) userdata;
-	
-	printf("Protocol version: %d.%d\n", conn->proto_major,
-	       conn->proto_minor);
-	printf("Capabilities:\n");
-	if(conn->capable & FUSE_CAP_FLOCK_LOCKS)
-		printf("\tFUSE_CAP_FLOCK_LOCKS\n");
-	if(conn->capable & FUSE_CAP_ASYNC_READ)
-			printf("\tFUSE_CAP_ASYNC_READ\n");
-	if(conn->capable & FUSE_CAP_POSIX_LOCKS)
-			printf("\tFUSE_CAP_POSIX_LOCKS\n");
-	if(conn->capable & FUSE_CAP_ATOMIC_O_TRUNC)
-			printf("\tFUSE_CAP_ATOMIC_O_TRUNC\n");
-	if(conn->capable & FUSE_CAP_EXPORT_SUPPORT)
-			printf("\tFUSE_CAP_EXPORT_SUPPORT\n");
-	if(conn->capable & FUSE_CAP_DONT_MASK)
-			printf("\tFUSE_CAP_DONT_MASK\n");
-	if(conn->capable & FUSE_CAP_SPLICE_MOVE)
-			printf("\tFUSE_CAP_SPLICE_MOVE\n");
-	if(conn->capable & FUSE_CAP_SPLICE_READ)
-			printf("\tFUSE_CAP_SPLICE_READ\n");
-	if(conn->capable & FUSE_CAP_SPLICE_WRITE)
-			printf("\tFUSE_CAP_SPLICE_WRITE\n");
-	if(conn->capable & FUSE_CAP_IOCTL_DIR)
-			printf("\tFUSE_CAP_IOCTL_DIR\n");
-	if(conn->capable & FUSE_CAP_BIG_WRITES)
-			printf("\tFUSE_CAP_BIG_WRITES\n");
-
-	if ( MODE == NO_SPLICE ) conn->want &= ~FUSE_CAP_SPLICE_WRITE & ~FUSE_CAP_SPLICE_MOVE & ~FUSE_CAP_SPLICE_READ;
-	else if ( MODE == SPLICE ) conn->want |= FUSE_CAP_SPLICE_WRITE | FUSE_CAP_SPLICE_MOVE | FUSE_CAP_SPLICE_READ;
-	if(conn->want & FUSE_CAP_SPLICE_WRITE)
-			printf("\tFUSE_CAP_SPLICE_WRITE on\n");
-	else printf("\tFUSE_CAP_SPLICE_WRITE off\n");
-	if(conn->want & FUSE_CAP_SPLICE_MOVE)
-			printf("\tFUSE_CAP_SPLICE_MOVE on\n");
-	else printf("\tFUSE_CAP_SPLICE_MOVE off\n");
-	if(conn->want & FUSE_CAP_SPLICE_READ)
-			printf("\tFUSE_CAP_SPLICE_READ on\n");
-	else printf("\tFUSE_CAP_SPLICE_READ off\n");
-
-
 	if ( !connection_initThreads() ) {
 		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
 		exit( EXIT_FAILURE );
@@ -327,13 +278,9 @@ flags contains FUSE_BUF_SPLICE_MOVE
 	struct sigaction newHandler;
 	memset( &newHandler, 0, sizeof(newHandler) );
 	newHandler.sa_handler = &image_sigHandler;
-	//newHandler.sa_flags &= ~SA_RESTART;
-	newHandler.sa_flags |= SA_RESETHAND;  // allows SIGINT with SPLICE
 	sigemptyset( &newHandler.sa_mask );
-	//rt_sigaction(sa_flags=SA_RESTORER|SA_ONSTACK|SA_INTERRUPT|SA_NODEFER|SA_RESETHAND|SA_SIGINFO|SA_NOCLDSTOP|SA_NOCLDWAIT|0x3fffff8
+
 	struct sigaction oldHandler;
-	//oldHandler.sa_flags &= ~SA_RESTART;
-	//oldHandler.sa_flags |= SA_RESETHAND;
 	// Retrieve old handlers when setting
 	sigaction( SIGINT, &newHandler, &oldHandler );
 	fuse_sigIntHandler = oldHandler.sa_handler;
@@ -368,14 +315,16 @@ static void printVersion()
 {
 	char *arg[] = { "foo", "-V" };
 	printf( "DNBD3-Fuse Version 1.2.3.4, protocol version %d\n", (int)PROTOCOL_VERSION );
-	//fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
+	struct fuse_args args = FUSE_ARGS_INIT(2, arg);
+	fuse_parse_cmdline(&args, NULL, NULL, NULL);
 	exit( 0 );
 }
 
 static void printUsage(char *argv0, int exitCode)
 {
 	char *arg[] = { argv0, "-h" };
-	//fuse_main( 2, arg, &dnbd3_fuse_no_operations, NULL );
+	struct fuse_args args = FUSE_ARGS_INIT(2, arg);
+	fuse_parse_cmdline(&args, NULL, NULL, NULL);
 	printf( "\n" );
 	printf( "Usage: %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
 	printf( "Or:    %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
@@ -415,10 +364,10 @@ int main(int argc, char *argv[])
 	int newArgc;
 	int opt, lidx;
 	bool learnNewServers = true;
+	bool single_thread = false;
 	struct fuse_chan *ch;
 	char *mountpoint;
-	int err = -1;
-	mountpoint = argv[5];
+	int fuse_err;
 
 	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
 		printUsage( argv[0], 0 );
@@ -472,7 +421,7 @@ int main(int argc, char *argv[])
 			newArgv[newArgc++] = "-d";
 			break;
 		case 's':
-			newArgv[newArgc++] = "-s";
+			single_thread = true;
 			break;
 		case 'S':
 			learnNewServers = false;
@@ -517,7 +466,6 @@ int main(int argc, char *argv[])
 
 	// Since dnbd3 is always read only and the remote image will not change
 	newArgv[newArgc++] = "-o";
-	//newArgv[newArgc++] = "ro,auto_cache,default_permissions";
 	newArgv[newArgc++] = "ro,default_permissions";
 	// Mount point goes last
 	newArgv[newArgc++] = argv[optind];
@@ -530,7 +478,7 @@ int main(int argc, char *argv[])
 	clock_gettime( CLOCK_REALTIME, &startupTime );
 	owner = getuid();
 
-	// LL partnewArgv[newArgc++]
+	// Fuse lowlevel loop
 	struct fuse_args args = FUSE_ARGS_INIT(newArgc, newArgv);
 	if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 && (ch = fuse_mount(mountpoint, &args)) != NULL) {
 		struct fuse_session *se;
@@ -539,7 +487,8 @@ int main(int argc, char *argv[])
 		if (se != NULL) {
 			if (fuse_set_signal_handlers(se) != -1) {
 				fuse_session_add_chan(se, ch);
-				err = fuse_session_loop(se);
+				if (single_thread) fuse_err = fuse_session_loop(se);
+				else fuse_err = fuse_session_loop_mt(se);  //MT produces errors (race conditions) in libfuse and didnt improve speed at all
 				fuse_remove_signal_handlers(se);
 				fuse_session_remove_chan(ch);
 			}
@@ -548,6 +497,6 @@ int main(int argc, char *argv[])
 		fuse_unmount(mountpoint, ch);
 	}
 	fuse_opt_free_args(&args);
-
-	return err ? 1 : 0;
+	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err);
+	return fuse_err;
 }

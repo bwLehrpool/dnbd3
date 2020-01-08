@@ -15,7 +15,6 @@
 #include <errno.h>
 #include <time.h>
 #include <inttypes.h>
-#include "main.h"
 
 /* Constants */
 static const size_t SHORTBUF = 100;
@@ -32,7 +31,7 @@ static const int FAIL_BACKOFF_START_COUNT = 8;
 static bool connectionInitDone = false;
 static bool threadInitDone = false;
 static pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
-extern bool keepRunning = true;
+bool keepRunning = true;
 static bool learnNewServers;
 
 // List of pending requests
@@ -222,10 +221,10 @@ bool connection_initThreads()
 		logadd( LOG_ERROR, "Mutex or spinlock init failure" );
 		success = false;
 	} else {
-		if ( pthread_create( &thread, NULL, &connection_receiveThreadMain, (void*)(size_t)connection.sockFd ) != 0 ) {
+		if (pthread_create( &thread, NULL, &connection_receiveThreadMain, (void*)(size_t)connection.sockFd ) != 0 ) {
 			logadd( LOG_ERROR, "Could not create receive thread" );
 			success = false;
-		} else if ( pthread_create( &thread, NULL, &connection_backgroundThread, NULL ) != 0 ) {
+		} else if (pthread_create( &thread, NULL, &connection_backgroundThread, NULL ) != 0 ) {
 			logadd( LOG_ERROR, "Could not create background thread" );
 			success = false;
 		}
@@ -347,11 +346,9 @@ static void* connection_receiveThreadMain(void *sockPtr)
 	int sockFd = (int)(size_t)sockPtr;
 	dnbd3_reply_t reply;
 	pthread_detach( pthread_self() );
-	
 
 	while ( keepRunning ) {
 		int ret;
-		struct fuse_bufvec splice_buf;
 		do {
 			ret = dnbd3_read_reply( sockFd, &reply, true );
 			if ( ret == REPLY_OK ) break;
@@ -374,11 +371,6 @@ static void* connection_receiveThreadMain(void *sockPtr)
 			} else {
 				// Found a match
 				request->buffer = malloc(request->length); // char*
-				if (request->mode == SPLICE) {
-					splice_buf = FUSE_BUFVEC_INIT(request->length);
-					splice_buf.buf[0].mem = request->buffer;
-					splice_buf.buf[0].pos = request->offset;
-				}
 				const ssize_t ret = sock_recv( sockFd, request->buffer, request->length );
 				if ( ret != (ssize_t)request->length ) {
 					logadd( LOG_DEBUG1, "receiving payload for a block reply failed" );
@@ -402,20 +394,10 @@ static void* connection_receiveThreadMain(void *sockPtr)
 					}
 					unlock_rw( &altLock );
 				}
-				int rep = -1;
-				if (request->mode == NO_SPLICE) {
-					rep = fuse_reply_buf(request->fuse_req, request->buffer, request->length);
-				}
-				else if (request->mode == SPLICE) {
-					rep = fuse_reply_data(request->fuse_req, &splice_buf, FUSE_BUF_FORCE_SPLICE);
-					// free(splice_buf);
-				}
-				if (rep == 0) {
-					// no error
-				}
-				else {
-					printf("ERROR ON FUSE REPLY %i \n", rep);
-					fuse_reply_err(request->fuse_req, rep);
+				int fuse_reply = fuse_reply_buf(request->fuse_req, request->buffer, request->length);
+				if (fuse_reply != 0) {
+					printf("ERROR ON FUSE REPLY %i \n", fuse_reply);
+					fuse_reply_err(request->fuse_req, fuse_reply);
 				}
 				free(request->buffer);
 				request->buffer = NULL;
@@ -443,7 +425,6 @@ static void* connection_receiveThreadMain(void *sockPtr)
 			}
 		}
 	}
-	if (!keepRunning) connection_close();
 	logadd( LOG_DEBUG1, "Aus der Schleife rausgeflogen! ARRRRRRRRRR" );
 fail:;
 	// Make sure noone is trying to use the socket for sending by locking,
@@ -462,6 +443,7 @@ fail:;
 
 static void* connection_backgroundThread(void *something UNUSED)
 {
+	pthread_detach( pthread_self() );  // fixes thread leak after fuse termination
 	ticks nextKeepalive;
 	ticks nextRttCheck;
 
@@ -714,9 +696,6 @@ static void probeAltServers()
 			}
 			// Success, wake up caller
 			logadd( LOG_DEBUG1, "[RTT] Successful direct probe" );
-			//request->success = true;
-			//request->finished = true;
-			//signal_call( request->signal );
 		} else {
 			// Wasn't a request that's in our request queue
 			if ( !throwDataAway( sock, testLength ) ) {
@@ -914,8 +893,6 @@ static bool throwDataAway(int sockFd, uint32_t amount)
 static void enqueueRequest(dnbd3_async_t *request)
 {
 	request->next = NULL;
-	//request->finished = false;
-	//request->success = false;
 	//logadd( LOG_DEBUG2, "Queue: %p @ %s : %d", request, file, line );
 	// Measure latency and add to switch formula
 	timing_get( &request->time );

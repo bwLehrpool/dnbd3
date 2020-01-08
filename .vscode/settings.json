@@ -1,6 +1,0 @@
-{
-    "files.associations": {
-        "pthread.h": "c",
-        "inttypes.h": "c"
-    }
-}
