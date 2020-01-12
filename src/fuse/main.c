@@ -46,7 +46,6 @@ static struct timespec startupTime;
 static uid_t owner;
 static void (*fuse_sigIntHandler)(int) = NULL;
 static void (*fuse_sigTermHandler)(int) = NULL;
-//static struct fuse_operations dnbd3_fuse_no_operations;
 
 static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize);
 static int fillStatsFile(char *buf, size_t size, off_t offset);
@@ -173,7 +172,7 @@ static void image_ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info 
 	else if ((fi->flags & 3) != O_RDONLY)
 		fuse_reply_err(req, EACCES);
 	else {
-		// auto caching
+		// auto caching 
 		fi->keep_cache = 1;
 		fuse_reply_open(req, fi);
 	}
@@ -274,12 +273,12 @@ static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
 		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
 		exit( EXIT_FAILURE );
 	}
+
 	// Prepare our handler
 	struct sigaction newHandler;
 	memset( &newHandler, 0, sizeof(newHandler) );
 	newHandler.sa_handler = &image_sigHandler;
 	sigemptyset( &newHandler.sa_mask );
-
 	struct sigaction oldHandler;
 	// Retrieve old handlers when setting
 	sigaction( SIGINT, &newHandler, &oldHandler );
@@ -288,6 +287,7 @@ static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
 	sigaction( SIGTERM, &newHandler, &oldHandler );
 	fuse_sigTermHandler = oldHandler.sa_handler;
 	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
+	return NULL;
 }
 
 /* close the connection */
@@ -367,6 +367,7 @@ int main(int argc, char *argv[])
 	bool single_thread = false;
 	struct fuse_chan *ch;
 	char *mountpoint;
+	int foreground = 0;
 	int fuse_err;
 
 	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
@@ -381,6 +382,7 @@ int main(int argc, char *argv[])
 	newArgv = calloc( argc + 10, sizeof(char*) );
 	newArgv[0] = argv[0];
 	newArgc = 1;
+
 	while ( ( opt = getopt_long( argc, argv, optString, longOpts, &lidx ) ) != -1 ) {
 		switch ( opt ) {
 		case 'h':
@@ -419,6 +421,7 @@ int main(int argc, char *argv[])
 		case 'd':
 			useDebug = true;
 			newArgv[newArgc++] = "-d";
+			foreground = 1;
 			break;
 		case 's':
 			single_thread = true;
@@ -487,6 +490,7 @@ int main(int argc, char *argv[])
 		if (se != NULL) {
 			if (fuse_set_signal_handlers(se) != -1) {
 				fuse_session_add_chan(se, ch);
+				//fuse_daemonize(foreground);
 				if (single_thread) fuse_err = fuse_session_loop(se);
 				else fuse_err = fuse_session_loop_mt(se);  //MT produces errors (race conditions) in libfuse and didnt improve speed at all
 				fuse_remove_signal_handlers(se);
@@ -497,6 +501,7 @@ int main(int argc, char *argv[])
 		fuse_unmount(mountpoint, ch);
 	}
 	fuse_opt_free_args(&args);
+	free(newArgv);
 	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err);
 	return fuse_err;
 }

@@ -3,6 +3,7 @@
 
 #include "../shared/fdsignal.h"
 #include "../shared/timing.h"
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -10,7 +11,7 @@
 #include <fuse_lowlevel.h>
 
 
-extern bool keepRunning;
+extern atomic_bool keepRunning;
 struct _dnbd3_async;
 
 typedef struct _dnbd3_async {

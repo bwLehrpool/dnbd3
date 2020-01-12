@@ -31,7 +31,7 @@ static const int FAIL_BACKOFF_START_COUNT = 8;
 static bool connectionInitDone = false;
 static bool threadInitDone = false;
 static pthread_mutex_t mutexInit = PTHREAD_MUTEX_INITIALIZER;
-bool keepRunning = true;
+atomic_bool keepRunning = true;
 static bool learnNewServers;
 
 // List of pending requests
@@ -425,6 +425,7 @@ static void* connection_receiveThreadMain(void *sockPtr)
 			}
 		}
 	}
+	if(!keepRunning) connection_close();
 	logadd( LOG_DEBUG1, "Aus der Schleife rausgeflogen! ARRRRRRRRRR" );
 fail:;
 	// Make sure noone is trying to use the socket for sending by locking,
