@@ -1143,8 +1143,7 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
  * revision 0 is requested, it will:
  * a) Try to clone it from an authoritative dnbd3 server, if
  *    the server is running in proxy mode.
- * b) Try to load it from disk by constructing the appropriate file name, if not
- *    running in proxy mode.
+ * b) Try to load it from disk by constructing the appropriate file name.
  *
  *  If the return value is not NULL,
  * image_release needs to be called on the image at some point.
@@ -1152,21 +1151,25 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
  */
 dnbd3_image_t* image_getOrLoad(char * const name, const uint16_t revision)
 {
+	dnbd3_image_t *image;
 	// specific revision - try shortcut
 	if ( revision != 0 ) {
-		dnbd3_image_t *image = image_get( name, revision, true );
-		if ( image != NULL ) return image;
+		image = image_get( name, revision, true );
+		if ( image != NULL )
+			return image;
 	}
 	const size_t len = strlen( name );
 	// Sanity check
 	if ( len == 0 || name[len - 1] == '/' || name[0] == '/'
 			|| name[0] == '.' || strstr( name, "/." ) != NULL ) return NULL;
-	// Call specific function depending on whether this is a proxy or not
+	// If in proxy mode, check with upstream server first
 	if ( _isProxy ) {
-		return loadImageProxy( name, revision, len );
-	} else {
-		return loadImageServer( name, revision );
+		image = loadImageProxy( name, revision, len );
+		if ( image != NULL )
+			return image;
 	}
+	// Lookup on local storage
+	return loadImageServer( name, revision );
 }
 
 /**
