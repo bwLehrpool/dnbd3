@@ -255,6 +255,12 @@ extern atomic_bool _lookupMissingForProxy;
 extern atomic_bool _sparseFiles;
 
 /**
+ * If true, don't abort image replication if preallocating
+ * the image fails, but retry with sparse file.
+ */
+extern atomic_bool _ignoreAllocErrors;
+
+/**
  * Port to listen on (default: #define PORT (5003))
  */
 extern atomic_int _listenPort;

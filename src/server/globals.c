@@ -21,6 +21,7 @@ atomic_int _backgroundReplication = BGR_FULL;
 atomic_int _bgrMinClients = 0;
 atomic_bool _lookupMissingForProxy = true;
 atomic_bool _sparseFiles = false;
+atomic_bool _ignoreAllocErrors = false;
 atomic_bool _removeMissingImages = true;
 atomic_int _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
 atomic_int _clientTimeout = SOCKET_TIMEOUT_CLIENT;
@@ -75,6 +76,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_INT( dnbd3, bgrMinClients );
 	SAVE_TO_VAR_BOOL( dnbd3, lookupMissingForProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, sparseFiles );
+	SAVE_TO_VAR_BOOL( dnbd3, ignoreAllocErrors );
 	SAVE_TO_VAR_BOOL( dnbd3, removeMissingImages );
 	SAVE_TO_VAR_BOOL( dnbd3, closeUnusedFd );
 	SAVE_TO_VAR_UINT( dnbd3, serverPenalty );
@@ -322,6 +324,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PINT(bgrMinClients);
 	PBOOL(lookupMissingForProxy);
 	PBOOL(sparseFiles);
+	PBOOL(ignoreAllocErrors);
 	PBOOL(removeMissingImages);
 	PINT(uplinkTimeout);
 	PINT(clientTimeout);

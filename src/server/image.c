@@ -1111,14 +1111,19 @@ bool image_create(char *image, int revision, uint64_t size)
 		logadd( LOG_DEBUG1, "Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
 	}
 	// Now write image
+	bool fallback = false;
 	if ( !_sparseFiles && !file_alloc( fdImage, 0, size ) ) {
 		logadd( LOG_ERROR, "Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, errno );
 		logadd( LOG_ERROR, "It is highly recommended to use a file system that supports preallocating disk"
 				" space without actually writing all zeroes to the block device." );
 		logadd( LOG_ERROR, "If you cannot fix this, try setting sparseFiles=true, but don't expect"
 				" divine performance during replication." );
-		goto failure_cleanup;
-	} else if ( _sparseFiles && !file_setSize( fdImage, size ) ) {
+		if ( !_ignoreAllocErrors ) {
+			goto failure_cleanup;
+		}
+		fallback = true;
+	}
+	if ( ( _sparseFiles || fallback ) && !file_setSize( fdImage, size ) ) {
 		logadd( LOG_ERROR, "Could not create sparse file of %" PRIu64 " bytes for %s (errno=%d)", size, path, errno );
 		logadd( LOG_ERROR, "Make sure you have enough disk space, check directory permissions, fs errors etc." );
 		goto failure_cleanup;
