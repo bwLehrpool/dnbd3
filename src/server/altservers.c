@@ -268,7 +268,7 @@ int altservers_getHostListForReplication(const char *image, dnbd3_host_t *server
 	int idx[size];
 	int num = altservers_getListForUplink( NULL, image, idx, size, -1 );
 	for ( int i = 0; i < num; ++i ) {
-		servers[i] = altServers[i].host;
+		servers[i] = altServers[idx[i]].host;
 	}
 	return num;
 }
