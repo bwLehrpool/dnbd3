@@ -269,21 +269,17 @@ void* net_handleNewConnection(void *clientPtr)
 				// Image is fine so far, but occasionally drop a client if the uplink for the image is clogged or unavailable
 				bOk = true;
 				if ( image->ref_cacheMap != NULL ) {
-					dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
-					if ( uplink != NULL && ( uplink->cacheFd == -1 || uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) ) {
+					if ( image->problem.queue || image->problem.write ) {
 						bOk = ( rand() % 4 ) == 1;
 					}
-					if ( bOk && uplink != NULL ) {
-						if ( uplink->cacheFd == -1 ) { // Wait 100ms if local caching is not working so this
+					if ( bOk ) {
+						if ( image->problem.write ) { // Wait 100ms if local caching is not working so this
 							usleep( 100000 ); // server gets a penalty and is less likely to be selected
 						}
 						if ( image->problem.uplink ) {
 							// Penaltize depending on completeness, if no uplink is available
 							usleep( ( 100 - image->completenessEstimate ) * 100 );
 						}
-					}
-					if ( uplink != NULL ) {
-						ref_put( &uplink->reference );
 					}
 				}
 				if ( bOk ) {

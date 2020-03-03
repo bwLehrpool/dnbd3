@@ -93,7 +93,7 @@ struct _dnbd3_uplink
 	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
 	uint64_t replicationHandle; // Handle of pending replication request
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
-	atomic_int queueLen;        // length of queue
+	int queueLen;               // length of queue
 	uint32_t idleTime;          // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
 	dnbd3_alt_local_t altData[SERVER_MAX_ALTS];
@@ -141,6 +141,7 @@ struct _dnbd3_image
 		atomic_bool write;       // Error writing to file
 		atomic_bool read;        // Error reading from file
 		atomic_bool changed;     // File disappeared or changed, thorough check required if it seems to be back
+		atomic_bool queue;       // Too many requests waiting on uplink
 	} problem;
 	uint16_t rid;          // revision of image
 	pthread_mutex_t lock;

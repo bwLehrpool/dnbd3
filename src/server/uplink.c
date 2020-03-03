@@ -118,6 +118,8 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	mutex_unlock( &uplink->sendMutex );
 	uplink->cycleDetected = false;
 	image->problem.uplink = true;
+	image->problem.write = true;
+	image->problem.queue = false;
 	if ( sock != -1 ) {
 		uplink->better.fd = sock;
 		int index = altservers_hostToIndex( host );
@@ -191,6 +193,7 @@ static void cancelAllRequests(dnbd3_uplink_t *uplink)
 		}
 	}
 	uplink->queueLen = 0;
+	uplink->image->problem.queue = false;
 }
 
 static void uplink_free(ref *ref)
@@ -328,6 +331,9 @@ bool uplink_request(dnbd3_client_t *client, uint64_t handle, uint64_t start, uin
 			goto fail_lock;
 		}
 		freeSlot = uplink->queueLen++;
+		if ( freeSlot > SERVER_UPLINK_QUEUELEN_THRES ) {
+			uplink->image->problem.queue = true;
+		}
 	}
 	// Do not send request to uplink server if we have a matching pending request AND the request either has the
 	// status ULR_NEW/PENDING OR we found a free slot with LOWER index than the one we attach to. Otherwise
@@ -904,6 +910,7 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 						continue; // Success, retry write
 					}
 					if ( err == EBADF || err == EINVAL || err == EIO ) {
+						uplink->image->problem.write = true;
 						if ( !tryAgain || !uplink_reopenCacheFd( uplink, true ) )
 							break;
 						tryAgain = false;
@@ -982,6 +989,9 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 				}
 			}
 			if ( req->status == ULR_FREE && i == uplink->queueLen - 1 ) uplink->queueLen--;
+		}
+		if ( uplink->queueLen < SERVER_UPLINK_QUEUELEN_THRES ) {
+			uplink->image->problem.queue = false;
 		}
 		mutex_unlock( &uplink->queueLock );
 #ifdef _DEBUG
@@ -1121,6 +1131,7 @@ static bool uplink_reopenCacheFd(dnbd3_uplink_t *uplink, const bool force)
 		close( uplink->cacheFd );
 	}
 	uplink->cacheFd = open( uplink->image->path, O_WRONLY | O_CREAT, 0644 );
+	uplink->image->problem.write = uplink->cacheFd == -1;
 	return uplink->cacheFd != -1;
 }
 
