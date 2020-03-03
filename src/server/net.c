@@ -207,6 +207,7 @@ void* net_handleNewConnection(void *clientPtr)
 	dnbd3_reply_t reply;
 
 	dnbd3_image_t *image = NULL;
+	dnbd3_cache_map_t *cache = NULL;
 	int image_file = -1;
 
 	int num;
@@ -315,9 +316,8 @@ void* net_handleNewConnection(void *clientPtr)
 		// client handling mainloop
 		while ( recv_request_header( client->sock, &request ) ) {
 			if ( _shutdown ) break;
-			switch ( request.cmd ) {
+			if ( likely ( request.cmd == CMD_GET_BLOCK ) ) {
 
-			case CMD_GET_BLOCK:;
 				const uint64_t offset = request.offset_small; // Copy to full uint64 to prevent repeated masking
 				reply.handle = request.handle;
 				if ( unlikely( offset >= image->virtualFilesize ) ) {
@@ -326,7 +326,7 @@ void* net_handleNewConnection(void *clientPtr)
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
 					send_reply( client->sock, &reply, NULL );
-					break;
+					continue;
 				}
 				if ( unlikely( offset + request.size > image->virtualFilesize ) ) {
 					// Sanity check
@@ -334,11 +334,14 @@ void* net_handleNewConnection(void *clientPtr)
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
 					send_reply( client->sock, &reply, NULL );
-					break;
+					continue;
 				}
 
-				dnbd3_cache_map_t *cache;
-				if ( request.size != 0 && ( cache = ref_get_cachemap( image ) ) != NULL ) {
+				if ( cache == NULL && image->uplinkref != NULL ) {
+					cache = ref_get_cachemap( image );
+				}
+
+				if ( request.size != 0 && cache != NULL ) {
 					// This is a proxyed image, check if we need to relay the request...
 					start = offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					end = (offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
@@ -360,36 +363,39 @@ void* net_handleNewConnection(void *clientPtr)
 					// First byte
 					if ( isCached ) {
 						b = atomic_load_explicit( &cache->map[firstByteInMap], memory_order_relaxed );
-						for ( pos = start; firstByteInMap == (pos >> 15) && pos < end; pos += DNBD3_BLOCK_SIZE ) {
-							const int map_x = (pos >> 12) & 7; // mod 8
-							const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-							if ( (b & bit_mask) == 0 ) {
-								isCached = false;
-								break;
+						if ( b != 0xff ) {
+							for ( pos = start; firstByteInMap == (pos >> 15) && pos < end; pos += DNBD3_BLOCK_SIZE ) {
+								const int map_x = (pos >> 12) & 7; // mod 8
+								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
+								if ( (b & bit_mask) == 0 ) {
+									isCached = false;
+									break;
+								}
 							}
 						}
 					}
 					// Last byte - only check if request spans multiple bytes in cache map
 					if ( isCached && firstByteInMap != lastByteInMap ) {
 						b = atomic_load_explicit( &cache->map[lastByteInMap], memory_order_relaxed );
-						for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
-							assert( lastByteInMap == (pos >> 15) );
-							const int map_x = (pos >> 12) & 7; // mod 8
-							const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-							if ( (b & bit_mask) == 0 ) {
-								isCached = false;
-								break;
+						if ( b != 0xff ) {
+							for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
+								assert( lastByteInMap == (pos >> 15) );
+								const int map_x = (pos >> 12) & 7; // mod 8
+								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
+								if ( (b & bit_mask) == 0 ) {
+									isCached = false;
+									break;
+								}
 							}
 						}
 					}
-					ref_put( &cache->reference );
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, offset, request.size, request.hops ) ) {
 							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy for image %s:%d",
 									client->hostName, image->name, image->rid );
 							goto exit_client_cleanup;
 						}
-						break; // DONE, exit request.cmd switch
+						continue; // Reply arrives on uplink some time later, handle next request now
 					}
 				}
 
@@ -474,7 +480,16 @@ void* net_handleNewConnection(void *clientPtr)
 				if ( lock ) mutex_unlock( &client->sendMutex );
 				// Global per-client counter
 				client->bytesSent += request.size; // Increase counter for statistics.
-				break;
+				continue;
+			}
+			// Any other command
+			// Release cache map every now and then, in case the image was replicated
+			// entirely. Will be re-grabbed on next CMD_GET_BLOCK otherwise.
+			if ( cache != NULL ) {
+				ref_put( &cache->reference );
+				cache = NULL;
+			}
+			switch ( request.cmd ) {
 
 			case CMD_GET_SERVERS:
 				// Build list of known working alt servers
@@ -523,9 +538,9 @@ set_name: ;
 				logadd( LOG_ERROR, "Unknown command from client %s: %d", client->hostName, (int)request.cmd );
 				break;
 
-			}
-		}
-	}
+			} // end switch
+		} // end loop
+	} // end bOk
 exit_client_cleanup: ;
 	// First remove from list, then add to counter to prevent race condition
 	removeFromList( client );
@@ -535,6 +550,9 @@ exit_client_cleanup: ;
 		mutex_lock( &image->lock );
 		timing_get( &image->atime );
 		mutex_unlock( &image->lock );
+	}
+	if ( cache != NULL ) {
+		ref_put( &cache->reference );
 	}
 	freeClientStruct( client ); // This will also call image_release on client->image
 	return NULL ;
