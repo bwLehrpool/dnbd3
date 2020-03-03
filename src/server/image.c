@@ -118,30 +118,26 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	const uint64_t firstByteInMap = start >> 15;
 	const uint64_t lastByteInMap = (end - 1) >> 15;
 	uint64_t pos;
-	// First byte
-	uint8_t fb = 0, lb = 0;
-	for ( pos = start; firstByteInMap == (pos >> 15) && pos < end; pos += DNBD3_BLOCK_SIZE ) {
-		const int map_x = (pos >> 12) & 7; // mod 8
-		const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-		fb |= bit_mask;
-	}
-	// Last byte
-	if ( lastByteInMap != firstByteInMap ) {
-		for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
-			assert( lastByteInMap == (pos >> 15) );
-			const int map_x = (pos >> 12) & 7; // mod 8
-			const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-			lb |= bit_mask;
-		}
-	}
+	// First and last byte masks
+	const uint8_t fb = (uint8_t)(0xff << ((start >> 12) & 7));
+	const uint8_t lb = (uint8_t)(~(0xff << ((((end - 1) >> 12) & 7) + 1)));
 	atomic_thread_fence( memory_order_acquire );
-	if ( set ) {
-		uint8_t fo = atomic_fetch_or_explicit( &cache->map[firstByteInMap], fb, memory_order_relaxed );
-		uint8_t lo = atomic_fetch_or_explicit( &cache->map[lastByteInMap], lb, memory_order_relaxed );
-		setNewBlocks = ( fo != cache->map[firstByteInMap] || lo != cache->map[lastByteInMap] );
+	if ( firstByteInMap != lastByteInMap ) {
+		if ( set ) {
+			uint8_t fo = atomic_fetch_or_explicit( &cache->map[firstByteInMap], fb, memory_order_relaxed );
+			uint8_t lo = atomic_fetch_or_explicit( &cache->map[lastByteInMap], lb, memory_order_relaxed );
+			setNewBlocks = ( fo != ( fo | fb ) || lo != ( lo | lb ) );
+		} else {
+			atomic_fetch_and_explicit( &cache->map[firstByteInMap], (uint8_t)~fb, memory_order_relaxed );
+			atomic_fetch_and_explicit( &cache->map[lastByteInMap], (uint8_t)~lb, memory_order_relaxed );
+		}
 	} else {
-		atomic_fetch_and_explicit( &cache->map[firstByteInMap], (uint8_t)~fb, memory_order_relaxed );
-		atomic_fetch_and_explicit( &cache->map[lastByteInMap], (uint8_t)~lb, memory_order_relaxed );
+		if ( set ) {
+			uint8_t o = atomic_fetch_or_explicit( &cache->map[firstByteInMap], (uint8_t)(fb & lb), memory_order_relaxed );
+			setNewBlocks = o != ( o | (fb & lb) );
+		} else {
+			atomic_fetch_and_explicit( &cache->map[firstByteInMap], (uint8_t)~(fb & lb), memory_order_relaxed );
+		}
 	}
 	const uint8_t nval = set ? 0xff : 0;
 	// Everything in between
