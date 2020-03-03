@@ -195,9 +195,10 @@ static void* integrity_main(void * data UNUSED)
 							readFd = directFd;
 						}
 					}
-					if ( readFd == -1 ) { // Try buffered; flush to disk for that
-						image_ensureOpen( image );
-						readFd = image->readFd;
+					if ( readFd == -1 ) { // Try buffered as fallback
+						if ( image_ensureOpen( image ) && !image->problem.read ) {
+							readFd = image->readFd;
+						}
 					}
 					if ( readFd == -1 ) {
 						logadd( LOG_MINOR, "Couldn't get any valid fd for integrity check of %s... ignoring...", image->path );
@@ -237,16 +238,6 @@ static void* integrity_main(void * data UNUSED)
 					// Done with this task as nothing left
 					checkQueue[i].image = NULL;
 					if ( i + 1 == queueLen ) queueLen--;
-					// Mark as working again if applicable
-					if ( !foundCorrupted ) {
-						dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
-						if ( uplink != NULL ) { // TODO: image_determineWorkingState() helper?
-							mutex_lock( &image->lock );
-							image->working = uplink->current.fd != -1 && image->readFd != -1;
-							mutex_unlock( &image->lock );
-							ref_put( &uplink->reference );
-						}
-					}
 				} else {
 					// Still more blocks to go...
 					checkQueue[i].block = blocks[0];
@@ -254,9 +245,6 @@ static void* integrity_main(void * data UNUSED)
 			}
 			if ( foundCorrupted && !_shutdown ) {
 				// Something was fishy, make sure uplink exists
-				mutex_lock( &image->lock );
-				image->working = false;
-				mutex_unlock( &image->lock );
 				uplink_init( image, -1, NULL, -1 );
 			}
 			// Release :-)

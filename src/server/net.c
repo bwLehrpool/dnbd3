@@ -262,7 +262,7 @@ void* net_handleNewConnection(void *clientPtr)
 			atomic_thread_fence( memory_order_release );
 			if ( unlikely( image == NULL ) ) {
 				//logadd( LOG_DEBUG1, "Client requested non-existent image '%s' (rid:%d), rejected\n", image_name, (int)rid );
-			} else if ( unlikely( !image->working ) ) {
+			} else if ( unlikely( image->problem.read || image->problem.changed ) ) {
 				logadd( LOG_DEBUG1, "Client %s requested non-working image '%s' (rid:%d), rejected\n",
 						client->hostName, image_name, (int)rid );
 			} else {
@@ -273,8 +273,14 @@ void* net_handleNewConnection(void *clientPtr)
 					if ( uplink != NULL && ( uplink->cacheFd == -1 || uplink->queueLen > SERVER_UPLINK_QUEUELEN_THRES ) ) {
 						bOk = ( rand() % 4 ) == 1;
 					}
-					if ( bOk && uplink != NULL && uplink->cacheFd == -1 ) { // Wait 100ms if local caching is not working so this
-						usleep( 100000 ); // server gets a penalty and is less likely to be selected
+					if ( bOk && uplink != NULL ) {
+						if ( uplink->cacheFd == -1 ) { // Wait 100ms if local caching is not working so this
+							usleep( 100000 ); // server gets a penalty and is less likely to be selected
+						}
+						if ( image->problem.uplink ) {
+							// Penaltize depending on completeness, if no uplink is available
+							usleep( ( 100 - image->completenessEstimate ) * 100 );
+						}
 					}
 					if ( uplink != NULL ) {
 						ref_put( &uplink->reference );
@@ -383,9 +389,8 @@ void* net_handleNewConnection(void *clientPtr)
 					ref_put( &cache->reference );
 					if ( !isCached ) {
 						if ( !uplink_request( client, request.handle, offset, request.size, request.hops ) ) {
-							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy, disabling image %s:%d",
+							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy for image %s:%d",
 									client->hostName, image->name, image->rid );
-							image->working = false;
 							goto exit_client_cleanup;
 						}
 						break; // DONE, exit request.cmd switch
@@ -456,7 +461,7 @@ void* net_handleNewConnection(void *clientPtr)
 								}
 								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
 									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
-									image->working = false;
+									image->problem.read = true;
 								}
 							}
 							goto exit_client_cleanup;

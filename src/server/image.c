@@ -53,7 +53,7 @@ static bool image_ensureDiskSpace(uint64_t size, bool force);
 
 static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
-static void image_checkRandomBlocks(dnbd3_image_t *image, const int count);
+static bool image_checkRandomBlocks(dnbd3_image_t *image, const int count, int fromFd);
 static void* closeUnusedFds(void*);
 static void allocCacheMap(dnbd3_image_t *image, bool complete);
 
@@ -239,35 +239,76 @@ bool image_isComplete(dnbd3_image_t *image)
  */
 bool image_ensureOpen(dnbd3_image_t *image)
 {
-	if ( image->readFd != -1 ) return image;
-	int newFd = open( image->path, O_RDONLY );
+	bool sizeChanged = false;
+	if ( image->readFd != -1 && !image->problem.changed )
+		return true;
+	int newFd = image->readFd == -1 ? open( image->path, O_RDONLY ) : dup( image->readFd );
 	if ( newFd == -1 ) {
-		logadd( LOG_WARNING, "Cannot open %s for reading", image->path );
+		if ( !image->problem.read ) {
+			logadd( LOG_WARNING, "Cannot open %s for reading", image->path );
+			image->problem.read = true;
+		}
 	} else {
-		// Check size
+		// Check size + read access
+		char buffer[100];
 		const off_t flen = lseek( newFd, 0, SEEK_END );
 		if ( flen == -1 ) {
-			logadd( LOG_WARNING, "Could not seek to end of %s (errno %d)", image->path, errno );
+			if ( !image->problem.read ) {
+				logadd( LOG_WARNING, "Could not seek to end of %s (errno %d)", image->path, errno );
+				image->problem.read = true;
+			}
 			close( newFd );
 			newFd = -1;
 		} else if ( (uint64_t)flen != image->realFilesize ) {
-			logadd( LOG_WARNING, "Size of active image with closed fd changed from %" PRIu64 " to %" PRIu64, image->realFilesize, (uint64_t)flen );
+			if ( !image->problem.changed ) {
+				logadd( LOG_WARNING, "Size of active image with closed fd changed from %" PRIu64 " to %" PRIu64,
+						image->realFilesize, (uint64_t)flen );
+			}
+			sizeChanged = true;
+		} else if ( pread( newFd, buffer, sizeof(buffer), 0 ) == -1 ) {
+			if ( !image->problem.read ) {
+				logadd( LOG_WARNING, "Reading first %d bytes from %s failed (errno=%d)",
+						(int)sizeof(buffer), image->path, errno );
+				image->problem.read = true;
+			}
 			close( newFd );
 			newFd = -1;
 		}
 	}
 	if ( newFd == -1 ) {
-		mutex_lock( &image->lock );
-		image->working = false;
-		mutex_unlock( &image->lock );
+		if ( sizeChanged ) {
+			image->problem.changed = true;
+		}
 		return false;
 	}
+
+	// Re-opened. Check if the "size/content changed" flag was set before and if so, check crc32,
+	// but only if the size we just got above is correct.
+	if ( image->problem.changed && !sizeChanged ) {
+		if ( image->crc32 == NULL ) {
+			// Cannot verify further, hope for the best
+			image->problem.changed = false;
+			logadd( LOG_DEBUG1, "Size of image %s:%d changed back to expected value",
+					image->name, (int)image->rid );
+		} else if ( image_checkRandomBlocks( image, 1, newFd ) ) {
+			// This should have checked the first block (if complete) -> All is well again
+			image->problem.changed = false;
+			logadd( LOG_DEBUG1, "Size and CRC of image %s:%d changed back to expected value",
+					image->name, (int)image->rid );
+		}
+	} else {
+		image->problem.changed = sizeChanged;
+	}
+
 	mutex_lock( &image->lock );
 	if ( image->readFd == -1 ) {
 		image->readFd = newFd;
+		image->problem.read = false;
 		mutex_unlock( &image->lock );
 	} else {
-		// There was a race while opening the file (happens cause not locked cause blocking), we lost the race so close new fd and proceed
+		// There was a race while opening the file (happens cause not locked cause blocking),
+		// we lost the race so close new fd and proceed.
+		// *OR* we dup()'ed above for cheating when the image changed before.
 		mutex_unlock( &image->lock );
 		close( newFd );
 	}
@@ -296,7 +337,7 @@ dnbd3_image_t* image_byId(int imgId)
  * point...
  * Locks on: imageListLock, _images[].lock
  */
-dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
+dnbd3_image_t* image_get(char *name, uint16_t revision, bool ensureFdOpen)
 {
 	int i;
 	const char *removingText = _removeMissingImages ? ", removing from list" : "";
@@ -326,84 +367,36 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 	candidate->users++;
 	mutex_unlock( &imageListLock );
 
-	// Found, see if it works
-	// TODO: Also make sure a non-working image still has old fd open but created a new one and removed itself from the list
-	// TODO: But remember size-changed images forever
-	if ( candidate->working || checkIfWorking ) {
-		// Is marked working, but might not have an fd open
-		if ( !image_ensureOpen( candidate ) ) {
-			mutex_lock( &candidate->lock );
-			timing_get( &candidate->lastWorkCheck );
-			mutex_unlock( &candidate->lock );
-			if ( _removeMissingImages ) {
-				candidate = image_remove( candidate ); // No release here, the image is still returned and should be released by caller
-			}
-			return candidate;
-		}
-	}
-
-	if ( !checkIfWorking ) return candidate; // Not interested in re-cechking working state
-
-	// ...not working...
-
-	// Don't re-check too often
-	mutex_lock( &candidate->lock );
-	bool check;
-	declare_now;
-	check = timing_diff( &candidate->lastWorkCheck, &now ) > NONWORKING_RECHECK_INTERVAL_SECONDS;
-	if ( check ) {
-		candidate->lastWorkCheck = now;
-	}
-	mutex_unlock( &candidate->lock );
-	if ( !check ) {
+	if ( !ensureFdOpen ) // Don't want to re-check
 		return candidate;
-	}
 
-	// reaching this point means:
-	// 1) We should check if the image is working, it might or might not be in working state right now
-	// 2) The image is open for reading (or at least was at some point, the fd might be stale if images lie on an NFS share etc.)
-	// 3) We made sure not to re-check this image too often
+	if ( image_ensureOpen( candidate ) && !candidate->problem.read )
+		return candidate; // We have a read fd and no read or changed problems
 
-	// Common for ro and rw images: Size check, read check
-	const off_t len = lseek( candidate->readFd, 0, SEEK_END );
-	bool reload = false;
-	if ( len == -1 ) {
-		logadd( LOG_WARNING, "lseek() on %s failed (errno=%d)%s.", candidate->path, errno, removingText );
-		reload = true;
-	} else if ( (uint64_t)len != candidate->realFilesize ) {
-		logadd( LOG_WARNING, "Size of %s changed at runtime, keeping disabled! Expected: %" PRIu64 ", found: %" PRIu64
-				". Try sending SIGHUP to server if you know what you're doing.",
-				candidate->path, candidate->realFilesize, (uint64_t)len );
-	} else {
-		// Seek worked, file size is same, now see if we can read from file
-		char buffer[100];
-		if ( pread( candidate->readFd, buffer, sizeof(buffer), 0 ) == -1 ) {
-			logadd( LOG_WARNING, "Reading first %d bytes from %s failed (errno=%d)%s.",
-					(int)sizeof(buffer), candidate->path, errno, removingText );
-			reload = true;
-		} else if ( !candidate->working ) {
-			// Seems everything is fine again \o/
-			candidate->working = true;
-			logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->name, candidate->rid );
-		}
-	}
+	// -- image could not be opened again, or is open but has problem --
 
-	if ( reload ) {
+	if ( _removeMissingImages && !file_isReadable( candidate->path ) ) {
+		candidate = image_remove( candidate );
+		// No image_release here, the image is still returned and should be released by caller
+	} else if ( candidate->readFd != -1 ) {
+		// We cannot just close the fd as it might be in use. Make a copy and remove old entry.
+		candidate = image_remove( candidate );
 		// Could not access the image with exising fd - mark for reload which will re-open the file.
 		// make a copy of the image struct but keep the old one around. If/When it's not being used
 		// anymore, it will be freed automatically.
-		logadd( LOG_DEBUG1, "Reloading image file %s", candidate->path );
+		logadd( LOG_DEBUG1, "Reloading image file %s because of read problem/changed", candidate->path );
 		dnbd3_image_t *img = calloc( sizeof(dnbd3_image_t), 1 );
 		img->path = strdup( candidate->path );
 		img->name = strdup( candidate->name );
 		img->virtualFilesize = candidate->virtualFilesize;
 		img->realFilesize = candidate->realFilesize;
-		img->atime = now;
+		timing_get( &img->atime );
 		img->masterCrc32 = candidate->masterCrc32;
 		img->readFd = -1;
 		img->rid = candidate->rid;
 		img->users = 1;
-		img->working = false;
+		img->problem.read = true;
+		img->problem.changed = candidate->problem.changed;
 		img->ref_cacheMap = NULL;
 		mutex_init( &img->lock, LOCK_IMAGE );
 		if ( candidate->crc32 != NULL ) {
@@ -419,18 +412,17 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		if ( image_addToList( img ) ) {
 			image_release( candidate );
 			candidate = img;
+			// Check if image is incomplete, initialize uplink
+			if ( candidate->ref_cacheMap != NULL ) {
+				uplink_init( candidate, -1, NULL, -1 );
+			}
+			// Try again with new instance
+			image_ensureOpen( candidate );
 		} else {
 			img->users = 0;
 			image_free( img );
 		}
-		// Check if image is incomplete, initialize uplink
-		if ( candidate->ref_cacheMap != NULL ) {
-			uplink_init( candidate, -1, NULL, -1 );
-		}
-		// readFd == -1 and working == FALSE at this point,
-		// this function needs some splitting up for handling as we need to run most
-		// of the above code again. for now we know that the next call for this
-		// name:rid will get ne newly inserted "img" and try to re-open the file.
+		// readFd == -1 and problem.read == true
 	}
 
 	return candidate; // We did all we can, hopefully it's working
@@ -900,7 +892,6 @@ static bool image_load(char *base, char *path, int withUplink)
 	image->rid = (uint16_t)revision;
 	image->users = 0;
 	image->readFd = -1;
-	image->working = ( cache == NULL );
 	timing_get( &image->nextCompletenessEstimate );
 	image->completenessEstimate = -1;
 	mutex_init( &image->lock, LOCK_IMAGE );
@@ -925,7 +916,7 @@ static bool image_load(char *base, char *path, int withUplink)
 
 	// Image is definitely incomplete, initialize uplink worker
 	if ( image->ref_cacheMap != NULL ) {
-		image->working = false;
+		image->problem.uplink = true;
 		if ( withUplink ) {
 			uplink_init( image, -1, NULL, -1 );
 		}
@@ -937,7 +928,7 @@ static bool image_load(char *base, char *path, int withUplink)
 		// Keep fd for reading
 		fdImage = -1;
 		// Check CRC32
-		image_checkRandomBlocks( image, 4 );
+		image_checkRandomBlocks( image, 4, -1 );
 	} else {
 		logadd( LOG_ERROR, "Image list full: Could not add image %s", path );
 		image->readFd = -1; // Keep fdImage instead, will be closed below
@@ -1027,10 +1018,19 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 	return retval;
 }
 
-static void image_checkRandomBlocks(dnbd3_image_t *image, const int count)
+/**
+ * Check up to count random blocks from given image. If fromFd is -1, the check will
+ * be run asynchronously using the integrity checker. Otherwise, the check will
+ * happen in the function and return the result of the check.
+ * @param image image to check
+ * @param count number of blocks to check (max)
+ * @param fromFd, check synchronously and use this fd for reading, -1 = async
+ * @return true = OK, false = error. Meaningless if fromFd == -1
+ */
+static bool image_checkRandomBlocks(dnbd3_image_t *image, const int count, int fromFd)
 {
 	if ( image->crc32 == NULL )
-		return;
+		return true;
 	// This checks the first block and (up to) count - 1 random blocks for corruption
 	// via the known crc32 list. This is very sloppy and is merely supposed to detect
 	// accidental corruption due to broken dnbd3-proxy functionality or file system
@@ -1038,7 +1038,7 @@ static void image_checkRandomBlocks(dnbd3_image_t *image, const int count)
 	assert( count > 0 );
 	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
 	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( image->virtualFilesize );
-	int blocks[count];
+	int blocks[count+1]; // +1 for "-1" in sync case
 	int index = 0, j;
 	int block;
 	if ( image_isHashBlockComplete( cache, 0, image->virtualFilesize ) ) {
@@ -1062,9 +1062,16 @@ while_end: ;
 	if ( cache != NULL ) {
 		ref_put( &cache->reference );
 	}
-	for ( int i = 0; i < index; ++i ) {
-		integrity_check( image, blocks[i], true );
+	if ( fromFd == -1 ) {
+		// Async
+		for ( int i = 0; i < index; ++i ) {
+			integrity_check( image, blocks[i], true );
+		}
+		return true;
 	}
+	// Sync
+	blocks[index] = -1;
+	return image_checkBlocksCrc32( fromFd, image->crc32, blocks, image->realFilesize );
 }
 
 /**
@@ -1306,7 +1313,7 @@ server_fail: ;
 		} else {
 			// Clumsy busy wait, but this should only take as long as it takes to start a thread, so is it really worth using a signalling mechanism?
 			int i = 0;
-			while ( !image->working && ++i < 100 )
+			while ( image->problem.uplink && ++i < 100 )
 				usleep( 2000 );
 		}
 	} else if ( uplinkSock != -1 ) {
@@ -1599,7 +1606,7 @@ int image_getCompletenessEstimate(dnbd3_image_t * const image)
 	assert( image != NULL );
 	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
 	if ( cache == NULL )
-		return image->working ? 100 : 0;
+		return 100;
 	const int len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
 	if ( unlikely( len == 0 ) ) {
 		ref_put( &cache->reference );

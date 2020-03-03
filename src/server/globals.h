@@ -136,7 +136,12 @@ struct _dnbd3_image
 	atomic_int completenessEstimate; // Completeness estimate in percent
 	atomic_int users;      // clients currently using this image. XXX Lock on imageListLock when modifying and checking whether the image should be freed. Reading it elsewhere is fine without the lock.
 	int id;                // Unique ID of this image. Only unique in the context of this running instance of DNBD3-Server
-	atomic_bool working;   // true if image exists and completeness is == 100% or a working upstream proxy is connected
+	struct {
+		atomic_bool uplink;      // No uplink connected
+		atomic_bool write;       // Error writing to file
+		atomic_bool read;        // Error reading from file
+		atomic_bool changed;     // File disappeared or changed, thorough check required if it seems to be back
+	} problem;
 	uint16_t rid;          // revision of image
 	pthread_mutex_t lock;
 };

@@ -628,10 +628,6 @@ failed:
 		if ( best.fd != -1 ) {
 			close( best.fd );
 		}
-		if ( !image->working || uplink->cycleDetected ) {
-			image->working = true;
-			LOG( LOG_DEBUG1, "[RTT] No better alt server found, enabling '%s:%d' again... :-(", image->name, (int)image->rid );
-		}
 		uplink->cycleDetected = false; // It's a lie, but prevents rtt measurement triggering again right away
 		mutex_lock( &uplink->rttLock );
 		uplink->rttTestResult = RTT_DONTCHANGE;
