@@ -1576,14 +1576,23 @@ json_t* image_getListAsJson()
 			ref_put( &uplink->reference );
 		}
 
-		jsonImage = json_pack( "{sisssisisisisI}",
+		int problems = 0;
+#define addproblem(name,val) if (image->problem.name) problems |= (1 << val)
+		addproblem(read, 0);
+		addproblem(write, 1);
+		addproblem(changed, 2);
+		addproblem(uplink, 3);
+		addproblem(queue, 4);
+
+		jsonImage = json_pack( "{sisssisisisisIsi}",
 				"id", image->id, // id, name, rid never change, so access them without locking
 				"name", image->name,
 				"rid", (int) image->rid,
 				"users", image->users,
 				"complete",  completeness,
 				"idle", idleTime,
-				"size", (json_int_t)image->virtualFilesize );
+				"size", (json_int_t)image->virtualFilesize,
+				"problems", problems );
 		if ( bytesReceived != 0 ) {
 			json_object_set_new( jsonImage, "bytesReceived", json_integer( (json_int_t) bytesReceived ) );
 		}
