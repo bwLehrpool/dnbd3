@@ -57,7 +57,6 @@ static bool uplink_sendKeepalive(dnbd3_uplink_t *uplink);
 static void uplink_addCrc32(dnbd3_uplink_t *uplink);
 static bool uplink_sendReplicationRequest(dnbd3_uplink_t *uplink);
 static bool uplink_reopenCacheFd(dnbd3_uplink_t *uplink, const bool force);
-static bool uplink_saveCacheMap(dnbd3_uplink_t *uplink);
 static bool uplink_connectionShouldShutdown(dnbd3_uplink_t *uplink);
 static void uplink_connectionFailed(dnbd3_uplink_t *uplink, bool findNew);
 
@@ -103,6 +102,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	mutex_init( &uplink->sendMutex, LOCK_UPLINK_SEND );
 	uplink->image = image;
 	uplink->bytesReceived = 0;
+	uplink->bytesReceivedLastSave = 0;
 	uplink->idleTime = 0;
 	uplink->queueLen = 0;
 	uplink->cacheFd = -1;
@@ -445,7 +445,6 @@ static void* uplink_mainloop(void *data)
 	int altCheckInterval = SERVER_RTT_INTERVAL_INIT;
 	int rttTestResult;
 	uint32_t discoverFailCount = 0;
-	uint32_t unsavedSeconds = 0;
 	ticks nextAltCheck, lastKeepalive;
 	char buffer[200];
 	memset( events, 0, sizeof(events) );
@@ -561,12 +560,6 @@ static void* uplink_mainloop(void *data)
 		if ( timepassed >= SERVER_UPLINK_KEEPALIVE_INTERVAL ) {
 			lastKeepalive = now;
 			uplink->idleTime += timepassed;
-			unsavedSeconds += timepassed;
-			if ( unsavedSeconds > 240 || ( unsavedSeconds > 60 && uplink->idleTime >= 20 && uplink->idleTime <= 70 ) ) {
-				// fsync/save every 4 minutes, or every 60 seconds if uplink is idle
-				unsavedSeconds = 0;
-				uplink_saveCacheMap( uplink );
-			}
 			// Keep-alive
 			if ( uplink->current.fd != -1 && uplink->replicationHandle == REP_NONE ) {
 				// Send keep-alive if nothing is happening, and try to trigger background rep.
@@ -639,9 +632,9 @@ static void* uplink_mainloop(void *data)
 		}
 #endif
 	}
-	cleanup: ;
-	uplink_saveCacheMap( uplink );
+cleanup: ;
 	dnbd3_image_t *image = uplink->image;
+	image->mapDirty = true; // Force writeout of cache map
 	mutex_lock( &image->lock );
 	bool exp = false;
 	if ( atomic_compare_exchange_strong( &uplink->shutdown, &exp, true ) ) {
@@ -1133,69 +1126,6 @@ static bool uplink_reopenCacheFd(dnbd3_uplink_t *uplink, const bool force)
 	uplink->cacheFd = open( uplink->image->path, O_WRONLY | O_CREAT, 0644 );
 	uplink->image->problem.write = uplink->cacheFd == -1;
 	return uplink->cacheFd != -1;
-}
-
-/**
- * Saves the cache map of the given image.
- * Return true on success.
- * Locks on: imageListLock, image.lock
- */
-static bool uplink_saveCacheMap(dnbd3_uplink_t *uplink)
-{
-	dnbd3_image_t *image = uplink->image;
-	assert( image != NULL );
-
-	if ( uplink->cacheFd != -1 ) {
-		if ( fsync( uplink->cacheFd ) == -1 ) {
-			// A failing fsync means we have no guarantee that any data
-			// since the last fsync (or open if none) has been saved. Apart
-			// from keeping the cache map from the last successful fsync
-			// around and restoring it there isn't much we can do to recover
-			// a consistent state. Bail out.
-			logadd( LOG_ERROR, "fsync() on image file %s failed with errno %d", image->path, errno );
-			logadd( LOG_ERROR, "Bailing out immediately" );
-			exit( 1 );
-		}
-	}
-
-	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
-	if ( cache == NULL )
-		return true;
-	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
-	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
-	assert( image->path != NULL );
-	char mapfile[strlen( image->path ) + 4 + 1];
-	strcpy( mapfile, image->path );
-	strcat( mapfile, ".map" );
-
-	int fd = open( mapfile, O_WRONLY | O_CREAT, 0644 );
-	if ( fd == -1 ) {
-		const int err = errno;
-		ref_put( &cache->reference );
-		logadd( LOG_WARNING, "Could not open file to write cache map to disk (errno=%d) file %s", err, mapfile );
-		return false;
-	}
-
-	size_t done = 0;
-	while ( done < size ) {
-		const ssize_t ret = write( fd, cache->map + done, size - done );
-		if ( ret == -1 ) {
-			if ( errno == EINTR ) continue;
-			logadd( LOG_WARNING, "Could not write cache map (errno=%d) file %s", errno, mapfile );
-			break;
-		}
-		if ( ret <= 0 ) {
-			logadd( LOG_WARNING, "Unexpected return value %d for write() to %s", (int)ret, mapfile );
-			break;
-		}
-		done += (size_t)ret;
-	}
-	ref_put( &cache->reference );
-	if ( fsync( fd ) == -1 ) {
-		logadd( LOG_WARNING, "fsync() on image map %s failed with errno %d", mapfile, errno );
-	}
-	close( fd );
-	return true;
 }
 
 static bool uplink_connectionShouldShutdown(dnbd3_uplink_t *uplink)

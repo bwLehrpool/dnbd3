@@ -49,6 +49,8 @@ void image_closeUnusedFd();
 
 bool image_ensureDiskSpaceLocked(uint64_t size, bool force);
 
+bool image_saveCacheMap(dnbd3_image_t *image);
+
 // one byte in the map covers 8 4kib blocks, so 32kib per byte
 // "+ (1 << 15) - 1" is required to account for the last bit of
 // the image that is smaller than 32kib

@@ -17,7 +17,10 @@
 #define SERVER_UPLINK_QUEUELEN_THRES  900 // Threshold where we start dropping incoming clients
 #define SERVER_MAX_PENDING_ALT_CHECKS 500 // Length of queue for pending alt checks requested by uplinks
 
-#define SERVER_CACHE_MAP_SAVE_INTERVAL 90
+// Wait a maximum of 5 minutes before saving cache map (if data was received at all)
+#define CACHE_MAP_MAX_SAVE_DELAY 300
+// If more than 500MB have been received from uplink without saving cache map, do so
+#define CACHE_MAP_MAX_UNSAVED_BYTES ((uint64_t)500 * 1000 * 1000)
 
 // Time in ms to wait for a read/write call to complete on an uplink connection
 #define SOCKET_TIMEOUT_UPLINK 5000

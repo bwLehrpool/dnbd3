@@ -274,6 +274,26 @@ int altservers_getHostListForReplication(const char *image, dnbd3_host_t *server
 }
 
 /**
+ * Returns true if there is at least one alt-server the
+ * given image name would be allowed to be cloned from.
+ */
+bool altservers_imageHasAltServers(const char *image)
+{
+	bool ret = false;
+	mutex_lock( &altServersLock );
+	for ( int i = 0; i < numAltServers; ++i ) {
+		if ( altServers[i].isClientOnly || ( !altServers[i].isPrivate && _proxyPrivateOnly ) )
+			continue;
+		if ( !isImageAllowed( &altServers[i], image ) )
+			continue;
+		ret = true;
+		break;
+	}
+	mutex_unlock( &altServersLock );
+	return ret;
+}
+
+/**
  * Get <size> alt servers. If there are more alt servers than
  * requested, random servers will be picked.
  * This function is suited for finding uplink servers as

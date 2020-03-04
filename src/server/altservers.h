@@ -19,6 +19,8 @@ int altservers_getListForClient(dnbd3_client_t *client, dnbd3_server_entry_t *ou
 
 int altservers_getHostListForReplication(const char *image, dnbd3_host_t *servers, int size);
 
+bool altservers_imageHasAltServers(const char *image);
+
 bool altservers_toString(int server, char *buffer, size_t len);
 
 int altservers_netCloseness(dnbd3_host_t *host1, dnbd3_host_t *host2);

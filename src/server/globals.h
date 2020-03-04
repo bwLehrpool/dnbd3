@@ -93,6 +93,7 @@ struct _dnbd3_uplink
 	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
 	uint64_t replicationHandle; // Handle of pending replication request
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
+	atomic_uint_fast64_t bytesReceivedLastSave; // Number of bytes received when we last saved the cache map
 	int queueLen;               // length of queue
 	uint32_t idleTime;          // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
@@ -128,7 +129,6 @@ struct _dnbd3_image
 	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
 	uint64_t realFilesize;      // actual file size on disk
 	ticks atime;                // last access time
-	ticks lastWorkCheck;   // last time a non-working image has been checked
 	ticks nextCompletenessEstimate; // next time the completeness estimate should be updated
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
 	uint32_t masterCrc32;  // CRC-32 of the crc-32 list
@@ -144,6 +144,7 @@ struct _dnbd3_image
 		atomic_bool queue;       // Too many requests waiting on uplink
 	} problem;
 	uint16_t rid;          // revision of image
+	atomic_bool mapDirty;  // Cache map has been modified outside uplink (only integrity checker for now)
 	pthread_mutex_t lock;
 };
 
