@@ -121,8 +121,15 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	// First and last byte masks
 	const uint8_t fb = (uint8_t)(0xff << ((start >> 12) & 7));
 	const uint8_t lb = (uint8_t)(~(0xff << ((((end - 1) >> 12) & 7) + 1)));
-	atomic_thread_fence( memory_order_acquire );
-	if ( firstByteInMap != lastByteInMap ) {
+	if ( firstByteInMap == lastByteInMap ) {
+		if ( set ) {
+			uint8_t o = atomic_fetch_or( &cache->map[firstByteInMap], (uint8_t)(fb & lb) );
+			setNewBlocks = o != ( o | (fb & lb) );
+		} else {
+			atomic_fetch_and( &cache->map[firstByteInMap], (uint8_t)~(fb & lb) );
+		}
+	} else {
+		atomic_thread_fence( memory_order_acquire );
 		if ( set ) {
 			uint8_t fo = atomic_fetch_or_explicit( &cache->map[firstByteInMap], fb, memory_order_relaxed );
 			uint8_t lo = atomic_fetch_or_explicit( &cache->map[lastByteInMap], lb, memory_order_relaxed );
@@ -131,22 +138,15 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 			atomic_fetch_and_explicit( &cache->map[firstByteInMap], (uint8_t)~fb, memory_order_relaxed );
 			atomic_fetch_and_explicit( &cache->map[lastByteInMap], (uint8_t)~lb, memory_order_relaxed );
 		}
-	} else {
-		if ( set ) {
-			uint8_t o = atomic_fetch_or_explicit( &cache->map[firstByteInMap], (uint8_t)(fb & lb), memory_order_relaxed );
-			setNewBlocks = o != ( o | (fb & lb) );
-		} else {
-			atomic_fetch_and_explicit( &cache->map[firstByteInMap], (uint8_t)~(fb & lb), memory_order_relaxed );
+		// Everything in between
+		const uint8_t nval = set ? 0xff : 0;
+		for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
+			if ( atomic_exchange_explicit( &cache->map[pos], nval, memory_order_relaxed ) != nval && set ) {
+				setNewBlocks = true;
+			}
 		}
+		atomic_thread_fence( memory_order_release );
 	}
-	const uint8_t nval = set ? 0xff : 0;
-	// Everything in between
-	for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
-		if ( atomic_exchange_explicit( &cache->map[pos], nval, memory_order_relaxed ) != nval && set ) {
-			setNewBlocks = true;
-		}
-	}
-	atomic_thread_fence( memory_order_release );
 	if ( setNewBlocks && image->crc32 != NULL ) {
 		// If setNewBlocks is set, at least one of the blocks was not cached before, so queue all hash blocks
 		// for checking, even though this might lead to checking some hash block again, if it was

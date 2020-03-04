@@ -216,7 +216,6 @@ void* net_handleNewConnection(void *clientPtr)
 
 	serialized_buffer_t payload;
 	uint16_t rid, client_version;
-	uint64_t start, end;
 
 	dnbd3_server_entry_t server_list[NUMBER_SERVERS];
 
@@ -343,46 +342,35 @@ void* net_handleNewConnection(void *clientPtr)
 
 				if ( request.size != 0 && cache != NULL ) {
 					// This is a proxyed image, check if we need to relay the request...
-					start = offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-					end = (offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-					bool isCached = true;
+					const uint64_t start = offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
+					const uint64_t end = (offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					const uint64_t firstByteInMap = start >> 15;
 					const uint64_t lastByteInMap = (end - 1) >> 15;
+					const uint8_t fb = (uint8_t)(0xff << ((start >> 12) & 7));
+					const uint8_t lb = (uint8_t)(~(0xff << ((((end - 1) >> 12) & 7) + 1)));
 					uint64_t pos;
 					uint8_t b;
-					atomic_thread_fence( memory_order_acquire );
-					// Middle - quick checking
-					if ( isCached ) {
-						for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
-							if ( atomic_load_explicit( &cache->map[pos], memory_order_relaxed ) != 0xff ) {
-								isCached = false;
-								break;
-							}
+					bool isCached;
+					if ( firstByteInMap == lastByteInMap ) { // Single byte to check, much simpler
+						b = cache->map[firstByteInMap];
+						isCached = ( b & ( fb & lb ) ) == ( fb & lb );
+					} else {
+						isCached = true;
+						atomic_thread_fence( memory_order_acquire );
+						// First byte
+						if ( isCached ) {
+							b = atomic_load_explicit( &cache->map[firstByteInMap], memory_order_relaxed );
+							isCached = ( ( b & fb ) == fb );
 						}
-					}
-					// First byte
-					if ( isCached ) {
-						b = atomic_load_explicit( &cache->map[firstByteInMap], memory_order_relaxed );
-						if ( b != 0xff ) {
-							for ( pos = start; firstByteInMap == (pos >> 15) && pos < end; pos += DNBD3_BLOCK_SIZE ) {
-								const int map_x = (pos >> 12) & 7; // mod 8
-								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-								if ( (b & bit_mask) == 0 ) {
-									isCached = false;
-									break;
-								}
-							}
+						// Last byte
+						if ( isCached ) {
+							b = atomic_load_explicit( &cache->map[lastByteInMap], memory_order_relaxed );
+							isCached = ( ( b & lb ) == lb );
 						}
-					}
-					// Last byte - only check if request spans multiple bytes in cache map
-					if ( isCached && firstByteInMap != lastByteInMap ) {
-						b = atomic_load_explicit( &cache->map[lastByteInMap], memory_order_relaxed );
-						if ( b != 0xff ) {
-							for ( pos = lastByteInMap << 15; pos < end; pos += DNBD3_BLOCK_SIZE ) {
-								assert( lastByteInMap == (pos >> 15) );
-								const int map_x = (pos >> 12) & 7; // mod 8
-								const uint8_t bit_mask = (uint8_t)( 1 << map_x );
-								if ( (b & bit_mask) == 0 ) {
+						// Middle, must be all bits set (0xff)
+						if ( isCached ) {
+							for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
+								if ( atomic_load_explicit( &cache->map[pos], memory_order_relaxed ) != 0xff ) {
 									isCached = false;
 									break;
 								}
