@@ -14,7 +14,7 @@
 #include <inttypes.h>
 #include <jansson.h>
 
-#define LOG(lvl, msg, ...) logadd(lvl, msg " (%s:%d)", __VA_ARGS__, image->name, (int)image->rid)
+#define LOG(lvl, msg, ...) logadd(lvl, msg " (%s:%d)", __VA_ARGS__, PIMG(image))
 #define LOG_GOTO(jumplabel, lvl, ...) do { LOG(lvl, __VA_ARGS__); goto jumplabel; } while (0);
 #define ERROR_GOTO(jumplabel, ...) LOG_GOTO(jumplabel, LOG_ERROR, __VA_ARGS__)
 
@@ -524,7 +524,7 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 		logadd( LOG_WARNING, "Image has gone away that was queued for RTT measurement" );
 		return;
 	}
-	LOG( LOG_DEBUG2, "Running alt check for %s:%d", image->name, (int)image->rid );
+	logadd( LOG_DEBUG2, "Running alt check for %s:%d", PIMG(image) );
 	assert( uplink->rttTestResult == RTT_INPROGRESS );
 	// Test them all
 	dnbd3_server_connection_t best = { .fd = -1 };

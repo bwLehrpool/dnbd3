@@ -171,7 +171,7 @@ bool uplink_shutdown(dnbd3_image_t *image)
 		image->users++; // Prevent free while uplink shuts down
 		signal_call( uplink->signal );
 	} else {
-		logadd( LOG_ERROR, "This will never happen. '%s:%d'", image->name, (int)image->rid );
+		logadd( LOG_ERROR, "This will never happen. '%s:%d'", PIMG(image) );
 	}
 	cancelAllRequests( uplink );
 	ref_setref( &image->uplinkref, NULL );
@@ -201,7 +201,7 @@ static void cancelAllRequests(dnbd3_uplink_t *uplink)
 static void uplink_free(ref *ref)
 {
 	dnbd3_uplink_t *uplink = container_of(ref, dnbd3_uplink_t, reference);
-	logadd( LOG_DEBUG1, "Freeing uplink for '%s:%d'", uplink->image->name, (int)uplink->image->rid );
+	logadd( LOG_DEBUG1, "Freeing uplink for '%s:%d'", PIMG(uplink->image) );
 	assert( uplink->queueLen == 0 );
 	if ( uplink->signal != NULL ) {
 		signal_close( uplink->signal );
@@ -572,7 +572,7 @@ static void* uplink_mainloop(void *data)
 			}
 			// Don't keep uplink established if we're idle for too much
 			if ( uplink_connectionShouldShutdown( uplink ) ) {
-				logadd( LOG_DEBUG1, "Closing idle uplink for image %s:%d", uplink->image->name, (int)uplink->image->rid );
+				logadd( LOG_DEBUG1, "Closing idle uplink for image %s:%d", PIMG(uplink->image) );
 				goto cleanup;
 			}
 		}
@@ -915,11 +915,13 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 						tryAgain = false;
 						continue; // Write handle to image successfully re-opened, try again
 					}
-					logadd( LOG_DEBUG1, "Error trying to cache data for %s:%d -- errno=%d", uplink->image->name, (int)uplink->image->rid, err );
+					logadd( LOG_DEBUG1, "Error trying to cache data for %s:%d -- errno=%d",
+							PIMG(uplink->image), err );
 					break;
 				}
 				if ( unlikely( ret <= 0 || (uint32_t)ret > inReply.size - done ) ) {
-					logadd( LOG_WARNING, "Unexpected return value %d from pwrite to %s:%d", ret, uplink->image->name, (int)uplink->image->rid );
+					logadd( LOG_WARNING, "Unexpected return value %d from pwrite to %s:%d",
+							ret, PIMG(uplink->image) );
 					break;
 				}
 				done += (uint32_t)ret;
@@ -929,7 +931,7 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 			}
 			if ( unlikely( ret == -1 && ( err == EBADF || err == EINVAL || err == EIO ) ) ) {
 				logadd( LOG_WARNING, "Error writing received data for %s:%d (errno=%d); disabling caching.",
-						uplink->image->name, (int)uplink->image->rid, err );
+						PIMG(uplink->image), err );
 			}
 		}
 		// 2) Figure out which clients are interested in it
@@ -1098,8 +1100,7 @@ static void uplink_addCrc32(dnbd3_uplink_t *uplink)
 	lists_crc = crc32( lists_crc, (uint8_t*)buffer, bytes );
 	lists_crc = net_order_32( lists_crc );
 	if ( lists_crc != masterCrc ) {
-		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s:%d)!",
-				uplink->image->name, (int)uplink->image->rid );
+		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s:%d)!", PIMG(uplink->image) );
 		free( buffer );
 		return;
 	}
@@ -1115,8 +1116,7 @@ static void uplink_addCrc32(dnbd3_uplink_t *uplink)
 		close( fd );
 		if ( (size_t)ret != sizeof(masterCrc) + bytes ) {
 			unlink( path );
-			logadd( LOG_WARNING, "Could not write crc32 file for %s:%d",
-					uplink->image->name, (int)uplink->image->rid );
+			logadd( LOG_WARNING, "Could not write crc32 file for %s:%d", PIMG(uplink->image) );
 		}
 	}
 }

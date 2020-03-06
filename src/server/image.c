@@ -290,13 +290,11 @@ bool image_ensureOpen(dnbd3_image_t *image)
 		if ( image->crc32 == NULL ) {
 			// Cannot verify further, hope for the best
 			image->problem.changed = false;
-			logadd( LOG_DEBUG1, "Size of image %s:%d changed back to expected value",
-					image->name, (int)image->rid );
+			logadd( LOG_DEBUG1, "Size of image %s:%d changed back to expected value", PIMG(image) );
 		} else if ( image_checkRandomBlocks( image, 1, newFd ) ) {
 			// This should have checked the first block (if complete) -> All is well again
 			image->problem.changed = false;
-			logadd( LOG_DEBUG1, "Size and CRC of image %s:%d changed back to expected value",
-					image->name, (int)image->rid );
+			logadd( LOG_DEBUG1, "Size and CRC of image %s:%d changed back to expected value", PIMG(image) );
 		}
 	} else {
 		image->problem.changed = sizeChanged;
@@ -624,7 +622,7 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
 	assert( image != NULL );
 	assert( image->users == 0 );
-	logadd( ( _shutdown ? LOG_DEBUG1 : LOG_INFO ), "Freeing image %s:%d", image->name, (int)image->rid );
+	logadd( ( _shutdown ? LOG_DEBUG1 : LOG_INFO ), "Freeing image %s:%d", PIMG(image) );
 	// uplink_shutdown might return false to tell us
 	// that the shutdown is in progress. Bail out since
 	// this will get called again when the uplink is done.
@@ -852,16 +850,16 @@ static bool image_load(char *base, char *path, int withUplink)
 	// Compare data just loaded to identical image we apparently already loaded
 	if ( existing != NULL ) {
 		if ( existing->realFilesize != realFilesize ) {
-			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", existing->name, (int)existing->rid );
+			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", PIMG(existing) );
 			// Image will be replaced below
 		} else if ( existing->crc32 != NULL && crc32list != NULL
 				&& memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlockCount ) != 0 ) {
-			logadd( LOG_WARNING, "CRC32 list of image '%s:%d' has changed.", existing->name, (int)existing->rid );
+			logadd( LOG_WARNING, "CRC32 list of image '%s:%d' has changed.", PIMG(existing) );
 			logadd( LOG_WARNING, "The image will be reloaded, but you should NOT replace existing images while the server is running." );
 			logadd( LOG_WARNING, "Actually even if it's not running this should never be done. Use a new RID instead!" );
 			// Image will be replaced below
 		} else if ( existing->crc32 == NULL && crc32list != NULL ) {
-			logadd( LOG_INFO, "Found CRC-32 list for already loaded image '%s:%d', adding...", existing->name, (int)existing->rid );
+			logadd( LOG_INFO, "Found CRC-32 list for already loaded image '%s:%d', adding...", PIMG(existing) );
 			existing->crc32 = crc32list;
 			existing->masterCrc32 = masterCrc;
 			crc32list = NULL;
@@ -869,7 +867,7 @@ static bool image_load(char *base, char *path, int withUplink)
 			goto load_error; // Keep existing
 		} else if ( existing->ref_cacheMap != NULL && cache == NULL ) {
 			// Just ignore that fact, if replication is really complete the cache map will be removed anyways
-			logadd( LOG_INFO, "Image '%s:%d' has no cache map on disk!", existing->name, (int)existing->rid );
+			logadd( LOG_INFO, "Image '%s:%d' has no cache map on disk!", PIMG(existing) );
 			function_return = true;
 			goto load_error; // Keep existing
 		} else {
@@ -940,7 +938,7 @@ static bool image_load(char *base, char *path, int withUplink)
 		image = image_free( image );
 		goto load_error;
 	}
-	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->name, (int)image->rid );
+	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", PIMG(image) );
 	function_return = true;
 
 	// Clean exit:
@@ -1790,7 +1788,7 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 			image_release( oldest ); // We did users++ above; image might have to be freed entirely
 			return false;
 		}
-		logadd( LOG_INFO, "'%s:%d' has to go!", oldest->name, (int)oldest->rid );
+		logadd( LOG_INFO, "'%s:%d' has to go!", PIMG(oldest) );
 		char *filename = strdup( oldest->path ); // Copy name as we remove the image first
 		oldest = image_remove( oldest ); // Remove from list first...
 		oldest = image_release( oldest ); // Decrease users counter; if it falls to 0, image will be freed
@@ -1825,10 +1823,8 @@ static void* closeUnusedFds(void* nix UNUSED)
 		dnbd3_image_t * const image = _images[i];
 		if ( image == NULL || image->readFd == -1 )
 			continue;
-		// TODO: Also close for idle uplinks (uplink_connectionShouldShutdown)
-		// TODO: And close writeFd for idle uplinks....
 		if ( image->users == 0 && image->uplinkref == NULL && timing_reached( &image->atime, &deadline ) ) {
-			logadd( LOG_DEBUG1, "Inactive fd closed for %s:%d", image->name, (int)image->rid );
+			logadd( LOG_DEBUG1, "Inactive fd closed for %s:%d", PIMG(image) );
 			fds[fdindex++] = image->readFd;
 			image->readFd = -1; // Not a race; image->users is 0 and to increase it you need imageListLock
 			if ( fdindex == FDCOUNT )
@@ -1900,11 +1896,11 @@ static void* saveLoadAllCacheMaps(void* nix UNUSED)
 			// it periodically, since we might read from a shared storage that
 			// another server instance is writing to.
 			if ( full || !cache->unchanged && !image->problem.read ) {
-				logadd( LOG_DEBUG2, "Reloading cache map of %s:%d", image->name, (int)image->rid );
+				logadd( LOG_DEBUG2, "Reloading cache map of %s:%d", PIMG(image) );
 				dnbd3_cache_map_t *onDisk = image_loadCacheMap(image->path, image->virtualFilesize);
 				if ( onDisk == NULL ) {
 					// Should be complete now
-					logadd( LOG_DEBUG1, "External replication of %s:%d complete", image->name, (int)image->rid );
+					logadd( LOG_DEBUG1, "External replication of %s:%d complete", PIMG(image) );
 					ref_setref( &image->ref_cacheMap, NULL );
 				} else {
 					const int mapSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
@@ -1945,7 +1941,7 @@ static void saveCacheMap(dnbd3_image_t *image)
 	if ( cache == NULL )
 		return; // Race - wasn't NULL in function call above...
 
-	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
+	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", PIMG(image) );
 	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
 	char mapfile[strlen( image->path ) + 4 + 1];
 	strcpy( mapfile, image->path );
@@ -2015,7 +2011,7 @@ static void allocCacheMap(dnbd3_image_t *image, bool complete)
 	memset( cache->map, val, byteSize );
 	mutex_lock( &image->lock );
 	if ( image->ref_cacheMap != NULL ) {
-		logadd( LOG_WARNING, "BUG: allocCacheMap called but there already is a cache map for %s:%d", image->name, (int)image->rid );
+		logadd( LOG_WARNING, "BUG: allocCacheMap called but there already is a map for %s:%d", PIMG(image) );
 		free( cache );
 	} else {
 		ref_setref( &image->ref_cacheMap, &cache->reference );

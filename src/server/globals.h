@@ -148,6 +148,7 @@ struct _dnbd3_image
 	uint16_t rid;          // revision of image
 	pthread_mutex_t lock;
 };
+#define PIMG(x) (x)->name, (int)(x)->rid
 
 struct _dnbd3_client
 {
