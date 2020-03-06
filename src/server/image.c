@@ -55,8 +55,9 @@ static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
 static bool image_checkRandomBlocks(dnbd3_image_t *image, const int count, int fromFd);
 static void* closeUnusedFds(void*);
-static void* saveAllCacheMaps(void*);
-static bool saveCacheMap(dnbd3_image_t *image);
+static bool imageShouldSaveCacheMap(dnbd3_image_t *image);
+static void* saveLoadAllCacheMaps(void*);
+static void saveCacheMap(dnbd3_image_t *image);
 static void allocCacheMap(dnbd3_image_t *image, bool complete);
 
 static void cmfree(ref *ref)
@@ -75,7 +76,7 @@ void image_serverStartup()
 	mutex_init( &remoteCloneLock, LOCK_REMOTE_CLONE );
 	mutex_init( &reloadLock, LOCK_RELOAD );
 	server_addJob( &closeUnusedFds, NULL, 10, 900 );
-	server_addJob( &saveAllCacheMaps, NULL, 9, 20 );
+	server_addJob( &saveLoadAllCacheMaps, NULL, 9, 20 );
 }
 
 /**
@@ -164,7 +165,7 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 			}
 		}
 	} else if ( !set ) {
-		image->mapDirty = true;
+		cache->dirty = true;
 	}
 	ref_put( &cache->reference );
 }
@@ -629,7 +630,9 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	// this will get called again when the uplink is done.
 	if ( !uplink_shutdown( image ) )
 		return NULL;
-	saveCacheMap( image );
+	if ( imageShouldSaveCacheMap( image ) ) {
+		saveCacheMap( image );
+	}
 	mutex_lock( &image->lock );
 	ref_setref( &image->ref_cacheMap, NULL );
 	free( image->crc32 );
@@ -1836,72 +1839,107 @@ static void* closeUnusedFds(void* nix UNUSED)
 	return NULL;
 }
 
-#define IMGCOUNT 5
-static void* saveAllCacheMaps(void* nix UNUSED)
+static bool imageShouldSaveCacheMap(dnbd3_image_t *image)
+{
+	if ( !_isProxy )
+		return false; // Nothing to do
+	if ( image->ref_cacheMap == NULL )
+		return false; // Nothing to do
+	// Check if we're a "hybrid proxy", i.e. there are only some namespaces (directories)
+	// for which we have any upstream servers configured. If there's none, don't touch
+	// the cache map on disk.
+	if ( !altservers_imageHasAltServers( image->name ) )
+		return false; // Nothing to do
+	return true;
+}
+
+static void* saveLoadAllCacheMaps(void* nix UNUSED)
 {
 	static ticks nextSave;
-	dnbd3_image_t *list[IMGCOUNT];
-	int count = 0;
 	declare_now;
 	bool full = timing_reached( &nextSave, &now );
 	mutex_lock( &imageListLock );
 	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
-		if ( image->mapDirty ) {
-			// Flag is set if integrity checker found a problem - save out
-			image->users++;
-			list[count++] = image;
-			image->mapDirty = false;
-		} else {
-			// Otherwise, consider longer timeout and byte count limits of uplink
+		dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+		if ( cache == NULL )
+			continue; // No users++ or mutex_unlock yet -> safe
+		image->users++;
+		mutex_unlock( &imageListLock );
+		if ( imageShouldSaveCacheMap( image ) ) {
+			// Replicated image, we're responsible for updating the map, so save it
+			// Save if dirty bit is set, blocks were invalidated
+			bool save = cache->dirty;
 			dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
-			if ( uplink != NULL ) {
-				assert( uplink->bytesReceivedLastSave <= uplink->bytesReceived );
-				uint64_t diff = uplink->bytesReceived - uplink->bytesReceivedLastSave;
-				if ( diff > CACHE_MAP_MAX_UNSAVED_BYTES
-						|| ( full && diff != 0 ) ) {
-					image->users++;
-					list[count++] = image;
+			if ( !save ) {
+				// Otherwise, consider longer timeout and byte count limits of uplink
+				if ( uplink != NULL ) {
+					assert( uplink->bytesReceivedLastSave <= uplink->bytesReceived );
+					uint64_t diff = uplink->bytesReceived - uplink->bytesReceivedLastSave;
+					if ( diff > CACHE_MAP_MAX_UNSAVED_BYTES || ( full && diff != 0 ) ) {
+						save = true;
+					}
+				}
+			}
+			if ( save ) {
+				cache->dirty = false;
+				if ( uplink != NULL ) {
 					uplink->bytesReceivedLastSave = uplink->bytesReceived;
 				}
+				saveCacheMap( image );
+			}
+			if ( uplink != NULL ) {
 				ref_put( &uplink->reference );
 			}
+		} else {
+			// We're not replicating this image, if there's a cache map, reload
+			// it periodically, since we might read from a shared storage that
+			// another server instance is writing to.
+			if ( full || !cache->unchanged && !image->problem.read ) {
+				logadd( LOG_DEBUG2, "Reloading cache map of %s:%d", image->name, (int)image->rid );
+				dnbd3_cache_map_t *onDisk = image_loadCacheMap(image->path, image->virtualFilesize);
+				if ( onDisk == NULL ) {
+					// Should be complete now
+					logadd( LOG_DEBUG1, "External replication of %s:%d complete", image->name, (int)image->rid );
+					ref_setref( &image->ref_cacheMap, NULL );
+				} else {
+					const int mapSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+					if ( memcmp( cache->map, onDisk->map, mapSize ) == 0 ) {
+						// Unchanged
+						cache->unchanged = true;
+						onDisk->reference.free( &onDisk->reference );
+					} else {
+						// Replace
+						ref_setref( &image->ref_cacheMap, &onDisk->reference );
+						logadd( LOG_DEBUG2, "Map changed" );
+					}
+				}
+			}
 		}
-		if ( count == IMGCOUNT )
-			break;
+		ref_put( &cache->reference );
+		image_release( image ); // Always do this instead of users-- to handle freeing
+		mutex_lock( &imageListLock );
 	}
 	mutex_unlock( &imageListLock );
-	if ( full && count < IMGCOUNT ) {
-		// Only update nextSave once we handled all images in the list
+	if ( full ) {
 		timing_addSeconds( &nextSave, &now, CACHE_MAP_MAX_SAVE_DELAY );
-	}
-	for ( int i = 0; i < count; ++i ) {
-		saveCacheMap( list[i] );
-		image_release( list[i] );
 	}
 	return NULL;
 }
-#undef IMGCOUNT
 
 /**
  * Saves the cache map of the given image.
- * Return true on success.
+ * Return false if this image doesn't have a cache map, or if the image
+ * doesn't have any uplink to replicate from. In this case the image might
+ * still have a cache map that was loaded from disk, and should be reloaded
+ * periodically.
  * @param image the image
  */
-static bool saveCacheMap(dnbd3_image_t *image)
+static void saveCacheMap(dnbd3_image_t *image)
 {
-	if ( !_isProxy )
-		return true; // Nothing to do
 	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
 	if ( cache == NULL )
-		return true; // Nothing to do
-	// Check if we're a "hybrid proxy", i.e. there are only some namespaces (directories)
-	// for which we have any upstream servers configured. If there's none, don't touch
-	// the cache map on disk.
-	if ( !altservers_imageHasAltServers( image->name ) ) {
-		ref_put( &cache->reference );
-		return true; // Nothing to do
-	}
+		return; // Race - wasn't NULL in function call above...
 
 	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", image->name, (int)image->rid );
 	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
@@ -1914,7 +1952,7 @@ static bool saveCacheMap(dnbd3_image_t *image)
 		const int err = errno;
 		ref_put( &cache->reference );
 		logadd( LOG_WARNING, "Could not open file to write cache map to disk (errno=%d) file %s", err, mapfile );
-		return false;
+		return;
 	}
 
 	// On Linux we could use readFd, but in general it's not guaranteed to work
@@ -1962,7 +2000,6 @@ static bool saveCacheMap(dnbd3_image_t *image)
 	}
 	close( fd );
 	// TODO fsync on parent directory
-	return true;
 }
 
 static void allocCacheMap(dnbd3_image_t *image, bool complete)

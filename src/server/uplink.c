@@ -80,6 +80,8 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 {
 	if ( !_isProxy || _shutdown ) return false;
 	assert( image != NULL );
+	if ( sock == -1 && !altservers_imageHasAltServers( image->name ) )
+		return false; // Nothing to do
 	mutex_lock( &image->lock );
 	dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
 	if ( uplink != NULL ) {
@@ -103,7 +105,7 @@ bool uplink_init(dnbd3_image_t *image, int sock, dnbd3_host_t *host, int version
 	uplink->image = image;
 	uplink->bytesReceived = 0;
 	uplink->bytesReceivedLastSave = 0;
-	uplink->idleTime = 0;
+	uplink->idleTime = SERVER_UPLINK_IDLE_TIMEOUT - 90;
 	uplink->queueLen = 0;
 	uplink->cacheFd = -1;
 	uplink->signal = signal_new();
@@ -634,7 +636,11 @@ static void* uplink_mainloop(void *data)
 	}
 cleanup: ;
 	dnbd3_image_t *image = uplink->image;
-	image->mapDirty = true; // Force writeout of cache map
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache != NULL ) {
+		cache->dirty = true; // Force writeout of cache map
+		ref_put( &cache->reference );
+	}
 	mutex_lock( &image->lock );
 	bool exp = false;
 	if ( atomic_compare_exchange_strong( &uplink->shutdown, &exp, true ) ) {

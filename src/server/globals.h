@@ -111,6 +111,8 @@ typedef struct
 typedef struct
 {
 	ref reference;
+	atomic_bool dirty;     // Cache map has been modified outside uplink (only integrity checker for now)
+	bool unchanged;        // How many times in a row a reloaded cache map went unchanged
 	_Atomic uint8_t map[];
 } dnbd3_cache_map_t;
 
@@ -144,7 +146,6 @@ struct _dnbd3_image
 		atomic_bool queue;       // Too many requests waiting on uplink
 	} problem;
 	uint16_t rid;          // revision of image
-	atomic_bool mapDirty;  // Cache map has been modified outside uplink (only integrity checker for now)
 	pthread_mutex_t lock;
 };
 
