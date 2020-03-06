@@ -1098,7 +1098,8 @@ static void uplink_addCrc32(dnbd3_uplink_t *uplink)
 	lists_crc = crc32( lists_crc, (uint8_t*)buffer, bytes );
 	lists_crc = net_order_32( lists_crc );
 	if ( lists_crc != masterCrc ) {
-		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s)!", uplink->image->name );
+		logadd( LOG_WARNING, "Received corrupted crc32 list from uplink server (%s:%d)!",
+				uplink->image->name, (int)uplink->image->rid );
 		free( buffer );
 		return;
 	}
@@ -1108,10 +1109,15 @@ static void uplink_addCrc32(dnbd3_uplink_t *uplink)
 	char path[len];
 	snprintf( path, len, "%s.crc", uplink->image->path );
 	const int fd = open( path, O_WRONLY | O_CREAT, 0644 );
-	if ( fd >= 0 ) {
-		write( fd, &masterCrc, sizeof(uint32_t) );
-		write( fd, buffer, bytes );
+	if ( fd != -1 ) {
+		ssize_t ret = write( fd, &masterCrc, sizeof(masterCrc) );
+		ret += write( fd, buffer, bytes );
 		close( fd );
+		if ( (size_t)ret != sizeof(masterCrc) + bytes ) {
+			unlink( path );
+			logadd( LOG_WARNING, "Could not write crc32 file for %s:%d",
+					uplink->image->name, (int)uplink->image->rid );
+		}
 	}
 }
 

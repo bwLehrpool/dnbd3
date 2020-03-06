@@ -315,7 +315,10 @@ int main(int argc, char *argv[])
 	// No one-shot detected, normal server operation or errormsg serving
 	if ( demonize ) {
 		logadd( LOG_INFO, "Forking into background, see log file for further information" );
-		daemon( 1, 0 );
+		if ( daemon( 0, 0 ) == -1 ) {
+			logadd( LOG_ERROR, "Could not daemon(): errno=%d", errno );
+			exit( 1 );
+		}
 	}
 	if ( errorMsg != NULL ) {
 		setupNetwork( bindAddress );

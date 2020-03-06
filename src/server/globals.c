@@ -113,7 +113,10 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 void globals_loadConfig()
 {
 	char *name = NULL;
-	asprintf( &name, "%s/%s", _configDir, CONFIG_FILENAME );
+	if ( asprintf( &name, "%s/%s", _configDir, CONFIG_FILENAME ) == -1 ) {
+		logadd( LOG_ERROR, "Memory allocation error for config filename" );
+		exit( 1 );
+	}
 	if ( name == NULL ) return;
 	if ( initialLoad ) {
 		mutex_init( &loadLock, LOCK_LOAD_CONFIG );

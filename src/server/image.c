@@ -1446,9 +1446,13 @@ static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageS
 				logadd( LOG_WARNING, "OTF-Clone: Corrupted CRC-32 list. ignored. (%s)", name );
 			} else {
 				int fd = open( crcFile, O_WRONLY | O_CREAT, 0644 );
-				write( fd, &masterCrc, sizeof(uint32_t) );
-				write( fd, crc32list, crc32len );
+				ssize_t ret = write( fd, &masterCrc, sizeof(masterCrc) );
+				ret += write( fd, crc32list, crc32len );
 				close( fd );
+				if ( (size_t)ret != crc32len + sizeof(masterCrc) ) {
+					logadd( LOG_WARNING, "Could not save freshly received crc32 list for %s:%d", name, (int)revision );
+					unlink( crcFile );
+				}
 			}
 		}
 		free( crc32list );

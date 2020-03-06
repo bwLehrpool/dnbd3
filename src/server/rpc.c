@@ -101,7 +101,7 @@ void rpc_init()
 		int fd = open( "/dev/urandom", O_RDONLY );
 		if ( fd != -1 ) {
 			uint32_t bla = 1;
-			read( fd, &bla, 4 );
+			(void)!read( fd, &bla, 4 );
 			randomRunId = (randomRunId << 32) | bla;
 		}
 		close( fd );
