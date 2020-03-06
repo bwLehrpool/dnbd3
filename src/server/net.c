@@ -336,7 +336,7 @@ void* net_handleNewConnection(void *clientPtr)
 					continue;
 				}
 
-				if ( cache == NULL && image->uplinkref != NULL ) {
+				if ( cache == NULL ) {
 					cache = ref_get_cachemap( image );
 				}
 
