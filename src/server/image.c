@@ -46,7 +46,7 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image);
 static dnbd3_image_t* image_free(dnbd3_image_t *image);
 static bool image_load_all_internal(char *base, char *path);
 static bool image_addToList(dnbd3_image_t *image);
-static bool image_load(char *base, char *path, int withUplink);
+static bool image_load(char *base, char *path, bool withUplink);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc);
 static bool image_ensureDiskSpace(uint64_t size, bool force);
@@ -751,7 +751,7 @@ static bool image_addToList(dnbd3_image_t *image)
  * Note that this is NOT THREAD SAFE so make sure its always
  * called on one thread only.
  */
-static bool image_load(char *base, char *path, int withUplink)
+static bool image_load(char *base, char *path, bool withUplink)
 {
 	int revision = -1;
 	struct stat st;
