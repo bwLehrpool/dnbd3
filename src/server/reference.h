@@ -39,6 +39,11 @@ static inline ref *ref_get( weakref *weakref )
 	return ref;
 }
 
+static inline void ref_inc( ref *ref )
+{
+	++ref->count;
+}
+
 static inline void ref_put( ref *ref )
 {
 	if ( --ref->count == 0 ) {

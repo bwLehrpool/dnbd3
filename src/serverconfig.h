@@ -13,7 +13,8 @@
 #define SERVER_BAD_UPLINK_MAX 20 // Hard block server if it failed this many times
 #define SERVER_BAD_UPLINK_LOCAL_BLOCK 10 // If a server didn't supply the requested image this many times, block it for some time
 #define SERVER_BAD_UPLINK_IGNORE 180 // How many seconds is a server ignored
-#define SERVER_MAX_UPLINK_QUEUE  1500 // Maximum number of queued requests per uplink
+#define UPLINK_MAX_QUEUE  500 // Maximum number of queued requests per uplink
+#define UPLINK_MAX_CLIENTS_PER_REQUEST 32 // Maximum number of clients that can attach to one uplink request
 #define SERVER_UPLINK_QUEUELEN_THRES  900 // Threshold where we start dropping incoming clients
 #define SERVER_MAX_PENDING_ALT_CHECKS 500 // Length of queue for pending alt checks requested by uplinks
 

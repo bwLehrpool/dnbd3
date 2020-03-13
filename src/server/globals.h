@@ -18,18 +18,27 @@ typedef struct _dnbd3_uplink dnbd3_uplink_t;
 typedef struct _dnbd3_image dnbd3_image_t;
 typedef struct _dnbd3_client dnbd3_client_t;
 
-typedef struct
+typedef struct _dnbd3_queue_client
 {
-	uint64_t handle;  // Client defined handle to pass back in reply
-	uint64_t from;    // First byte offset of requested block (ie. 4096)
-	uint64_t to;      // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
+	struct _dnbd3_queue_client *next;
+	uint64_t handle;    // Handle used by client
+	uint64_t from, to;  // Client range
 	dnbd3_client_t * client; // Client to send reply to
-	int status;      // status of this entry: ULR_*
+} dnbd3_queue_client_t;
+
+typedef struct _dnbd3_queue_entry
+{
+	struct _dnbd3_queue_entry *next;
+	uint64_t   handle;   // Our handle for this entry
+	uint64_t   from;     // First byte offset of requested block (ie. 4096)
+	uint64_t   to;       // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
+	dnbd3_queue_client_t *clients;
 #ifdef _DEBUG
-	ticks entered;           // When this request entered the queue (for debugging)
+	ticks      entered;  // When this request entered the queue (for debugging)
 #endif
-	uint8_t hopCount;      // How many hops this request has already taken across proxies
-} dnbd3_queued_request_t;
+	uint8_t    hopCount; // How many hops this request has already taken across proxies
+	bool       sent;     // Already sent to uplink?
+} dnbd3_queue_entry_t;
 
 typedef struct _ns
 {
@@ -91,12 +100,12 @@ struct _dnbd3_uplink
 	bool cycleDetected;         // connection cycle between proxies detected for current remote server
 	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
 	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
-	uint64_t replicationHandle; // Handle of pending replication request
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
 	atomic_uint_fast64_t bytesReceivedLastSave; // Number of bytes received when we last saved the cache map
 	int queueLen;               // length of queue
 	uint32_t idleTime;          // How many seconds the uplink was idle (apart from keep-alives)
-	dnbd3_queued_request_t queue[SERVER_MAX_UPLINK_QUEUE];
+	dnbd3_queue_entry_t *queue;
+	atomic_uint_fast32_t queueId;
 	dnbd3_alt_local_t altData[SERVER_MAX_ALTS];
 };
 
@@ -156,6 +165,7 @@ struct _dnbd3_client
 	atomic_uint_fast64_t bytesSent;   // Byte counter for this client.
 	dnbd3_image_t * _Atomic image;    // Image in use by this client, or NULL during handshake
 	int sock;
+	_Atomic uint8_t relayedCount;     // How many requests are in-flight to the uplink server
 	bool isServer;                    // true if a server in proxy mode, false if real client
 	dnbd3_host_t host;
 	char hostName[HOSTNAMELEN];       // inet_ntop version of host
@@ -241,6 +251,11 @@ extern atomic_int _backgroundReplication;
  * Minimum connected clients for background replication to kick in
  */
 extern atomic_int _bgrMinClients;
+
+/**
+ * How many in-flight replication requests we should target (per uplink)
+ */
+extern atomic_int _bgrWindowSize;
 
 /**
  * (In proxy mode): If connecting client is a proxy, and the requested image

@@ -197,6 +197,7 @@ void* net_handleNewConnection(void *clientPtr)
 	client->hostName[HOSTNAMELEN-1] = '\0';
 	mutex_unlock( &client->lock );
 	client->bytesSent = 0;
+	client->relayedCount = 0;
 
 	if ( !addToList( client ) ) {
 		freeClientStruct( client );
@@ -344,41 +345,18 @@ void* net_handleNewConnection(void *clientPtr)
 					// This is a proxyed image, check if we need to relay the request...
 					const uint64_t start = offset & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 					const uint64_t end = (offset + request.size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-					const uint64_t firstByteInMap = start >> 15;
-					const uint64_t lastByteInMap = (end - 1) >> 15;
-					const uint8_t fb = (uint8_t)(0xff << ((start >> 12) & 7));
-					const uint8_t lb = (uint8_t)(~(0xff << ((((end - 1) >> 12) & 7) + 1)));
-					uint64_t pos;
-					uint8_t b;
-					bool isCached;
-					if ( firstByteInMap == lastByteInMap ) { // Single byte to check, much simpler
-						b = cache->map[firstByteInMap];
-						isCached = ( b & ( fb & lb ) ) == ( fb & lb );
-					} else {
-						isCached = true;
-						atomic_thread_fence( memory_order_acquire );
-						// First byte
-						if ( isCached ) {
-							b = atomic_load_explicit( &cache->map[firstByteInMap], memory_order_relaxed );
-							isCached = ( ( b & fb ) == fb );
-						}
-						// Last byte
-						if ( isCached ) {
-							b = atomic_load_explicit( &cache->map[lastByteInMap], memory_order_relaxed );
-							isCached = ( ( b & lb ) == lb );
-						}
-						// Middle, must be all bits set (0xff)
-						if ( isCached ) {
-							for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
-								if ( atomic_load_explicit( &cache->map[pos], memory_order_relaxed ) != 0xff ) {
-									isCached = false;
-									break;
-								}
+					if ( !image_isRangeCachedUnsafe( cache, start, end ) ) {
+						if ( unlikely( client->relayedCount > 250 ) ) {
+							logadd( LOG_DEBUG1, "Client is overloading uplink; throttling" );
+							for ( int i = 0; i < 100 && client->relayedCount > 200; ++i ) {
+								usleep( 10000 );
+							}
+							if ( client->relayedCount > 250 ) {
+								logadd( LOG_WARNING, "Could not lower client's uplink backlog; dropping client" );
+								goto exit_client_cleanup;
 							}
 						}
-					}
-					if ( !isCached ) {
-						if ( !uplink_request( client, request.handle, offset, request.size, request.hops ) ) {
+						if ( !uplink_request( NULL, client, request.handle, offset, request.size, request.hops ) ) {
 							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy for image %s:%d",
 									client->hostName, image->name, image->rid );
 							goto exit_client_cleanup;

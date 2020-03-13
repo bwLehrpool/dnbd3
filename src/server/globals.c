@@ -19,6 +19,7 @@ atomic_int _clientPenalty = 0;
 atomic_bool _isProxy = false;
 atomic_int _backgroundReplication = BGR_FULL;
 atomic_int _bgrMinClients = 0;
+atomic_int _bgrWindowSize = 1;
 atomic_bool _lookupMissingForProxy = true;
 atomic_bool _sparseFiles = false;
 atomic_bool _ignoreAllocErrors = false;
@@ -74,6 +75,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_BOOL( dnbd3, isProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_INT( dnbd3, bgrMinClients );
+	SAVE_TO_VAR_INT( dnbd3, bgrWindowSize );
 	SAVE_TO_VAR_BOOL( dnbd3, lookupMissingForProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, sparseFiles );
 	SAVE_TO_VAR_BOOL( dnbd3, ignoreAllocErrors );
@@ -133,6 +135,9 @@ void globals_loadConfig()
 	if ( _backgroundReplication == BGR_FULL && _sparseFiles && _bgrMinClients < 5 ) {
 		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true and bgrMinClients is too low" );
 		_sparseFiles = false;
+	}
+	if ( _bgrWindowSize < 1 ) {
+		_bgrWindowSize = 1;
 	}
 	// Dump config as interpreted
 	char buffer[2000];
@@ -325,6 +330,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 		PBOOL(backgroundReplication);
 	}
 	PINT(bgrMinClients);
+	PINT(bgrWindowSize);
 	PBOOL(lookupMissingForProxy);
 	PBOOL(sparseFiles);
 	PBOOL(ignoreAllocErrors);

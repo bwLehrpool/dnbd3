@@ -340,7 +340,6 @@ dnbd3_image_t* image_byId(int imgId)
 dnbd3_image_t* image_get(char *name, uint16_t revision, bool ensureFdOpen)
 {
 	int i;
-	const char *removingText = _removeMissingImages ? ", removing from list" : "";
 	dnbd3_image_t *candidate = NULL;
 	// Simple sanity check
 	const size_t slen = strlen( name );
@@ -1895,7 +1894,7 @@ static void* saveLoadAllCacheMaps(void* nix UNUSED)
 			// We're not replicating this image, if there's a cache map, reload
 			// it periodically, since we might read from a shared storage that
 			// another server instance is writing to.
-			if ( full || !cache->unchanged && !image->problem.read ) {
+			if ( full || ( !cache->unchanged && !image->problem.read ) ) {
 				logadd( LOG_DEBUG2, "Reloading cache map of %s:%d", PIMG(image) );
 				dnbd3_cache_map_t *onDisk = image_loadCacheMap(image->path, image->virtualFilesize);
 				if ( onDisk == NULL ) {
