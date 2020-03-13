@@ -264,6 +264,10 @@ bool uplink_request(dnbd3_uplink_t *uplink, dnbd3_client_t *client, uint64_t han
 {
 	bool getUplink = ( uplink == NULL );
 	assert( client != NULL || uplink != NULL );
+	if ( hops++ > 200 ) { // This is just silly
+		logadd( LOG_WARNING, "Refusing to relay a request that has > 200 hops" );
+		return false;
+	}
 	if ( length > (uint32_t)_maxPayload ) {
 		logadd( LOG_WARNING, "Cannot relay request by client; length of %" PRIu32 " exceeds maximum payload", length );
 		return false;
@@ -285,7 +289,7 @@ bool uplink_request(dnbd3_uplink_t *uplink, dnbd3_client_t *client, uint64_t han
 	}
 	// Check if the client is the same host as the uplink. If so assume this is a circular proxy chain
 	// This might be a false positive if there are multiple instances running on the same host (IP)
-	if ( client != NULL && hops != 0
+	if ( client != NULL && hops > 1
 			&& isSameAddress( altservers_indexToHost( uplink->current.index ), &client->host ) ) {
 		uplink->cycleDetected = true;
 		signal_call( uplink->signal );
@@ -354,7 +358,7 @@ bool uplink_request(dnbd3_uplink_t *uplink, dnbd3_client_t *client, uint64_t han
 			isNew = false;
 		} else {
 			// Existing request. Check if potential cycle
-			if ( hops > request->hopCount + 1 && request->from == start && request->to == end ) {
+			if ( hops > request->hopCount && request->from == start && request->to == end ) {
 				logadd( LOG_DEBUG1, "Request cycle detected on uplink for %s:%d", PIMG(uplink->image) );
 				goto fail_lock;
 			}
@@ -397,7 +401,6 @@ bool uplink_request(dnbd3_uplink_t *uplink, dnbd3_client_t *client, uint64_t han
 		mutex_unlock( &uplink->sendMutex );
 		logadd( LOG_DEBUG2, "Cannot do direct uplink request: No socket open" );
 	} else {
-		if ( hops < 200 ) ++hops;
 		const bool ret = dnbd3_get_block( uplink->current.fd, req.start, req.end - req.start,
 				req.handle, COND_HOPCOUNT( uplink->current.version, hops ) );
 		if ( unlikely( !ret ) ) {
@@ -707,7 +710,7 @@ static void uplink_sendRequests(dnbd3_uplink_t *uplink, bool newOnly)
 		hdr->cmd = CMD_GET_BLOCK;
 		hdr->size = it->to - it->from;
 		hdr->offset_small = it->from;
-		hdr->hops = it->hopCount + 1;
+		hdr->hops = it->hopCount;
 		hdr->handle = it->handle;
 		fixup_request( *hdr );
 		if ( count == MAX_RESEND_BATCH ) {
