@@ -710,7 +710,7 @@ static void uplink_sendRequests(dnbd3_uplink_t *uplink, bool newOnly)
 		hdr->cmd = CMD_GET_BLOCK;
 		hdr->size = it->to - it->from;
 		hdr->offset_small = it->from;
-		hdr->hops = it->hopCount;
+		hdr->hops = COND_HOPCOUNT( uplink->current.version, it->hopCount );
 		hdr->handle = it->handle;
 		fixup_request( *hdr );
 		if ( count == MAX_RESEND_BATCH ) {
