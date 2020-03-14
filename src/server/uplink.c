@@ -895,19 +895,19 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 		if ( unlikely( ret == REPLY_INTR ) && likely( !_shutdown && !uplink->shutdown ) ) continue;
 		if ( ret == REPLY_AGAIN ) break;
 		if ( unlikely( ret == REPLY_CLOSED ) ) {
-			logadd( LOG_INFO, "Uplink: Remote host hung up (%s)", uplink->image->path );
+			logadd( LOG_INFO, "Uplink: Remote host hung up (%s:%d)", PIMG(uplink->image) );
 			goto error_cleanup;
 		}
 		if ( unlikely( ret == REPLY_WRONGMAGIC ) ) {
-			logadd( LOG_WARNING, "Uplink server's packet did not start with dnbd3_packet_magic (%s)", uplink->image->path );
+			logadd( LOG_WARNING, "Uplink server's packet did not start with dnbd3_packet_magic (%s:%d)", PIMG(uplink->image) );
 			goto error_cleanup;
 		}
 		if ( unlikely( ret != REPLY_OK ) ) {
-			logadd( LOG_INFO, "Uplink: Connection error %d (%s)", ret, uplink->image->path );
+			logadd( LOG_INFO, "Uplink: Connection error %d (%s:%d)", ret, PIMG(uplink->image) );
 			goto error_cleanup;
 		}
 		if ( unlikely( inReply.size > (uint32_t)_maxPayload ) ) {
-			logadd( LOG_WARNING, "Pure evil: Uplink server sent too much payload (%" PRIu32 ") for %s", inReply.size, uplink->image->path );
+			logadd( LOG_WARNING, "Pure evil: Uplink server sent too much payload (%" PRIu32 ") for %s:%d", inReply.size, PIMG(uplink->image) );
 			goto error_cleanup;
 		}
 
@@ -920,7 +920,7 @@ static void uplink_handleReceive(dnbd3_uplink_t *uplink)
 			}
 		}
 		if ( unlikely( (uint32_t)sock_recv( uplink->current.fd, uplink->recvBuffer, inReply.size ) != inReply.size ) ) {
-			logadd( LOG_INFO, "Lost connection to uplink server of %s (payload)", uplink->image->path );
+			logadd( LOG_INFO, "Lost connection to uplink server of %s:%d (payload)", PIMG(uplink->image) );
 			goto error_cleanup;
 		}
 		// Payload read completely
