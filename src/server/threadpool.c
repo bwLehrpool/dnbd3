@@ -62,15 +62,16 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 		logadd( LOG_MINOR, "Cannot submit work to threadpool while shutting down!" );
 		return false;
 	}
+#ifdef _DEBUG
 	if ( unlikely( startRoutine == NULL ) ) {
 		logadd( LOG_ERROR, "Trying to queue work for thread pool with NULL startRoutine" );
 		return false; // Or bail out!?
 	}
-	entry_t *entry = NULL;
+#endif
+	entry_t *entry;
 	for ( int i = 0; i < maxIdleThreads; ++i ) {
-		entry_t *cur = pool[i];
-		if ( cur != NULL && atomic_compare_exchange_weak( &pool[i], &cur, NULL ) ) {
-			entry = cur;
+		entry = atomic_exchange( &pool[i], NULL );
+		if ( entry != NULL ) {
 			break;
 		}
 	}
@@ -120,10 +121,12 @@ keep_going:;
 			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!", ret );
 			continue;
 		}
+#ifdef _DEBUG
 		if ( entry->startRoutine == NULL ) {
 			logadd( LOG_ERROR, "Worker woke up but has no work to do!" );
 			exit( 1 );
 		}
+#endif
 		// Start assigned work
 		(*entry->startRoutine)( entry->arg );
 		// Reset vars for safety
