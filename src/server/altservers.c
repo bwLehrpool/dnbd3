@@ -470,6 +470,11 @@ static void *altservers_runCheck(void *data)
 void altservers_findUplink(dnbd3_uplink_t *uplink)
 {
 	altservers_findUplinkInternal( uplink );
+	// Above function is sync, which means normally when it
+	// returns, rttTestResult will not be RTT_INPROGRESS.
+	// But we might have an ansync call running in parallel, which would
+	// mean the above call returns immediately. Wait for that check
+	// to finish too.
 	while ( uplink->rttTestResult == RTT_INPROGRESS ) {
 		usleep( 5000 );
 	}
@@ -530,6 +535,18 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 	dnbd3_server_connection_t best = { .fd = -1 };
 	unsigned long bestRtt = RTT_UNREACHABLE;
 	unsigned long currentRtt = RTT_UNREACHABLE;
+	uint64_t offset = 0;
+	uint32_t length = DNBD3_BLOCK_SIZE;
+	// Try to use the range of the first request in the queue as RTT block.
+	// In case we have a cluster of servers where none of them has a complete
+	// copy, we at least make sure the one we're potentially switching to
+	// has the next block we're about to request.
+	mutex_lock( &uplink->queueLock );
+	if ( uplink->queue != NULL ) {
+		offset = uplink->queue->from;
+		length = (uint32_t)( uplink->queue->to - offset );
+	}
+	mutex_unlock( &uplink->queueLock );
 	for (itAlt = 0; itAlt < numAlts; ++itAlt) {
 		int server = servers[itAlt];
 		// Connect
@@ -563,9 +580,9 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 		if ( imageSize != image->virtualFilesize ) {
 			ERROR_GOTO( image_failed, "[RTT] Remote size: %" PRIu64 ", expected: %" PRIu64, imageSize, image->virtualFilesize );
 		}
-		// Request first block (NOT random!) ++++++++++++++++++++++++++++++
-		if ( !dnbd3_get_block( sock, 0, DNBD3_BLOCK_SIZE, 0, COND_HOPCOUNT( protocolVersion, 1 ) ) ) {
-			LOG_GOTO( image_failed, LOG_DEBUG1, "[RTT%d] Could not request first block", server );
+		// Request block (NOT random! First or from queue) ++++++++++++
+		if ( !dnbd3_get_block( sock, offset, length, 0, COND_HOPCOUNT( protocolVersion, 1 ) ) ) {
+			LOG_GOTO( image_failed, LOG_DEBUG1, "[RTT%d] Could not request block", server );
 		}
 		// See if requesting the block succeeded ++++++++++++++++++++++
 		dnbd3_reply_t reply;
@@ -587,9 +604,6 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 		mutex_lock( &uplink->rttLock );
 		const bool isCurrent = ( uplink->current.index == server );
 		mutex_unlock( &uplink->rttLock );
-		// Penaltize rtt if this was a cycle; this will treat this server with lower priority
-		// in the near future too, so we prevent alternating between two servers that are both
-		// part of a cycle and have the lowest latency.
 		uint32_t rtt = (uint32_t)((end.tv_sec - start.tv_sec) * 1000000
 				+ (end.tv_nsec - start.tv_nsec) / 1000); // µs
 		uint32_t avg = altservers_updateRtt( uplink, server, rtt );
