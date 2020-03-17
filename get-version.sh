@@ -8,7 +8,7 @@ ROOT_DIR="$(dirname "${SELF}")"
 cd "$ROOT_DIR"
 
 if [ -d .git ]; then
-	[ -n "$(git diff)" ] && MODDED='+MOD'
+	[ -n "$(git diff HEAD)" ] && MODDED='+MOD'
 	echo $(git describe)$MODDED, branch $(git rev-parse --abbrev-ref HEAD), built "$(date +%Y-%m-%d)"
 	exit 0
 fi

@@ -6,6 +6,7 @@
 #include "image.h"
 #include "altservers.h"
 #include "../shared/sockhelper.h"
+#include "../version.h"
 #include "fileutil.h"
 #include "picohttpparser/picohttpparser.h"
 #include "urldecode.h"
@@ -259,7 +260,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 {
 	bool ok;
 	bool stats = false, images = false, clients = false, space = false;
-	bool logfile = false, config = false, altservers = false;
+	bool logfile = false, config = false, altservers = false, version = false;
 #define SETVAR(var) if ( !var && STRCMP(fields[i].value, #var) ) var = true
 	for (size_t i = 0; i < fields_num; ++i) {
 		if ( !equals( &fields[i].name, &STR_Q ) ) continue;
@@ -270,9 +271,10 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 		else SETVAR(logfile);
 		else SETVAR(config);
 		else SETVAR(altservers);
+		else SETVAR(version);
 	}
 #undef SETVAR
-	if ( ( stats || space ) && !(permissions & ACL_STATS) ) {
+	if ( ( stats || space || version ) && !(permissions & ACL_STATS) ) {
 		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, keepAlive );
 	}
 	if ( images && !(permissions & ACL_IMAGE_LIST) ) {
@@ -307,6 +309,10 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	} else {
 		statisticsJson = json_pack( "{sI}",
 				"runId", randomRunId );
+	}
+	if ( version ) {
+		json_object_set_new( statisticsJson, "version", json_string( VERSION_STRING ) );
+		json_object_set_new( statisticsJson, "build", json_string( TOSTRING( BUILD_TYPE ) ) );
 	}
 	if ( space ) {
 		uint64_t spaceTotal = 0, spaceAvail = 0;

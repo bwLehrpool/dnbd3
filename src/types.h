@@ -34,6 +34,9 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #endif
 
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
 #ifdef __GNUC__
 #define UNUSED __attribute__ ((unused))
 #else

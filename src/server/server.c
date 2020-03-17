@@ -342,7 +342,10 @@ int main(int argc, char *argv[])
 	net_init();
 	uplink_globalsInit();
 	rpc_init();
-	logadd( LOG_INFO, "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
+	logadd( LOG_INFO, "DNBD3 server starting...." );
+	logadd( LOG_INFO, "Machine type: " ENDIAN_MODE );
+	logadd( LOG_INFO, "Build Type: " TOSTRING( BUILD_TYPE ) );
+	logadd( LOG_INFO, "Version: %s", VERSION_STRING );
 
 	if ( altservers_load() < 0 ) {
 		logadd( LOG_WARNING, "Could not load alt-servers. Does the file exist in %s?", _configDir );
@@ -385,7 +388,7 @@ int main(int argc, char *argv[])
 		exit( EXIT_FAILURE );
 	}
 
-	logadd( LOG_INFO, "Server is ready. (%s)", VERSION_STRING );
+	logadd( LOG_INFO, "Server is ready." );
 
 	if ( thread_create( &timerThread, NULL, &timerMainloop, NULL ) == 0 ) {
 		hasTimerThread = true;

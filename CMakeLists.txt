@@ -71,6 +71,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 
 ADD_DEFINITIONS(-D_FILE_OFFSET_BITS=64)
 ADD_DEFINITIONS(-DWITH_IPV6)
+ADD_DEFINITIONS(-DBUILD_TYPE=${CMAKE_BUILD_TYPE})
 
 FIND_PACKAGE(Threads)
 
@@ -133,14 +134,12 @@ ADD_CUSTOM_TARGET(
 						-P ${CMAKE_BINARY_DIR}/version.cmake
 )
 
-INCLUDE_DIRECTORIES( ${CMAKE_BINARY_DIR}/generated )
-
 ################################################################################
 # CLIENT                                                                       #
 ################################################################################
 
 if(BUILD_KERNEL_MODULE)
-	FILE(GLOB_RECURSE CLIENT_SRCS src/client/*.c)
+	FILE(GLOB_RECURSE CLIENT_SRCS ${CMAKE_BINARY_DIR}/generated/version.c src/client/*.c)
 	ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-client)
 	ADD_DEPENDENCIES(dnbd3-client version)
@@ -157,7 +156,7 @@ if(BUILD_SERVER)
 		message(" ######################## Building server for AFL mode - will be useless otherwise!")
 		ADD_DEFINITIONS(-DAFL_MODE)
 	ENDIF()
-	FILE(GLOB SERVER_SRCS src/server/*.c src/shared/*.c src/server/picohttpparser/*.c)
+	FILE(GLOB SERVER_SRCS ${CMAKE_BINARY_DIR}/generated/version.c src/server/*.c src/shared/*.c src/server/picohttpparser/*.c)
 	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
 	TARGET_INCLUDE_DIRECTORIES(dnbd3-server PRIVATE ${JANSSON_INCLUDE_DIR})
 	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${JANSSON_LIBRARIES})
