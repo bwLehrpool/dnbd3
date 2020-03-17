@@ -44,7 +44,7 @@ typedef struct {
 	dnbd3_uplink_t *uplink;
 	uint64_t start;
 	uint32_t length;
-} prefetch_request_t;
+} prefetch_job_t;
 
 #define assert_uplink_thread() assert( pthread_equal( uplink->thread, pthread_self() ) )
 
@@ -425,9 +425,12 @@ bool uplink_request(dnbd3_uplink_t *uplink, dnbd3_client_t *client, uint64_t han
 success_ref:
 	if ( client != NULL ) {
 		// Was from client -- potential prefetch
+		// Same size as this request, but consider end of image...
 		uint32_t len = MIN( uplink->image->virtualFilesize - req.end, req.end - req.start );
-		if ( len > 0 ) {
-			prefetch_request_t *job = malloc( sizeof( *job ) );
+		// Also don't prefetch if we cross a hash block border and BGR mode == hashblock
+		if ( len > 0 && ( _backgroundReplication != BGR_HASHBLOCK
+					|| req.start % HASH_BLOCK_SIZE == (req.end-1) % HASH_BLOCK_SIZE ) ) {
+			prefetch_job_t *job = malloc( sizeof( *job ) );
 			job->start = req.end;
 			job->length = len;
 			job->uplink = uplink;
@@ -450,7 +453,7 @@ fail_ref:
 
 static void *prefetchForClient(void *data)
 {
-	prefetch_request_t *job = (prefetch_request_t*)data;
+	prefetch_job_t *job = (prefetch_job_t*)data;
 	dnbd3_cache_map_t *cache = ref_get_cachemap( job->uplink->image );
 	if ( cache != NULL ) {
 		if ( !image_isRangeCachedUnsafe( cache, job->start, job->start + job->length ) ) {
@@ -458,7 +461,7 @@ static void *prefetchForClient(void *data)
 		}
 		ref_put( &cache->reference );
 	}
-	ref_put( &job->uplink->reference );
+	ref_put( &job->uplink->reference ); // Acquired in uplink_request
 	free( job );
 	return NULL;
 }
