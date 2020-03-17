@@ -786,6 +786,8 @@ static bool sendReplicationRequest(dnbd3_uplink_t *uplink)
 	const int lastBlockIndex = mapBytes - 1;
 	for ( int bc = 0; bc < numNewRequests; ++bc ) {
 		int endByte;
+		if ( UPLINK_MAX_QUEUE - uplink->queueLen < 10 )
+			break; // Don't overload queue
 		if ( _backgroundReplication == BGR_FULL ) { // Full mode: consider all blocks
 			endByte = uplink->nextReplicationIndex + mapBytes;
 		} else { // Hashblock based: Only look for match in current hash block

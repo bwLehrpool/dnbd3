@@ -138,6 +138,10 @@ void globals_loadConfig()
 	}
 	if ( _bgrWindowSize < 1 ) {
 		_bgrWindowSize = 1;
+	} else if ( _bgrWindowSize > UPLINK_MAX_QUEUE - 10 ) {
+		_bgrWindowSize = UPLINK_MAX_QUEUE - 10;
+		logadd( LOG_MINOR, "Limiting bgrWindowSize to %d, because of UPLINK_MAX_QUEUE",
+				_bgrWindowSize );
 	}
 	// Dump config as interpreted
 	char buffer[2000];
