@@ -682,19 +682,20 @@ uint32_t crc32(crc, buf, len)
         c = crc32pclmul(c, buf, len & ~PCLMUL_ALIGN_MASK);
         buf += len & ~PCLMUL_ALIGN_MASK;
         len &= PCLMUL_ALIGN_MASK;
-    }
-#else
-    const uint32_t *buf4 = (const uint32_t *)(const void *)buf;
-    while (len >= 32) {
-        DOLIT32;
-        len -= 32;
-    }
-    while (len >= 4) {
-        DOLIT4;
-        len -= 4;
-    }
-    buf = (const uint8_t *)buf4;
+    } else
 #endif
+    do {
+        const uint32_t *buf4 = (const uint32_t *)(const void *)buf;
+        while (len >= 32) {
+            DOLIT32;
+            len -= 32;
+        }
+        while (len >= 4) {
+            DOLIT4;
+            len -= 4;
+        }
+        buf = (const uint8_t *)buf4;
+    } while (0);
 
     if (len) do {
         c = crc_table[0][(c ^ *buf++) & 0xff] ^ (c >> 8);
