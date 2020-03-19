@@ -508,7 +508,7 @@ static const uint32_t crc_table[TBLS][256] =
  *  V. Gopal, E. Ozturk, et al., 2009, http://intel.ly/2ySEwL0
  */
 static uint32_t
-__attribute__((target("pclmul")))
+__attribute__((target("pclmul,sse4.1")))
 crc32pclmul(uint32_t crc, const uint8_t *buf, size_t len)
 {
     /*
@@ -676,7 +676,7 @@ uint32_t crc32(crc, buf, len)
 #if defined(__x86_64__) || defined(__amd64__)
     static  atomic_int pclmul = -1;
     if (pclmul == -1) {
-        pclmul = __builtin_cpu_supports("pclmul");
+        pclmul = __builtin_cpu_supports("pclmul") && __builtin_cpu_supports("sse4.1");
     }
     if (pclmul && len >= PCLMUL_MIN_LEN) {
         c = crc32pclmul(c, buf, len & ~PCLMUL_ALIGN_MASK);
