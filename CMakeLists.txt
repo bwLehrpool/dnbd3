@@ -126,13 +126,14 @@ FILE(WRITE ${CMAKE_BINARY_DIR}/version.cmake
  )
  CONFIGURE_FILE(\${SRC} \${DST} @ONLY)
 ")
-ADD_CUSTOM_TARGET(
-	version
+ADD_CUSTOM_COMMAND(OUTPUT fake-file.c ${CMAKE_BINARY_DIR}/generated/version.c
+	COMMAND
 	${CMAKE_COMMAND} -D SRC=${CMAKE_SOURCE_DIR}/src/version.c.in
 						-D DST=${CMAKE_BINARY_DIR}/generated/version.c
 						-D CMD=${CMAKE_SOURCE_DIR}/get-version.sh
 						-P ${CMAKE_BINARY_DIR}/version.cmake
 )
+ADD_CUSTOM_TARGET(version ALL DEPENDS fake-file.c)
 
 ################################################################################
 # CLIENT                                                                       #
