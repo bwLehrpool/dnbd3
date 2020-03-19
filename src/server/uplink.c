@@ -435,7 +435,7 @@ success_ref:
 			job->length = len;
 			job->uplink = uplink;
 			ref_inc( &uplink->reference ); // Hold one for the thread, thread will return it
-			threadpool_run( &prefetchForClient, (void*)job );
+			threadpool_run( &prefetchForClient, (void*)job, "PREFETCH" );
 		}
 	}
 	if ( getUplink ) {

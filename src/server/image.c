@@ -1817,6 +1817,7 @@ static void* closeUnusedFds(void* nix UNUSED)
 	timing_gets( &deadline, -UNUSED_FD_TIMEOUT );
 	int fds[FDCOUNT];
 	int fdindex = 0;
+	setThreadName( "unused-fd-close" );
 	mutex_lock( &imageListLock );
 	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
@@ -1857,6 +1858,7 @@ static void* saveLoadAllCacheMaps(void* nix UNUSED)
 	static ticks nextSave;
 	declare_now;
 	bool full = timing_reached( &nextSave, &now );
+	setThreadName( "cache-mapper" );
 	mutex_lock( &imageListLock );
 	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];

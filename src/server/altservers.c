@@ -172,7 +172,7 @@ void altservers_findUplinkAsync(dnbd3_uplink_t *uplink)
 	if ( uplink->rttTestResult != RTT_INPROGRESS ) {
 		dnbd3_uplink_t *current = ref_get_uplink( &uplink->image->uplinkref );
 		if ( current == uplink ) {
-			threadpool_run( &altservers_runCheck, uplink );
+			threadpool_run( &altservers_runCheck, uplink, "UPLINK" );
 		} else if ( current != NULL ) {
 			ref_put( &current->reference );
 		}

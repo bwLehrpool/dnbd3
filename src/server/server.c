@@ -404,7 +404,7 @@ int main(int argc, char *argv[])
 		if ( sigReload ) {
 			sigReload = false;
 			logadd( LOG_INFO, "SIGHUP received, re-scanning image directory" );
-			threadpool_run( &server_asyncImageListLoad, NULL );
+			threadpool_run( &server_asyncImageListLoad, NULL, "IMAGE_RELOAD" );
 		}
 		if ( sigLogCycle ) {
 			sigLogCycle = false;
@@ -431,7 +431,7 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		if ( !threadpool_run( &net_handleNewConnection, (void *)dnbd3_client ) ) {
+		if ( !threadpool_run( &net_handleNewConnection, (void *)dnbd3_client, "CLIENT" ) ) {
 			logadd( LOG_ERROR, "Could not start thread for new connection." );
 			free( dnbd3_client );
 			continue;
@@ -574,7 +574,7 @@ static int handlePendingJobs(void)
 	jobHead = *temp; // Make it list head
 	*temp = NULL; // Split off part before that
 	while ( todo != NULL ) {
-		threadpool_run( todo->startRoutine, todo->arg );
+		threadpool_run( todo->startRoutine, todo->arg, "TIMER_TASK" );
 		old = todo;
 		todo = todo->next;
 		if ( old->intervalSecs == 0 ) {

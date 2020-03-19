@@ -8,6 +8,7 @@ typedef struct _entry_t {
 	dnbd3_signal_t* signal;
 	void *(*startRoutine)(void *);
 	void * arg;
+	const char *name;
 } entry_t;
 
 static void *threadpool_worker(void *entryPtr);
@@ -56,7 +57,7 @@ void threadpool_waitEmpty()
 	} while ( activeThreads != 0 );
 }
 
-bool threadpool_run(void *(*startRoutine)(void *), void *arg)
+bool threadpool_run(void *(*startRoutine)(void *), void *arg, const char *name)
 {
 	if ( unlikely( _shutdown ) ) {
 		logadd( LOG_MINOR, "Cannot submit work to threadpool while shutting down!" );
@@ -97,6 +98,7 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg)
 	}
 	entry->startRoutine = startRoutine;
 	entry->arg = arg;
+	entry->name = name;
 	atomic_thread_fence( memory_order_release );
 	signal_call( entry->signal );
 	return true;
@@ -126,6 +128,9 @@ keep_going:;
 			logadd( LOG_ERROR, "Worker woke up but has no work to do!" );
 			exit( 1 );
 		}
+		if ( entry->name != NULL ) {
+			setThreadName( entry->name );
+		}
 #endif
 		// Start assigned work
 		(*entry->startRoutine)( entry->arg );
@@ -146,6 +151,7 @@ keep_going:;
 		// Reaching here means pool is full; just let the thread exit
 		break;
 	}
+	setThreadName( "[dead]" );
 	signal_close( entry->signal );
 	free( entry );
 	activeThreads--;
