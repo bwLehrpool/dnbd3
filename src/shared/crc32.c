@@ -41,21 +41,20 @@
 #include "../types.h"
 #include <stddef.h>
 
-#define FAR
+#if defined(__x86_64__) || defined(__amd64__)
+#include <emmintrin.h>
+#include <smmintrin.h>
+#include <wmmintrin.h>
+#include <stdatomic.h>
+#define zalign(n) __attribute__((aligned(n)))
+#endif
+
 #define OF(args) args
-#define local static
 
 /* Definitions for doing the crc four data bytes at a time. */
-#if !defined(NOBYFOUR)
-#  define BYFOUR
-#endif
-#ifdef BYFOUR
-#  define TBLS 8
-#else
-#  define TBLS 1
-#endif /* BYFOUR */
+#define TBLS 8
 
-local const uint32_t crc_table[TBLS][256] =
+static const uint32_t crc_table[TBLS][256] =
 {
   {
     0x00000000U, 0x77073096U, 0xee0e612cU, 0x990951baU, 0x076dc419U,
@@ -110,7 +109,6 @@ local const uint32_t crc_table[TBLS][256] =
     0xcdd70693U, 0x54de5729U, 0x23d967bfU, 0xb3667a2eU, 0xc4614ab8U,
     0x5d681b02U, 0x2a6f2b94U, 0xb40bbe37U, 0xc30c8ea1U, 0x5a05df1bU,
     0x2d02ef8dU
-#ifdef BYFOUR
   },
   {
     0x00000000U, 0x191b3141U, 0x32366282U, 0x2b2d53c3U, 0x646cc504U,
@@ -489,37 +487,158 @@ local const uint32_t crc_table[TBLS][256] =
     0x95e6b8b1U, 0x7b490da3U, 0x1e2eb11bU, 0x483ed243U, 0x2d596efbU,
     0xc3f6dbe9U, 0xa6916751U, 0x1fa9b0ccU, 0x7ace0c74U, 0x9461b966U,
     0xf10605deU
-#endif
   }
 };
 
-#ifdef NO_ENDIAN
-// Currently not in use, always use the BYFOUR method with known endianness
-/* ========================================================================= */
-#define DO1 crc = crc_table[0][((int)crc ^ (*buf++)) & 0xff] ^ (crc >> 8)
-#define DO8 DO1; DO1; DO1; DO1; DO1; DO1; DO1; DO1
+#define PCLMUL_MIN_LEN 64
+#define PCLMUL_ALIGN 16
+#define PCLMUL_ALIGN_MASK 15
 
-/* ========================================================================= */
-uint32_t crc32(crc, buf, len)
-    uint32_t crc;
-    const uint8_t *buf;
-    size_t len;
+#if defined(__x86_64__) || defined(__amd64__)
+/* crc32_simd.c
+ *
+ * Copyright 2017 The Chromium Authors. All rights reserved.
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the Chromium source repository LICENSE file.
+ *
+ * crc32_sse42_simd_(): compute the crc32 of the buffer, where the buffer
+ * length must be at least 64, and a multiple of 16. Based on:
+ *
+ * "Fast CRC Computation for Generic Polynomials Using PCLMULQDQ Instruction"
+ *  V. Gopal, E. Ozturk, et al., 2009, http://intel.ly/2ySEwL0
+ */
+static uint32_t
+__attribute__((target("pclmul")))
+crc32pclmul(uint32_t crc, const uint8_t *buf, size_t len)
 {
-    if (buf == NULL) return 0;
+    /*
+     * Definitions of the bit-reflected domain constants k1,k2,k3, etc and
+     * the CRC32+Barrett polynomials given at the end of the paper.
+     */
+    static const uint64_t zalign(16) k1k2[] = { 0x0154442bd4, 0x01c6e41596 };
+    static const uint64_t zalign(16) k3k4[] = { 0x01751997d0, 0x00ccaa009e };
+    static const uint64_t zalign(16) k5k0[] = { 0x0163cd6124, 0x0000000000 };
+    static const uint64_t zalign(16) poly[] = { 0x01db710641, 0x01f7011641 };
 
-    crc = crc ^ 0xffffffffU;
-    while (len >= 8) {
-        DO8;
-        len -= 8;
+    __m128i x0, x1, x2, x3, x4, x5, x6, x7, x8, y5, y6, y7, y8;
+
+    /*
+     * There's at least one block of 64.
+     */
+    x1 = _mm_loadu_si128((__m128i *)(buf + 0x00));
+    x2 = _mm_loadu_si128((__m128i *)(buf + 0x10));
+    x3 = _mm_loadu_si128((__m128i *)(buf + 0x20));
+    x4 = _mm_loadu_si128((__m128i *)(buf + 0x30));
+
+    x1 = _mm_xor_si128(x1, _mm_cvtsi32_si128(crc));
+
+    x0 = _mm_load_si128((__m128i *)k1k2);
+
+    buf += 64;
+    len -= 64;
+
+    /*
+     * Parallel fold blocks of 64, if any.
+     */
+    while (len >= 64)
+    {
+        x5 = _mm_clmulepi64_si128(x1, x0, 0x00);
+        x6 = _mm_clmulepi64_si128(x2, x0, 0x00);
+        x7 = _mm_clmulepi64_si128(x3, x0, 0x00);
+        x8 = _mm_clmulepi64_si128(x4, x0, 0x00);
+
+        x1 = _mm_clmulepi64_si128(x1, x0, 0x11);
+        x2 = _mm_clmulepi64_si128(x2, x0, 0x11);
+        x3 = _mm_clmulepi64_si128(x3, x0, 0x11);
+        x4 = _mm_clmulepi64_si128(x4, x0, 0x11);
+
+        y5 = _mm_loadu_si128((__m128i *)(buf + 0x00));
+        y6 = _mm_loadu_si128((__m128i *)(buf + 0x10));
+        y7 = _mm_loadu_si128((__m128i *)(buf + 0x20));
+        y8 = _mm_loadu_si128((__m128i *)(buf + 0x30));
+
+        x1 = _mm_xor_si128(x1, x5);
+        x2 = _mm_xor_si128(x2, x6);
+        x3 = _mm_xor_si128(x3, x7);
+        x4 = _mm_xor_si128(x4, x8);
+
+        x1 = _mm_xor_si128(x1, y5);
+        x2 = _mm_xor_si128(x2, y6);
+        x3 = _mm_xor_si128(x3, y7);
+        x4 = _mm_xor_si128(x4, y8);
+
+        buf += 64;
+        len -= 64;
     }
-    if (len) do {
-        DO1;
-    } while (--len);
-    return crc ^ 0xffffffffU;
+
+    /*
+     * Fold into 128-bits.
+     */
+    x0 = _mm_load_si128((__m128i *)k3k4);
+
+    x5 = _mm_clmulepi64_si128(x1, x0, 0x00);
+    x1 = _mm_clmulepi64_si128(x1, x0, 0x11);
+    x1 = _mm_xor_si128(x1, x2);
+    x1 = _mm_xor_si128(x1, x5);
+
+    x5 = _mm_clmulepi64_si128(x1, x0, 0x00);
+    x1 = _mm_clmulepi64_si128(x1, x0, 0x11);
+    x1 = _mm_xor_si128(x1, x3);
+    x1 = _mm_xor_si128(x1, x5);
+
+    x5 = _mm_clmulepi64_si128(x1, x0, 0x00);
+    x1 = _mm_clmulepi64_si128(x1, x0, 0x11);
+    x1 = _mm_xor_si128(x1, x4);
+    x1 = _mm_xor_si128(x1, x5);
+
+    /*
+     * Single fold blocks of 16, if any.
+     */
+    while (len >= 16)
+    {
+        x2 = _mm_loadu_si128((__m128i *)buf);
+
+        x5 = _mm_clmulepi64_si128(x1, x0, 0x00);
+        x1 = _mm_clmulepi64_si128(x1, x0, 0x11);
+        x1 = _mm_xor_si128(x1, x2);
+        x1 = _mm_xor_si128(x1, x5);
+
+        buf += 16;
+        len -= 16;
+    }
+
+    /*
+     * Fold 128-bits to 64-bits.
+     */
+    x2 = _mm_clmulepi64_si128(x1, x0, 0x10);
+    x3 = _mm_setr_epi32(~0, 0, ~0, 0);
+    x1 = _mm_srli_si128(x1, 8);
+    x1 = _mm_xor_si128(x1, x2);
+
+    x0 = _mm_loadl_epi64((__m128i*)k5k0);
+
+    x2 = _mm_srli_si128(x1, 4);
+    x1 = _mm_and_si128(x1, x3);
+    x1 = _mm_clmulepi64_si128(x1, x0, 0x00);
+    x1 = _mm_xor_si128(x1, x2);
+
+    /*
+     * Barret reduce to 32-bits.
+     */
+    x0 = _mm_load_si128((__m128i*)poly);
+
+    x2 = _mm_and_si128(x1, x3);
+    x2 = _mm_clmulepi64_si128(x2, x0, 0x10);
+    x2 = _mm_and_si128(x2, x3);
+    x2 = _mm_clmulepi64_si128(x2, x0, 0x00);
+    x1 = _mm_xor_si128(x1, x2);
+
+    /*
+     * Return the crc32.
+     */
+    return _mm_extract_epi32(x1, 1);
 }
 #endif
-
-#ifdef BYFOUR
 
 /*
    This BYFOUR code accesses the passed unsigned char * buffer with a 32-bit
@@ -533,7 +652,7 @@ uint32_t crc32(crc, buf, len)
    writes to the buffer that is passed to these routines.
  */
 
-#ifdef LITTLE_ENDIAN
+#ifdef DNBD3_LITTLE_ENDIAN
 /* ========================================================================= */
 #define DOLIT4 c ^= *buf4++; \
         c = crc_table[3][c & 0xff] ^ crc_table[2][(c >> 8) & 0xff] ^ \
@@ -547,16 +666,25 @@ uint32_t crc32(crc, buf, len)
     size_t len;
 {
     if (buf == NULL) return 0;
-    register uint32_t c;
-    register const uint32_t FAR *buf4;
+    uint32_t c;
 
     c = ~crc;
-    while (len && ((uintptr_t)buf & 3)) {
+    while (len && ((uintptr_t)buf & PCLMUL_ALIGN_MASK)) {
         c = crc_table[0][(c ^ *buf++) & 0xff] ^ (c >> 8);
         len--;
     }
-
-    buf4 = (const uint32_t FAR *)(const void FAR *)buf;
+#if defined(__x86_64__) || defined(__amd64__)
+    static  atomic_int pclmul = -1;
+    if (pclmul == -1) {
+        pclmul = __builtin_cpu_supports("pclmul");
+    }
+    if (pclmul && len >= PCLMUL_MIN_LEN) {
+        c = crc32pclmul(c, buf, len & ~PCLMUL_ALIGN_MASK);
+        buf += len & ~PCLMUL_ALIGN_MASK;
+        len &= PCLMUL_ALIGN_MASK;
+    }
+#else
+    const uint32_t *buf4 = (const uint32_t *)(const void *)buf;
     while (len >= 32) {
         DOLIT32;
         len -= 32;
@@ -565,7 +693,8 @@ uint32_t crc32(crc, buf, len)
         DOLIT4;
         len -= 4;
     }
-    buf = (const uint8_t FAR *)buf4;
+    buf = (const uint8_t *)buf4;
+#endif
 
     if (len) do {
         c = crc_table[0][(c ^ *buf++) & 0xff] ^ (c >> 8);
@@ -575,7 +704,7 @@ uint32_t crc32(crc, buf, len)
 }
 #endif
 
-#ifdef BIG_ENDIAN
+#ifdef DNBD3_BIG_ENDIAN
 /* ========================================================================= */
 #define DOBIG4 c ^= *buf4++; \
         c = crc_table[4][c & 0xff] ^ crc_table[5][(c >> 8) & 0xff] ^ \
@@ -590,7 +719,7 @@ uint32_t crc32(crc, buf, len)
 {
     if (buf == NULL) return 0;
     register uint32_t c;
-    register const uint32_t FAR *buf4;
+    register const uint32_t *buf4;
 
     c = ~net_order_32(crc);
     while (len && ((uintptr_t)buf & 3)) {
@@ -598,7 +727,7 @@ uint32_t crc32(crc, buf, len)
         len--;
     }
 
-    buf4 = (const uint32_t FAR *)(const void FAR *)buf;
+    buf4 = (const uint32_t *)(const void *)buf;
     while (len >= 32) {
         DOBIG32;
         len -= 32;
@@ -607,7 +736,7 @@ uint32_t crc32(crc, buf, len)
         DOBIG4;
         len -= 4;
     }
-    buf = (const uint8_t FAR *)buf4;
+    buf = (const uint8_t *)buf4;
 
     if (len) do {
         c = crc_table[4][(c >> 24) ^ *buf++] ^ (c << 8);
@@ -616,6 +745,4 @@ uint32_t crc32(crc, buf, len)
     return net_order_32(c);
 }
 #endif
-
-#endif /* BYFOUR */
 

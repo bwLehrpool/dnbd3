@@ -95,9 +95,7 @@
 	(a).size = net_order_32((a).size); \
 } while (0)
 #define ENDIAN_MODE "Big Endian"
-#ifndef BIG_ENDIAN
-#define BIG_ENDIAN
-#endif
+#define DNBD3_BIG_ENDIAN
 #elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(__i386__) || defined(__i386) || defined(__x86_64)
 #define dnbd3_packet_magic ((uint16_t)( (0x73) | (0x72 << 8) ))
 // Make little endian our network byte order as probably 99.999% of machines this will be used on are LE
@@ -107,9 +105,7 @@
 #define fixup_request(a) while(0)
 #define fixup_reply(a)   while(0)
 #define ENDIAN_MODE "Little Endian"
-#ifndef LITTLE_ENDIAN
-#define LITTLE_ENDIAN
-#endif
+#define DNBD3_LITTLE_ENDIAN
 #else
 #error "Unknown Endianness"
 #endif
@@ -156,10 +152,10 @@ typedef struct __attribute__((packed))
 	uint32_t size;            // 4byte
 	union {
 		struct {
-#ifdef LITTLE_ENDIAN
+#ifdef DNBD3_LITTLE_ENDIAN
 			uint64_t offset_small:56;  // 7byte
 			uint8_t  hops;            // 1byte
-#elif defined(BIG_ENDIAN)
+#elif defined(DNBD3_BIG_ENDIAN)
 			uint8_t  hops;            // 1byte
 			uint64_t offset_small:56;  // 7byte
 #endif
