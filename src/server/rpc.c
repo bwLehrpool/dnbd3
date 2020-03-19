@@ -414,6 +414,8 @@ static bool sendReply(int sock, const char *status, const char *ctype, const cha
 #ifdef AFL_MODE
 		sock = 0;
 #endif
+		// Don't wait too long in case other side ignores the shutdown
+		sock_setTimeout( sock, 600 );
 		while ( read( sock, buffer, sizeof buffer ) > 0 );
 		return false;
 	}
