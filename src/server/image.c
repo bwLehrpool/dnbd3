@@ -697,7 +697,8 @@ static bool image_load_all_internal(char *base, char *path)
 
 	while ( !_shutdown && (entryPtr = readdir( dir )) != NULL ) {
 		entry = *entryPtr;
-		if ( strcmp( entry.d_name, "." ) == 0 || strcmp( entry.d_name, ".." ) == 0 ) continue;
+		if ( entry.d_name[0] == '.' )
+			continue; // No hidden files, no . or ..
 		if ( strlen( entry.d_name ) > SUBDIR_LEN ) {
 			logadd( LOG_WARNING, "Skipping entry %s: Too long (max %d bytes)", entry.d_name, (int)SUBDIR_LEN );
 			continue;
