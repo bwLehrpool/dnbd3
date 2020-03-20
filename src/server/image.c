@@ -440,6 +440,7 @@ dnbd3_image_t* image_lock(dnbd3_image_t *image)
 	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) {
+			assert( _images[i]->id == image->id );
 			image->users++;
 			mutex_unlock( &imageListLock );
 			return image;
@@ -470,6 +471,7 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 	// responsible for freeing it
 	for (int i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) { // Found, do nothing
+			assert( _images[i]->id == image->id );
 			mutex_unlock( &imageListLock );
 			return NULL;
 		}
@@ -509,6 +511,7 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 	mutex_lock( &imageListLock );
 	for ( int i = _num_images - 1; i >= 0; --i ) {
 		if ( _images[i] == image ) {
+			assert( _images[i]->id == image->id );
 			_images[i] = NULL;
 			mustFree = ( image->users == 0 );
 		}
@@ -1088,7 +1091,7 @@ bool image_create(char *image, int revision, uint64_t size)
 		logadd( LOG_ERROR, "revision id invalid: %d", revision );
 		return false;
 	}
-	char path[PATHLEN], cache[PATHLEN];
+	char path[PATHLEN], cache[PATHLEN+4];
 	char *lastSlash = strrchr( image, '/' );
 	if ( lastSlash == NULL ) {
 		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
@@ -1099,7 +1102,7 @@ bool image_create(char *image, int revision, uint64_t size)
 		*lastSlash = '/';
 		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
 	}
-	snprintf( cache, PATHLEN, "%s.map", path );
+	snprintf( cache, PATHLEN+4, "%s.map", path );
 	size = (size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 	const int mapsize = IMGSIZE_TO_MAPBYTES(size);
 	// Write files

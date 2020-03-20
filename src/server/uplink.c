@@ -403,8 +403,9 @@ bool uplink_request(dnbd3_uplink_t *uplink, dnbd3_client_t *client, uint64_t han
 		mutex_unlock( &uplink->sendMutex );
 		logadd( LOG_DEBUG2, "Cannot do direct uplink request: No socket open" );
 	} else {
-		const bool ret = dnbd3_get_block( uplink->current.fd, req.start, req.end - req.start,
-				req.handle, COND_HOPCOUNT( uplink->current.version, hops ) );
+		const bool ret = dnbd3_get_block( uplink->current.fd, req.start,
+				(uint32_t)( req.end - req.start ), req.handle,
+				COND_HOPCOUNT( uplink->current.version, hops ) );
 		if ( unlikely( !ret ) ) {
 			markRequestUnsent( uplink, req.handle );
 			uplink->image->problem.uplink = true;
@@ -426,7 +427,8 @@ success_ref:
 	if ( client != NULL ) {
 		// Was from client -- potential prefetch
 		// Same size as this request, but consider end of image...
-		uint32_t len = MIN( uplink->image->virtualFilesize - req.end, req.end - req.start );
+		uint32_t len = (uint32_t)MIN( uplink->image->virtualFilesize - req.end,
+				req.end - req.start );
 		// Also don't prefetch if we cross a hash block border and BGR mode == hashblock
 		if ( len > 0 && ( _backgroundReplication != BGR_HASHBLOCK
 					|| req.start % HASH_BLOCK_SIZE == (req.end-1) % HASH_BLOCK_SIZE ) ) {
@@ -592,7 +594,8 @@ static void* uplink_mainloop(void *data)
 		}
 		declare_now;
 		uint32_t timepassed = timing_diff( &lastKeepalive, &now );
-		if ( timepassed >= SERVER_UPLINK_KEEPALIVE_INTERVAL || ( timepassed >= 2 && uplink->idleTime < _bgrWindowSize ) ) {
+		if ( timepassed >= SERVER_UPLINK_KEEPALIVE_INTERVAL
+				|| ( timepassed >= 2 && uplink->idleTime < _bgrWindowSize ) ) {
 			lastKeepalive = now;
 			uplink->idleTime += timepassed;
 			// Keep-alive
@@ -714,8 +717,8 @@ static void sendQueuedRequests(dnbd3_uplink_t *uplink, bool newOnly)
 		dnbd3_request_t *hdr = &reqs[count++];
 		hdr->magic = dnbd3_packet_magic;
 		hdr->cmd = CMD_GET_BLOCK;
-		hdr->size = it->to - it->from;
-		hdr->offset_small = it->from;
+		hdr->size = (uint32_t)( it->to - it->from );
+		hdr->offset = it->from; // Offset first, then hops! (union)
 		hdr->hops = COND_HOPCOUNT( uplink->current.version, it->hopCount );
 		hdr->handle = it->handle;
 		fixup_request( *hdr );

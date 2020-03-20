@@ -103,7 +103,7 @@ struct _dnbd3_uplink
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
 	atomic_uint_fast64_t bytesReceivedLastSave; // Number of bytes received when we last saved the cache map
 	int queueLen;               // length of queue
-	uint32_t idleTime;          // How many seconds the uplink was idle (apart from keep-alives)
+	int idleTime;               // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queue_entry_t *queue;
 	atomic_uint_fast32_t queueId;
 	dnbd3_alt_local_t altData[SERVER_MAX_ALTS];
