@@ -155,6 +155,7 @@ struct _dnbd3_image
 		atomic_bool queue;       // Too many requests waiting on uplink
 	} problem;
 	uint16_t rid;          // revision of image
+	bool accessed;         // image was accessed since .meta was written
 	pthread_mutex_t lock;
 };
 #define PIMG(x) (x)->name, (int)(x)->rid

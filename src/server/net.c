@@ -289,6 +289,7 @@ void* net_handleNewConnection(void *clientPtr)
 					if ( !client->isServer ) {
 						// Only update immediately if this is a client. Servers are handled on disconnect.
 						timing_get( &image->atime );
+						image->accessed = true;
 					}
 					mutex_unlock( &image->lock );
 					serializer_reset_write( &payload );
@@ -515,6 +516,7 @@ exit_client_cleanup: ;
 	if ( image != NULL && client->bytesSent > DNBD3_BLOCK_SIZE * 10 ) {
 		mutex_lock( &image->lock );
 		timing_get( &image->atime );
+		image->accessed = true;
 		mutex_unlock( &image->lock );
 	}
 	if ( cache != NULL ) {

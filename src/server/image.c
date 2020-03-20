@@ -55,10 +55,12 @@ static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
 static bool image_checkRandomBlocks(dnbd3_image_t *image, const int count, int fromFd);
 static void* closeUnusedFds(void*);
-static bool imageShouldSaveCacheMap(dnbd3_image_t *image);
+static bool isImageFromUpstream(dnbd3_image_t *image);
 static void* saveLoadAllCacheMaps(void*);
 static void saveCacheMap(dnbd3_image_t *image);
 static void allocCacheMap(dnbd3_image_t *image, bool complete);
+static void saveMetaData(dnbd3_image_t *image, ticks *now, time_t walltime);
+static void loadImageMeta(dnbd3_image_t *image);
 
 static void cmfree(ref *ref)
 {
@@ -630,8 +632,11 @@ static dnbd3_image_t* image_free(dnbd3_image_t *image)
 	// this will get called again when the uplink is done.
 	if ( !uplink_shutdown( image ) )
 		return NULL;
-	if ( imageShouldSaveCacheMap( image ) ) {
-		saveCacheMap( image );
+	if ( isImageFromUpstream( image ) ) {
+		saveMetaData( image, NULL, 0 );
+		if ( image->ref_cacheMap != NULL ) {
+			saveCacheMap( image );
+		}
 	}
 	mutex_lock( &image->lock );
 	ref_setref( &image->ref_cacheMap, NULL );
@@ -757,7 +762,6 @@ static bool image_addToList(dnbd3_image_t *image)
 static bool image_load(char *base, char *path, bool withUplink)
 {
 	int revision = -1;
-	struct stat st;
 	dnbd3_cache_map_t *cache = NULL;
 	uint32_t *crc32list = NULL;
 	dnbd3_image_t *existing = NULL;
@@ -901,15 +905,7 @@ static bool image_load(char *base, char *path, bool withUplink)
 	timing_get( &image->nextCompletenessEstimate );
 	image->completenessEstimate = -1;
 	mutex_init( &image->lock, LOCK_IMAGE );
-	int32_t offset;
-	if ( stat( path, &st ) == 0 ) {
-		// Negatively offset atime by file modification time
-		offset = (int32_t)( st.st_mtime - time( NULL ) );
-		if ( offset > 0 ) offset = 0;
-	} else {
-		offset = 0;
-	}
-	timing_gets( &image->atime, offset );
+	loadImageMeta( image );
 
 	// Prevent freeing in cleanup
 	cache = NULL;
@@ -1843,11 +1839,9 @@ static void* closeUnusedFds(void* nix UNUSED)
 	return NULL;
 }
 
-static bool imageShouldSaveCacheMap(dnbd3_image_t *image)
+static bool isImageFromUpstream(dnbd3_image_t *image)
 {
 	if ( !_isProxy )
-		return false; // Nothing to do
-	if ( image->ref_cacheMap == NULL )
 		return false; // Nothing to do
 	// Check if we're a "hybrid proxy", i.e. there are only some namespaces (directories)
 	// for which we have any upstream servers configured. If there's none, don't touch
@@ -1862,66 +1856,71 @@ static void* saveLoadAllCacheMaps(void* nix UNUSED)
 	static ticks nextSave;
 	declare_now;
 	bool full = timing_reached( &nextSave, &now );
+	time_t walltime = full ? time( NULL ) : 0;
 	setThreadName( "cache-mapper" );
 	mutex_lock( &imageListLock );
 	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
-		dnbd3_cache_map_t *cache = ref_get_cachemap( image );
-		if ( cache == NULL )
-			continue; // No users++ or mutex_unlock yet -> safe
 		image->users++;
 		mutex_unlock( &imageListLock );
-		if ( imageShouldSaveCacheMap( image ) ) {
-			// Replicated image, we're responsible for updating the map, so save it
-			// Save if dirty bit is set, blocks were invalidated
-			bool save = cache->dirty;
-			dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
-			if ( !save ) {
-				// Otherwise, consider longer timeout and byte count limits of uplink
-				if ( uplink != NULL ) {
-					assert( uplink->bytesReceivedLastSave <= uplink->bytesReceived );
-					uint64_t diff = uplink->bytesReceived - uplink->bytesReceivedLastSave;
-					if ( diff > CACHE_MAP_MAX_UNSAVED_BYTES || ( full && diff != 0 ) ) {
-						save = true;
+		const bool fromUpstream = isImageFromUpstream( image );
+		dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+		if ( cache != NULL ) {
+			if ( fromUpstream ) {
+				// Replicated image, we're responsible for updating the map, so save it
+				// Save if dirty bit is set, blocks were invalidated
+				bool save = cache->dirty;
+				dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
+				if ( !save ) {
+					// Otherwise, consider longer timeout and byte count limits of uplink
+					if ( uplink != NULL ) {
+						assert( uplink->bytesReceivedLastSave <= uplink->bytesReceived );
+						uint64_t diff = uplink->bytesReceived - uplink->bytesReceivedLastSave;
+						if ( diff > CACHE_MAP_MAX_UNSAVED_BYTES || ( full && diff != 0 ) ) {
+							save = true;
+						}
 					}
 				}
-			}
-			if ( save ) {
-				cache->dirty = false;
-				if ( uplink != NULL ) {
-					uplink->bytesReceivedLastSave = uplink->bytesReceived;
+				if ( save ) {
+					cache->dirty = false;
+					if ( uplink != NULL ) {
+						uplink->bytesReceivedLastSave = uplink->bytesReceived;
+					}
+					saveCacheMap( image );
 				}
-				saveCacheMap( image );
-			}
-			if ( uplink != NULL ) {
-				ref_put( &uplink->reference );
-			}
-		} else {
-			// We're not replicating this image, if there's a cache map, reload
-			// it periodically, since we might read from a shared storage that
-			// another server instance is writing to.
-			if ( full || ( !cache->unchanged && !image->problem.read ) ) {
-				logadd( LOG_DEBUG2, "Reloading cache map of %s:%d", PIMG(image) );
-				dnbd3_cache_map_t *onDisk = image_loadCacheMap(image->path, image->virtualFilesize);
-				if ( onDisk == NULL ) {
-					// Should be complete now
-					logadd( LOG_DEBUG1, "External replication of %s:%d complete", PIMG(image) );
-					ref_setref( &image->ref_cacheMap, NULL );
-				} else {
-					const int mapSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
-					if ( memcmp( cache->map, onDisk->map, mapSize ) == 0 ) {
-						// Unchanged
-						cache->unchanged = true;
-						onDisk->reference.free( &onDisk->reference );
+				if ( uplink != NULL ) {
+					ref_put( &uplink->reference );
+				}
+			} else {
+				// We're not replicating this image, if there's a cache map, reload
+				// it periodically, since we might read from a shared storage that
+				// another server instance is writing to.
+				if ( full || ( !cache->unchanged && !image->problem.read ) ) {
+					logadd( LOG_DEBUG2, "Reloading cache map of %s:%d", PIMG(image) );
+					dnbd3_cache_map_t *onDisk = image_loadCacheMap(image->path, image->virtualFilesize);
+					if ( onDisk == NULL ) {
+						// Should be complete now
+						logadd( LOG_DEBUG1, "External replication of %s:%d complete", PIMG(image) );
+						ref_setref( &image->ref_cacheMap, NULL );
 					} else {
-						// Replace
-						ref_setref( &image->ref_cacheMap, &onDisk->reference );
-						logadd( LOG_DEBUG2, "Map changed" );
+						const int mapSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+						if ( memcmp( cache->map, onDisk->map, mapSize ) == 0 ) {
+							// Unchanged
+							cache->unchanged = true;
+							onDisk->reference.free( &onDisk->reference );
+						} else {
+							// Replace
+							ref_setref( &image->ref_cacheMap, &onDisk->reference );
+							logadd( LOG_DEBUG2, "Map changed" );
+						}
 					}
 				}
-			}
+			} // end reload cache map
+			ref_put( &cache->reference );
+		} // end has cache map
+		if ( full && fromUpstream ) {
+			saveMetaData( image, &now, walltime );
 		}
-		ref_put( &cache->reference );
 		image_release( image ); // Always do this instead of users-- to handle freeing
 		mutex_lock( &imageListLock );
 	}
@@ -2023,3 +2022,78 @@ static void allocCacheMap(dnbd3_image_t *image, bool complete)
 	}
 	mutex_unlock( &image->lock );
 }
+
+/**
+ * It's assumed you hold a reference to the image
+ */
+static void saveMetaData(dnbd3_image_t *image, ticks *now, time_t walltime)
+{
+	if ( !image->accessed )
+		return;
+	ticks tmp;
+	uint32_t diff;
+	char *fn;
+	if ( asprintf( &fn, "%s.meta", image->path ) == -1 ) {
+		logadd( LOG_WARNING, "Cannot asprintf meta" );
+		return;
+	}
+	if ( now == NULL ) {
+		timing_get( &tmp );
+		now = &tmp;
+		walltime = time( NULL );
+	}
+	mutex_lock( &image->lock );
+	image->accessed = false;
+	diff = timing_diff( &image->atime, now );
+	mutex_unlock( &image->lock );
+	FILE *f = fopen( fn, "w" );
+	if ( f == NULL ) {
+		logadd( LOG_WARNING, "Cannot open %s for writing", fn );
+	} else {
+		fprintf( f, "[main]\natime=%"PRIu64"\n", (uint64_t)( walltime - diff ) );
+		fclose( f );
+	}
+	free( fn );
+	// TODO: fsync() dir
+}
+
+static void loadImageMeta(dnbd3_image_t *image)
+{
+	int32_t offset = 1;
+	char *fn;
+	if ( asprintf( &fn, "%s.meta", image->path ) == -1 ) {
+		logadd( LOG_WARNING, "asprintf load" );
+	} else {
+		int fh = open( fn, O_RDONLY );
+		free( fn );
+		if ( fh != -1 ) {
+			char buf[200];
+			ssize_t ret = read( fh, buf, sizeof(buf)-1 );
+			close( fh );
+			if ( ret > 0 ) {
+				buf[ret] = '\0';
+				// Do it the cheap way until we actually store more stuff
+				char *pos = strstr( buf, "atime=" );
+				if ( pos != NULL ) {
+					offset = (int32_t)( atol( pos + 6 ) - time( NULL ) );
+				}
+			}
+		}
+	}
+	if ( offset == 1 ) {
+		// Nothing from .meta file, use old guesstimate
+		struct stat st;
+		if ( stat( image->path, &st ) == 0 ) {
+			// Negatively offset atime by file modification time
+			offset = (int32_t)( st.st_mtime - time( NULL ) );
+		} else {
+			offset = 0;
+		}
+		image->accessed = true;
+	}
+	if ( offset > 0 ) {
+		offset = 0;
+	}
+	timing_gets( &image->atime, offset );
+}
+
