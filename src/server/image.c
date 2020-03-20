@@ -1732,17 +1732,17 @@ bool image_ensureDiskSpaceLocked(uint64_t size, bool force)
 /**
  * Make sure at least size bytes are available in _basePath.
  * Will delete old images to make room for new ones.
- * TODO: Store last access time of images. Currently the
- * last access time is reset to the file modification time
- * on server restart. Thus it will
- * currently only delete images if server uptime is > 24 hours.
+ * It will only delete images if a configurable uptime is
+ * reached.
  * This can be overridden by setting force to true, in case
  * free space is desperately needed.
  * Return true iff enough space is available. false in random other cases
  */
 static bool image_ensureDiskSpace(uint64_t size, bool force)
 {
-	for ( int maxtries = 0; maxtries < 20; ++maxtries ) {
+	if ( !_isProxy || _autoFreeDiskSpaceDelay == -1 )
+		return false; // If not in proxy mode at all, or explicitly disabled, never delete anything
+	for ( int maxtries = 0; maxtries < 50; ++maxtries ) {
 		uint64_t available;
 		if ( !file_freeDiskSpace( _basePath, NULL, &available ) ) {
 			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", errno );
@@ -1750,28 +1750,29 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 		}
 		if ( available > size )
 			return true; // Yay
-		if ( !_isProxy || _autoFreeDiskSpaceDelay == -1 )
-			return false; // If not in proxy mode at all, or explicitly disabled, never delete anything
 		if ( !force && dnbd3_serverUptime() < (uint32_t)_autoFreeDiskSpaceDelay ) {
-			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < %d minutes...", (int)(available / (1024ll * 1024ll)),
-					(int)(size / (1024 * 1024)), _autoFreeDiskSpaceDelay / 60 );
+			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < %d minutes...",
+					(int)(available / (1024ll * 1024)),
+					(int)(size / (1024ll * 1024)), _autoFreeDiskSpaceDelay / 60 );
 			return false;
 		}
-		logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, freeing an image...", (int)(available / (1024ll * 1024ll)),
-				(int)(size / (1024 * 1024)) );
+		logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, freeing an image...",
+				(int)(available / (1024ll * 1024)),
+				(int)(size / (1024ll * 1024)) );
 		// Find least recently used image
 		dnbd3_image_t *oldest = NULL;
 		int i;
 		mutex_lock( &imageListLock );
 		for (i = 0; i < _num_images; ++i) {
 			dnbd3_image_t *current = _images[i];
-			if ( current == NULL ) continue;
-			if ( current->users == 0 ) { // Not in use :-)
-				if ( oldest == NULL || timing_1le2( &current->atime, &oldest->atime ) ) {
-					// Oldest access time so far
-					oldest = current;
-				}
-			}
+			if ( current == NULL || current->users != 0 )
+				continue; // Empty slot or in use
+			if ( oldest != NULL && timing_1le2( &oldest->atime, &current->atime ) )
+				continue; // Already got a newer one
+			if ( !isImageFromUpstream( current ) )
+				continue; // Not replicated, don't touch
+			// Oldest access time so far
+			oldest = current;
 		}
 		if ( oldest != NULL ) {
 			oldest->users++;
