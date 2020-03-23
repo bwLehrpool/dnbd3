@@ -9,7 +9,7 @@
 #include "helper.h"
 #include "../shared/timing.h"
 
-#ifdef _DEBUG
+#ifdef DEBUG_LOCKS
 #define MAXLOCKS (SERVER_MAX_CLIENTS * 2 + SERVER_MAX_ALTS + 200 + SERVER_MAX_IMAGES)
 #define MAXTHREADS (SERVER_MAX_CLIENTS + 100)
 #define MAXLPT 20

@@ -26,7 +26,7 @@
 
 //
 
-#ifdef _DEBUG
+#ifdef DEBUG_LOCKS
 
 #define mutex_init( lock, prio ) debug_mutex_init( #lock, __FILE__, __LINE__, lock, prio)
 #define mutex_lock( lock ) debug_mutex_lock( #lock, __FILE__, __LINE__, lock, false)
