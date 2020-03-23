@@ -97,7 +97,7 @@ bool connection_init_n_times(
 				counters->fails++;
 				logadd( LOG_ERROR, "rid mismatch" );
 			//} else if ( !dnbd3_get_block( sock, run_i * blockSize, blockSize, 0, 0 ) ) {
-			} else if ( !dnbd3_get_block( sock, (((uint64_t)rand()) << 16 + rand()) % (remoteSize - blockSize), blockSize, 0, 0 ) ) {
+			} else if ( !dnbd3_get_block( sock, (((uint64_t)rand() << 16) + rand()) % (remoteSize - blockSize), blockSize, 0, 0 ) ) {
 				counters->fails++;
 				logadd( LOG_ERROR, "send: get block failed" );
 			} else if ( !dnbd3_get_reply( sock, &reply ) ) {
