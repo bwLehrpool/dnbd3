@@ -346,7 +346,7 @@ int sock_multiConnect(poll_list_t* list, const dnbd3_host_t* host, int connect_m
 		if ( i != list->count ) list->entry[i] = list->entry[list->count];
 		if ( fd != -1 ) {
 			sock_set_block( fd );
-			if ( rw_ms != -1 && rw_ms != connect_ms ) {
+			if ( rw_ms != -1 ) {
 				sock_setTimeout( fd, rw_ms );
 			}
 			return fd;
