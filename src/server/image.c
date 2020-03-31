@@ -1176,14 +1176,18 @@ dnbd3_image_t* image_getOrLoad(char * const name, const uint16_t revision)
 	// Sanity check
 	if ( len == 0 || name[len - 1] == '/' || name[0] == '/'
 			|| name[0] == '.' || strstr( name, "/." ) != NULL ) return NULL;
-	// If in proxy mode, check with upstream server first
+	// Re-check latest local revision
+	image = loadImageServer( name, revision );
+	// If in proxy mode, check with upstream servers
 	if ( _isProxy ) {
+		// Forget the locally loaded one
+		image_release( image );
+		// Check with upstream - if unsuccessful, will return the same
+		// as loadImageServer did
 		image = loadImageProxy( name, revision, len );
-		if ( image != NULL )
-			return image;
 	}
 	// Lookup on local storage
-	return loadImageServer( name, revision );
+	return image;
 }
 
 /**
