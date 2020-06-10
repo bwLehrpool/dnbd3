@@ -590,7 +590,7 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 			LOG_GOTO( image_failed, LOG_DEBUG1, "[RTT%d] Received corrupted reply header after CMD_GET_BLOCK", server );
 		}
 		// check reply header
-		if ( reply.cmd != CMD_GET_BLOCK || reply.size != DNBD3_BLOCK_SIZE ) {
+		if ( reply.cmd != CMD_GET_BLOCK || reply.size != length ) {
 			// Sanity check failed; count this as global error (malicious/broken server)
 			ERROR_GOTO( server_failed, "[RTT] Reply to first block request is %" PRIu32 " bytes", reply.size );
 		}
