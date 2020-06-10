@@ -69,7 +69,7 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg, const char *name)
 		return false; // Or bail out!?
 	}
 #endif
-	entry_t *entry;
+	entry_t *entry = NULL;
 	for ( int i = 0; i < maxIdleThreads; ++i ) {
 		entry = atomic_exchange( &pool[i], NULL );
 		if ( entry != NULL ) {
