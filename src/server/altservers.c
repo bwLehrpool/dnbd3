@@ -598,7 +598,7 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 		char buffer[DNBD3_BLOCK_SIZE];
 		uint32_t todo = length;
 		ssize_t ret;
-		while ( ( ret = recv( sock, buffer, MIN( DNBD3_BLOCK_SIZE, todo ), MSG_WAITALL ) ) > 0 ) {
+		while ( todo != 0 && ( ret = recv( sock, buffer, MIN( DNBD3_BLOCK_SIZE, todo ), MSG_WAITALL ) ) > 0 ) {
 			todo -= (uint32_t)ret;
 		}
 		if ( todo != 0 ) {
