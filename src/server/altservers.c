@@ -596,7 +596,12 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 		}
 		// flush payload to include this into measurement
 		char buffer[DNBD3_BLOCK_SIZE];
-		if ( recv( sock, buffer, DNBD3_BLOCK_SIZE, MSG_WAITALL ) != DNBD3_BLOCK_SIZE ) {
+		uint32_t todo = length;
+		ssize_t ret;
+		while ( ( ret = recv( sock, buffer, MIN( DNBD3_BLOCK_SIZE, todo ), MSG_WAITALL ) ) > 0 ) {
+			todo -= (uint32_t)ret;
+		}
+		if ( todo != 0 ) {
 			ERROR_GOTO( image_failed, "[RTT%d] Could not read first block payload", server );
 		}
 		clock_gettime( BEST_CLOCK_SOURCE, &end );
