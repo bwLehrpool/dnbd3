@@ -235,12 +235,14 @@ void uplink_removeClient(dnbd3_uplink_t *uplink, dnbd3_client_t *client)
 		return;
 	mutex_lock( &uplink->queueLock );
 	for ( dnbd3_queue_entry_t *it = uplink->queue; it != NULL; it = it->next ) {
-		for ( dnbd3_queue_client_t **cit = &it->clients; *cit != NULL; cit = &(**cit).next ) {
+		for ( dnbd3_queue_client_t **cit = &it->clients; *cit != NULL; ) {
 			if ( (**cit).client == client ) {
 				--client->relayedCount;
 				dnbd3_queue_client_t *entry = *cit;
 				*cit = (**cit).next;
 				free( entry );
+			} else {
+				cit = &(**cit).next;
 			}
 		}
 	}
