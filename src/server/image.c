@@ -1291,7 +1291,11 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 		} else {
 			ok = image_ensureDiskSpace( remoteImageSize + ( 10 * 1024 * 1024 ), false ); // some extra space for cache map etc.
 		}
-		ok = ok && image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img
+		if ( ok ) {
+			ok = image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img
+		} else {
+			logadd( LOG_INFO, "Not enough space to replicate '%s:%d'", name, (int)revision );
+		}
 		mutex_unlock( &reloadLock );
 		if ( !ok ) goto server_fail;
 
@@ -1744,16 +1748,20 @@ bool image_ensureDiskSpaceLocked(uint64_t size, bool force)
  */
 static bool image_ensureDiskSpace(uint64_t size, bool force)
 {
-	if ( !_isProxy || _autoFreeDiskSpaceDelay == -1 )
-		return false; // If not in proxy mode at all, or explicitly disabled, never delete anything
 	for ( int maxtries = 0; maxtries < 50; ++maxtries ) {
 		uint64_t available;
 		if ( !file_freeDiskSpace( _basePath, NULL, &available ) ) {
-			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", errno );
+			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left.", errno );
 			return true;
 		}
 		if ( available > size )
 			return true; // Yay
+		if ( !_isProxy || _autoFreeDiskSpaceDelay == -1 ) {
+			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but auto-freeing of disk space is disabled.",
+					(int)(available / (1024ll * 1024)),
+					(int)(size / (1024ll * 1024)) );
+			return false; // If not in proxy mode at all, or explicitly disabled, never delete anything
+		}
 		if ( !force && dnbd3_serverUptime() < (uint32_t)_autoFreeDiskSpaceDelay ) {
 			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < %d minutes...",
 					(int)(available / (1024ll * 1024)),
