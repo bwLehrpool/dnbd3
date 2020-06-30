@@ -69,10 +69,8 @@ static inline bool dnbd3_select_image(int sock, const char *name, uint16_t rid, 
 	request.magic = dnbd3_packet_magic;
 	request.cmd = CMD_SELECT_IMAGE;
 	request.size = (uint32_t)len;
-#ifdef _DEBUG
 	request.handle = 0;
 	request.offset = 0;
-#endif
 	fixup_request( request );
 	iov[0].iov_base = &request;
 	iov[0].iov_len = sizeof(request);
