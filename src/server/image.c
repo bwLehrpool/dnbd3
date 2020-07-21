@@ -1874,6 +1874,8 @@ static void* saveLoadAllCacheMaps(void* nix UNUSED)
 	mutex_lock( &imageListLock );
 	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
+		if ( image == NULL )
+			continue;
 		image->users++;
 		mutex_unlock( &imageListLock );
 		const bool fromUpstream = isImageFromUpstream( image );
