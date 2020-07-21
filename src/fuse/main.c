@@ -33,6 +33,8 @@
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
+#define INO_STATS (3)
+#define INO_IMAGE (4)
 
 static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
@@ -47,7 +49,7 @@ static void ( *fuse_sigIntHandler )(int) = NULL;
 static void ( *fuse_sigTermHandler )(int) = NULL;
 
 static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize );
-static int fillStatsFile( char *buf, size_t size, off_t offset );
+static void fillStatsFile( fuse_req_t req, size_t size, off_t offset );
 static void image_destroy( void *private_data );
 static void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
 static void image_ll_init( void *userdata, struct fuse_conn_info *conn );
@@ -70,12 +72,12 @@ static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 		stbuf->st_nlink = 2;
 		break;
 
-	case 2:
+	case INO_IMAGE:
 		stbuf->st_mode = S_IFREG | 0440;
 		stbuf->st_nlink = 1;
 		stbuf->st_size = imageSize;
 		break;
-	case 3:
+	case INO_STATS:
 		stbuf->st_mode = S_IFREG | 0440;
 		stbuf->st_nlink = 1;
 		stbuf->st_size = 4096;
@@ -109,9 +111,9 @@ static void image_ll_lookup( fuse_req_t req, fuse_ino_t parent, const char *name
 	if ( strcmp( name, IMAGE_NAME ) == 0 || strcmp( name, STATS_NAME ) == 0 ) {
 		memset( &e, 0, sizeof( e ) );
 		if ( strcmp( name, IMAGE_NAME ) == 0 ) {
-			e.ino = 2;
+			e.ino = INO_IMAGE;
 		} else {
-			e.ino = 3;
+			e.ino = INO_STATS;
 		}
 		e.attr_timeout = 1.0;
 		e.entry_timeout = 1.0;
@@ -139,14 +141,12 @@ static void dirbuf_add( fuse_req_t req, struct dirbuf *b, const char *name, fuse
 	return;
 }
 
-#define min(x, y) ((x) < (y) ? (x) : (y))
-
 static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize )
 {
-	if ( off >= 0 && off < (off_t)bufsize )
-		return fuse_reply_buf( req, buf + off, min( bufsize - off, maxsize ) );
-	else
-		return fuse_reply_buf( req, NULL, 0 );
+	if ( off >= 0 && off < (off_t)bufsize ) {
+		return fuse_reply_buf( req, buf + off, MIN( bufsize - off, maxsize ) );
+	}
+	return fuse_reply_buf( req, NULL, 0 );
 }
 
 static void image_ll_readdir( fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi )
@@ -181,61 +181,41 @@ static void image_ll_open( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info
 	}
 }
 
-static int fillStatsFile( char *buf, size_t size, off_t offset ) {
-	if ( offset == 0 ) {
-		return (int)connection_printStats( buf, size );
-	}
+static void fillStatsFile( fuse_req_t req, size_t size, off_t offset ) {
 	char buffer[4096];
 	int ret = (int)connection_printStats( buffer, sizeof buffer );
 	int len = MIN( ret - (int)offset, (int)size );
-	if ( len == 0 )
-		return 0;
 	if ( len < 0 ) {
-		return -EOF;
+		fuse_reply_err( req, 0 );
+		return;
 	}
-	memcpy( buf, buffer + offset, len );
-	return len;
+	fuse_reply_buf( req, buffer + offset, len );
 }
 
 static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi )
 {
-	assert( ino == 2 || ino == 3 );
+	assert( ino == INO_STATS || ino == INO_IMAGE );
 
 	( void )fi;
-	int len = 0;
-	char *buf = NULL;
 
-	if ( size > __INT_MAX__ )
-	{
-		// fuse docs say we MUST fill the buffer with exactly size bytes and return size,
-		// otherwise the buffer will we padded with zeros. Since the return value is just
-		// an int, we could not properly fulfill read requests > 2GB. Since there is no
-		// mention of a guarantee that this will never happen, better add a safety check.
-		// Way to go fuse.
-		// return -EIO;
-		fuse_reply_err( req, EIO );
-	}
-	if ( ino == 3 )
-	{
-		buf = ( char * )malloc( 4096 ); // they use 4096 byte buffer in fillStatsFile() for the status-file
-		len = fillStatsFile( buf, size, offset );
-		fuse_reply_buf( req, buf, len );
-		free( buf );
-		buf = NULL;
+	if ( ino == INO_STATS ) {
+		fillStatsFile( req, size, offset );
+		return;
 	}
 
-	if ( (uint64_t)offset >= imageSize )
-	{
+	if ( (uint64_t)offset >= imageSize ) {
 		fuse_reply_err( req, 0 );
+		return;
 	}
-
-	if ( offset + size > imageSize )
-	{
+	if ( offset + size > imageSize ) {
 		size = imageSize - offset;
 	}
+	if ( size == 0 ) {
+		fuse_reply_err( req, 0 );
+		return;
+	}
 
-	if ( useDebug )
-	{
+	if ( useDebug ) {
 		uint64_t startBlock = offset / ( 4096 );
 		const uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
 
@@ -244,26 +224,25 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
-	if ( ino == 2 && size != 0 ) // with size == 0 there is nothing to do
-	{
-		dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) );
-		request->length = (uint32_t)size;
-		request->offset = offset;
-		request->fuse_req = req;
+	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) );
+	request->length = (uint32_t)size;
+	request->offset = offset;
+	request->fuse_req = req;
 
-		if ( !connection_read( request ) ) fuse_reply_err( req, EINVAL );
+	if ( !connection_read( request ) ) {
+		fuse_reply_err( req, EIO );
 	}
 }
 
-static void image_sigHandler( int signum ) {
+static void image_sigHandler( int signum )
+{
 	int temp_errno = errno; // Threadsanitizer: don't spoil errno
+	keepRunning = false;
 	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
-		keepRunning = false;
 		fuse_sigIntHandler( signum );
 		connection_signalShutdown();
 	}
 	if ( signum == SIGTERM && fuse_sigTermHandler != NULL ) {
-		keepRunning = false;
 		fuse_sigTermHandler( signum );
 		connection_signalShutdown();
 	}
