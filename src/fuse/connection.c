@@ -84,20 +84,20 @@ static pthread_rwlock_t altLock = PTHREAD_RWLOCK_INITIALIZER;
 /* Static methods */
 
 
-static void* connection_receiveThreadMain(void *sock);
-static void* connection_backgroundThread(void *something);
+static void* connection_receiveThreadMain( void *sock );
+static void* connection_backgroundThread( void *something );
 
 static void addAltServers();
 static void sortAltServers();
 static void probeAltServers();
-static void switchConnection(int sockFd, alt_server_t *srv);
+static void switchConnection( int sockFd, alt_server_t *srv );
 static void requestAltServers();
-static bool throwDataAway(int sockFd, uint32_t amount);
+static bool throwDataAway( int sockFd, uint32_t amount );
 
-static void enqueueRequest(dnbd3_async_t *request);
-static dnbd3_async_t* removeRequest(dnbd3_async_t *request);
+static void enqueueRequest( dnbd3_async_t *request );
+static dnbd3_async_t* removeRequest( dnbd3_async_t *request );
 
-bool connection_init(const char *hosts, const char *lowerImage, const uint16_t rid, const bool doLearnNew)
+bool connection_init( const char *hosts, const char *lowerImage, const uint16_t rid, const bool doLearnNew )
 {
 	int sock = -1;
 	char host[SHORTBUF];
@@ -124,7 +124,7 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 			// Get next host from string
 			while ( *current == ' ' ) current++;
 			end = strchr( current, ' ' );
-			size_t len = (end == NULL ? SHORTBUF : (size_t)( end - current ) + 1);
+			size_t len = ( end == NULL ? SHORTBUF : (size_t)( end - current ) + 1 );
 			if ( len > SHORTBUF ) len = SHORTBUF;
 			snprintf( host, len, "%s", current );
 			int newHosts = sock_resolveToDnbd3Host( host, tempHosts, MAX_HOSTS_PER_ADDRESS );
@@ -156,14 +156,14 @@ bool connection_init(const char *hosts, const char *lowerImage, const uint16_t r
 			}
 			if ( sock == -2 || sock == -1 )
 				continue;
-			salen = sizeof(sa);
+			salen = sizeof( sa );
 			if ( getpeername( sock, (struct sockaddr*)&sa, &salen ) == -1 ) {
 				logadd( LOG_ERROR, "getpeername on successful connection failed!? (errno=%d)", errno );
 				close( sock );
 				sock = -1;
 				continue;
 			}
-			hlen = sock_printable( (struct sockaddr*)&sa, salen, host, sizeof(host) );
+			hlen = sock_printable( (struct sockaddr*)&sa, salen, host, sizeof( host ) );
 			logadd( LOG_INFO, "Connected to %.*s", (int)hlen, host );
 			if ( !dnbd3_select_image( sock, lowerImage, rid, 0 ) ) {
 				logadd( LOG_ERROR, "Could not send select image" );
@@ -221,10 +221,10 @@ bool connection_initThreads()
 		logadd( LOG_ERROR, "Mutex or spinlock init failure" );
 		success = false;
 	} else {
-		if (pthread_create( &thread, NULL, &connection_receiveThreadMain, (void*)(size_t)connection.sockFd ) != 0 ) {
+		if ( pthread_create( &thread, NULL, &connection_receiveThreadMain, ( void* )(size_t)connection.sockFd ) != 0 ) {
 			logadd( LOG_ERROR, "Could not create receive thread" );
 			success = false;
-		} else if (pthread_create( &thread, NULL, &connection_backgroundThread, NULL ) != 0 ) {
+		} else if ( pthread_create( &thread, NULL, &connection_backgroundThread, NULL ) != 0 ) {
 			logadd( LOG_ERROR, "Could not create background thread" );
 			success = false;
 		}
@@ -242,7 +242,7 @@ uint64_t connection_getImageSize()
 	return image.size;
 }
 
-bool connection_read(dnbd3_async_t *request)
+bool connection_read( dnbd3_async_t *request )
 {
 	if ( !connectionInitDone ) return false;
 	pthread_mutex_lock( &connection.sendMutex );
@@ -280,14 +280,14 @@ void connection_close()
 	logadd( LOG_DEBUG1, "Connection closed." );
 }
 
-size_t connection_printStats(char *buffer, const size_t len)
+size_t connection_printStats( char *buffer, const size_t len )
 {
 	int ret;
 	size_t remaining = len;
 	declare_now;
 	if ( remaining > 0 ) {
 		ret = snprintf( buffer, remaining, "Image:    %s\nRevision: %d\n\nCurrent connection time: %" PRIu32 "s\n\n",
-				image.name, (int)image.rid, timing_diff( &connection.startupTime, &now ) );
+							 image.name, (int)image.rid, timing_diff( &connection.startupTime, &now ) );
 		if ( ret < 0 ) {
 			ret = 0;
 		}
@@ -310,7 +310,7 @@ size_t connection_printStats(char *buffer, const size_t len)
 			*buffer++ = ' ';
 		}
 		const size_t addrlen = sock_printHost( &altservers[i].host, buffer, remaining );
-		remaining -= (addrlen + 1); // For space or * above
+		remaining -= ( addrlen + 1 ); // For space or * above
 		buffer += addrlen;
 		if ( remaining < 3 )
 			break;
@@ -326,7 +326,7 @@ size_t connection_printStats(char *buffer, const size_t len)
 			width += 3;
 		}
 		ret = snprintf( buffer, remaining, "% *d %s   Unreachable:% 5d   BestCount:% 5d  Live:% 5dµs\n",
-				width, value, unit, altservers[i].consecutiveFails, altservers[i].bestCount, altservers[i].liveRtt );
+							 width, value, unit, altservers[i].consecutiveFails, altservers[i].bestCount, altservers[i].liveRtt );
 		if ( ret < 0 ) {
 			ret = 0;
 		}
@@ -341,7 +341,7 @@ size_t connection_printStats(char *buffer, const size_t len)
 	return len - remaining;
 }
 
-static void* connection_receiveThreadMain(void *sockPtr)
+static void* connection_receiveThreadMain( void *sockPtr )
 {
 	int sockFd = (int)(size_t)sockPtr;
 	dnbd3_reply_t reply;
@@ -370,12 +370,12 @@ static void* connection_receiveThreadMain(void *sockPtr)
 				}
 			} else {
 				// Found a match
-				request->buffer = malloc(request->length); // char*
+				request->buffer = malloc( request->length ); // char*
 				const ssize_t ret = sock_recv( sockFd, request->buffer, request->length );
 				if ( ret != (ssize_t)request->length ) {
 					logadd( LOG_DEBUG1, "receiving payload for a block reply failed" );
 					connection_read( request );
-					free(request->buffer);
+					free( request->buffer );
 					request->buffer = NULL;
 					goto fail;
 				}
@@ -394,14 +394,14 @@ static void* connection_receiveThreadMain(void *sockPtr)
 					}
 					unlock_rw( &altLock );
 				}
-				int fuse_reply = fuse_reply_buf(request->fuse_req, request->buffer, request->length);
-				if (fuse_reply != 0) {
-					printf("ERROR ON FUSE REPLY %i \n", fuse_reply);
-					fuse_reply_err(request->fuse_req, fuse_reply);
+				int fuse_reply = fuse_reply_buf( request->fuse_req, request->buffer, request->length );
+				if ( fuse_reply != 0 ) {
+					printf( "ERROR ON FUSE REPLY %i \n", fuse_reply );
+					fuse_reply_err( request->fuse_req, fuse_reply );
 				}
-				free(request->buffer);
+				free( request->buffer );
 				request->buffer = NULL;
-				free(request);
+				free( request );
 				request = NULL;
 			}
 		} else if ( reply.cmd == CMD_GET_SERVERS ) {
@@ -425,9 +425,10 @@ static void* connection_receiveThreadMain(void *sockPtr)
 			}
 		}
 	}
-	if(!keepRunning) connection_close();
+	if( !keepRunning ) connection_close();
 	logadd( LOG_DEBUG1, "Aus der Schleife rausgeflogen! ARRRRRRRRRR" );
-fail:;
+fail:
+	;
 	// Make sure noone is trying to use the socket for sending by locking,
 	pthread_mutex_lock( &connection.sendMutex );
 	// then just set the fd to -1, but only if it's the same fd as ours,
@@ -442,7 +443,7 @@ fail:;
 	return NULL;
 }
 
-static void* connection_backgroundThread(void *something UNUSED)
+static void* connection_backgroundThread( void *something UNUSED )
 {
 	pthread_detach( pthread_self() );  // fixes thread leak after fuse termination
 	ticks nextKeepalive;
@@ -539,9 +540,10 @@ static void addAltServers()
 			altservers[slot].host = newservers[nIdx].host;
 			altservers[slot].liveRtt = 0;
 		}
-skip_server:;
+skip_server:
+		;
 	}
-	memset( newservers, 0, sizeof(newservers) );
+	memset( newservers, 0, sizeof( newservers ) );
 	unlock_rw( &altLock );
 	pthread_mutex_unlock( &newAltLock );
 }
@@ -637,7 +639,7 @@ static void probeAltServers()
 	}
 
 	lock_read( &altLock );
-	for ( int altIndex = 0; altIndex < (panic ? MAX_ALTS : MAX_ALTS_ACTIVE); ++altIndex ) {
+	for ( int altIndex = 0; altIndex < ( panic ? MAX_ALTS : MAX_ALTS_ACTIVE ); ++altIndex ) {
 		alt_server_t * const srv = &altservers[altIndex];
 		if ( srv->host.type == 0 )
 			continue;
@@ -663,7 +665,7 @@ static void probeAltServers()
 			logadd( LOG_DEBUG1, "probe: select_image failed" );
 			goto fail;
 		}
-		if ( !dnbd3_select_image_reply( &buffer, sock, &remoteProto, &remoteName, &remoteRid, &remoteSize )) {
+		if ( !dnbd3_select_image_reply( &buffer, sock, &remoteProto, &remoteName, &remoteRid, &remoteSize ) ) {
 			logadd( LOG_DEBUG1, "probe: select image reply failed" );
 			goto fail;
 		}
@@ -682,7 +684,7 @@ static void probeAltServers()
 			goto fail;
 		}
 		int a = 111;
-		if ( !(a = dnbd3_get_reply( sock, &reply )) || reply.size != testLength ) {
+		if ( !( a = dnbd3_get_reply( sock, &reply ) ) || reply.size != testLength ) {
 			logadd( LOG_DEBUG1, "<- get block reply fail %d %d", a, (int)reply.size );
 			goto fail;
 		}
@@ -709,7 +711,7 @@ static void probeAltServers()
 		// Panic mode? Just switch to server
 		if ( panic ) {
 			unlock_rw( &altLock );
-			if (keepRunning) switchConnection( sock, srv );
+			if ( keepRunning ) switchConnection( sock, srv );
 			return;
 		}
 		// Non-panic mode:
@@ -741,7 +743,8 @@ static void probeAltServers()
 			close( sock );
 		}
 		continue;
-fail:;
+fail:
+		;
 		if ( sock != -1 ) {
 			close( sock );
 		}
@@ -782,7 +785,7 @@ fail:;
 		// Regular logic: Apply threshold when considering switch
 		if ( !doSwitch && current != NULL ) {
 			doSwitch = current->rtt > best->rtt + RTT_ABSOLUTE_THRESHOLD
-					|| RTT_THRESHOLD_FACTOR(current->rtt) > best->rtt + 1000;
+						  || RTT_THRESHOLD_FACTOR( current->rtt ) > best->rtt + 1000;
 		}
 	}
 	// Switch if a better server was found
@@ -804,11 +807,11 @@ fail:;
 	}
 }
 
-static void switchConnection(int sockFd, alt_server_t *srv)
+static void switchConnection( int sockFd, alt_server_t *srv )
 {
 	pthread_t thread;
 	struct sockaddr_storage addr;
-	socklen_t addrLen = sizeof(addr);
+	socklen_t addrLen = sizeof( addr );
 	char message[200] = "Connection switched to ";
 	const size_t len = strlen( message );
 	int ret;
@@ -838,8 +841,8 @@ static void switchConnection(int sockFd, alt_server_t *srv)
 		return;
 	}
 	timing_get( &connection.startupTime );
-	pthread_create( &thread, NULL, &connection_receiveThreadMain, (void*)(size_t)sockFd );
-	sock_printable( (struct sockaddr*)&addr, sizeof(addr), message + len, sizeof(message) - len );
+	pthread_create( &thread, NULL, &connection_receiveThreadMain, ( void* )(size_t)sockFd );
+	sock_printable( (struct sockaddr*)&addr, sizeof( addr ), message + len, sizeof( message ) - len );
 	logadd( LOG_INFO, "%s", message );
 	// resend queue
 	if ( queue != NULL ) {
@@ -871,14 +874,14 @@ static void requestAltServers()
 	request.magic = dnbd3_packet_magic;
 	request.cmd = CMD_GET_SERVERS;
 	fixup_request( request );
-	if ( sock_sendAll( connection.sockFd, &request, sizeof(request), 2 ) != (ssize_t)sizeof(request) ) {
+	if ( sock_sendAll( connection.sockFd, &request, sizeof( request ), 2 ) != (ssize_t)sizeof( request ) ) {
 		logadd( LOG_WARNING, "Connection failed while requesting alt server list" );
 		shutdown( connection.sockFd, SHUT_RDWR );
 		connection.sockFd = -1;
 	}
 }
 
-static bool throwDataAway(int sockFd, uint32_t amount)
+static bool throwDataAway( int sockFd, uint32_t amount )
 {
 	size_t done = 0;
 	char tempBuffer[SHORTBUF];
@@ -891,7 +894,7 @@ static bool throwDataAway(int sockFd, uint32_t amount)
 	return true;
 }
 
-static void enqueueRequest(dnbd3_async_t *request)
+static void enqueueRequest( dnbd3_async_t *request )
 {
 	request->next = NULL;
 	//logadd( LOG_DEBUG2, "Queue: %p @ %s : %d", request, file, line );
@@ -907,7 +910,7 @@ static void enqueueRequest(dnbd3_async_t *request)
 	pthread_spin_unlock( &requests.lock );
 }
 
-static dnbd3_async_t* removeRequest(dnbd3_async_t *request)
+static dnbd3_async_t* removeRequest( dnbd3_async_t *request )
 {
 	pthread_spin_lock( &requests.lock );
 	//logadd( LOG_DEBUG2, "Remov: %p @ %s : %d", request, file, line );

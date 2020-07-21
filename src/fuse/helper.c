@@ -18,8 +18,8 @@ void printLog( log_info *info )
 	}
 
 	//rewind(file);
-	fprintf( logFile, "ImageSize: %"PRIu64" MiB\n", ( uint64_t )( info->imageSize/ ( 1024ll*1024ll ) ) );
-	fprintf( logFile, "ReceivedMiB: %"PRIu64" MiB\n", ( uint64_t )( info->receivedBytes/ ( 1024ll*1024ll ) ) );
+	fprintf( logFile, "ImageSize: %"PRIu64" MiB\n", (uint64_t)( info->imageSize/ ( 1024ll*1024ll ) ) );
+	fprintf( logFile, "ReceivedMiB: %"PRIu64" MiB\n", (uint64_t)( info->receivedBytes/ ( 1024ll*1024ll ) ) );
 	fprintf( logFile, "imageBlockCount: %"PRIu64"\n", info->imageBlockCount );
 	fprintf( logFile, "Blocksize: 4KiB\n\n" );
 	fprintf( logFile, "Block access count:\n" );
@@ -29,7 +29,7 @@ void printLog( log_info *info )
 		if ( i % 50 == 0 ) {
 			fprintf( logFile, "\n" );
 		}
-		fprintf( logFile, "%i ", ( int ) info->blockRequestCount[i] );
+		fprintf( logFile, "%i ", (int) info->blockRequestCount[i] );
 	}
 	fprintf( logFile, "\n" );
 	fclose( logFile );

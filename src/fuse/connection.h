@@ -23,16 +23,16 @@ typedef struct _dnbd3_async {
 	fuse_req_t fuse_req;
 } dnbd3_async_t;
 
-bool connection_init(const char *hosts, const char *image, const uint16_t rid, const bool learnNewServers);
+bool connection_init( const char *hosts, const char *image, const uint16_t rid, const bool learnNewServers );
 
 bool connection_initThreads();
 
 uint64_t connection_getImageSize();
 
-bool connection_read(dnbd3_async_t *request);
+bool connection_read( dnbd3_async_t *request );
 
 void connection_close();
 
-size_t connection_printStats(char *buffer, const size_t len);
+size_t connection_printStats( char *buffer, const size_t len );
 
 #endif /* CONNECTION_H_ */

@@ -43,28 +43,28 @@ static bool useDebug = false;
 static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
-static void (*fuse_sigIntHandler)(int) = NULL;
-static void (*fuse_sigTermHandler)(int) = NULL;
+static void ( *fuse_sigIntHandler )(int) = NULL;
+static void ( *fuse_sigTermHandler )(int) = NULL;
 
-static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize);
-static int fillStatsFile(char *buf, size_t size, off_t offset);
-static void image_destroy(void *private_data);
-static void image_ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-static void image_ll_init(void *userdata, struct fuse_conn_info *conn);
-static void image_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name);
-static void image_ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi);
-static void image_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi);
-static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi);
-static int image_stat(fuse_ino_t ino, struct stat *stbuf);
-static void printUsage(char *argv0, int exitCode);
+static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize );
+static int fillStatsFile( char *buf, size_t size, off_t offset );
+static void image_destroy( void *private_data );
+static void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
+static void image_ll_init( void *userdata, struct fuse_conn_info *conn );
+static void image_ll_lookup( fuse_req_t req, fuse_ino_t parent, const char *name );
+static void image_ll_open( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
+static void image_ll_readdir( fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi );
+static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi );
+static int image_stat( fuse_ino_t ino, struct stat *stbuf );
+static void printUsage( char *argv0, int exitCode );
 static void printVersion();
 
-static int image_stat(fuse_ino_t ino, struct stat *stbuf)
+static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 {
 	stbuf->st_ctim = stbuf->st_atim = stbuf->st_mtim = startupTime;
 	stbuf->st_uid = owner;
 	stbuf->st_ino = ino;
-	switch (ino) {
+	switch ( ino ) {
 	case 1:
 		stbuf->st_mode = S_IFDIR | 0550;
 		stbuf->st_nlink = 2;
@@ -88,38 +88,38 @@ static int image_stat(fuse_ino_t ino, struct stat *stbuf)
 	return 0;
 }
 
-static void image_ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+static void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi )
 {
 	struct stat stbuf;
 
-	(void) fi;
+	( void ) fi;
 
-	memset(&stbuf, 0, sizeof(stbuf));
-	if (image_stat(ino, &stbuf) == -1)
-		fuse_reply_err(req, ENOENT);
+	memset( &stbuf, 0, sizeof( stbuf ) );
+	if ( image_stat( ino, &stbuf ) == -1 )
+		fuse_reply_err( req, ENOENT );
 	else
-		fuse_reply_attr(req, &stbuf, 1.0); // 1.0 seconds validity timeout
+		fuse_reply_attr( req, &stbuf, 1.0 ); // 1.0 seconds validity timeout
 }
 
-static void image_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
+static void image_ll_lookup( fuse_req_t req, fuse_ino_t parent, const char *name )
 {
 	struct fuse_entry_param e;
-	(void)parent;
+	( void )parent;
 
-	if (strcmp(name, IMAGE_NAME) == 0 || strcmp(name, STATS_NAME) == 0) {
-		memset(&e, 0, sizeof(e));
-		if (strcmp(name, IMAGE_NAME) == 0) {
+	if ( strcmp( name, IMAGE_NAME ) == 0 || strcmp( name, STATS_NAME ) == 0 ) {
+		memset( &e, 0, sizeof( e ) );
+		if ( strcmp( name, IMAGE_NAME ) == 0 ) {
 			e.ino = 2;
 		} else {
 			e.ino = 3;
 		}
 		e.attr_timeout = 1.0;
 		e.entry_timeout = 1.0;
-		image_stat(e.ino, &e.attr);
+		image_stat( e.ino, &e.attr );
 
-		fuse_reply_entry(req, &e);
+		fuse_reply_entry( req, &e );
 	}
-	else fuse_reply_err(req, ENOENT);
+	else fuse_reply_err( req, ENOENT );
 }
 
 struct dirbuf {
@@ -127,61 +127,61 @@ struct dirbuf {
 	size_t size;
 };
 
-static void dirbuf_add(fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino)
+static void dirbuf_add( fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino )
 {
 	struct stat stbuf;
 	size_t oldsize = b->size;
-	b->size += fuse_add_direntry(req, NULL, 0, name, NULL, 0);
-	b->p = (char *) realloc(b->p, b->size);
-	memset(&stbuf, 0, sizeof(stbuf));
+	b->size += fuse_add_direntry( req, NULL, 0, name, NULL, 0 );
+	b->p = ( char * ) realloc( b->p, b->size );
+	memset( &stbuf, 0, sizeof( stbuf ) );
 	stbuf.st_ino = ino;
-	fuse_add_direntry(req, b->p + oldsize, b->size - oldsize, name, &stbuf, b->size);
+	fuse_add_direntry( req, b->p + oldsize, b->size - oldsize, name, &stbuf, b->size );
 	return;
 }
 
 #define min(x, y) ((x) < (y) ? (x) : (y))
 
-static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize)
+static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize )
 {
-	if (off >= 0 && off < (off_t)bufsize)
-		return fuse_reply_buf(req, buf + off, min(bufsize - off, maxsize));
+	if ( off >= 0 && off < (off_t)bufsize )
+		return fuse_reply_buf( req, buf + off, min( bufsize - off, maxsize ) );
 	else
-		return fuse_reply_buf(req, NULL, 0);
+		return fuse_reply_buf( req, NULL, 0 );
 }
 
-static void image_ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi)
+static void image_ll_readdir( fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi )
 {
-	(void) fi;
+	( void ) fi;
 
-	if (ino != 1)
-		fuse_reply_err(req, ENOTDIR);
+	if ( ino != 1 )
+		fuse_reply_err( req, ENOTDIR );
 	else {
 		struct dirbuf b;
 
-		memset(&b, 0, sizeof(b));
-		dirbuf_add(req, &b, ".", 1);
-		dirbuf_add(req, &b, "..", 1);
-		dirbuf_add(req, &b, IMAGE_NAME, 2);
-		dirbuf_add(req, &b, STATS_NAME, 3);
-		reply_buf_limited(req, b.p, b.size, off, size);
-		free(b.p);
+		memset( &b, 0, sizeof( b ) );
+		dirbuf_add( req, &b, ".", 1 );
+		dirbuf_add( req, &b, "..", 1 );
+		dirbuf_add( req, &b, IMAGE_NAME, 2 );
+		dirbuf_add( req, &b, STATS_NAME, 3 );
+		reply_buf_limited( req, b.p, b.size, off, size );
+		free( b.p );
 	}
 }
 
-static void image_ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
+static void image_ll_open( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi )
 {
-	if (ino != 2 && ino != 3)
-		fuse_reply_err(req, EISDIR);
-	else if ((fi->flags & 3) != O_RDONLY)
-		fuse_reply_err(req, EACCES);
+	if ( ino != 2 && ino != 3 )
+		fuse_reply_err( req, EISDIR );
+	else if ( ( fi->flags & 3 ) != O_RDONLY )
+		fuse_reply_err( req, EACCES );
 	else {
-		// auto caching 
+		// auto caching
 		fi->keep_cache = 1;
-		fuse_reply_open(req, fi);
+		fuse_reply_open( req, fi );
 	}
 }
 
-static int fillStatsFile(char *buf, size_t size, off_t offset) {
+static int fillStatsFile( char *buf, size_t size, off_t offset ) {
 	if ( offset == 0 ) {
 		return (int)connection_printStats( buf, size );
 	}
@@ -197,15 +197,15 @@ static int fillStatsFile(char *buf, size_t size, off_t offset) {
 	return len;
 }
 
-static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi)
+static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi )
 {
-	assert(ino == 2 || ino == 3);
+	assert( ino == 2 || ino == 3 );
 
-	(void)fi;
+	( void )fi;
 	int len = 0;
 	char *buf = NULL;
 
-	if (size > __INT_MAX__)
+	if ( size > __INT_MAX__ )
 	{
 		// fuse docs say we MUST fill the buffer with exactly size bytes and return size,
 		// otherwise the buffer will we padded with zeros. Since the return value is just
@@ -213,66 +213,66 @@ static void image_ll_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off
 		// mention of a guarantee that this will never happen, better add a safety check.
 		// Way to go fuse.
 		// return -EIO;
-		fuse_reply_err(req, EIO);
+		fuse_reply_err( req, EIO );
 	}
-	if (ino == 3)
+	if ( ino == 3 )
 	{
-		buf = (char *)malloc(4096); // they use 4096 byte buffer in fillStatsFile() for the status-file
-		len = fillStatsFile(buf, size, offset);
-		fuse_reply_buf(req, buf, len);
-		free(buf);
+		buf = ( char * )malloc( 4096 ); // they use 4096 byte buffer in fillStatsFile() for the status-file
+		len = fillStatsFile( buf, size, offset );
+		fuse_reply_buf( req, buf, len );
+		free( buf );
 		buf = NULL;
 	}
 
-	if ((uint64_t)offset >= imageSize)
+	if ( (uint64_t)offset >= imageSize )
 	{
-		fuse_reply_err(req, 0);
+		fuse_reply_err( req, 0 );
 	}
 
-	if (offset + size > imageSize)
+	if ( offset + size > imageSize )
 	{
 		size = imageSize - offset;
 	}
 
-	if (useDebug)
+	if ( useDebug )
 	{
-		uint64_t startBlock = offset / (4096);
-		const uint64_t endBlock = (offset + size - 1) / (4096);
+		uint64_t startBlock = offset / ( 4096 );
+		const uint64_t endBlock = ( offset + size - 1 ) / ( 4096 );
 
-		for (; startBlock <= endBlock; startBlock++)
+		for ( ; startBlock <= endBlock; startBlock++ )
 		{
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
-	if (!keepRunning) connection_close();
-	if (ino == 2 && size != 0) // with size == 0 there is nothing to do
+	if ( !keepRunning ) connection_close();
+	if ( ino == 2 && size != 0 ) // with size == 0 there is nothing to do
 	{
-		dnbd3_async_t *request = malloc(sizeof(dnbd3_async_t));
+		dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) );
 		request->length = (uint32_t)size;
 		request->offset = offset;
 		request->fuse_req = req;
 
-		if (!connection_read(request)) fuse_reply_err(req, EINVAL);
+		if ( !connection_read( request ) ) fuse_reply_err( req, EINVAL );
 	}
 }
 
-static void image_sigHandler(int signum) {
+static void image_sigHandler( int signum ) {
 	int temp_errno = errno; // Threadsanitizer: don't spoil errno
 	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
 		keepRunning = false;
-		fuse_sigIntHandler(signum);
+		fuse_sigIntHandler( signum );
 	}
 	if ( signum == SIGTERM && fuse_sigTermHandler != NULL ) {
 		keepRunning = false;
-		fuse_sigTermHandler(signum);
+		fuse_sigTermHandler( signum );
 	}
 	errno = temp_errno;
 }
 
-static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
+static void image_ll_init( void *userdata, struct fuse_conn_info *conn )
 {
-	(void) userdata;
-	(void) conn;
+	( void ) userdata;
+	( void ) conn;
 	if ( !connection_initThreads() ) {
 		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
 		exit( EXIT_FAILURE );
@@ -280,21 +280,21 @@ static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
 
 	// Prepare our handler
 	struct sigaction newHandler;
-	memset( &newHandler, 0, sizeof(newHandler) );
+	memset( &newHandler, 0, sizeof( newHandler ) );
 	newHandler.sa_handler = &image_sigHandler;
 	sigemptyset( &newHandler.sa_mask );
 	struct sigaction oldHandler;
 	// Retrieve old handlers when setting
 	sigaction( SIGINT, &newHandler, &oldHandler );
 	fuse_sigIntHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
+	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", ( void* )(uintptr_t)fuse_sigIntHandler );
 	sigaction( SIGTERM, &newHandler, &oldHandler );
 	fuse_sigTermHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
+	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", ( void* )(uintptr_t)fuse_sigIntHandler );
 }
 
 /* close the connection */
-static void image_destroy(void *private_data UNUSED)
+static void image_destroy( void *private_data UNUSED )
 {
 	if ( useDebug ) {
 		printLog( &logInfo );
@@ -318,16 +318,16 @@ static void printVersion()
 {
 	char *arg[] = { "foo", "-V" };
 	printf( "DNBD3-Fuse Version 1.2.3.4, protocol version %d\n", (int)PROTOCOL_VERSION );
-	struct fuse_args args = FUSE_ARGS_INIT(2, arg);
-	fuse_parse_cmdline(&args, NULL, NULL, NULL);
+	struct fuse_args args = FUSE_ARGS_INIT( 2, arg );
+	fuse_parse_cmdline( &args, NULL, NULL, NULL );
 	exit( 0 );
 }
 
-static void printUsage(char *argv0, int exitCode)
+static void printUsage( char *argv0, int exitCode )
 {
 	char *arg[] = { argv0, "-h" };
-	struct fuse_args args = FUSE_ARGS_INIT(2, arg);
-	fuse_parse_cmdline(&args, NULL, NULL, NULL);
+	struct fuse_args args = FUSE_ARGS_INIT( 2, arg );
+	fuse_parse_cmdline( &args, NULL, NULL, NULL );
 	printf( "\n" );
 	printf( "Usage: %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
 	printf( "Or:    %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
@@ -345,19 +345,19 @@ static void printUsage(char *argv0, int exitCode)
 
 static const char *optString = "dfHh:i:l:o:r:SsVv";
 static const struct option longOpts[] = {
-        { "debug", no_argument, NULL, 'd' },
-        { "help", no_argument, NULL, 'H' },
-        { "host", required_argument, NULL, 'h' },
-        { "image", required_argument, NULL, 'i' },
-        { "log", required_argument, NULL, 'l' },
-        { "option", required_argument, NULL, 'o' },
-        { "rid", required_argument, NULL, 'r' },
-        { "sticky", no_argument, NULL, 'S' },
-        { "version", no_argument, NULL, 'v' },
-        { 0, 0, 0, 0 }
+	{ "debug", no_argument, NULL, 'd' },
+	{ "help", no_argument, NULL, 'H' },
+	{ "host", required_argument, NULL, 'h' },
+	{ "image", required_argument, NULL, 'i' },
+	{ "log", required_argument, NULL, 'l' },
+	{ "option", required_argument, NULL, 'o' },
+	{ "rid", required_argument, NULL, 'r' },
+	{ "sticky", no_argument, NULL, 'S' },
+	{ "version", no_argument, NULL, 'v' },
+	{ 0, 0, 0, 0 }
 };
 
-int main(int argc, char *argv[])
+int main( int argc, char *argv[] )
 {
 	char *server_address = NULL;
 	char *image_Name = NULL;
@@ -381,7 +381,7 @@ int main(int argc, char *argv[])
 	log_setConsoleTimestamps( true );
 	log_setFileMask( 65535 );
 
-	newArgv = calloc( argc + 10, sizeof(char*) );
+	newArgv = calloc( argc + 10, sizeof( char* ) );
 	newArgv[0] = argv[0];
 	newArgc = 1;
 
@@ -394,7 +394,7 @@ int main(int argc, char *argv[])
 			image_Name = optarg;
 			break;
 		case 'r':
-			rid = (uint16_t)atoi(optarg);
+			rid = (uint16_t)atoi( optarg );
 			break;
 		case 'o':
 			newArgv[newArgc++] = "-o";
@@ -479,32 +479,32 @@ int main(int argc, char *argv[])
 	for ( int i = 0; i < newArgc; ++i ) {
 		printf( " '%s'", newArgv[i] );
 	}
-	putchar('\n');
+	putchar( '\n' );
 	clock_gettime( CLOCK_REALTIME, &startupTime );
 	owner = getuid();
 
 	// Fuse lowlevel loop
-	struct fuse_args args = FUSE_ARGS_INIT(newArgc, newArgv);
+	struct fuse_args args = FUSE_ARGS_INIT( newArgc, newArgv );
 	int fuse_err = 1;
-	if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 && (ch = fuse_mount(mountpoint, &args)) != NULL) {
+	if ( fuse_parse_cmdline( &args, &mountpoint, NULL, NULL ) != -1 && ( ch = fuse_mount( mountpoint, &args ) ) != NULL ) {
 		struct fuse_session *se;
 
-		se = fuse_lowlevel_new(&args, &image_oper, sizeof(image_oper), NULL);
-		if (se != NULL) {
-			if (fuse_set_signal_handlers(se) != -1) {
-				fuse_session_add_chan(se, ch);
+		se = fuse_lowlevel_new( &args, &image_oper, sizeof( image_oper ), NULL );
+		if ( se != NULL ) {
+			if ( fuse_set_signal_handlers( se ) != -1 ) {
+				fuse_session_add_chan( se, ch );
 				//fuse_daemonize(foreground);
-				if (single_thread) fuse_err = fuse_session_loop(se);
-				else fuse_err = fuse_session_loop_mt(se);  //MT produces errors (race conditions) in libfuse and didnt improve speed at all
-				fuse_remove_signal_handlers(se);
-				fuse_session_remove_chan(ch);
+				if ( single_thread ) fuse_err = fuse_session_loop( se );
+				else fuse_err = fuse_session_loop_mt( se ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
+				fuse_remove_signal_handlers( se );
+				fuse_session_remove_chan( ch );
 			}
-			fuse_session_destroy(se);
+			fuse_session_destroy( se );
 		}
-		fuse_unmount(mountpoint, ch);
+		fuse_unmount( mountpoint, ch );
 	}
-	fuse_opt_free_args(&args);
-	free(newArgv);
-	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err);
+	fuse_opt_free_args( &args );
+	free( newArgv );
+	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err );
 	return fuse_err;
 }
