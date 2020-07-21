@@ -58,7 +58,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	}
 	for ( int i = 0; i < 5; ++i ) {
 		int ret = connect( client_sock, (struct sockaddr *)&ss, addrlen );
-		if ( ret != -1 || errno == EINPROGRESS || errno == EISCONN ) break;
+		if ( ret != -1 || ( connect_ms == -1 && errno == EINPROGRESS ) || errno == EISCONN ) break;
 		if ( errno == EINTR ) {
 			// http://www.madore.org/~david/computers/connect-intr.html
 #ifdef __linux__
