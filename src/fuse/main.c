@@ -244,7 +244,6 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
-	if ( !keepRunning ) connection_close();
 	if ( ino == 2 && size != 0 ) // with size == 0 there is nothing to do
 	{
 		dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) );
@@ -261,10 +260,12 @@ static void image_sigHandler( int signum ) {
 	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
 		keepRunning = false;
 		fuse_sigIntHandler( signum );
+		connection_signalShutdown();
 	}
 	if ( signum == SIGTERM && fuse_sigTermHandler != NULL ) {
 		keepRunning = false;
 		fuse_sigTermHandler( signum );
+		connection_signalShutdown();
 	}
 	errno = temp_errno;
 }
@@ -494,8 +495,11 @@ int main( int argc, char *argv[] )
 			if ( fuse_set_signal_handlers( se ) != -1 ) {
 				fuse_session_add_chan( se, ch );
 				//fuse_daemonize(foreground);
-				if ( single_thread ) fuse_err = fuse_session_loop( se );
-				else fuse_err = fuse_session_loop_mt( se ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
+				if ( single_thread ) {
+					fuse_err = fuse_session_loop( se );
+				} else {
+					fuse_err = fuse_session_loop_mt( se ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
+				}
 				fuse_remove_signal_handlers( se );
 				fuse_session_remove_chan( ch );
 			}
@@ -506,5 +510,6 @@ int main( int argc, char *argv[] )
 	fuse_opt_free_args( &args );
 	free( newArgv );
 	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err );
+	connection_join();
 	return fuse_err;
 }

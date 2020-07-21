@@ -33,6 +33,10 @@ bool connection_read( dnbd3_async_t *request );
 
 void connection_close();
 
+void connection_signalShutdown();
+
+void connection_join();
+
 size_t connection_printStats( char *buffer, const size_t len );
 
 #endif /* CONNECTION_H_ */
