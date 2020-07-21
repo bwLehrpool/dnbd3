@@ -34,7 +34,6 @@
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
 
-static const char * const IMAGE_PATH = "/img";
 static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
 
@@ -105,11 +104,15 @@ static void image_ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_in
 static void image_ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 {
 	struct fuse_entry_param e;
+	(void)parent;
 
 	if (strcmp(name, IMAGE_NAME) == 0 || strcmp(name, STATS_NAME) == 0) {
 		memset(&e, 0, sizeof(e));
-		if (strcmp(name, IMAGE_NAME) == 0) e.ino = 2;
-		else e.ino = 3;
+		if (strcmp(name, IMAGE_NAME) == 0) {
+			e.ino = 2;
+		} else {
+			e.ino = 3;
+		}
 		e.attr_timeout = 1.0;
 		e.entry_timeout = 1.0;
 		image_stat(e.ino, &e.attr);
@@ -140,7 +143,7 @@ static void dirbuf_add(fuse_req_t req, struct dirbuf *b, const char *name, fuse_
 
 static int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize)
 {
-	if (off < bufsize)
+	if (off >= 0 && off < (off_t)bufsize)
 		return fuse_reply_buf(req, buf + off, min(bufsize - off, maxsize));
 	else
 		return fuse_reply_buf(req, NULL, 0);
@@ -269,6 +272,7 @@ static void image_sigHandler(int signum) {
 static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
 {
 	(void) userdata;
+	(void) conn;
 	if ( !connection_initThreads() ) {
 		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
 		exit( EXIT_FAILURE );
@@ -287,7 +291,6 @@ static void image_ll_init(void *userdata, struct fuse_conn_info *conn)
 	sigaction( SIGTERM, &newHandler, &oldHandler );
 	fuse_sigTermHandler = oldHandler.sa_handler;
 	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", (void*)(uintptr_t)fuse_sigIntHandler );
-	return NULL;
 }
 
 /* close the connection */
@@ -368,7 +371,6 @@ int main(int argc, char *argv[])
 	struct fuse_chan *ch;
 	char *mountpoint;
 	int foreground = 0;
-	int fuse_err;
 
 	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
 		printUsage( argv[0], 0 );
@@ -473,7 +475,7 @@ int main(int argc, char *argv[])
 	// Mount point goes last
 	newArgv[newArgc++] = argv[optind];
 
-	printf( "ImagePathName: %s\nFuseArgs:",IMAGE_PATH );
+	printf( "ImagePathName: /%s\nFuseArgs:", IMAGE_NAME );
 	for ( int i = 0; i < newArgc; ++i ) {
 		printf( " '%s'", newArgv[i] );
 	}
@@ -483,6 +485,7 @@ int main(int argc, char *argv[])
 
 	// Fuse lowlevel loop
 	struct fuse_args args = FUSE_ARGS_INIT(newArgc, newArgv);
+	int fuse_err = 1;
 	if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) != -1 && (ch = fuse_mount(mountpoint, &args)) != NULL) {
 		struct fuse_session *se;
 

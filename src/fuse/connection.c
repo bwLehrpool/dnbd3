@@ -615,7 +615,7 @@ static void probeAltServers()
 	pthread_spin_lock( &requests.lock );
 	if ( requests.head != NULL ) {
 		if ( !panic && current != NULL ) {
-			const int maxDelay = MAX( current->rtt * 5, 1000000 ); // Give at least one second
+			const uint64_t maxDelay = MAX( current->rtt * 5, 1000000 ); // Give at least one second
 			dnbd3_async_t *iterator;
 			for ( iterator = requests.head; iterator != NULL; iterator = iterator->next ) {
 				// A request with measurement tag is pending
