@@ -267,30 +267,27 @@ bool connection_read( dnbd3_async_t *request )
 
 void connection_close()
 {
+	static bool signalled = false;
 	if ( true ) {
 		logadd( LOG_INFO, "Tearing down dnbd3 connections and workers" );
 	}
 	pthread_mutex_lock( &mutexInit );
 	keepRunning = false;
-	if ( !connectionInitDone ) {
-		pthread_mutex_unlock( &mutexInit );
-		return;
+	if ( threadInitDone && !signalled ) {
+		signalled = true;
+		pthread_kill( tidReceiver, SIGHUP );
+		pthread_kill( tidBackground, SIGHUP );
 	}
 	pthread_mutex_unlock( &mutexInit );
+	if ( !connectionInitDone ) {
+		return;
+	}
 	pthread_mutex_lock( &connection.sendMutex );
 	if ( connection.sockFd != -1 ) {
+		logadd( LOG_DEBUG1, "Shutting down socket..." );
 		shutdown( connection.sockFd, SHUT_RDWR );
 	}
 	pthread_mutex_unlock( &connection.sendMutex );
-	logadd( LOG_DEBUG1, "Connection closed." );
-}
-
-void connection_signalShutdown()
-{
-	if ( !threadInitDone )
-		return;
-	pthread_kill( tidReceiver, SIGHUP );
-	pthread_kill( tidBackground, SIGHUP );
 }
 
 void connection_join()
@@ -962,12 +959,17 @@ static dnbd3_async_t* removeRequest( dnbd3_async_t *request )
 static void blockSignals()
 {
 	sigset_t sigmask;
-	sigemptyset( &sigmask );
+	if ( pthread_sigmask( 0, NULL, &sigmask ) == -1 ) {
+		logadd( LOG_WARNING, "Cannot get current sigmask of thread" );
+		sigemptyset( &sigmask );
+	}
 	sigaddset( &sigmask, SIGUSR1 );
 	sigaddset( &sigmask, SIGUSR2 );
 	sigaddset( &sigmask, SIGPIPE );
 	sigaddset( &sigmask, SIGINT );
 	sigaddset( &sigmask, SIGTERM );
-	pthread_sigmask( SIG_SETMASK, &sigmask, NULL );
-
+	sigdelset( &sigmask, SIGHUP );
+	if ( pthread_sigmask( SIG_SETMASK, &sigmask, NULL ) == -1 ) {
+		logadd( LOG_WARNING, "Cannot set sigmask of thread" );
+	}
 }

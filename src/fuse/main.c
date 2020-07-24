@@ -40,14 +40,14 @@
 static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
 
+static struct fuse_session *_fuseSession = NULL;
+
 static uint64_t imageSize;
 /* Debug/Benchmark variables */
 static bool useDebug = false;
 static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
-static void ( *fuse_sigIntHandler )(int) = NULL;
-static void ( *fuse_sigTermHandler )(int) = NULL;
 
 static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize );
 static void fillStatsFile( fuse_req_t req, size_t size, off_t offset );
@@ -236,19 +236,9 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 	}
 }
 
-static void image_sigHandler( int signum )
+static void noopSigHandler( int signum )
 {
-	int temp_errno = errno; // Threadsanitizer: don't spoil errno
-	keepRunning = false;
-	if ( signum == SIGINT && fuse_sigIntHandler != NULL ) {
-		fuse_sigIntHandler( signum );
-		connection_signalShutdown();
-	}
-	if ( signum == SIGTERM && fuse_sigTermHandler != NULL ) {
-		fuse_sigTermHandler( signum );
-		connection_signalShutdown();
-	}
-	errno = temp_errno;
+	(void)signum;
 }
 
 static void image_ll_init( void *userdata, struct fuse_conn_info *conn )
@@ -257,22 +247,10 @@ static void image_ll_init( void *userdata, struct fuse_conn_info *conn )
 	( void ) conn;
 	if ( !connection_initThreads() ) {
 		logadd( LOG_ERROR, "Could not initialize threads for dnbd3 connection, exiting..." );
-		exit( EXIT_FAILURE );
+		if ( _fuseSession != NULL ) {
+			fuse_session_exit( _fuseSession );
+		}
 	}
-
-	// Prepare our handler
-	struct sigaction newHandler;
-	memset( &newHandler, 0, sizeof( newHandler ) );
-	newHandler.sa_handler = &image_sigHandler;
-	sigemptyset( &newHandler.sa_mask );
-	struct sigaction oldHandler;
-	// Retrieve old handlers when setting
-	sigaction( SIGINT, &newHandler, &oldHandler );
-	fuse_sigIntHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGINT handler was %p", ( void* )(uintptr_t)fuse_sigIntHandler );
-	sigaction( SIGTERM, &newHandler, &oldHandler );
-	fuse_sigTermHandler = oldHandler.sa_handler;
-	logadd( LOG_DEBUG1, "Previous SIGTERM handler was %p", ( void* )(uintptr_t)fuse_sigIntHandler );
 }
 
 /* close the connection */
@@ -282,7 +260,6 @@ static void image_destroy( void *private_data UNUSED )
 		printLog( &logInfo );
 	}
 	connection_close();
-	return;
 }
 
 /* map the implemented fuse operations */
@@ -414,7 +391,7 @@ int main( int argc, char *argv[] )
 			learnNewServers = false;
 			break;
 		case 'f':
-			newArgv[newArgc++] = "-f";
+			foreground = 1;
 			break;
 		default:
 			printUsage( argv[0], EXIT_FAILURE );
@@ -434,6 +411,17 @@ int main( int argc, char *argv[] )
 			logadd( LOG_WARNING, "Could not open log file at '%s'", log_file );
 		}
 	}
+
+	// Prepare our handler
+	struct sigaction newHandler;
+	memset( &newHandler, 0, sizeof( newHandler ) );
+	newHandler.sa_handler = &noopSigHandler;
+	sigemptyset( &newHandler.sa_mask );
+	sigaction( SIGHUP, &newHandler, NULL );
+	sigset_t sigmask;
+	sigemptyset( &sigmask );
+	sigaddset( &sigmask, SIGHUP );
+	pthread_sigmask( SIG_BLOCK, &sigmask, NULL );
 
 	if ( !connection_init( server_address, image_Name, rid, learnNewServers ) ) {
 		logadd( LOG_ERROR, "Could not connect to any server. Bye.\n" );
@@ -468,29 +456,36 @@ int main( int argc, char *argv[] )
 	// Fuse lowlevel loop
 	struct fuse_args args = FUSE_ARGS_INIT( newArgc, newArgv );
 	int fuse_err = 1;
-	if ( fuse_parse_cmdline( &args, &mountpoint, NULL, NULL ) != -1 && ( ch = fuse_mount( mountpoint, &args ) ) != NULL ) {
-		struct fuse_session *se;
-
-		se = fuse_lowlevel_new( &args, &image_oper, sizeof( image_oper ), NULL );
-		if ( se != NULL ) {
-			if ( fuse_set_signal_handlers( se ) != -1 ) {
-				fuse_session_add_chan( se, ch );
-				//fuse_daemonize(foreground);
+	if ( fuse_parse_cmdline( &args, &mountpoint, NULL, NULL ) == -1 ) {
+		logadd( LOG_ERROR, "FUSE: Parsing command line failed" );
+	} else if ( ( ch = fuse_mount( mountpoint, &args ) ) == NULL ) {
+		logadd( LOG_ERROR, "Mounting file system failed" );
+	} else {
+		_fuseSession = fuse_lowlevel_new( &args, &image_oper, sizeof( image_oper ), NULL );
+		if ( _fuseSession == NULL ) {
+			logadd( LOG_ERROR, "Could not initialize fuse session" );
+		} else {
+			if ( fuse_set_signal_handlers( _fuseSession ) == -1 ) {
+				logadd( LOG_ERROR, "Could not install fuse signal handlers" );
+			} else {
+				fuse_session_add_chan( _fuseSession, ch );
+				fuse_daemonize( foreground );
 				if ( single_thread ) {
-					fuse_err = fuse_session_loop( se );
+					fuse_err = fuse_session_loop( _fuseSession );
 				} else {
-					fuse_err = fuse_session_loop_mt( se ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
+					fuse_err = fuse_session_loop_mt( _fuseSession ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
 				}
-				fuse_remove_signal_handlers( se );
+				fuse_remove_signal_handlers( _fuseSession );
 				fuse_session_remove_chan( ch );
 			}
-			fuse_session_destroy( se );
+			fuse_session_destroy( _fuseSession );
+			_fuseSession = NULL;
 		}
 		fuse_unmount( mountpoint, ch );
 	}
 	fuse_opt_free_args( &args );
 	free( newArgv );
-	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err );
 	connection_join();
+	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err );
 	return fuse_err;
 }
