@@ -385,13 +385,10 @@ static void* connection_receiveThreadMain( void *sockPtr )
 				}
 			} else {
 				// Found a match
-				request->buffer = malloc( request->length ); // char*
 				const ssize_t ret = sock_recv( sockFd, request->buffer, request->length );
 				if ( ret != (ssize_t)request->length ) {
 					logadd( LOG_DEBUG1, "receiving payload for a block reply failed" );
 					connection_read( request );
-					free( request->buffer );
-					request->buffer = NULL;
 					goto fail;
 				}
 				// Check RTT
@@ -409,15 +406,8 @@ static void* connection_receiveThreadMain( void *sockPtr )
 					}
 					unlock_rw( &altLock );
 				}
-				int fuse_reply = fuse_reply_buf( request->fuse_req, request->buffer, request->length );
-				if ( fuse_reply != 0 ) {
-					printf( "ERROR ON FUSE REPLY %i \n", fuse_reply );
-					fuse_reply_err( request->fuse_req, fuse_reply );
-				}
-				free( request->buffer );
-				request->buffer = NULL;
+				fuse_reply_buf( request->fuse_req, request->buffer, request->length );
 				free( request );
-				request = NULL;
 			}
 		} else if ( reply.cmd == CMD_GET_SERVERS ) {
 			// List of known alt servers
@@ -715,7 +705,9 @@ static void probeAltServers()
 				connection_read( request );
 				goto fail;
 			}
-			// Success, wake up caller
+			// Success, reply to fuse
+			fuse_reply_buf( request->fuse_req, request->buffer, request->length );
+			free( request );
 			logadd( LOG_DEBUG1, "%s probe: Successful direct probe", hstr );
 		} else {
 			// Wasn't a request that's in our request queue

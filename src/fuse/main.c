@@ -207,7 +207,7 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 	if ( offset + size > imageSize ) {
 		size = imageSize - offset;
 	}
-	if ( size == 0 ) {
+	if ( size == 0 || size > UINT32_MAX ) {
 		fuse_reply_err( req, 0 );
 		return;
 	}
@@ -221,13 +221,14 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
-	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) );
+	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) + size );
 	request->length = (uint32_t)size;
 	request->offset = offset;
 	request->fuse_req = req;
 
 	if ( !connection_read( request ) ) {
 		fuse_reply_err( req, EIO );
+		free( request );
 	}
 }
 
