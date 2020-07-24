@@ -256,9 +256,7 @@ bool connection_read( dnbd3_async_t *request )
 		if ( !dnbd3_get_block( connection.sockFd, request->offset, request->length, (uint64_t)request, 0 ) ) {
 			shutdown( connection.sockFd, SHUT_RDWR );
 			connection.sockFd = -1;
-			pthread_mutex_unlock( &connection.sendMutex );
 			signal_call( connection.panicSignal );
-			return true;
 		}
 	}
 	pthread_mutex_unlock( &connection.sendMutex );
@@ -268,9 +266,7 @@ bool connection_read( dnbd3_async_t *request )
 void connection_close()
 {
 	static bool signalled = false;
-	if ( true ) {
-		logadd( LOG_INFO, "Tearing down dnbd3 connections and workers" );
-	}
+	logadd( LOG_INFO, "Tearing down dnbd3 connections and workers" );
 	pthread_mutex_lock( &mutexInit );
 	keepRunning = false;
 	if ( threadInitDone && !signalled ) {
@@ -502,10 +498,10 @@ static void* connection_backgroundThread( void *something UNUSED )
 		if ( timing_reachedPrecise( &nextKeepalive, &now ) ) {
 			pthread_mutex_lock( &connection.sendMutex );
 			if ( connection.sockFd != -1 ) {
-				dnbd3_request_t request;
-				request.magic = dnbd3_packet_magic;
-				request.cmd = CMD_KEEPALIVE;
-				request.handle = request.offset = request.size = 0;
+				dnbd3_request_t request = {
+					.magic = dnbd3_packet_magic,
+					.cmd = CMD_KEEPALIVE,
+				};
 				fixup_request( request );
 				ssize_t ret = sock_sendAll( connection.sockFd, &request, sizeof request, 2 );
 				if ( (size_t)ret != sizeof request ) {

@@ -64,19 +64,17 @@ static void printVersion();
 
 static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 {
-	stbuf->st_ctim = stbuf->st_atim = stbuf->st_mtim = startupTime;
-	stbuf->st_uid = owner;
-	stbuf->st_ino = ino;
 	switch ( ino ) {
 	case INO_ROOT:
 		stbuf->st_mode = S_IFDIR | 0550;
 		stbuf->st_nlink = 2;
+		stbuf->st_mtim = startupTime;
 		break;
-
 	case INO_IMAGE:
 		stbuf->st_mode = S_IFREG | 0440;
 		stbuf->st_nlink = 1;
 		stbuf->st_size = imageSize;
+		stbuf->st_mtim = startupTime;
 		break;
 	case INO_STATS:
 		stbuf->st_mode = S_IFREG | 0440;
@@ -84,47 +82,46 @@ static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 		stbuf->st_size = 4096;
 		clock_gettime( CLOCK_REALTIME, &stbuf->st_mtim );
 		break;
-
 	default:
 		return -1;
 	}
+	stbuf->st_ctim = stbuf->st_atim = startupTime;
+	stbuf->st_uid = owner;
+	stbuf->st_ino = ino;
 	return 0;
 }
 
 static void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi )
 {
-	struct stat stbuf;
-
+	struct stat stbuf = { 0 };
 	( void ) fi;
 
-	memset( &stbuf, 0, sizeof( stbuf ) );
-	if ( image_stat( ino, &stbuf ) == -1 )
+	if ( image_stat( ino, &stbuf ) == -1 ) {
 		fuse_reply_err( req, ENOENT );
-	else
-		fuse_reply_attr( req, &stbuf, 1.0 ); // 1.0 seconds validity timeout
+	} else {
+		fuse_reply_attr( req, &stbuf, ino == INO_IMAGE ? 120 : 1 ); // seconds validity timeout
+	}
 }
 
 static void image_ll_lookup( fuse_req_t req, fuse_ino_t parent, const char *name )
 {
-	struct fuse_entry_param e;
 	( void )parent;
 
 	if ( strcmp( name, IMAGE_NAME ) == 0 || strcmp( name, STATS_NAME ) == 0 ) {
-		memset( &e, 0, sizeof( e ) );
+		struct fuse_entry_param e = { 0 };
 		if ( strcmp( name, IMAGE_NAME ) == 0 ) {
 			e.ino = INO_IMAGE;
+			e.attr_timeout = e.entry_timeout = 120;
 		} else {
 			e.ino = INO_STATS;
+			e.attr_timeout = e.entry_timeout = 1;
 		}
-		e.attr_timeout = 1.0;
-		e.entry_timeout = 1.0;
-		image_stat( e.ino, &e.attr );
-
-		fuse_reply_entry( req, &e );
+		if ( image_stat( e.ino, &e.attr ) == 0 ) {
+			fuse_reply_entry( req, &e );
+			return;
+		}
 	}
-	else {
-		fuse_reply_err( req, ENOENT );
-	}
+	fuse_reply_err( req, ENOENT );
 }
 
 struct dirbuf {
@@ -134,12 +131,10 @@ struct dirbuf {
 
 static void dirbuf_add( fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino )
 {
-	struct stat stbuf;
+	struct stat stbuf = { .st_ino = ino };
 	size_t oldsize = b->size;
 	b->size += fuse_add_direntry( req, NULL, 0, name, NULL, 0 );
 	b->p = ( char * ) realloc( b->p, b->size );
-	memset( &stbuf, 0, sizeof( stbuf ) );
-	stbuf.st_ino = ino;
 	fuse_add_direntry( req, b->p + oldsize, b->size - oldsize, name, &stbuf, b->size );
 	return;
 }
