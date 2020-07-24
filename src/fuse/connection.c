@@ -831,7 +831,6 @@ fail:
 
 static void switchConnection( int sockFd, alt_server_t *srv )
 {
-	pthread_t thread;
 	struct sockaddr_storage addr;
 	socklen_t addrLen = sizeof( addr );
 	char message[200] = "Connection switched to ";
@@ -862,8 +861,9 @@ static void switchConnection( int sockFd, alt_server_t *srv )
 		signal_call( connection.panicSignal );
 		return;
 	}
+	pthread_detach( tidReceiver );
 	timing_get( &connection.startupTime );
-	pthread_create( &thread, NULL, &connection_receiveThreadMain, ( void* )(size_t)sockFd );
+	pthread_create( &tidReceiver, NULL, &connection_receiveThreadMain, ( void* )(size_t)sockFd );
 	sock_printable( (struct sockaddr*)&addr, sizeof( addr ), message + len, sizeof( message ) - len );
 	logadd( LOG_INFO, "%s", message );
 	// resend queue
