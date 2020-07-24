@@ -33,8 +33,9 @@
 
 #define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
-#define INO_STATS (3)
-#define INO_IMAGE (4)
+#define INO_ROOT (1)
+#define INO_STATS (2)
+#define INO_IMAGE (3)
 
 static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
@@ -67,7 +68,7 @@ static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 	stbuf->st_uid = owner;
 	stbuf->st_ino = ino;
 	switch ( ino ) {
-	case 1:
+	case INO_ROOT:
 		stbuf->st_mode = S_IFDIR | 0550;
 		stbuf->st_nlink = 2;
 		break;
@@ -121,7 +122,9 @@ static void image_ll_lookup( fuse_req_t req, fuse_ino_t parent, const char *name
 
 		fuse_reply_entry( req, &e );
 	}
-	else fuse_reply_err( req, ENOENT );
+	else {
+		fuse_reply_err( req, ENOENT );
+	}
 }
 
 struct dirbuf {
@@ -153,16 +156,15 @@ static void image_ll_readdir( fuse_req_t req, fuse_ino_t ino, size_t size, off_t
 {
 	( void ) fi;
 
-	if ( ino != 1 )
+	if ( ino != INO_ROOT ) {
 		fuse_reply_err( req, ENOTDIR );
-	else {
+	} else {
 		struct dirbuf b;
-
 		memset( &b, 0, sizeof( b ) );
-		dirbuf_add( req, &b, ".", 1 );
-		dirbuf_add( req, &b, "..", 1 );
-		dirbuf_add( req, &b, IMAGE_NAME, 2 );
-		dirbuf_add( req, &b, STATS_NAME, 3 );
+		dirbuf_add( req, &b, ".", INO_ROOT );
+		dirbuf_add( req, &b, "..", INO_ROOT );
+		dirbuf_add( req, &b, IMAGE_NAME, INO_IMAGE );
+		dirbuf_add( req, &b, STATS_NAME, INO_STATS );
 		reply_buf_limited( req, b.p, b.size, off, size );
 		free( b.p );
 	}
@@ -170,11 +172,11 @@ static void image_ll_readdir( fuse_req_t req, fuse_ino_t ino, size_t size, off_t
 
 static void image_ll_open( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi )
 {
-	if ( ino != 2 && ino != 3 )
+	if ( ino != INO_IMAGE && ino != INO_STATS ) {
 		fuse_reply_err( req, EISDIR );
-	else if ( ( fi->flags & 3 ) != O_RDONLY )
+	} else if ( ( fi->flags & 3 ) != O_RDONLY ) {
 		fuse_reply_err( req, EACCES );
-	else {
+	} else {
 		// auto caching
 		fi->keep_cache = 1;
 		fuse_reply_open( req, fi );
