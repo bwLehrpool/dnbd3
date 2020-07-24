@@ -99,7 +99,7 @@ static void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_i
 	if ( image_stat( ino, &stbuf ) == -1 ) {
 		fuse_reply_err( req, ENOENT );
 	} else {
-		fuse_reply_attr( req, &stbuf, ino == INO_IMAGE ? 120 : 1 ); // seconds validity timeout
+		fuse_reply_attr( req, &stbuf, ino == INO_IMAGE ? 1200 : 1 ); // seconds validity timeout
 	}
 }
 
@@ -111,10 +111,10 @@ static void image_ll_lookup( fuse_req_t req, fuse_ino_t parent, const char *name
 		struct fuse_entry_param e = { 0 };
 		if ( strcmp( name, IMAGE_NAME ) == 0 ) {
 			e.ino = INO_IMAGE;
-			e.attr_timeout = e.entry_timeout = 120;
+			e.attr_timeout = e.entry_timeout = 1200;
 		} else {
 			e.ino = INO_STATS;
-			e.attr_timeout = e.entry_timeout = 1;
+			e.attr_timeout = e.entry_timeout = 0;
 		}
 		if ( image_stat( e.ino, &e.attr ) == 0 ) {
 			fuse_reply_entry( req, &e );
