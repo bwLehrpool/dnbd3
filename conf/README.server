@@ -7,13 +7,18 @@ There are two files in that dir
 
 == alt-servers ==
 List of known alt-servers for this server.
-Format:
-[PREFIX]<IP:PORT> [Comment]
+INI Format:
+[Address]
+comment=Whatever
+for=client | replication
+namespace=some/path/
 
-Prefix can be:
-+ - Only report server to clients as alt-server, but don't use for replication
-- - Only use server for replication, but don't advertise to clients
-No prefix means server will be advertised to clients and is used for replication
+All fields in a section are optional. If the "for" key is missing, the server
+will be used for replication and will be sent to clients that request a list
+of alt servers.
+The namespace key can be specified multiple times per section. If it is missing,
+the server will be used for all image names; otherwise, it will only be used
+for images which's name starts with one of the given strings.
 
 If you're not running in proxy mode, this file won't do much for you
 

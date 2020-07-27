@@ -22,7 +22,7 @@ extern struct timespec basetime;
 /**
  * Assign src to dst while adding secs seconds.
  */
-#define timing_set(dst,src,secs) do { (dst)->tv_sec = (src)->tv_sec + secs; (dst)->tv_nsec = (src)->tv_nsec; } while (0)
+#define timing_set(dst,src,secs) do { (dst)->tv_sec = (src)->tv_sec + (secs); (dst)->tv_nsec = (src)->tv_nsec; } while (0)
 
 /**
  * Define variable now, initialize to timing_get.

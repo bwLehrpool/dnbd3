@@ -8,6 +8,7 @@
 #include "../shared/protocol.h"
 #include "../shared/timing.h"
 #include "../shared/crc32.h"
+#include "reference.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -45,29 +46,44 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image);
 static dnbd3_image_t* image_free(dnbd3_image_t *image);
 static bool image_load_all_internal(char *base, char *path);
 static bool image_addToList(dnbd3_image_t *image);
-static bool image_load(char *base, char *path, int withUplink);
+static bool image_load(char *base, char *path, bool withUplink);
 static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageSize);
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc);
 static bool image_ensureDiskSpace(uint64_t size, bool force);
 
-static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
+static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize);
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
-static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t fileSize, uint32_t * const crc32list, uint8_t * const cache_map);
+static bool image_checkRandomBlocks(dnbd3_image_t *image, const int count, int fromFd);
+static void* closeUnusedFds(void*);
+static bool isImageFromUpstream(dnbd3_image_t *image);
+static void* saveLoadAllCacheMaps(void*);
+static void saveCacheMap(dnbd3_image_t *image);
+static void allocCacheMap(dnbd3_image_t *image, bool complete);
+static void saveMetaData(dnbd3_image_t *image, ticks *now, time_t walltime);
+static void loadImageMeta(dnbd3_image_t *image);
+
+static void cmfree(ref *ref)
+{
+	dnbd3_cache_map_t *cache = container_of(ref, dnbd3_cache_map_t, reference);
+	logadd( LOG_DEBUG2, "Freeing a cache map" );
+	free( cache );
+}
 
 // ##########################################
 
 void image_serverStartup()
 {
 	srand( (unsigned int)time( NULL ) );
-	mutex_init( &imageListLock );
-	mutex_init( &remoteCloneLock );
-	mutex_init( &reloadLock );
+	mutex_init( &imageListLock, LOCK_IMAGE_LIST );
+	mutex_init( &remoteCloneLock, LOCK_REMOTE_CLONE );
+	mutex_init( &reloadLock, LOCK_RELOAD );
+	server_addJob( &closeUnusedFds, NULL, 10, 900 );
+	server_addJob( &saveLoadAllCacheMaps, NULL, 9, 20 );
 }
 
 /**
  * Update cache-map of given image for the given byte range
  * start (inclusive) - end (exclusive)
- * Locks on: images[].lock
  */
 void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, const bool set)
 {
@@ -88,32 +104,54 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 	if ( start >= end )
 		return;
 	bool setNewBlocks = false;
-	uint64_t pos = start;
-	mutex_lock( &image->lock );
-	if ( image->cache_map == NULL ) {
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL ) {
 		// Image seems already complete
 		if ( set ) {
 			// This makes no sense
-			mutex_unlock( &image->lock );
-			logadd( LOG_DEBUG1, "image_updateCachemap(true) with no cache_map: %s", image->path );
+			logadd( LOG_DEBUG1, "image_updateCachemap(true) with no cache map: %s", image->path );
 			return;
 		}
 		// Recreate a cache map, set it to all 1 initially as we assume the image was complete
-		const int byteSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
-		image->cache_map = malloc( byteSize );
-		memset( image->cache_map, 0xff, byteSize );
-	}
-	while ( pos < end ) {
-		const size_t map_y = (int)( pos >> 15 );
-		const int map_x = (int)( (pos >> 12) & 7 ); // mod 8
-		const int bit_mask = 1 << map_x;
-		if ( set ) {
-			if ( (image->cache_map[map_y] & bit_mask) == 0 ) setNewBlocks = true;
-			image->cache_map[map_y] |= (uint8_t)bit_mask;
-		} else {
-			image->cache_map[map_y] &= (uint8_t)~bit_mask;
+		allocCacheMap( image, true );
+		cache = ref_get_cachemap( image );
+		if ( cache == NULL ) {
+			logadd( LOG_WARNING, "WHAT!!!?!?!= No cache map right after alloc?! %s", image->path );
+			return;
 		}
-		pos += DNBD3_BLOCK_SIZE;
+	}
+	// Set/unset
+	const uint64_t firstByteInMap = start >> 15;
+	const uint64_t lastByteInMap = (end - 1) >> 15;
+	uint64_t pos;
+	// First and last byte masks
+	const uint8_t fb = (uint8_t)(0xff << ((start >> 12) & 7));
+	const uint8_t lb = (uint8_t)(~(0xff << ((((end - 1) >> 12) & 7) + 1)));
+	if ( firstByteInMap == lastByteInMap ) {
+		if ( set ) {
+			uint8_t o = atomic_fetch_or( &cache->map[firstByteInMap], (uint8_t)(fb & lb) );
+			setNewBlocks = o != ( o | (fb & lb) );
+		} else {
+			atomic_fetch_and( &cache->map[firstByteInMap], (uint8_t)~(fb & lb) );
+		}
+	} else {
+		atomic_thread_fence( memory_order_acquire );
+		if ( set ) {
+			uint8_t fo = atomic_fetch_or_explicit( &cache->map[firstByteInMap], fb, memory_order_relaxed );
+			uint8_t lo = atomic_fetch_or_explicit( &cache->map[lastByteInMap], lb, memory_order_relaxed );
+			setNewBlocks = ( fo != ( fo | fb ) || lo != ( lo | lb ) );
+		} else {
+			atomic_fetch_and_explicit( &cache->map[firstByteInMap], (uint8_t)~fb, memory_order_relaxed );
+			atomic_fetch_and_explicit( &cache->map[lastByteInMap], (uint8_t)~lb, memory_order_relaxed );
+		}
+		// Everything in between
+		const uint8_t nval = set ? 0xff : 0;
+		for ( pos = firstByteInMap + 1; pos < lastByteInMap; ++pos ) {
+			if ( atomic_exchange_explicit( &cache->map[pos], nval, memory_order_relaxed ) != nval && set ) {
+				setNewBlocks = true;
+			}
+		}
+		atomic_thread_fence( memory_order_release );
 	}
 	if ( setNewBlocks && image->crc32 != NULL ) {
 		// If setNewBlocks is set, at least one of the blocks was not cached before, so queue all hash blocks
@@ -122,19 +160,16 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 		// First set start and end to borders of hash blocks
 		start &= ~(uint64_t)(HASH_BLOCK_SIZE - 1);
 		end = (end + HASH_BLOCK_SIZE - 1) & ~(uint64_t)(HASH_BLOCK_SIZE - 1);
-		pos = start;
-		while ( pos < end ) {
-			if ( image->cache_map == NULL ) break;
+		for ( pos = start; pos < end; pos += HASH_BLOCK_SIZE ) {
 			const int block = (int)( pos / HASH_BLOCK_SIZE );
-			if ( image_isHashBlockComplete( image->cache_map, block, image->realFilesize ) ) {
-				mutex_unlock( &image->lock );
-				integrity_check( image, block );
-				mutex_lock( &image->lock );
+			if ( image_isHashBlockComplete( cache, block, image->realFilesize ) ) {
+				integrity_check( image, block, false );
 			}
-			pos += HASH_BLOCK_SIZE;
 		}
+	} else if ( !set ) {
+		cache->dirty = true;
 	}
-	mutex_unlock( &image->lock );
+	ref_put( &cache->reference );
 }
 
 /**
@@ -146,20 +181,18 @@ void image_updateCachemap(dnbd3_image_t *image, uint64_t start, uint64_t end, co
 bool image_isComplete(dnbd3_image_t *image)
 {
 	assert( image != NULL );
-	mutex_lock( &image->lock );
 	if ( image->virtualFilesize == 0 ) {
-		mutex_unlock( &image->lock );
 		return false;
 	}
-	if ( image->cache_map == NULL ) {
-		mutex_unlock( &image->lock );
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL ) {
 		return true;
 	}
 	bool complete = true;
 	int j;
 	const int map_len_bytes = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
 	for (j = 0; j < map_len_bytes - 1; ++j) {
-		if ( image->cache_map[j] != 0xFF ) {
+		if ( cache->map[j] != 0xFF ) {
 			complete = false;
 			break;
 		}
@@ -174,18 +207,27 @@ bool image_isComplete(dnbd3_image_t *image)
 			for (j = 0; j < blocks_in_last_byte; ++j)
 				last_byte |= (uint8_t)(1 << j);
 		}
-		complete = ((image->cache_map[map_len_bytes - 1] & last_byte) == last_byte);
+		complete = ((cache->map[map_len_bytes - 1] & last_byte) == last_byte);
 	}
-	if ( !complete ) {
-		mutex_unlock( &image->lock );
+	ref_put( &cache->reference );
+	if ( !complete )
 		return false;
+	mutex_lock( &image->lock );
+	// Lock and make sure current cache map is still the one we saw complete
+	dnbd3_cache_map_t *current = ref_get_cachemap( image );
+	if ( current == cache ) {
+		// Set cache map NULL as it's complete
+		ref_setref( &image->ref_cacheMap, NULL );
 	}
-	char mapfile[PATHLEN] = "";
-	free( image->cache_map );
-	image->cache_map = NULL;
-	snprintf( mapfile, PATHLEN, "%s.map", image->path );
+	if ( current != NULL ) {
+		ref_put( &current->reference );
+	}
 	mutex_unlock( &image->lock );
-	unlink( mapfile );
+	if ( current == cache ) { // Successfully set cache map to NULL above
+		char mapfile[PATHLEN] = "";
+		snprintf( mapfile, PATHLEN, "%s.map", image->path );
+		unlink( mapfile );
+	}
 	return true;
 }
 
@@ -201,37 +243,94 @@ bool image_isComplete(dnbd3_image_t *image)
  */
 bool image_ensureOpen(dnbd3_image_t *image)
 {
-	if ( image->readFd != -1 ) return image;
-	int newFd = open( image->path, O_RDONLY );
-	if ( newFd != -1 ) {
-		// Check size
+	bool sizeChanged = false;
+	if ( image->readFd != -1 && !image->problem.changed )
+		return true;
+	int newFd = image->readFd == -1 ? open( image->path, O_RDONLY ) : dup( image->readFd );
+	if ( newFd == -1 ) {
+		if ( !image->problem.read ) {
+			logadd( LOG_WARNING, "Cannot open %s for reading", image->path );
+			image->problem.read = true;
+		}
+	} else {
+		// Check size + read access
+		char buffer[100];
 		const off_t flen = lseek( newFd, 0, SEEK_END );
 		if ( flen == -1 ) {
-			logadd( LOG_WARNING, "Could not seek to end of %s (errno %d)", image->path, errno );
+			if ( !image->problem.read ) {
+				logadd( LOG_WARNING, "Could not seek to end of %s (errno %d)", image->path, errno );
+				image->problem.read = true;
+			}
 			close( newFd );
 			newFd = -1;
 		} else if ( (uint64_t)flen != image->realFilesize ) {
-			logadd( LOG_WARNING, "Size of active image with closed fd changed from %" PRIu64 " to %" PRIu64, image->realFilesize, (uint64_t)flen );
+			if ( !image->problem.changed ) {
+				logadd( LOG_WARNING, "Size of active image with closed fd changed from %" PRIu64 " to %" PRIu64,
+						image->realFilesize, (uint64_t)flen );
+			}
+			sizeChanged = true;
+		} else if ( pread( newFd, buffer, sizeof(buffer), 0 ) == -1 ) {
+			if ( !image->problem.read ) {
+				logadd( LOG_WARNING, "Reading first %d bytes from %s failed (errno=%d)",
+						(int)sizeof(buffer), image->path, errno );
+				image->problem.read = true;
+			}
 			close( newFd );
 			newFd = -1;
 		}
 	}
 	if ( newFd == -1 ) {
-		mutex_lock( &image->lock );
-		image->working = false;
-		mutex_unlock( &image->lock );
+		if ( sizeChanged ) {
+			image->problem.changed = true;
+		}
 		return false;
 	}
+
+	// Re-opened. Check if the "size/content changed" flag was set before and if so, check crc32,
+	// but only if the size we just got above is correct.
+	if ( image->problem.changed && !sizeChanged ) {
+		if ( image->crc32 == NULL ) {
+			// Cannot verify further, hope for the best
+			image->problem.changed = false;
+			logadd( LOG_DEBUG1, "Size of image %s:%d changed back to expected value", PIMG(image) );
+		} else if ( image_checkRandomBlocks( image, 1, newFd ) ) {
+			// This should have checked the first block (if complete) -> All is well again
+			image->problem.changed = false;
+			logadd( LOG_DEBUG1, "Size and CRC of image %s:%d changed back to expected value", PIMG(image) );
+		}
+	} else {
+		image->problem.changed = sizeChanged;
+	}
+
 	mutex_lock( &image->lock );
 	if ( image->readFd == -1 ) {
 		image->readFd = newFd;
+		image->problem.read = false;
 		mutex_unlock( &image->lock );
 	} else {
-		// There was a race while opening the file (happens cause not locked cause blocking), we lost the race so close new fd and proceed
+		// There was a race while opening the file (happens cause not locked cause blocking),
+		// we lost the race so close new fd and proceed.
+		// *OR* we dup()'ed above for cheating when the image changed before.
 		mutex_unlock( &image->lock );
 		close( newFd );
 	}
 	return image->readFd != -1;
+}
+
+dnbd3_image_t* image_byId(int imgId)
+{
+	int i;
+	mutex_lock( &imageListLock );
+	for (i = 0; i < _num_images; ++i) {
+		dnbd3_image_t * const image = _images[i];
+		if ( image != NULL && image->id == imgId ) {
+			image->users++;
+			mutex_unlock( &imageListLock );
+			return image;
+		}
+	}
+	mutex_unlock( &imageListLock );
+	return NULL;
 }
 
 /**
@@ -240,10 +339,9 @@ bool image_ensureOpen(dnbd3_image_t *image)
  * point...
  * Locks on: imageListLock, _images[].lock
  */
-dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
+dnbd3_image_t* image_get(char *name, uint16_t revision, bool ensureFdOpen)
 {
 	int i;
-	const char *removingText = _removeMissingImages ? ", removing from list" : "";
 	dnbd3_image_t *candidate = NULL;
 	// Simple sanity check
 	const size_t slen = strlen( name );
@@ -267,119 +365,65 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
 		return NULL ;
 	}
 
-	mutex_lock( &candidate->lock );
-	mutex_unlock( &imageListLock );
 	candidate->users++;
-	mutex_unlock( &candidate->lock );
+	mutex_unlock( &imageListLock );
 
-	// Found, see if it works
-// TODO: Also make sure a non-working image still has old fd open but created a new one and removed itself from the list
-// TODO: But remember size-changed images forever
-	if ( candidate->working || checkIfWorking ) {
-		// Is marked working, but might not have an fd open
-		if ( !image_ensureOpen( candidate ) ) {
-			mutex_lock( &candidate->lock );
-			timing_get( &candidate->lastWorkCheck );
-			mutex_unlock( &candidate->lock );
-			if ( _removeMissingImages ) {
-				candidate = image_remove( candidate ); // No release here, the image is still returned and should be released by caller
-			}
-			return candidate;
-		}
-	}
-
-	if ( !checkIfWorking ) return candidate; // Not interested in re-cechking working state
-
-	// ...not working...
-
-	// Don't re-check too often
-	mutex_lock( &candidate->lock );
-	bool check;
-	declare_now;
-	check = timing_diff( &candidate->lastWorkCheck, &now ) > NONWORKING_RECHECK_INTERVAL_SECONDS;
-	if ( check ) {
-		candidate->lastWorkCheck = now;
-	}
-	mutex_unlock( &candidate->lock );
-	if ( !check ) {
+	if ( !ensureFdOpen ) // Don't want to re-check
 		return candidate;
-	}
 
-	// reaching this point means:
-	// 1) We should check if the image is working, it might or might not be in working state right now
-	// 2) The image is open for reading (or at least was at some point, the fd might be stale if images lie on an NFS share etc.)
-	// 3) We made sure not to re-check this image too often
+	if ( image_ensureOpen( candidate ) && !candidate->problem.read )
+		return candidate; // We have a read fd and no read or changed problems
 
-	// Common for ro and rw images: Size check, read check
-	const off_t len = lseek( candidate->readFd, 0, SEEK_END );
-	bool reload = false;
-	if ( len == -1 ) {
-		logadd( LOG_WARNING, "lseek() on %s failed (errno=%d)%s.", candidate->path, errno, removingText );
-		reload = true;
-	} else if ( (uint64_t)len != candidate->realFilesize ) {
-		logadd( LOG_DEBUG1, "Size of %s changed at runtime, keeping disabled! Expected: %" PRIu64 ", found: %" PRIu64
-				". Try sending SIGHUP to server if you know what you're doing.",
-				candidate->path, candidate->realFilesize, (uint64_t)len );
-	} else {
-		// Seek worked, file size is same, now see if we can read from file
-		char buffer[100];
-		if ( pread( candidate->readFd, buffer, sizeof(buffer), 0 ) == -1 ) {
-			logadd( LOG_DEBUG2, "Reading first %d bytes from %s failed (errno=%d)%s.",
-					(int)sizeof(buffer), candidate->path, errno, removingText );
-			reload = true;
-		} else if ( !candidate->working ) {
-			// Seems everything is fine again \o/
-			candidate->working = true;
-			logadd( LOG_INFO, "Changed state of %s:%d to 'working'", candidate->name, candidate->rid );
-		}
-	}
+	// -- image could not be opened again, or is open but has problem --
 
-	if ( reload ) {
+	if ( _removeMissingImages && !file_isReadable( candidate->path ) ) {
+		candidate = image_remove( candidate );
+		// No image_release here, the image is still returned and should be released by caller
+	} else if ( candidate->readFd != -1 ) {
+		// We cannot just close the fd as it might be in use. Make a copy and remove old entry.
+		candidate = image_remove( candidate );
 		// Could not access the image with exising fd - mark for reload which will re-open the file.
 		// make a copy of the image struct but keep the old one around. If/When it's not being used
 		// anymore, it will be freed automatically.
+		logadd( LOG_DEBUG1, "Reloading image file %s because of read problem/changed", candidate->path );
 		dnbd3_image_t *img = calloc( sizeof(dnbd3_image_t), 1 );
 		img->path = strdup( candidate->path );
 		img->name = strdup( candidate->name );
 		img->virtualFilesize = candidate->virtualFilesize;
 		img->realFilesize = candidate->realFilesize;
-		img->atime = now;
+		timing_get( &img->atime );
 		img->masterCrc32 = candidate->masterCrc32;
 		img->readFd = -1;
 		img->rid = candidate->rid;
 		img->users = 1;
-		img->working = false;
-		mutex_init( &img->lock );
+		img->problem.read = true;
+		img->problem.changed = candidate->problem.changed;
+		img->ref_cacheMap = NULL;
+		mutex_init( &img->lock, LOCK_IMAGE );
 		if ( candidate->crc32 != NULL ) {
 			const size_t mb = IMGSIZE_TO_HASHBLOCKS( candidate->virtualFilesize ) * sizeof(uint32_t);
 			img->crc32 = malloc( mb );
 			memcpy( img->crc32, candidate->crc32, mb );
 		}
-		mutex_lock( &candidate->lock );
-		if ( candidate->cache_map != NULL ) {
-			const size_t mb = IMGSIZE_TO_MAPBYTES( candidate->virtualFilesize );
-			img->cache_map = malloc( mb );
-			memcpy( img->cache_map, candidate->cache_map, mb );
+		dnbd3_cache_map_t *cache = ref_get_cachemap( candidate );
+		if ( cache != NULL ) {
+			ref_setref( &img->ref_cacheMap, &cache->reference );
+			ref_put( &cache->reference );
 		}
-		mutex_unlock( &candidate->lock );
 		if ( image_addToList( img ) ) {
 			image_release( candidate );
 			candidate = img;
+			// Check if image is incomplete, initialize uplink
+			if ( candidate->ref_cacheMap != NULL ) {
+				uplink_init( candidate, -1, NULL, -1 );
+			}
+			// Try again with new instance
+			image_ensureOpen( candidate );
 		} else {
 			img->users = 0;
 			image_free( img );
 		}
-		// readFd == -1 and working == FALSE at this point,
-		// this function needs some splitting up for handling as we need to run most
-		// of the above code again. for now we know that the next call for this
-		// name:rid will get ne newly inserted "img" and try to re-open the file.
-	}
-
-	// Check if image is incomplete, handle
-	if ( candidate->cache_map != NULL ) {
-		if ( candidate->uplink == NULL ) {
-			uplink_init( candidate, -1, NULL, -1 );
-		}
+		// readFd == -1 and problem.read == true
 	}
 
 	return candidate; // We did all we can, hopefully it's working
@@ -391,17 +435,16 @@ dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking)
  * Every call to image_lock() needs to be followed by a call to image_release() at some point.
  * Locks on: imageListLock, _images[].lock
  */
-dnbd3_image_t* image_lock(dnbd3_image_t *image) // TODO: get rid, fix places that do image->users--
+dnbd3_image_t* image_lock(dnbd3_image_t *image)
 {
 	if ( image == NULL ) return NULL ;
 	int i;
 	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) {
-			mutex_lock( &image->lock );
-			mutex_unlock( &imageListLock );
+			assert( _images[i]->id == image->id );
 			image->users++;
-			mutex_unlock( &image->lock );
+			mutex_unlock( &imageListLock );
 			return image;
 		}
 	}
@@ -419,12 +462,9 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 {
 	if ( image == NULL ) return NULL;
 	mutex_lock( &imageListLock );
-	mutex_lock( &image->lock );
 	assert( image->users > 0 );
-	image->users--;
-	bool inUse = image->users != 0;
-	mutex_unlock( &image->lock );
-	if ( inUse ) { // Still in use, do nothing
+	// Decrement and check for 0
+	if ( --image->users != 0 ) { // Still in use, do nothing
 		mutex_unlock( &imageListLock );
 		return NULL;
 	}
@@ -433,13 +473,14 @@ dnbd3_image_t* image_release(dnbd3_image_t *image)
 	// responsible for freeing it
 	for (int i = 0; i < _num_images; ++i) {
 		if ( _images[i] == image ) { // Found, do nothing
+			assert( _images[i]->id == image->id );
 			mutex_unlock( &imageListLock );
 			return NULL;
 		}
 	}
 	mutex_unlock( &imageListLock );
 	// So it wasn't in the images list anymore either, get rid of it
-	if ( !inUse ) image = image_free( image );
+	image = image_free( image );
 	return NULL;
 }
 
@@ -470,15 +511,14 @@ static dnbd3_image_t* image_remove(dnbd3_image_t *image)
 {
 	bool mustFree = false;
 	mutex_lock( &imageListLock );
-	mutex_lock( &image->lock );
 	for ( int i = _num_images - 1; i >= 0; --i ) {
 		if ( _images[i] == image ) {
+			assert( _images[i]->id == image->id );
 			_images[i] = NULL;
 			mustFree = ( image->users == 0 );
 		}
 		if ( _images[i] == NULL && i + 1 == _num_images ) _num_images--;
 	}
-	mutex_unlock( &image->lock );
 	mutex_unlock( &imageListLock );
 	if ( mustFree ) image = image_free( image );
 	return image;
@@ -493,17 +533,7 @@ void image_killUplinks()
 	mutex_lock( &imageListLock );
 	for (i = 0; i < _num_images; ++i) {
 		if ( _images[i] == NULL ) continue;
-		mutex_lock( &_images[i]->lock );
-		if ( _images[i]->uplink != NULL ) {
-			mutex_lock( &_images[i]->uplink->queueLock );
-			if ( !_images[i]->uplink->shutdown ) {
-				thread_detach( _images[i]->uplink->thread );
-				_images[i]->uplink->shutdown = true;
-			}
-			mutex_unlock( &_images[i]->uplink->queueLock );
-			signal_call( _images[i]->uplink->signal );
-		}
-		mutex_unlock( &_images[i]->lock );
+		uplink_shutdown( _images[i] );
 	}
 	mutex_unlock( &imageListLock );
 }
@@ -542,18 +572,14 @@ bool image_loadAll(char *path)
 			// Lock again, see if image is still there, free if required
 			mutex_lock( &imageListLock );
 			if ( ret || i >= _num_images || _images[i] == NULL || _images[i]->id != imgId ) continue;
-			// Image needs to be removed
+			// File not readable but still in list -- needs to be removed
 			imgHandle = _images[i];
 			_images[i] = NULL;
 			if ( i + 1 == _num_images ) _num_images--;
-			mutex_lock( &imgHandle->lock );
-			const bool freeImg = ( imgHandle->users == 0 );
-			mutex_unlock( &imgHandle->lock );
-			// We unlocked, but the image has been removed from the list already, so
-			// there's no way the users-counter can increase at this point.
-			if ( freeImg ) {
+			if ( imgHandle->users == 0 ) {
 				// Image is not in use anymore, free the dangling entry immediately
-				mutex_unlock( &imageListLock ); // image_free might do several fs operations; unlock
+				mutex_unlock( &imageListLock ); // image_free locks on this, and
+				// might do several fs operations; unlock
 				image_free( imgHandle );
 				mutex_lock( &imageListLock );
 			}
@@ -581,12 +607,10 @@ bool image_tryFreeAll()
 {
 	mutex_lock( &imageListLock );
 	for (int i = _num_images - 1; i >= 0; --i) {
-		if ( _images[i] != NULL && _images[i]->users == 0 ) { // XXX Data race...
+		if ( _images[i] != NULL && _images[i]->users == 0 ) {
 			dnbd3_image_t *image = _images[i];
 			_images[i] = NULL;
-			mutex_unlock( &imageListLock );
 			image = image_free( image );
-			mutex_lock( &imageListLock );
 		}
 		if ( i + 1 == _num_images && _images[i] == NULL ) _num_images--;
 	}
@@ -596,37 +620,44 @@ bool image_tryFreeAll()
 
 /**
  * Free image. DOES NOT check if it's in use.
- * Indirectly locks on imageListLock, image.lock, uplink.queueLock
+ * (Indirectly) locks on image.lock, uplink.queueLock
  */
 static dnbd3_image_t* image_free(dnbd3_image_t *image)
 {
 	assert( image != NULL );
-	if ( !_shutdown ) {
-		logadd( LOG_INFO, "Freeing image %s:%d", image->name, (int)image->rid );
+	assert( image->users == 0 );
+	logadd( ( _shutdown ? LOG_DEBUG1 : LOG_INFO ), "Freeing image %s:%d", PIMG(image) );
+	// uplink_shutdown might return false to tell us
+	// that the shutdown is in progress. Bail out since
+	// this will get called again when the uplink is done.
+	if ( !uplink_shutdown( image ) )
+		return NULL;
+	if ( isImageFromUpstream( image ) ) {
+		saveMetaData( image, NULL, 0 );
+		if ( image->ref_cacheMap != NULL ) {
+			saveCacheMap( image );
+		}
 	}
-	//
-	uplink_shutdown( image );
 	mutex_lock( &image->lock );
-	free( image->cache_map );
+	ref_setref( &image->ref_cacheMap, NULL );
 	free( image->crc32 );
 	free( image->path );
 	free( image->name );
-	image->cache_map = NULL;
 	image->crc32 = NULL;
 	image->path = NULL;
 	image->name = NULL;
 	mutex_unlock( &image->lock );
 	if ( image->readFd != -1 ) close( image->readFd );
 	mutex_destroy( &image->lock );
-	//
-	memset( image, 0, sizeof(*image) );
 	free( image );
 	return NULL ;
 }
 
-bool image_isHashBlockComplete(const uint8_t * const cacheMap, const uint64_t block, const uint64_t realFilesize)
+bool image_isHashBlockComplete(dnbd3_cache_map_t * const cache, const uint64_t block, const uint64_t realFilesize)
 {
-	if ( cacheMap == NULL ) return true;
+	if ( cache == NULL )
+		return true;
+	const atomic_uint_least8_t *cacheMap = cache->map;
 	const uint64_t end = (block + 1) * HASH_BLOCK_SIZE;
 	if ( end <= realFilesize ) {
 		// Trivial case: block in question is not the last block (well, or image size is multiple of HASH_BLOCK_SIZE)
@@ -671,7 +702,8 @@ static bool image_load_all_internal(char *base, char *path)
 
 	while ( !_shutdown && (entryPtr = readdir( dir )) != NULL ) {
 		entry = *entryPtr;
-		if ( strcmp( entry.d_name, "." ) == 0 || strcmp( entry.d_name, ".." ) == 0 ) continue;
+		if ( entry.d_name[0] == '.' )
+			continue; // No hidden files, no . or ..
 		if ( strlen( entry.d_name ) > SUBDIR_LEN ) {
 			logadd( LOG_WARNING, "Skipping entry %s: Too long (max %d bytes)", entry.d_name, (int)SUBDIR_LEN );
 			continue;
@@ -727,11 +759,10 @@ static bool image_addToList(dnbd3_image_t *image)
  * Note that this is NOT THREAD SAFE so make sure its always
  * called on one thread only.
  */
-static bool image_load(char *base, char *path, int withUplink)
+static bool image_load(char *base, char *path, bool withUplink)
 {
 	int revision = -1;
-	struct stat st;
-	uint8_t *cache_map = NULL;
+	dnbd3_cache_map_t *cache = NULL;
 	uint32_t *crc32list = NULL;
 	dnbd3_image_t *existing = NULL;
 	int fdImage = -1;
@@ -814,45 +845,36 @@ static bool image_load(char *base, char *path, int withUplink)
 	}
 
 	// 1. Allocate memory for the cache map if the image is incomplete
-	cache_map = image_loadCacheMap( path, virtualFilesize );
+	cache = image_loadCacheMap( path, virtualFilesize );
 
 	// XXX: Maybe try sha-256 or 512 first if you're paranoid (to be implemented)
 
 	// 2. Load CRC-32 list of image
-	bool doFullCheck = false;
 	uint32_t masterCrc = 0;
 	const int hashBlockCount = IMGSIZE_TO_HASHBLOCKS( virtualFilesize );
 	crc32list = image_loadCrcList( path, virtualFilesize, &masterCrc );
 
-	// Check CRC32
-	if ( crc32list != NULL ) {
-		if ( !image_checkRandomBlocks( 4, fdImage, realFilesize, crc32list, cache_map ) ) {
-			logadd( LOG_ERROR, "quick crc32 check of %s failed. Data corruption?", path );
-			doFullCheck = true;
-		}
-	}
-
 	// Compare data just loaded to identical image we apparently already loaded
 	if ( existing != NULL ) {
 		if ( existing->realFilesize != realFilesize ) {
-			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", existing->name, (int)existing->rid );
+			logadd( LOG_WARNING, "Size of image '%s:%d' has changed.", PIMG(existing) );
 			// Image will be replaced below
 		} else if ( existing->crc32 != NULL && crc32list != NULL
 				&& memcmp( existing->crc32, crc32list, sizeof(uint32_t) * hashBlockCount ) != 0 ) {
-			logadd( LOG_WARNING, "CRC32 list of image '%s:%d' has changed.", existing->name, (int)existing->rid );
+			logadd( LOG_WARNING, "CRC32 list of image '%s:%d' has changed.", PIMG(existing) );
 			logadd( LOG_WARNING, "The image will be reloaded, but you should NOT replace existing images while the server is running." );
 			logadd( LOG_WARNING, "Actually even if it's not running this should never be done. Use a new RID instead!" );
 			// Image will be replaced below
 		} else if ( existing->crc32 == NULL && crc32list != NULL ) {
-			logadd( LOG_INFO, "Found CRC-32 list for already loaded image '%s:%d', adding...", existing->name, (int)existing->rid );
+			logadd( LOG_INFO, "Found CRC-32 list for already loaded image '%s:%d', adding...", PIMG(existing) );
 			existing->crc32 = crc32list;
 			existing->masterCrc32 = masterCrc;
 			crc32list = NULL;
 			function_return = true;
 			goto load_error; // Keep existing
-		} else if ( existing->cache_map != NULL && cache_map == NULL ) {
+		} else if ( existing->ref_cacheMap != NULL && cache == NULL ) {
 			// Just ignore that fact, if replication is really complete the cache map will be removed anyways
-			logadd( LOG_INFO, "Image '%s:%d' has no cache map on disk!", existing->name, (int)existing->rid );
+			logadd( LOG_INFO, "Image '%s:%d' has no cache map on disk!", PIMG(existing) );
 			function_return = true;
 			goto load_error; // Keep existing
 		} else {
@@ -870,41 +892,33 @@ static bool image_load(char *base, char *path, int withUplink)
 	dnbd3_image_t *image = calloc( 1, sizeof(dnbd3_image_t) );
 	image->path = strdup( path );
 	image->name = strdup( imgName );
-	image->cache_map = cache_map;
+	image->ref_cacheMap = NULL;
+	ref_setref( &image->ref_cacheMap, &cache->reference );
 	image->crc32 = crc32list;
 	image->masterCrc32 = masterCrc;
-	image->uplink = NULL;
+	image->uplinkref = NULL;
 	image->realFilesize = realFilesize;
 	image->virtualFilesize = virtualFilesize;
 	image->rid = (uint16_t)revision;
 	image->users = 0;
 	image->readFd = -1;
-	image->working = (image->cache_map == NULL );
 	timing_get( &image->nextCompletenessEstimate );
 	image->completenessEstimate = -1;
-	mutex_init( &image->lock );
-	int32_t offset;
-	if ( stat( path, &st ) == 0 ) {
-		// Negatively offset atime by file modification time
-		offset = (int32_t)( st.st_mtime - time( NULL ) );
-		if ( offset > 0 ) offset = 0;
-	} else {
-		offset = 0;
-	}
-	timing_gets( &image->atime, offset );
+	mutex_init( &image->lock, LOCK_IMAGE );
+	loadImageMeta( image );
 
 	// Prevent freeing in cleanup
-	cache_map = NULL;
+	cache = NULL;
 	crc32list = NULL;
 
 	// Get rid of cache map if image is complete
-	if ( image->cache_map != NULL ) {
+	if ( image->ref_cacheMap != NULL ) {
 		image_isComplete( image );
 	}
 
 	// Image is definitely incomplete, initialize uplink worker
-	if ( image->cache_map != NULL ) {
-		image->working = false;
+	if ( image->ref_cacheMap != NULL ) {
+		image->problem.uplink = true;
 		if ( withUplink ) {
 			uplink_init( image, -1, NULL, -1 );
 		}
@@ -915,40 +929,37 @@ static bool image_load(char *base, char *path, int withUplink)
 	if ( image_addToList( image ) ) {
 		// Keep fd for reading
 		fdImage = -1;
+		// Check CRC32
+		image_checkRandomBlocks( image, 4, -1 );
 	} else {
 		logadd( LOG_ERROR, "Image list full: Could not add image %s", path );
 		image->readFd = -1; // Keep fdImage instead, will be closed below
 		image = image_free( image );
 		goto load_error;
 	}
-	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", image->name, (int)image->rid );
-	// CRC errors found...
-	if ( doFullCheck ) {
-		logadd( LOG_INFO, "Queueing full CRC32 check for '%s:%d'\n", image->name, (int)image->rid );
-		integrity_check( image, -1 );
-	}
-
+	logadd( LOG_DEBUG1, "Loaded image '%s:%d'\n", PIMG(image) );
 	function_return = true;
 
 	// Clean exit:
 load_error: ;
 	if ( existing != NULL ) existing = image_release( existing );
 	if ( crc32list != NULL ) free( crc32list );
-	if ( cache_map != NULL ) free( cache_map );
+	if ( cache != NULL ) free( cache );
 	if ( fdImage != -1 ) close( fdImage );
 	return function_return;
 }
 
-static uint8_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize)
+static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const int64_t fileSize)
 {
-	uint8_t *retval = NULL;
+	dnbd3_cache_map_t *retval = NULL;
 	char mapFile[strlen( imagePath ) + 10 + 1];
 	sprintf( mapFile, "%s.map", imagePath );
 	int fdMap = open( mapFile, O_RDONLY );
-	if ( fdMap >= 0 ) {
+	if ( fdMap != -1 ) {
 		const int map_size = IMGSIZE_TO_MAPBYTES( fileSize );
-		retval = calloc( 1, map_size );
-		const ssize_t rd = read( fdMap, retval, map_size );
+		retval = calloc( 1, sizeof(*retval) + map_size );
+		ref_init( &retval->reference, cmfree, 0 );
+		const ssize_t rd = read( fdMap, retval->map, map_size );
 		if ( map_size != rd ) {
 			logadd( LOG_WARNING, "Could only read %d of expected %d bytes of cache map of '%s'", (int)rd, (int)map_size, imagePath );
 			// Could not read complete map, that means the rest of the image file will be considered incomplete
@@ -1009,18 +1020,35 @@ static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t f
 	return retval;
 }
 
-static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t realFilesize, uint32_t * const crc32list, uint8_t * const cache_map)
+/**
+ * Check up to count random blocks from given image. If fromFd is -1, the check will
+ * be run asynchronously using the integrity checker. Otherwise, the check will
+ * happen in the function and return the result of the check.
+ * @param image image to check
+ * @param count number of blocks to check (max)
+ * @param fromFd, check synchronously and use this fd for reading, -1 = async
+ * @return true = OK, false = error. Meaningless if fromFd == -1
+ */
+static bool image_checkRandomBlocks(dnbd3_image_t *image, const int count, int fromFd)
 {
+	if ( image->crc32 == NULL )
+		return true;
 	// This checks the first block and (up to) count - 1 random blocks for corruption
 	// via the known crc32 list. This is very sloppy and is merely supposed to detect
 	// accidental corruption due to broken dnbd3-proxy functionality or file system
-	// corruption.
+	// corruption, or people replacing/updating images which is a very stupid thing.
 	assert( count > 0 );
-	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( realFilesize );
-	int blocks[count + 1];
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	const int hashBlocks = IMGSIZE_TO_HASHBLOCKS( image->virtualFilesize );
+	int blocks[count+1]; // +1 for "-1" in sync case
 	int index = 0, j;
 	int block;
-	if ( image_isHashBlockComplete( cache_map, 0, realFilesize ) ) blocks[index++] = 0;
+	if ( image_isHashBlockComplete( cache, 0, image->virtualFilesize ) ) {
+		blocks[index++] = 0;
+	}
+	if ( hashBlocks > 1 && image_isHashBlockComplete( cache, hashBlocks - 1, image->virtualFilesize ) ) {
+		blocks[index++] = hashBlocks - 1;
+	}
 	int tries = count * 5; // Try only so many times to find a non-duplicate complete block
 	while ( index + 1 < count && --tries > 0 ) {
 		block = rand() % hashBlocks; // Random block
@@ -1028,11 +1056,24 @@ static bool image_checkRandomBlocks(const int count, int fdImage, const int64_t 
 			if ( blocks[j] == block ) goto while_end;
 		}
 		// Block complete? If yes, add to list
-		if ( image_isHashBlockComplete( cache_map, block, realFilesize ) ) blocks[index++] = block;
+		if ( image_isHashBlockComplete( cache, block, image->virtualFilesize ) ) {
+			blocks[index++] = block;
+		}
 while_end: ;
 	}
-	blocks[MIN(index, count)] = -1; // End of array has to be marked by a -1
-	return image_checkBlocksCrc32( fdImage, crc32list, blocks, realFilesize ); // Return result of check
+	if ( cache != NULL ) {
+		ref_put( &cache->reference );
+	}
+	if ( fromFd == -1 ) {
+		// Async
+		for ( int i = 0; i < index; ++i ) {
+			integrity_check( image, blocks[i], true );
+		}
+		return true;
+	}
+	// Sync
+	blocks[index] = -1;
+	return image_checkBlocksCrc32( fromFd, image->crc32, blocks, image->realFilesize );
 }
 
 /**
@@ -1047,7 +1088,7 @@ bool image_create(char *image, int revision, uint64_t size)
 		logadd( LOG_ERROR, "revision id invalid: %d", revision );
 		return false;
 	}
-	char path[PATHLEN], cache[PATHLEN];
+	char path[PATHLEN], cache[PATHLEN+4];
 	char *lastSlash = strrchr( image, '/' );
 	if ( lastSlash == NULL ) {
 		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
@@ -1058,7 +1099,7 @@ bool image_create(char *image, int revision, uint64_t size)
 		*lastSlash = '/';
 		snprintf( path, PATHLEN, "%s/%s.r%d", _basePath, image, revision );
 	}
-	snprintf( cache, PATHLEN, "%s.map", path );
+	snprintf( cache, PATHLEN+4, "%s.map", path );
 	size = (size + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 	const int mapsize = IMGSIZE_TO_MAPBYTES(size);
 	// Write files
@@ -1079,14 +1120,19 @@ bool image_create(char *image, int revision, uint64_t size)
 		logadd( LOG_DEBUG1, "Could not allocate %d bytes for %s (errno=%d)", mapsize, cache, err );
 	}
 	// Now write image
+	bool fallback = false;
 	if ( !_sparseFiles && !file_alloc( fdImage, 0, size ) ) {
 		logadd( LOG_ERROR, "Could not allocate %" PRIu64 " bytes for %s (errno=%d)", size, path, errno );
 		logadd( LOG_ERROR, "It is highly recommended to use a file system that supports preallocating disk"
 				" space without actually writing all zeroes to the block device." );
 		logadd( LOG_ERROR, "If you cannot fix this, try setting sparseFiles=true, but don't expect"
 				" divine performance during replication." );
-		goto failure_cleanup;
-	} else if ( _sparseFiles && !file_setSize( fdImage, size ) ) {
+		if ( !_ignoreAllocErrors ) {
+			goto failure_cleanup;
+		}
+		fallback = true;
+	}
+	if ( ( _sparseFiles || fallback ) && !file_setSize( fdImage, size ) ) {
 		logadd( LOG_ERROR, "Could not create sparse file of %" PRIu64 " bytes for %s (errno=%d)", size, path, errno );
 		logadd( LOG_ERROR, "Make sure you have enough disk space, check directory permissions, fs errors etc." );
 		goto failure_cleanup;
@@ -1111,8 +1157,7 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
  * revision 0 is requested, it will:
  * a) Try to clone it from an authoritative dnbd3 server, if
  *    the server is running in proxy mode.
- * b) Try to load it from disk by constructing the appropriate file name, if not
- *    running in proxy mode.
+ * b) Try to load it from disk by constructing the appropriate file name.
  *
  *  If the return value is not NULL,
  * image_release needs to be called on the image at some point.
@@ -1120,21 +1165,29 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
  */
 dnbd3_image_t* image_getOrLoad(char * const name, const uint16_t revision)
 {
+	dnbd3_image_t *image;
 	// specific revision - try shortcut
 	if ( revision != 0 ) {
-		dnbd3_image_t *image = image_get( name, revision, true );
-		if ( image != NULL ) return image;
+		image = image_get( name, revision, true );
+		if ( image != NULL )
+			return image;
 	}
 	const size_t len = strlen( name );
 	// Sanity check
 	if ( len == 0 || name[len - 1] == '/' || name[0] == '/'
 			|| name[0] == '.' || strstr( name, "/." ) != NULL ) return NULL;
-	// Call specific function depending on whether this is a proxy or not
+	// Re-check latest local revision
+	image = loadImageServer( name, revision );
+	// If in proxy mode, check with upstream servers
 	if ( _isProxy ) {
-		return loadImageProxy( name, revision, len );
-	} else {
-		return loadImageServer( name, revision );
+		// Forget the locally loaded one
+		image_release( image );
+		// Check with upstream - if unsuccessful, will return the same
+		// as loadImageServer did
+		image = loadImageProxy( name, revision, len );
 	}
+	// Lookup on local storage
+	return image;
 }
 
 /**
@@ -1191,7 +1244,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	dnbd3_host_t servers[REP_NUM_SRV];
 	int uplinkSock = -1;
 	dnbd3_host_t uplinkServer;
-	const int count = altservers_getListForUplink( servers, REP_NUM_SRV, false );
+	const int count = altservers_getHostListForReplication( name, servers, REP_NUM_SRV );
 	uint16_t remoteProtocolVersion;
 	uint16_t remoteRid = revision;
 	uint64_t remoteImageSize;
@@ -1238,7 +1291,11 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 		} else {
 			ok = image_ensureDiskSpace( remoteImageSize + ( 10 * 1024 * 1024 ), false ); // some extra space for cache map etc.
 		}
-		ok = ok && image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img
+		if ( ok ) {
+			ok = image_clone( sock, name, remoteRid, remoteImageSize ); // This sets up the file+map+crc and loads the img
+		} else {
+			logadd( LOG_INFO, "Not enough space to replicate '%s:%d'", name, (int)revision );
+		}
 		mutex_unlock( &reloadLock );
 		if ( !ok ) goto server_fail;
 
@@ -1266,7 +1323,7 @@ server_fail: ;
 		} else {
 			// Clumsy busy wait, but this should only take as long as it takes to start a thread, so is it really worth using a signalling mechanism?
 			int i = 0;
-			while ( !image->working && ++i < 100 )
+			while ( image->problem.uplink && ++i < 100 )
 				usleep( 2000 );
 		}
 	} else if ( uplinkSock != -1 ) {
@@ -1394,9 +1451,13 @@ static bool image_clone(int sock, char *name, uint16_t revision, uint64_t imageS
 				logadd( LOG_WARNING, "OTF-Clone: Corrupted CRC-32 list. ignored. (%s)", name );
 			} else {
 				int fd = open( crcFile, O_WRONLY | O_CREAT, 0644 );
-				write( fd, &masterCrc, sizeof(uint32_t) );
-				write( fd, crc32list, crc32len );
+				ssize_t ret = write( fd, &masterCrc, sizeof(masterCrc) );
+				ret += write( fd, crc32list, crc32len );
 				close( fd );
+				if ( (size_t)ret != crc32len + sizeof(masterCrc) ) {
+					logadd( LOG_WARNING, "Could not save freshly received crc32 list for %s:%d", name, (int)revision );
+					unlink( crcFile );
+				}
 			}
 		}
 		free( crc32list );
@@ -1504,9 +1565,9 @@ json_t* image_getListAsJson()
 	json_t *imagesJson = json_array();
 	json_t *jsonImage;
 	int i;
-	char uplinkName[100] = { 0 };
+	char uplinkName[100];
 	uint64_t bytesReceived;
-	int users, completeness, idleTime;
+	int completeness, idleTime;
 	declare_now;
 
 	mutex_lock( &imageListLock );
@@ -1514,30 +1575,38 @@ json_t* image_getListAsJson()
 		if ( _images[i] == NULL ) continue;
 		dnbd3_image_t *image = _images[i];
 		mutex_lock( &image->lock );
-		mutex_unlock( &imageListLock );
-		users = image->users;
 		idleTime = (int)timing_diff( &image->atime, &now );
 		completeness = image_getCompletenessEstimate( image );
-		if ( image->uplink == NULL ) {
+		mutex_unlock( &image->lock );
+		dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
+		if ( uplink == NULL ) {
 			bytesReceived = 0;
 			uplinkName[0] = '\0';
 		} else {
-			bytesReceived = image->uplink->bytesReceived;
-			if ( image->uplink->fd == -1 || !host_to_string( &image->uplink->currentServer, uplinkName, sizeof(uplinkName) ) ) {
+			bytesReceived = uplink->bytesReceived;
+			if ( !uplink_getHostString( uplink, uplinkName, sizeof(uplinkName) ) ) {
 				uplinkName[0] = '\0';
 			}
+			ref_put( &uplink->reference );
 		}
-		image->users++; // Prevent freeing after we unlock
-		mutex_unlock( &image->lock );
 
-		jsonImage = json_pack( "{sisssisisisisI}",
+		int problems = 0;
+#define addproblem(name,val) if (image->problem.name) problems |= (1 << val)
+		addproblem(read, 0);
+		addproblem(write, 1);
+		addproblem(changed, 2);
+		addproblem(uplink, 3);
+		addproblem(queue, 4);
+
+		jsonImage = json_pack( "{sisssisisisisIsi}",
 				"id", image->id, // id, name, rid never change, so access them without locking
 				"name", image->name,
 				"rid", (int) image->rid,
-				"users", users,
+				"users", image->users,
 				"complete",  completeness,
 				"idle", idleTime,
-				"size", (json_int_t)image->virtualFilesize );
+				"size", (json_int_t)image->virtualFilesize,
+				"problems", problems );
 		if ( bytesReceived != 0 ) {
 			json_object_set_new( jsonImage, "bytesReceived", json_integer( (json_int_t) bytesReceived ) );
 		}
@@ -1546,8 +1615,6 @@ json_t* image_getListAsJson()
 		}
 		json_array_append_new( imagesJson, jsonImage );
 
-		image = image_release( image ); // Since we did image->users++;
-		mutex_lock( &imageListLock );
 	}
 	mutex_unlock( &imageListLock );
 	return imagesJson;
@@ -1556,30 +1623,37 @@ json_t* image_getListAsJson()
 /**
  * Get completeness of an image in percent. Only estimated, not exact.
  * Returns: 0-100
- * DOES NOT LOCK, so make sure to do so before calling
  */
 int image_getCompletenessEstimate(dnbd3_image_t * const image)
 {
 	assert( image != NULL );
-	if ( image->cache_map == NULL ) return image->working ? 100 : 0;
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL )
+		return 100;
+	const int len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+	if ( unlikely( len == 0 ) ) {
+		ref_put( &cache->reference );
+		return 0;
+	}
 	declare_now;
 	if ( !timing_reached( &image->nextCompletenessEstimate, &now ) ) {
 		// Since this operation is relatively expensive, we cache the result for a while
+		ref_put( &cache->reference );
 		return image->completenessEstimate;
 	}
 	int i;
 	int percent = 0;
-	const int len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
-	if ( len == 0 ) return 0;
 	for ( i = 0; i < len; ++i ) {
-		if ( image->cache_map[i] == 0xff ) {
+		const uint8_t v = atomic_load_explicit( &cache->map[i], memory_order_relaxed );
+		if ( v == 0xff ) {
 			percent += 100;
-		} else if ( image->cache_map[i] != 0 ) {
+		} else if ( v != 0 ) {
 			percent += 50;
 		}
 	}
+	ref_put( &cache->reference );
 	image->completenessEstimate = percent / len;
-	timing_set( &image->nextCompletenessEstimate, &now, 8 + rand() % 32 );
+	timing_set( &image->nextCompletenessEstimate, &now, 4 + rand() % 16 );
 	return image->completenessEstimate;
 }
 
@@ -1611,7 +1685,7 @@ bool image_checkBlocksCrc32(const int fd, uint32_t *crc32list, const int *blocks
 static bool image_calcBlockCrc32(const int fd, const size_t block, const uint64_t realFilesize, uint32_t *crc)
 {
 	// Make buffer 4k aligned in case fd has O_DIRECT set
-#define BSIZE 262144
+#define BSIZE (512*1024)
 	char rawBuffer[BSIZE + DNBD3_BLOCK_SIZE];
 	char * const buffer = (char*)( ( (uintptr_t)rawBuffer + ( DNBD3_BLOCK_SIZE - 1 ) ) & ~( DNBD3_BLOCK_SIZE - 1 ) );
 	// How many bytes to read from the input file
@@ -1666,61 +1740,73 @@ bool image_ensureDiskSpaceLocked(uint64_t size, bool force)
 /**
  * Make sure at least size bytes are available in _basePath.
  * Will delete old images to make room for new ones.
- * TODO: Store last access time of images. Currently the
- * last access time is reset to the file modification time
- * on server restart. Thus it will
- * currently only delete images if server uptime is > 10 hours.
+ * It will only delete images if a configurable uptime is
+ * reached.
  * This can be overridden by setting force to true, in case
  * free space is desperately needed.
  * Return true iff enough space is available. false in random other cases
  */
 static bool image_ensureDiskSpace(uint64_t size, bool force)
 {
-	for ( int maxtries = 0; maxtries < 20; ++maxtries ) {
+	for ( int maxtries = 0; maxtries < 50; ++maxtries ) {
 		uint64_t available;
 		if ( !file_freeDiskSpace( _basePath, NULL, &available ) ) {
-			const int e = errno;
-			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left... ;-)\n", e );
+			logadd( LOG_WARNING, "Could not get free disk space (errno %d), will assume there is enough space left.", errno );
 			return true;
 		}
-		if ( available > size ) return true;
-		if ( !force && dnbd3_serverUptime() < 10 * 3600 ) {
-			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < 10 hours...", (int)(available / (1024ll * 1024ll)),
-					(int)(size / (1024 * 1024)) );
+		if ( available > size )
+			return true; // Yay
+		if ( !_isProxy || _autoFreeDiskSpaceDelay == -1 ) {
+			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but auto-freeing of disk space is disabled.",
+					(int)(available / (1024ll * 1024)),
+					(int)(size / (1024ll * 1024)) );
+			return false; // If not in proxy mode at all, or explicitly disabled, never delete anything
+		}
+		if ( !force && dnbd3_serverUptime() < (uint32_t)_autoFreeDiskSpaceDelay ) {
+			logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, but server uptime < %d minutes...",
+					(int)(available / (1024ll * 1024)),
+					(int)(size / (1024ll * 1024)), _autoFreeDiskSpaceDelay / 60 );
 			return false;
 		}
-		logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, freeing an image...", (int)(available / (1024ll * 1024ll)),
-				(int)(size / (1024 * 1024)) );
+		logadd( LOG_INFO, "Only %dMiB free, %dMiB requested, freeing an image...",
+				(int)(available / (1024ll * 1024)),
+				(int)(size / (1024ll * 1024)) );
 		// Find least recently used image
 		dnbd3_image_t *oldest = NULL;
-		int i; // XXX improve locking
+		int i;
+		mutex_lock( &imageListLock );
 		for (i = 0; i < _num_images; ++i) {
-			if ( _images[i] == NULL ) continue;
-			dnbd3_image_t *current = image_lock( _images[i] );
-			if ( current == NULL ) continue;
-			if ( current->users == 1 ) { // Just from the lock above
-				if ( oldest == NULL || timing_1le2( &current->atime, &oldest->atime ) ) {
-					// Oldest access time so far
-					oldest = current;
-				}
-			}
-			current = image_release( current );
+			dnbd3_image_t *current = _images[i];
+			if ( current == NULL || current->users != 0 )
+				continue; // Empty slot or in use
+			if ( oldest != NULL && timing_1le2( &oldest->atime, &current->atime ) )
+				continue; // Already got a newer one
+			if ( !isImageFromUpstream( current ) )
+				continue; // Not replicated, don't touch
+			// Oldest access time so far
+			oldest = current;
 		}
-		declare_now;
-		if ( oldest == NULL || ( !_sparseFiles && timing_diff( &oldest->atime, &now ) < 86400 ) ) {
-			if ( oldest == NULL ) {
-				logadd( LOG_INFO, "All images are currently in use :-(" );
-			} else {
-				logadd( LOG_INFO, "Won't free any image, all have been in use in the past 24 hours :-(" );
-			}
+		if ( oldest != NULL ) {
+			oldest->users++;
+		}
+		mutex_unlock( &imageListLock );
+		if ( oldest == NULL ) {
+			logadd( LOG_INFO, "All images are currently in use :-(" );
 			return false;
 		}
-		oldest = image_lock( oldest );
-		if ( oldest == NULL ) continue; // Image freed in the meantime? Try again
-		logadd( LOG_INFO, "'%s:%d' has to go!", oldest->name, (int)oldest->rid );
-		char *filename = strdup( oldest->path );
-		oldest = image_remove( oldest );
-		oldest = image_release( oldest );
+		declare_now;
+		if ( !_sparseFiles && timing_diff( &oldest->atime, &now ) < 86400 ) {
+			logadd( LOG_INFO, "Won't free any image, all have been in use in the past 24 hours :-(" );
+			image_release( oldest ); // We did users++ above; image might have to be freed entirely
+			return false;
+		}
+		logadd( LOG_INFO, "'%s:%d' has to go!", PIMG(oldest) );
+		char *filename = strdup( oldest->path ); // Copy name as we remove the image first
+		oldest = image_remove( oldest ); // Remove from list first...
+		oldest = image_release( oldest ); // Decrease users counter; if it falls to 0, image will be freed
+		// Technically the image might have been grabbed again, but chances for
+		// this should be close to zero anyways since the image went unused for more than 24 hours..
+		// Proper fix would be a "delete" flag in the image struct that will be checked in image_free
 		unlink( filename );
 		size_t len = strlen( filename ) + 10;
 		char buffer[len];
@@ -1735,62 +1821,294 @@ static bool image_ensureDiskSpace(uint64_t size, bool force)
 	return false;
 }
 
-void image_closeUnusedFd()
+#define FDCOUNT (400)
+static void* closeUnusedFds(void* nix UNUSED)
 {
-	int fd, i;
+	if ( !_closeUnusedFd )
+		return NULL;
 	ticks deadline;
 	timing_gets( &deadline, -UNUSED_FD_TIMEOUT );
-	char imgstr[300];
+	int fds[FDCOUNT];
+	int fdindex = 0;
+	setThreadName( "unused-fd-close" );
 	mutex_lock( &imageListLock );
-	for (i = 0; i < _num_images; ++i) {
+	for ( int i = 0; i < _num_images; ++i ) {
+		dnbd3_image_t * const image = _images[i];
+		if ( image == NULL || image->readFd == -1 )
+			continue;
+		if ( image->users == 0 && image->uplinkref == NULL && timing_reached( &image->atime, &deadline ) ) {
+			logadd( LOG_DEBUG1, "Inactive fd closed for %s:%d", PIMG(image) );
+			fds[fdindex++] = image->readFd;
+			image->readFd = -1; // Not a race; image->users is 0 and to increase it you need imageListLock
+			if ( fdindex == FDCOUNT )
+				break;
+		}
+	}
+	mutex_unlock( &imageListLock );
+	// Do this after unlock since close might block
+	for ( int i = 0; i < fdindex; ++i ) {
+		close( fds[i] );
+	}
+	return NULL;
+}
+
+static bool isImageFromUpstream(dnbd3_image_t *image)
+{
+	if ( !_isProxy )
+		return false; // Nothing to do
+	// Check if we're a "hybrid proxy", i.e. there are only some namespaces (directories)
+	// for which we have any upstream servers configured. If there's none, don't touch
+	// the cache map on disk.
+	if ( !altservers_imageHasAltServers( image->name ) )
+		return false; // Nothing to do
+	return true;
+}
+
+static void* saveLoadAllCacheMaps(void* nix UNUSED)
+{
+	static ticks nextSave;
+	declare_now;
+	bool full = timing_reached( &nextSave, &now );
+	time_t walltime = full ? time( NULL ) : 0;
+	setThreadName( "cache-mapper" );
+	mutex_lock( &imageListLock );
+	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
 		if ( image == NULL )
 			continue;
-		mutex_lock( &image->lock );
+		image->users++;
 		mutex_unlock( &imageListLock );
-		if ( image->users == 0 && image->uplink == NULL && timing_reached( &image->atime, &deadline ) ) {
-			snprintf( imgstr, sizeof(imgstr), "%s:%d", image->name, (int)image->rid );
-			fd = image->readFd;
-			image->readFd = -1;
-		} else {
-			fd = -1;
+		const bool fromUpstream = isImageFromUpstream( image );
+		dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+		if ( cache != NULL ) {
+			if ( fromUpstream ) {
+				// Replicated image, we're responsible for updating the map, so save it
+				// Save if dirty bit is set, blocks were invalidated
+				bool save = cache->dirty;
+				dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
+				if ( !save ) {
+					// Otherwise, consider longer timeout and byte count limits of uplink
+					if ( uplink != NULL ) {
+						assert( uplink->bytesReceivedLastSave <= uplink->bytesReceived );
+						uint64_t diff = uplink->bytesReceived - uplink->bytesReceivedLastSave;
+						if ( diff > CACHE_MAP_MAX_UNSAVED_BYTES || ( full && diff != 0 ) ) {
+							save = true;
+						}
+					}
+				}
+				if ( save ) {
+					cache->dirty = false;
+					if ( uplink != NULL ) {
+						uplink->bytesReceivedLastSave = uplink->bytesReceived;
+					}
+					saveCacheMap( image );
+				}
+				if ( uplink != NULL ) {
+					ref_put( &uplink->reference );
+				}
+			} else {
+				// We're not replicating this image, if there's a cache map, reload
+				// it periodically, since we might read from a shared storage that
+				// another server instance is writing to.
+				if ( full || ( !cache->unchanged && !image->problem.read ) ) {
+					logadd( LOG_DEBUG2, "Reloading cache map of %s:%d", PIMG(image) );
+					dnbd3_cache_map_t *onDisk = image_loadCacheMap(image->path, image->virtualFilesize);
+					if ( onDisk == NULL ) {
+						// Should be complete now
+						logadd( LOG_DEBUG1, "External replication of %s:%d complete", PIMG(image) );
+						ref_setref( &image->ref_cacheMap, NULL );
+					} else {
+						const int mapSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+						if ( memcmp( cache->map, onDisk->map, mapSize ) == 0 ) {
+							// Unchanged
+							cache->unchanged = true;
+							onDisk->reference.free( &onDisk->reference );
+						} else {
+							// Replace
+							ref_setref( &image->ref_cacheMap, &onDisk->reference );
+							logadd( LOG_DEBUG2, "Map changed" );
+						}
+					}
+				}
+			} // end reload cache map
+			ref_put( &cache->reference );
+		} // end has cache map
+		if ( full && fromUpstream ) {
+			saveMetaData( image, &now, walltime );
 		}
-		mutex_unlock( &image->lock );
-		if ( fd != -1 ) {
-			close( fd );
-			logadd( LOG_DEBUG1, "Inactive fd closed for %s", imgstr );
-		}
+		image_release( image ); // Always do this instead of users-- to handle freeing
 		mutex_lock( &imageListLock );
 	}
 	mutex_unlock( &imageListLock );
+	if ( full ) {
+		timing_addSeconds( &nextSave, &now, CACHE_MAP_MAX_SAVE_DELAY );
+	}
+	return NULL;
 }
 
-/*
- void image_find_latest()
- {
- // Not in array or most recent rid is requested, try file system
- if (revision != 0) {
- // Easy case - specific RID
- char
- } else {
- // Determine base directory where the image in question has to reside.
- // Eg, the _basePath is "/srv/", requested image is "rz/ubuntu/default-13.04"
- // Then searchPath has to be set to "/srv/rz/ubuntu"
- char searchPath[strlen(_basePath) + len + 1];
- char *lastSlash = strrchr(name, '/');
- char *baseName; // Name of the image. In the example above, it will be "default-13.04"
- if ( lastSlash == NULL ) {
- *searchPath = '\0';
- baseName = name;
- } else {
- char *from = name, *to = searchPath;
- while (from < lastSlash) *to++ = *from++;
- *to = '\0';
- baseName = lastSlash + 1;
- }
- // Now we have the search path in our real file system and the expected image name.
- // The revision naming sceme is <IMAGENAME>.r<RID>, so if we're looking for revision 13,
- // our example image has to be named default-13.04.r13
- }
- }
+/**
+ * Saves the cache map of the given image.
+ * Return false if this image doesn't have a cache map, or if the image
+ * doesn't have any uplink to replicate from. In this case the image might
+ * still have a cache map that was loaded from disk, and should be reloaded
+ * periodically.
+ * @param image the image
  */
+static void saveCacheMap(dnbd3_image_t *image)
+{
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	if ( cache == NULL )
+		return; // Race - wasn't NULL in function call above...
+
+	logadd( LOG_DEBUG2, "Saving cache map of %s:%d", PIMG(image) );
+	const size_t size = IMGSIZE_TO_MAPBYTES(image->virtualFilesize);
+	char mapfile[strlen( image->path ) + 4 + 1];
+	strcpy( mapfile, image->path );
+	strcat( mapfile, ".map" );
+
+	int fd = open( mapfile, O_WRONLY | O_CREAT, 0644 );
+	if ( fd == -1 ) {
+		const int err = errno;
+		ref_put( &cache->reference );
+		logadd( LOG_WARNING, "Could not open file to write cache map to disk (errno=%d) file %s", err, mapfile );
+		return;
+	}
+
+	// On Linux we could use readFd, but in general it's not guaranteed to work
+	int imgFd = open( image->path, O_WRONLY );
+	if ( imgFd == -1 ) {
+		logadd( LOG_WARNING, "Cannot open %s for fsync(): errno=%d", image->path, errno );
+	} else {
+		if ( fsync( imgFd ) == -1 ) {
+			logadd( LOG_ERROR, "fsync() on image file %s failed with errno %d. Resetting cache map.", image->path, errno );
+			dnbd3_cache_map_t *old = image_loadCacheMap(image->path, image->virtualFilesize);
+			const int mapSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+			if ( old == NULL ) {
+				// Could not load old map. FS might be toast.
+				logadd( LOG_ERROR, "Cannot load old cache map. Setting all zero." );
+				memset( cache->map, 0, mapSize );
+			} else {
+				// AND the maps together to be safe
+				for ( int i = 0; i < mapSize; ++i ) {
+					cache->map[i] &= old->map[i];
+				}
+				old->reference.free( &old->reference );
+			}
+		}
+		close( imgFd );
+	}
+
+	// Write current map to file
+	size_t done = 0;
+	while ( done < size ) {
+		const ssize_t ret = write( fd, cache->map + done, size - done );
+		if ( ret == -1 ) {
+			if ( errno == EINTR ) continue;
+			logadd( LOG_WARNING, "Could not write cache map (errno=%d) file %s", errno, mapfile );
+			break;
+		}
+		if ( ret <= 0 ) {
+			logadd( LOG_WARNING, "Unexpected return value %d for write() to %s", (int)ret, mapfile );
+			break;
+		}
+		done += (size_t)ret;
+	}
+	ref_put( &cache->reference );
+	if ( fsync( fd ) == -1 ) {
+		logadd( LOG_WARNING, "fsync() on image map %s failed with errno %d", mapfile, errno );
+	}
+	close( fd );
+	// TODO fsync on parent directory
+}
+
+static void allocCacheMap(dnbd3_image_t *image, bool complete)
+{
+	const uint8_t val = complete ? 0xff : 0;
+	const int byteSize = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+	dnbd3_cache_map_t *cache = malloc( sizeof(*cache) + byteSize );
+	ref_init( &cache->reference, cmfree, 0 );
+	memset( cache->map, val, byteSize );
+	mutex_lock( &image->lock );
+	if ( image->ref_cacheMap != NULL ) {
+		logadd( LOG_WARNING, "BUG: allocCacheMap called but there already is a map for %s:%d", PIMG(image) );
+		free( cache );
+	} else {
+		ref_setref( &image->ref_cacheMap, &cache->reference );
+	}
+	mutex_unlock( &image->lock );
+}
+
+/**
+ * It's assumed you hold a reference to the image
+ */
+static void saveMetaData(dnbd3_image_t *image, ticks *now, time_t walltime)
+{
+	if ( !image->accessed )
+		return;
+	ticks tmp;
+	uint32_t diff;
+	char *fn;
+	if ( asprintf( &fn, "%s.meta", image->path ) == -1 ) {
+		logadd( LOG_WARNING, "Cannot asprintf meta" );
+		return;
+	}
+	if ( now == NULL ) {
+		timing_get( &tmp );
+		now = &tmp;
+		walltime = time( NULL );
+	}
+	mutex_lock( &image->lock );
+	image->accessed = false;
+	diff = timing_diff( &image->atime, now );
+	mutex_unlock( &image->lock );
+	FILE *f = fopen( fn, "w" );
+	if ( f == NULL ) {
+		logadd( LOG_WARNING, "Cannot open %s for writing", fn );
+	} else {
+		fprintf( f, "[main]\natime=%"PRIu64"\n", (uint64_t)( walltime - diff ) );
+		fclose( f );
+	}
+	free( fn );
+	// TODO: fsync() dir
+}
+
+static void loadImageMeta(dnbd3_image_t *image)
+{
+	int32_t offset = 1;
+	char *fn;
+	if ( asprintf( &fn, "%s.meta", image->path ) == -1 ) {
+		logadd( LOG_WARNING, "asprintf load" );
+	} else {
+		int fh = open( fn, O_RDONLY );
+		free( fn );
+		if ( fh != -1 ) {
+			char buf[200];
+			ssize_t ret = read( fh, buf, sizeof(buf)-1 );
+			close( fh );
+			if ( ret > 0 ) {
+				buf[ret] = '\0';
+				// Do it the cheap way until we actually store more stuff
+				char *pos = strstr( buf, "atime=" );
+				if ( pos != NULL ) {
+					offset = (int32_t)( atol( pos + 6 ) - time( NULL ) );
+				}
+			}
+		}
+	}
+	if ( offset == 1 ) {
+		// Nothing from .meta file, use old guesstimate
+		struct stat st;
+		if ( stat( image->path, &st ) == 0 ) {
+			// Negatively offset atime by file modification time
+			offset = (int32_t)( st.st_mtime - time( NULL ) );
+		} else {
+			offset = 0;
+		}
+		image->accessed = true;
+	}
+	if ( offset > 0 ) {
+		offset = 0;
+	}
+	timing_gets( &image->atime, offset );
+}
+

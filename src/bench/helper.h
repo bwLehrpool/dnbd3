@@ -29,6 +29,7 @@ typedef struct BenchThreadData {
 	char* server_address;
 	char * image_name;
 	int runs;
+	int bs;
 	int threadNumber;
 	bool closeSockets;
 } BenchThreadData;

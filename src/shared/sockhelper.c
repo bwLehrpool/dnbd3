@@ -46,6 +46,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 #endif
 	else {
 		logadd( LOG_DEBUG1, "Unsupported address type: %d\n", (int)addr->type );
+		errno = EAFNOSUPPORT;
 		return -1;
 	}
 	int client_sock = socket( proto, SOCK_STREAM, IPPROTO_TCP );
@@ -56,8 +57,10 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	} else {
 		sock_setTimeout( client_sock, connect_ms );
 	}
+	int e2;
 	for ( int i = 0; i < 5; ++i ) {
 		int ret = connect( client_sock, (struct sockaddr *)&ss, addrlen );
+		e2 = errno;
 		if ( ret != -1 || ( connect_ms == -1 && errno == EINPROGRESS ) || errno == EISCONN ) break;
 		if ( errno == EINTR ) {
 			// http://www.madore.org/~david/computers/connect-intr.html
@@ -67,21 +70,26 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 			struct pollfd unix_really_sucks = { .fd = client_sock, .events = POLLOUT | POLLIN };
 			while ( i-- > 0 ) {
 				int pr = poll( &unix_really_sucks, 1, connect_ms == 0 ? -1 : connect_ms );
+				e2 = errno;
 				if ( pr == 1 && ( unix_really_sucks.revents & POLLOUT ) ) break;
 				if ( pr == -1 && errno == EINTR ) continue;
 				close( client_sock );
+				errno = e2;
 				return -1;
 			}
 			sockaddr_storage junk;
 			socklen_t more_junk = sizeof(junk);
 			if ( getpeername( client_sock, (struct sockaddr*)&junk, &more_junk ) == -1 ) {
+				e2 = errno;
 				close( client_sock );
+				errno = e2;
 				return -1;
 			}
 			break;
 #endif
 		} // EINTR
 		close( client_sock );
+		errno = e2;
 		return -1;
 	}
 	if ( connect_ms != -1 && connect_ms != rw_ms ) {
@@ -338,7 +346,7 @@ int sock_multiConnect(poll_list_t* list, const dnbd3_host_t* host, int connect_m
 		if ( i != list->count ) list->entry[i] = list->entry[list->count];
 		if ( fd != -1 ) {
 			sock_set_block( fd );
-			if ( rw_ms != -1 && rw_ms != connect_ms ) {
+			if ( rw_ms != -1 ) {
 				sock_setTimeout( fd, rw_ms );
 			}
 			return fd;

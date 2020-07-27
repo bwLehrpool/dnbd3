@@ -24,8 +24,8 @@
 #include "globals.h"
 #include "../types.h"
 
-void dnbd3_cleanup();
 uint32_t dnbd3_serverUptime();
+void server_addJob(void *(*startRoutine)(void *), void *arg, int delaySecs, int intervalSecs);
 
 #if !defined(_FILE_OFFSET_BITS) || _FILE_OFFSET_BITS != 64
 #error Please set _FILE_OFFSET_BITS to 64 in your makefile/configuration

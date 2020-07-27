@@ -1,6 +1,6 @@
 #include "fdsignal.h"
 
-#if defined(linux) || defined(__linux) || defined(__linux__)
+#if defined(__linux__)
 //#warning "Using eventfd based signalling"
 #include "fdsignal.inc/eventfd.c"
 #elif __SIZEOF_INT__ == 4 && __SIZEOF_POINTER__ == 8

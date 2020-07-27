@@ -4,6 +4,7 @@
 #include "locks.h"
 #include "image.h"
 #include "uplink.h"
+#include "reference.h"
 
 #include <assert.h>
 #include <sys/syscall.h>
@@ -12,6 +13,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 
 #define CHECK_QUEUE_SIZE 200
 
@@ -29,9 +32,10 @@ static queue_entry checkQueue[CHECK_QUEUE_SIZE];
 static pthread_mutex_t integrityQueueLock;
 static pthread_cond_t queueSignal;
 static int queueLen = -1;
-static volatile bool bRunning = false;
+static atomic_bool bRunning = false;
 
 static void* integrity_main(void *data);
+static void flushFileRange(dnbd3_image_t *image, uint64_t start, uint64_t end);
 
 /**
  * Initialize the integrity check thread
@@ -39,7 +43,7 @@ static void* integrity_main(void *data);
 void integrity_init()
 {
 	assert( queueLen == -1 );
-	mutex_init( &integrityQueueLock );
+	mutex_init( &integrityQueueLock, LOCK_INTEGRITY_QUEUE );
 	pthread_cond_init( &queueSignal, NULL );
 	mutex_lock( &integrityQueueLock );
 	queueLen = 0;
@@ -55,13 +59,14 @@ void integrity_init()
 void integrity_shutdown()
 {
 	assert( queueLen != -1 );
+	if ( !bRunning )
+		return;
 	logadd( LOG_DEBUG1, "Shutting down integrity checker...\n" );
+	pthread_kill( thread, SIGINT );
 	mutex_lock( &integrityQueueLock );
 	pthread_cond_signal( &queueSignal );
 	mutex_unlock( &integrityQueueLock );
 	thread_join( thread, NULL );
-	while ( bRunning )
-		usleep( 10000 );
 	mutex_destroy( &integrityQueueLock );
 	pthread_cond_destroy( &queueSignal );
 	logadd( LOG_DEBUG1, "Integrity checker exited normally.\n" );
@@ -73,32 +78,42 @@ void integrity_shutdown()
  * make sure it is before calling, otherwise it will result in falsely
  * detected corruption.
  */
-void integrity_check(dnbd3_image_t *image, int block)
+void integrity_check(dnbd3_image_t *image, int block, bool blocking)
 {
+	int freeSlot;
 	if ( !bRunning ) {
 		logadd( LOG_MINOR, "Ignoring check request; thread not running..." );
 		return;
 	}
-	int i, freeSlot = -1;
+start_over:
+	freeSlot = -1;
 	mutex_lock( &integrityQueueLock );
-	for (i = 0; i < queueLen; ++i) {
+	for (int i = 0; i < queueLen; ++i) {
 		if ( freeSlot == -1 && checkQueue[i].image == NULL ) {
 			freeSlot = i;
-		} else if ( checkQueue[i].image == image
-				&& checkQueue[i].block <= block && checkQueue[i].block + checkQueue[i].count >= block ) {
-			// Already queued check dominates this one, or at least lies directly before this block
-			if ( checkQueue[i].block + checkQueue[i].count == block ) {
-				// It's directly before this one; expand range
+		} else if ( checkQueue[i].image == image && checkQueue[i].block <= block ) {
+			if ( checkQueue[i].count == CHECK_ALL ) {
+				logadd( LOG_DEBUG2, "Dominated by full image scan request (%d/%d) (at %d)", i, queueLen, checkQueue[i].block );
+			} else if ( checkQueue[i].block + checkQueue[i].count == block ) {
 				checkQueue[i].count += 1;
+				logadd( LOG_DEBUG2, "Attaching to existing check request (%d/%d) (at %d, %d to go)", i, queueLen, checkQueue[i].block, checkQueue[i].count );
+			} else if ( checkQueue[i].block + checkQueue[i].count > block ) {
+				logadd( LOG_DEBUG2, "Dominated by existing check request (%d/%d) (at %d, %d to go)", i, queueLen, checkQueue[i].block, checkQueue[i].count );
+			} else {
+				continue;
 			}
-			logadd( LOG_DEBUG2, "Attaching to existing check request (%d/%d) (%d +%d)", i, queueLen, checkQueue[i].block, checkQueue[i].count );
 			mutex_unlock( &integrityQueueLock );
 			return;
 		}
 	}
 	if ( freeSlot == -1 ) {
-		if ( queueLen >= CHECK_QUEUE_SIZE ) {
+		if ( unlikely( queueLen >= CHECK_QUEUE_SIZE ) ) {
 			mutex_unlock( &integrityQueueLock );
+			if ( blocking ) {
+				logadd( LOG_INFO, "Check queue full, waiting a couple seconds...\n" );
+				sleep( 3 );
+				goto start_over;
+			}
 			logadd( LOG_INFO, "Check queue full, discarding check request...\n" );
 			return;
 		}
@@ -119,11 +134,9 @@ void integrity_check(dnbd3_image_t *image, int block)
 static void* integrity_main(void * data UNUSED)
 {
 	int i;
-	uint8_t *buffer = NULL;
-	size_t bufferSize = 0;
 	setThreadName( "image-check" );
 	blockNoncriticalSignals();
-#if defined(linux) || defined(__linux)
+#if defined(__linux__)
 	// Setting nice of this thread - this is not POSIX conforming, so check if other platforms support this.
 	// POSIX says that setpriority() should set the nice value of all threads belonging to the current process,
 	// but on linux you can do this per thread.
@@ -146,79 +159,71 @@ static void* integrity_main(void * data UNUSED)
 			// We have the image. Call image_release() some time
 			const int qCount = checkQueue[i].count;
 			bool foundCorrupted = false;
-			mutex_lock( &image->lock );
 			if ( image->crc32 != NULL && image->realFilesize != 0 ) {
 				int blocks[2] = { checkQueue[i].block, -1 };
 				mutex_unlock( &integrityQueueLock );
-				// Make copy of crc32 list as it might go away
 				const uint64_t fileSize = image->realFilesize;
 				const int numHashBlocks = IMGSIZE_TO_HASHBLOCKS(fileSize);
-				const size_t required = numHashBlocks * sizeof(uint32_t);
-				if ( buffer == NULL || required > bufferSize ) {
-					bufferSize = required;
-					if ( buffer != NULL ) free( buffer );
-					buffer = malloc( bufferSize );
-				}
-				memcpy( buffer, image->crc32, required );
-				mutex_unlock( &image->lock );
-				// Open for direct I/O if possible; this prevents polluting the fs cache
-				int fd = open( image->path, O_RDONLY | O_DIRECT );
-				bool direct = fd != -1;
-				if ( unlikely( !direct ) ) {
-					// Try unbuffered; flush to disk for that
-					logadd( LOG_DEBUG1, "O_DIRECT failed for %s", image->path );
-					image_ensureOpen( image );
-					fd = image->readFd;
-				}
 				int checkCount = MIN( qCount, 5 );
-				if ( fd != -1 ) {
-					while ( blocks[0] < numHashBlocks && !_shutdown ) {
-						const uint64_t start = blocks[0] * HASH_BLOCK_SIZE;
-						const uint64_t end = MIN( (uint64_t)(blocks[0] + 1) * HASH_BLOCK_SIZE, image->virtualFilesize );
-						bool complete = true;
-						if ( qCount == CHECK_ALL ) {
+				int readFd = -1, directFd = -1;
+				while ( blocks[0] < numHashBlocks && !_shutdown ) {
+					const uint64_t start = blocks[0] * HASH_BLOCK_SIZE;
+					const uint64_t end = MIN( (uint64_t)(blocks[0] + 1) * HASH_BLOCK_SIZE, image->virtualFilesize );
+					bool complete = true;
+					if ( qCount == CHECK_ALL ) {
+						dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+						if ( cache != NULL ) {
 							// When checking full image, skip incomplete blocks, otherwise assume block is complete
-							mutex_lock( &image->lock );
-							complete = image_isHashBlockComplete( image->cache_map, blocks[0], fileSize );
-							mutex_unlock( &image->lock );
+							complete = image_isHashBlockComplete( cache, blocks[0], fileSize );
+							ref_put( &cache->reference );
 						}
-#if defined(linux) || defined(__linux)
-						if ( sync_file_range( fd, start, end - start, SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER ) == -1 ) {
-#else
-						if ( fsync( fd ) == -1 ) {
-#endif
-							logadd( LOG_ERROR, "Cannot flush %s for integrity check", image->path );
-							exit( 1 );
-						}
+					}
+					// Flush to disk if there's an uplink, as that means the block might have been written recently
+					if ( image->uplinkref != NULL ) {
+						flushFileRange( image, start, end );
+					}
+					if ( _shutdown )
+						break;
+					// Open for direct I/O if possible; this prevents polluting the fs cache
+					if ( directFd == -1 && ( end % DNBD3_BLOCK_SIZE ) == 0 ) {
 						// Use direct I/O only if read length is multiple of 4096 to be on the safe side
-						int tfd;
-						if ( direct && ( end % DNBD3_BLOCK_SIZE ) == 0 ) {
-							// Suitable for direct io
-							tfd = fd;
-						} else if ( !image_ensureOpen( image ) ) {
-							logadd( LOG_WARNING, "Cannot open %s for reading", image->path );
-							break;
+						directFd = open( image->path, O_RDONLY | O_DIRECT );
+						if ( directFd == -1 ) {
+							logadd( LOG_DEBUG2, "O_DIRECT failed for %s (errno=%d)", image->path, errno );
+							directFd = -2;
 						} else {
-							tfd = image->readFd;
-							// Evict from cache so we have to re-read, making sure data was properly stored
-							posix_fadvise( fd, start, end - start, POSIX_FADV_DONTNEED );
+							readFd = directFd;
 						}
-						if ( complete && !image_checkBlocksCrc32( tfd, (uint32_t*)buffer, blocks, fileSize ) ) {
-							logadd( LOG_WARNING, "Hash check for block %d of %s failed!", blocks[0], image->name );
-							image_updateCachemap( image, start, end, false );
-							// If this is not a full check, queue one
-							if ( qCount != CHECK_ALL ) {
-								logadd( LOG_INFO, "Queueing full check for %s", image->name );
-								integrity_check( image, -1 );
-							}
-							foundCorrupted = true;
+					}
+					if ( readFd == -1 ) { // Try buffered as fallback
+						if ( image_ensureOpen( image ) && !image->problem.read ) {
+							readFd = image->readFd;
 						}
-						blocks[0]++; // Increase before break, so it always points to the next block to check after loop
-						if ( complete && --checkCount == 0 ) break;
 					}
-					if ( direct ) {
-						close( fd );
+					if ( readFd == -1 ) {
+						logadd( LOG_MINOR, "Couldn't get any valid fd for integrity check of %s... ignoring...", image->path );
+					} else if ( complete && !image_checkBlocksCrc32( readFd, image->crc32, blocks, fileSize ) ) {
+						bool iscomplete = true;
+						dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+						if ( cache != NULL ) {
+							iscomplete = image_isHashBlockComplete( cache, blocks[0], fileSize );
+							ref_put( &cache->reference );
+						}
+						logadd( LOG_WARNING, "Hash check for block %d of %s failed (complete: was: %d, is: %d)", blocks[0], image->name, (int)complete, (int)iscomplete );
+						image_updateCachemap( image, start, end, false );
+						// If this is not a full check, queue one
+						if ( qCount != CHECK_ALL ) {
+							logadd( LOG_INFO, "Queueing full check for %s", image->name );
+							integrity_check( image, -1, false );
+						}
+						foundCorrupted = true;
 					}
+					blocks[0]++; // Increase before break, so it always points to the next block to check after loop
+					if ( complete && --checkCount == 0 )
+						break;
+				}
+				if ( directFd != -1 && directFd != -2 ) {
+					close( directFd );
 				}
 				mutex_lock( &integrityQueueLock );
 				assert( checkQueue[i].image == image );
@@ -229,46 +234,70 @@ static void* integrity_main(void * data UNUSED)
 						logadd( LOG_WARNING, "BUG! checkQueue counter ran negative" );
 					}
 				}
-				if ( checkCount > 0 || checkQueue[i].count <= 0 || fd == -1 ) {
-					// Done with this task as nothing left, OR we don't have an fd to read from
-					if ( fd == -1 ) {
-						logadd( LOG_WARNING, "Cannot hash check %s: bad fd", image->path );
-					}
+				if ( checkCount > 0 || checkQueue[i].count <= 0 ) {
+					// Done with this task as nothing left
 					checkQueue[i].image = NULL;
 					if ( i + 1 == queueLen ) queueLen--;
-					// Mark as working again if applicable
-					if ( !foundCorrupted ) {
-						mutex_lock( &image->lock );
-						if ( image->uplink != NULL ) { // TODO: image_determineWorkingState() helper?
-							image->working = image->uplink->fd != -1 && image->readFd != -1;
-						}
-						mutex_unlock( &image->lock );
-					}
 				} else {
 					// Still more blocks to go...
 					checkQueue[i].block = blocks[0];
 				}
-			} else {
-				mutex_unlock( &image->lock );
 			}
-			if ( foundCorrupted ) {
+			if ( foundCorrupted && !_shutdown ) {
 				// Something was fishy, make sure uplink exists
-				mutex_lock( &image->lock );
-				image->working = false;
-				bool restart = image->uplink == NULL || image->uplink->shutdown;
-				mutex_unlock( &image->lock );
-				if ( restart ) {
-					uplink_shutdown( image );
-					uplink_init( image, -1, NULL, -1 );
-				}
+				uplink_init( image, -1, NULL, -1 );
 			}
 			// Release :-)
 			image_release( image );
 		}
 	}
 	mutex_unlock( &integrityQueueLock );
-	if ( buffer != NULL ) free( buffer );
 	bRunning = false;
 	return NULL;
 }
 
+static void flushFileRange(dnbd3_image_t *image, uint64_t start, uint64_t end)
+{
+	int flushFd;
+	int writableFd = -1;
+	dnbd3_uplink_t *uplink = ref_get_uplink( &image->uplinkref );
+	if ( uplink != NULL ) { // Try to steal uplink's writable fd
+		if ( uplink->cacheFd != -1 ) {
+			writableFd = dup( uplink->cacheFd );
+		}
+		ref_put( &uplink->reference );
+	}
+	if ( writableFd == -1 ) { // Open file as writable
+		writableFd = open( image->path, O_WRONLY );
+	}
+	if ( writableFd == -1 ) { // Fallback to readFd (should work on Linux and BSD...)
+		logadd( LOG_WARNING, "flushFileRange: Cannot open %s for writing. Trying readFd.", image->path );
+		image_ensureOpen( image );
+		flushFd = image->readFd;
+	} else {
+		flushFd = writableFd;
+	}
+	if ( flushFd == -1 )
+		return;
+#if defined(__linux__)
+	while ( sync_file_range( flushFd, start, end - start, SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER ) == -1 )
+#else
+	while ( fsync( flushFd ) == -1 ) // TODO: fdatasync() should be available since FreeBSD 12.0 ... Might be a tad bit faster
+#endif
+	{
+		if ( _shutdown )
+			break;
+		int e = errno;
+		if ( e == EINTR )
+			continue;
+		logadd( LOG_ERROR, "Cannot flush %s for integrity check (errno=%d)", image->path, e );
+		if ( e == EIO ) {
+			exit( 1 );
+		}
+	}
+	// Evict from cache too so we have to re-read, making sure data was properly stored
+	posix_fadvise( flushFd, start, end - start, POSIX_FADV_DONTNEED );
+	if ( writableFd != -1 ) {
+		close( writableFd );
+	}
+}

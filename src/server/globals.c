@@ -19,8 +19,10 @@ atomic_int _clientPenalty = 0;
 atomic_bool _isProxy = false;
 atomic_int _backgroundReplication = BGR_FULL;
 atomic_int _bgrMinClients = 0;
+atomic_int _bgrWindowSize = 1;
 atomic_bool _lookupMissingForProxy = true;
 atomic_bool _sparseFiles = false;
+atomic_bool _ignoreAllocErrors = false;
 atomic_bool _removeMissingImages = true;
 atomic_int _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
 atomic_int _clientTimeout = SOCKET_TIMEOUT_CLIENT;
@@ -28,6 +30,7 @@ atomic_bool _closeUnusedFd = false;
 atomic_bool _vmdkLegacyMode = false;
 // Not really needed anymore since we have '+' and '-' in alt-servers
 atomic_bool _proxyPrivateOnly = false;
+atomic_int _autoFreeDiskSpaceDelay = 3600 * 10;
 // [limits]
 atomic_int _maxClients = SERVER_MAX_CLIENTS;
 atomic_int _maxImages = SERVER_MAX_IMAGES;
@@ -72,8 +75,10 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_BOOL( dnbd3, isProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
 	SAVE_TO_VAR_INT( dnbd3, bgrMinClients );
+	SAVE_TO_VAR_INT( dnbd3, bgrWindowSize );
 	SAVE_TO_VAR_BOOL( dnbd3, lookupMissingForProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, sparseFiles );
+	SAVE_TO_VAR_BOOL( dnbd3, ignoreAllocErrors );
 	SAVE_TO_VAR_BOOL( dnbd3, removeMissingImages );
 	SAVE_TO_VAR_BOOL( dnbd3, closeUnusedFd );
 	SAVE_TO_VAR_UINT( dnbd3, serverPenalty );
@@ -83,6 +88,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_UINT( limits, maxPayload );
 	SAVE_TO_VAR_UINT64( limits, maxReplicationSize );
 	SAVE_TO_VAR_BOOL( dnbd3, pretendClient );
+	SAVE_TO_VAR_INT( dnbd3, autoFreeDiskSpaceDelay );
 	if ( strcmp( section, "dnbd3" ) == 0 && strcmp( key, "backgroundReplication" ) == 0 ) {
 		if ( strcmp( value, "hashblock" ) == 0 ) {
 			_backgroundReplication = BGR_HASHBLOCK;
@@ -109,10 +115,13 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 void globals_loadConfig()
 {
 	char *name = NULL;
-	asprintf( &name, "%s/%s", _configDir, CONFIG_FILENAME );
+	if ( asprintf( &name, "%s/%s", _configDir, CONFIG_FILENAME ) == -1 ) {
+		logadd( LOG_ERROR, "Memory allocation error for config filename" );
+		exit( 1 );
+	}
 	if ( name == NULL ) return;
 	if ( initialLoad ) {
-		mutex_init( &loadLock );
+		mutex_init( &loadLock, LOCK_LOAD_CONFIG );
 	}
 	if ( mutex_trylock( &loadLock ) != 0 ) {
 		logadd( LOG_INFO, "Ignoring config reload request due to already running reload" );
@@ -126,6 +135,13 @@ void globals_loadConfig()
 	if ( _backgroundReplication == BGR_FULL && _sparseFiles && _bgrMinClients < 5 ) {
 		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true and bgrMinClients is too low" );
 		_sparseFiles = false;
+	}
+	if ( _bgrWindowSize < 1 ) {
+		_bgrWindowSize = 1;
+	} else if ( _bgrWindowSize > UPLINK_MAX_QUEUE - 10 ) {
+		_bgrWindowSize = UPLINK_MAX_QUEUE - 10;
+		logadd( LOG_MINOR, "Limiting bgrWindowSize to %d, because of UPLINK_MAX_QUEUE",
+				_bgrWindowSize );
 	}
 	// Dump config as interpreted
 	char buffer[2000];
@@ -229,6 +245,15 @@ static bool parse64(const char *in, atomic_int_fast64_t *out, const char *optnam
 	while ( *end == ' ' ) end++;
 	if ( *end == '\0' ) {
 		exp = 0;
+	} else if ( *end == 'm' ) {
+		exp = 1;
+		base = 60;
+	} else if ( *end == 'h' ) {
+		exp = 1;
+		base = 3600;
+	} else if ( *end == 'd' ) {
+		exp = 1;
+		base = 24 * 3600;
 	} else {
 		char *pos = strchr( units, *end > 'Z' ? (*end - 32) : *end );
 		if ( pos == NULL ) {
@@ -309,8 +334,10 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 		PBOOL(backgroundReplication);
 	}
 	PINT(bgrMinClients);
+	PINT(bgrWindowSize);
 	PBOOL(lookupMissingForProxy);
 	PBOOL(sparseFiles);
+	PBOOL(ignoreAllocErrors);
 	PBOOL(removeMissingImages);
 	PINT(uplinkTimeout);
 	PINT(clientTimeout);
@@ -318,6 +345,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PBOOL(vmdkLegacyMode);
 	PBOOL(proxyPrivateOnly);
 	PBOOL(pretendClient);
+	PINT(autoFreeDiskSpaceDelay);
 	P_ARG("[limits]\n");
 	PINT(maxClients);
 	PINT(maxImages);

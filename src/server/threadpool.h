@@ -18,12 +18,18 @@ bool threadpool_init(int maxIdleThreadCount);
 void threadpool_close();
 
 /**
+ * Block until all threads spawned have exited
+ */
+void threadpool_waitEmpty();
+
+/**
  * Run a thread using the thread pool.
  * @param startRoutine function to run in new thread
  * @param arg argument to pass to thead
+ * @param name STRING CONSTANT (literal) for debugging purposes
  * @return true if thread was started
  */
-bool threadpool_run(void *(*startRoutine)(void *), void *arg);
+bool threadpool_run(void *(*startRoutine)(void *), void *arg, const char *name);
 
 #endif
 

@@ -6,9 +6,11 @@
 #include "image.h"
 #include "altservers.h"
 #include "../shared/sockhelper.h"
+#include "../version.h"
 #include "fileutil.h"
 #include "picohttpparser/picohttpparser.h"
 #include "urldecode.h"
+#include "reference.h"
 
 #include <jansson.h>
 #include <sys/types.h>
@@ -43,7 +45,9 @@ _Static_assert( sizeof("test") == 5 && sizeof("test2") == 6, "Stringsize messup 
 DEFSTR(STR_CONNECTION, "connection")
 DEFSTR(STR_CLOSE, "close")
 DEFSTR(STR_QUERY, "/query")
+DEFSTR(STR_CACHEMAP, "/cachemap")
 DEFSTR(STR_Q, "q")
+DEFSTR(STR_ID, "id")
 
 static inline bool equals(struct string *s1,struct string *s2)
 {
@@ -75,13 +79,13 @@ static json_int_t randomRunId;
 static pthread_mutex_t aclLock;
 #define MAX_CLIENTS 50
 #define CUTOFF_START 40
-static pthread_mutex_t statusLock;
 static struct {
-	int count;
-	bool overloaded;
+	atomic_int count;
+	atomic_bool overloaded;
 } status;
 
 static bool handleStatus(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive);
+static bool handleCacheMap(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive);
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive);
 static void parsePath(struct string *path, struct string *file, struct field *getv, size_t *getc);
 static bool hasHeaderValue(struct phr_header *headers, size_t numHeaders, struct string *name, struct string *value);
@@ -91,15 +95,14 @@ static void loadAcl();
 
 void rpc_init()
 {
-	mutex_init( &aclLock );
-	mutex_init( &statusLock );
+	mutex_init( &aclLock, LOCK_RPC_ACL );
 	randomRunId = (((json_int_t)getpid()) << 16) | (json_int_t)time(NULL);
 	// </guard>
 	if ( sizeof(randomRunId) > 4 ) {
 		int fd = open( "/dev/urandom", O_RDONLY );
 		if ( fd != -1 ) {
 			uint32_t bla = 1;
-			read( fd, &bla, 4 );
+			(void)!read( fd, &bla, 4 );
 			randomRunId = (randomRunId << 32) | bla;
 		}
 		close( fd );
@@ -123,10 +126,8 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 		return;
 	}
 	do {
-		mutex_lock( &statusLock );
 		const int curCount = ++status.count;
 		UPDATE_LOADSTATE( curCount );
-		mutex_unlock( &statusLock );
 		if ( curCount > MAX_CLIENTS ) {
 			sendReply( sock, "503 Service Temporarily Unavailable", "text/plain", "Too many HTTP clients", -1, HTTP_CLOSE );
 			goto func_return;
@@ -141,13 +142,13 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	bool hasName = false;
 	bool ok;
 	int keepAlive = HTTP_KEEPALIVE;
-	do {
+	while ( !_shutdown ) {
 		// Read request from client
 		struct phr_header headers[100];
 		size_t numHeaders, prevLen = 0, consumed;
 		struct string method, path;
 		int minorVersion;
-		do {
+		while ( !_shutdown ) {
 			// Parse before calling recv, there might be a complete pipelined request in the buffer already
 			// If the request is incomplete, we allow exactly one additional recv() to complete it.
 			// This should suffice for real world scenarios as I don't know of any
@@ -192,15 +193,15 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 				sendReply( sock, "400 Bad Request", "text/plain", "Server cannot understand what you're trying to say", -1, HTTP_CLOSE );
 				goto func_return;
 			}
-		} while ( true );
+		} // Loop while request header incomplete
+		if ( _shutdown )
+			break;
 		if ( keepAlive == HTTP_KEEPALIVE ) {
 			// Only keep the connection alive (and indicate so) if the client seems to support this
 			if ( minorVersion == 0 || hasHeaderValue( headers, numHeaders, &STR_CONNECTION, &STR_CLOSE ) ) {
 				keepAlive = HTTP_CLOSE;
 			} else { // And if there aren't too many active HTTP sessions
-				mutex_lock( &statusLock );
 				if ( status.overloaded ) keepAlive = HTTP_CLOSE;
-				mutex_unlock( &statusLock );
 			}
 		}
 		if ( method.s != NULL && path.s != NULL ) {
@@ -216,10 +217,13 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			// Don't care if GET or POST
 			if ( equals( &file, &STR_QUERY ) ) {
 				ok = handleStatus( sock, permissions, getv, getc, keepAlive );
+			} else if ( equals( &file, &STR_CACHEMAP ) ) {
+				ok = handleCacheMap( sock, permissions, getv, getc, keepAlive );
 			} else {
 				ok = sendReply( sock, "404 Not found", "text/plain", "Nothing", -1, keepAlive );
 			}
-			if ( !ok ) break;
+			if ( !ok )
+				break;
 		}
 		// hoff might be beyond end if the client sent another request (burst)
 		const ssize_t extra = hoff - consumed;
@@ -231,13 +235,11 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			hasName = true;
 			setThreadName( "HTTP" );
 		}
-	} while (true);
+	} // Loop while more requests
 func_return:;
 	do {
-		mutex_lock( &statusLock );
 		const int curCount = --status.count;
 		UPDATE_LOADSTATE( curCount );
-		mutex_unlock( &statusLock );
 	} while (0);
 }
 
@@ -258,7 +260,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 {
 	bool ok;
 	bool stats = false, images = false, clients = false, space = false;
-	bool logfile = false, config = false, altservers = false;
+	bool logfile = false, config = false, altservers = false, version = false;
 #define SETVAR(var) if ( !var && STRCMP(fields[i].value, #var) ) var = true
 	for (size_t i = 0; i < fields_num; ++i) {
 		if ( !equals( &fields[i].name, &STR_Q ) ) continue;
@@ -269,9 +271,10 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 		else SETVAR(logfile);
 		else SETVAR(config);
 		else SETVAR(altservers);
+		else SETVAR(version);
 	}
 #undef SETVAR
-	if ( ( stats || space ) && !(permissions & ACL_STATS) ) {
+	if ( ( stats || space || version ) && !(permissions & ACL_STATS) ) {
 		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access statistics", -1, keepAlive );
 	}
 	if ( images && !(permissions & ACL_IMAGE_LIST) ) {
@@ -306,6 +309,10 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	} else {
 		statisticsJson = json_pack( "{sI}",
 				"runId", randomRunId );
+	}
+	if ( version ) {
+		json_object_set_new( statisticsJson, "version", json_string( VERSION_STRING ) );
+		json_object_set_new( statisticsJson, "build", json_string( TOSTRING( BUILD_TYPE ) ) );
 	}
 	if ( space ) {
 		uint64_t spaceTotal = 0, spaceAvail = 0;
@@ -347,6 +354,46 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 	return ok;
 }
 
+static bool handleCacheMap(int sock, int permissions, struct field *fields, size_t fields_num, int keepAlive)
+{
+	if ( !(permissions & ACL_IMAGE_LIST) ) {
+		return sendReply( sock, "403 Forbidden", "text/plain", "No permission to access image list", -1, keepAlive );
+	}
+	int imgId = -1;
+	static const char one = (char)0xff;
+	for (size_t i = 0; i < fields_num; ++i) {
+		if ( equals( &fields[i].name, &STR_ID ) ) {
+			char *broken;
+			imgId = (int)strtol( fields[i].value.s, &broken, 10 );
+			if ( broken != fields[i].value.s )
+				break;
+			imgId = -1;
+		}
+	}
+	if ( imgId == -1 )
+		return sendReply( sock, "400 Bad Request", "text/plain", "Missing parameter 'id'", -1, keepAlive );
+	dnbd3_image_t *image = image_byId( imgId );
+	if ( image == NULL )
+		return sendReply( sock, "404 Not found", "text/plain", "Image not found", -1, keepAlive );
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	image_release( image );
+	int len;
+	const char *map;
+	if ( cache == NULL ) {
+		map = &one;
+		len = 1;
+	} else {
+		_Static_assert( sizeof(const char) == sizeof(_Atomic uint8_t), "Atomic assumption exploded" );
+		map = (const char*)cache->map;
+		len = IMGSIZE_TO_MAPBYTES( image->virtualFilesize );
+	}
+	bool ok = sendReply( sock, "200 OK", "application/octet-stream", map, len, keepAlive );
+	if ( cache != NULL ) {
+		ref_put( &cache->reference );
+	}
+	return ok;
+}
+
 static bool sendReply(int sock, const char *status, const char *ctype, const char *payload, ssize_t plen, int keepAlive)
 {
 	if ( plen == -1 ) plen = strlen( payload );
@@ -367,6 +414,8 @@ static bool sendReply(int sock, const char *status, const char *ctype, const cha
 #ifdef AFL_MODE
 		sock = 0;
 #endif
+		// Don't wait too long in case other side ignores the shutdown
+		sock_setTimeout( sock, 600 );
 		while ( read( sock, buffer, sizeof buffer ) > 0 );
 		return false;
 	}

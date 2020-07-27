@@ -37,6 +37,8 @@
 #include <signal.h>
 #include <getopt.h>
 #include <assert.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define LONGOPT_CRC4       1000
 #define LONGOPT_ASSERT     1001
@@ -44,6 +46,26 @@
 #define LONGOPT_REVISION   1003
 #define LONGOPT_SIZE       1004
 #define LONGOPT_ERRORMSG   1005
+
+typedef struct _job job_t;
+
+struct _job {
+	job_t *next;
+	void *(*startRoutine)(void *);
+	void *arg;
+	ticks dueDate;
+	int intervalSecs;
+};
+
+static job_t *jobHead;
+static _Atomic(job_t *) newJob;
+static bool hasTimerThread = false;
+static pthread_t timerThread;
+
+static pid_t mainPid;
+static pthread_t mainThread;
+
+#define DEFAULT_TIMER_TIMEOUT (60)
 
 static poll_list_t *listeners = NULL;
 
@@ -70,6 +92,12 @@ static void dnbd3_handleSignal(int signum);
 static void dnbd3_handleSignal2(int signum, siginfo_t *info, void *data);
 
 static void* server_asyncImageListLoad(void *data);
+
+static void* timerMainloop(void*);
+
+static int handlePendingJobs(void);
+
+static void queueJobInternal(job_t *job);
 
 /**
  * Print help text for usage instructions
@@ -105,14 +133,21 @@ void dnbd3_printVersion()
 /**
  * Clean up structs, connections, write out data, then exit
  */
-void dnbd3_cleanup()
+_Noreturn static void dnbd3_cleanup()
 {
 	int retries;
 
 	_shutdown = true;
 	logadd( LOG_INFO, "Cleanup..." );
 
-	if ( listeners != NULL ) sock_destroyPollList( listeners );
+	if ( hasTimerThread ) {
+		pthread_kill( timerThread, SIGINT );
+		thread_join( timerThread, NULL );
+	}
+
+	if ( listeners != NULL ) {
+		sock_destroyPollList( listeners );
+	}
 	listeners = NULL;
 
 	// Kill connection to all clients
@@ -120,9 +155,6 @@ void dnbd3_cleanup()
 
 	// Disable threadpool
 	threadpool_close();
-
-	// Terminate the altserver checking thread
-	altservers_shutdown();
 
 	// Terminate all uplinks
 	image_killUplinks();
@@ -133,8 +165,7 @@ void dnbd3_cleanup()
 	// Wait for clients to disconnect
 	net_waitForAllDisconnected();
 
-	// Watchdog not needed anymore
-	debug_locks_stop_watchdog();
+	threadpool_waitEmpty();
 
 	// Clean up images
 	retries = 5;
@@ -178,6 +209,8 @@ int main(int argc, char *argv[])
 			{ 0, 0, 0, 0 }
 	};
 
+	mainPid = getpid();
+	mainThread = pthread_self();
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
 	while ( opt != -1 ) {
@@ -201,6 +234,15 @@ int main(int argc, char *argv[])
 		case LONGOPT_CRC4:
 			return image_generateCrcFile( optarg ) ? 0 : EXIT_FAILURE;
 		case LONGOPT_ASSERT:
+			printf( "Now leaking memory:\n" );
+			char *bla = malloc( 10 );
+			bla[2] = 3;
+			bla = NULL;
+			printf( "Testing use after free:\n" );
+			char *test = malloc( 10 );
+			test[0] = 1;
+			free( (void*)test );
+			test[1] = 2;
 			printf( "Testing a failing assertion:\n" );
 			assert( 4 == 5 );
 			printf( "Assertion 4 == 5 seems to hold. ;-)\n" );
@@ -273,7 +315,10 @@ int main(int argc, char *argv[])
 	// No one-shot detected, normal server operation or errormsg serving
 	if ( demonize ) {
 		logadd( LOG_INFO, "Forking into background, see log file for further information" );
-		daemon( 1, 0 );
+		if ( daemon( 0, 0 ) == -1 ) {
+			logadd( LOG_ERROR, "Could not daemon(): errno=%d", errno );
+			exit( 1 );
+		}
 	}
 	if ( errorMsg != NULL ) {
 		setupNetwork( bindAddress );
@@ -297,22 +342,20 @@ int main(int argc, char *argv[])
 	net_init();
 	uplink_globalsInit();
 	rpc_init();
-	logadd( LOG_INFO, "DNBD3 server starting.... Machine type: " ENDIAN_MODE );
+	logadd( LOG_INFO, "DNBD3 server starting...." );
+	logadd( LOG_INFO, "Machine type: " ENDIAN_MODE );
+	logadd( LOG_INFO, "Build Type: " TOSTRING( BUILD_TYPE ) );
+	logadd( LOG_INFO, "Version: %s", VERSION_STRING );
 
 	if ( altservers_load() < 0 ) {
 		logadd( LOG_WARNING, "Could not load alt-servers. Does the file exist in %s?", _configDir );
 	}
 
-#ifdef _DEBUG
-	debug_locks_start_watchdog();
-#endif
-
 	// setup signal handler
-	struct sigaction sa;
-	memset( &sa, 0, sizeof(sa) );
-	sa.sa_sigaction = dnbd3_handleSignal2;
-	sa.sa_flags = SA_SIGINFO;
-	//sa.sa_mask = ;
+	struct sigaction sa = {
+		.sa_sigaction = dnbd3_handleSignal2,
+		.sa_flags = SA_SIGINFO,
+	};
 	sigaction( SIGTERM, &sa, NULL );
 	sigaction( SIGINT, &sa, NULL );
 	sigaction( SIGUSR1, &sa, NULL );
@@ -345,7 +388,11 @@ int main(int argc, char *argv[])
 		exit( EXIT_FAILURE );
 	}
 
-	logadd( LOG_INFO, "Server is ready. (%s)", VERSION_STRING );
+	logadd( LOG_INFO, "Server is ready." );
+
+	if ( thread_create( &timerThread, NULL, &timerMainloop, NULL ) == 0 ) {
+		hasTimerThread = true;
+	}
 
 	// +++++++++++++++++++++++++++++++++++++++++++++++++++ main loop
 	struct sockaddr_storage client;
@@ -357,7 +404,7 @@ int main(int argc, char *argv[])
 		if ( sigReload ) {
 			sigReload = false;
 			logadd( LOG_INFO, "SIGHUP received, re-scanning image directory" );
-			threadpool_run( &server_asyncImageListLoad, NULL );
+			threadpool_run( &server_asyncImageListLoad, NULL, "IMAGE_RELOAD" );
 		}
 		if ( sigLogCycle ) {
 			sigLogCycle = false;
@@ -370,7 +417,7 @@ int main(int argc, char *argv[])
 		//
 		len = sizeof(client);
 		fd = sock_accept( listeners, &client, &len );
-		if ( fd < 0 ) {
+		if ( fd == -1 ) {
 			const int err = errno;
 			if ( err == EINTR || err == EAGAIN ) continue;
 			logadd( LOG_ERROR, "Client accept failure (err=%d)", err );
@@ -384,7 +431,7 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		if ( !threadpool_run( &net_handleNewConnection, (void *)dnbd3_client ) ) {
+		if ( !threadpool_run( &net_handleNewConnection, (void *)dnbd3_client, "CLIENT" ) ) {
 			logadd( LOG_ERROR, "Could not start thread for new connection." );
 			free( dnbd3_client );
 			continue;
@@ -474,8 +521,16 @@ static void dnbd3_handleSignal(int signum)
 
 static void dnbd3_handleSignal2(int signum, siginfo_t *info, void *data UNUSED)
 {
-	memcpy( &lastSignal, info, sizeof(siginfo_t) );
-	dnbd3_handleSignal( signum );
+	if ( info->si_pid != mainPid ) { // Source is not this process
+		memcpy( &lastSignal, info, sizeof(siginfo_t) ); // Copy signal info
+		if ( info->si_pid != 0 && !pthread_equal( pthread_self(), mainThread ) ) {
+			pthread_kill( mainThread, info->si_signo ); // And relay signal if we're not the main thread
+		}
+	}
+	if ( pthread_equal( pthread_self(), mainThread ) ) {
+		// Signal received by main thread -- handle
+		dnbd3_handleSignal( signum );
+	}
 }
 
 uint32_t dnbd3_serverUptime()
@@ -491,5 +546,87 @@ static void* server_asyncImageListLoad(void *data UNUSED)
 	globals_loadConfig();
 	image_loadAll( NULL );
 	return NULL;
+}
+
+static void* timerMainloop(void* stuff UNUSED)
+{
+	setThreadName( "timer" );
+	while ( !_shutdown ) {
+		// Handle jobs/timer events; returns timeout until next event
+		int to = handlePendingJobs();
+		sleep( MIN( MAX( 1, to ), DEFAULT_TIMER_TIMEOUT ) );
+	}
+	logadd( LOG_DEBUG1, "Timer thread done" );
+	return NULL;
+}
+
+static int handlePendingJobs(void)
+{
+	declare_now;
+	job_t *todo, **temp, *old;
+	int diff;
+	todo = jobHead;
+	for ( temp = &todo; *temp != NULL; temp = &(*temp)->next ) {
+		diff = (int)timing_diff( &now, &(*temp)->dueDate );
+		if ( diff > 0 ) // Found one that's in the future
+			break;
+	}
+	jobHead = *temp; // Make it list head
+	*temp = NULL; // Split off part before that
+	while ( todo != NULL ) {
+		threadpool_run( todo->startRoutine, todo->arg, "TIMER_TASK" );
+		old = todo;
+		todo = todo->next;
+		if ( old->intervalSecs == 0 ) {
+			free( old ); // oneshot
+		} else {
+			timing_set( &old->dueDate, &now, old->intervalSecs );
+			queueJobInternal( old ); // repeated
+		}
+	}
+	// See if any new jobs have been queued
+	while ( newJob != NULL ) {
+		todo = newJob;
+		// NULL should never happen since we're the only consumer
+		assert( todo != NULL );
+		if ( !atomic_compare_exchange_weak( &newJob, &todo, NULL ) )
+			continue;
+		do {
+			old = todo;
+			todo = todo->next;
+			queueJobInternal( old );
+		} while ( todo != NULL );
+	}
+	// Return new timeout
+	if ( jobHead == NULL )
+		return DEFAULT_TIMER_TIMEOUT;
+	return (int)timing_diff( &now, &jobHead->dueDate );
+}
+
+static void queueJobInternal(job_t *job)
+{
+	assert( job != NULL );
+	job_t **it;
+	for ( it = &jobHead; *it != NULL; it = &(*it)->next ) {
+		if ( timing_1le2( &job->dueDate, &(*it)->dueDate ) )
+			break;
+	}
+	job->next = *it;
+	*it = job;
+}
+
+void server_addJob(void *(*startRoutine)(void *), void *arg, int delaySecs, int intervalSecs)
+{
+	declare_now;
+	job_t *new = malloc( sizeof(*new) );
+	new->startRoutine = startRoutine;
+	new->arg = arg;
+	new->intervalSecs = intervalSecs;
+	timing_set( &new->dueDate, &now, delaySecs );
+	for ( ;; ) {
+		new->next = newJob;
+		if ( atomic_compare_exchange_weak( &newJob, &new->next, new ) )
+			break;
+	}
 }
 

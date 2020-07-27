@@ -37,4 +37,6 @@ void net_disconnectAll();
 
 void net_waitForAllDisconnected();
 
+void net_sendReply(dnbd3_client_t *client, uint16_t cmd, uint64_t handle);
+
 #endif /* NET_H_ */

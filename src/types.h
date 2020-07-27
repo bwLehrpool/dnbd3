@@ -34,6 +34,9 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #endif
 
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
 #ifdef __GNUC__
 #define UNUSED __attribute__ ((unused))
 #else
@@ -77,7 +80,7 @@
 #define IOCTL_REM_SRV	_IO(0xab, 5)
 
 #if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && __BYTE_ORDER == __BIG_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
-static const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
+#define dnbd3_packet_magic ((uint16_t)( (0x73 << 8) | (0x72) ))
 // Flip bytes around on big endian when putting stuff on the net
 #define net_order_64(a) ((uint64_t)((((a) & 0xFFull) << 56) | (((a) & 0xFF00ull) << 40) | (((a) & 0xFF0000ull) << 24) | (((a) & 0xFF000000ull) << 8) | (((a) & 0xFF00000000ull) >> 8) | (((a) & 0xFF0000000000ull) >> 24) | (((a) & 0xFF000000000000ull) >> 40) | (((a) & 0xFF00000000000000ull) >> 56)))
 #define net_order_32(a) ((uint32_t)((((a) & (uint32_t)0xFF) << 24) | (((a) & (uint32_t)0xFF00) << 8) | (((a) & (uint32_t)0xFF0000) >> 8) | (((a) & (uint32_t)0xFF000000) >> 24)))
@@ -92,11 +95,9 @@ static const uint16_t dnbd3_packet_magic = (0x73 << 8) | (0x72);
 	(a).size = net_order_32((a).size); \
 } while (0)
 #define ENDIAN_MODE "Big Endian"
-#ifndef BIG_ENDIAN
-#define BIG_ENDIAN
-#endif
+#define DNBD3_BIG_ENDIAN
 #elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(__i386__) || defined(__i386) || defined(__x86_64)
-static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
+#define dnbd3_packet_magic ((uint16_t)( (0x73) | (0x72 << 8) ))
 // Make little endian our network byte order as probably 99.999% of machines this will be used on are LE
 #define net_order_64(a) (a)
 #define net_order_32(a) (a)
@@ -104,9 +105,7 @@ static const uint16_t dnbd3_packet_magic = (0x73) | (0x72 << 8);
 #define fixup_request(a) while(0)
 #define fixup_reply(a)   while(0)
 #define ENDIAN_MODE "Little Endian"
-#ifndef LITTLE_ENDIAN
-#define LITTLE_ENDIAN
-#endif
+#define DNBD3_LITTLE_ENDIAN
 #else
 #error "Unknown Endianness"
 #endif
@@ -117,17 +116,14 @@ static const dnbd3_af HOST_NONE = (dnbd3_af)0;
 static const dnbd3_af HOST_IP4 = (dnbd3_af)2;
 static const dnbd3_af HOST_IP6 = (dnbd3_af)10;
 
-#pragma pack(1)
-typedef struct dnbd3_host_t
+typedef struct __attribute__((packed)) dnbd3_host_t
 {
 	uint8_t addr[16];    // 16byte (network representation, so it can be directly passed to socket functions)
 	uint16_t port;       // 2byte (network representation, so it can be directly passed to socket functions)
 	dnbd3_af type;        // 1byte (ip version. HOST_IP4 or HOST_IP6. 0 means this struct is empty and should be ignored)
 } dnbd3_host_t;
-#pragma pack(0)
 
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	uint16_t len;
 	dnbd3_host_t host;
@@ -137,7 +133,6 @@ typedef struct
 	int read_ahead_kb;
 	uint8_t use_server_provided_alts;
 } dnbd3_ioctl_t;
-#pragma pack(0)
 
 // network
 #define CMD_GET_BLOCK           1
@@ -150,18 +145,17 @@ typedef struct
 #define CMD_GET_CRC32           8
 
 #define DNBD3_REQUEST_SIZE     24
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	uint16_t magic;           // 2byte
 	uint16_t cmd;             // 2byte
 	uint32_t size;            // 4byte
 	union {
 		struct {
-#ifdef LITTLE_ENDIAN
+#ifdef DNBD3_LITTLE_ENDIAN
 			uint64_t offset_small:56;  // 7byte
 			uint8_t  hops;            // 1byte
-#elif defined(BIG_ENDIAN)
+#elif defined(DNBD3_BIG_ENDIAN)
 			uint8_t  hops;            // 1byte
 			uint64_t offset_small:56;  // 7byte
 #endif
@@ -170,27 +164,22 @@ typedef struct
 	};
 	uint64_t handle;          // 8byte
 } dnbd3_request_t;
-#pragma pack(0)
 _Static_assert( sizeof(dnbd3_request_t) == DNBD3_REQUEST_SIZE, "dnbd3_request_t is messed up" );
 
 #define DNBD3_REPLY_SIZE       16
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	uint16_t magic;		// 2byte
 	uint16_t cmd;		// 2byte
 	uint32_t size;		// 4byte
 	uint64_t handle;	// 8byte
 } dnbd3_reply_t;
-#pragma pack(0)
 _Static_assert( sizeof(dnbd3_reply_t) == DNBD3_REPLY_SIZE, "dnbd3_reply_t is messed up" );
 
-#pragma pack(1)
-typedef struct
+typedef struct __attribute__((packed))
 {
 	dnbd3_host_t host;
 	uint8_t  failures;		// 1byte (number of times server has been consecutively unreachable)
 } dnbd3_server_entry_t;
-#pragma pack(0)
 
 #endif /* TYPES_H_ */

@@ -13,6 +13,8 @@ OPTION(BUILD_FUSE_CLIENT "Build dnbd3 fuse client" ON)
 OPTION(BUILD_SERVER "Build dnbd3 server" ON)
 OPTION(BUILD_STRESSTEST "Build dnbd3 stress testing tool" OFF)
 SET(EXTRA_C_FLAGS "" CACHE STRING "Additional options to pass to compiler")
+OPTION(DEBUG_LOCKS "Add lock debugging code to dnbd3-server" OFF)
+OPTION(DEBUG_THREADS "Add thread debugging code to dnbd3-server" OFF)
 
 OPTION(SERVER_FOR_AFL "Build dnbd3-server for usage with afl-fuzz" OFF)
 
@@ -33,24 +35,51 @@ ELSE()
 	OPTION(BUILD_KERNEL_MODULE "Build the dnbd3 Linux kernel module" ON)
 ENDIF()
 
+INCLUDE(CheckCCompilerFlag)
+macro (TRY_ADD_FLAG _FLAG)
+	UNSET(TMP_TEST CACHE)
+	CHECK_C_COMPILER_FLAG("${_FLAG}" TMP_TEST)
+	if (TMP_TEST)
+		message(":-) Compiler supports ${_FLAG}")
+		SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${_FLAG}")
+	else()
+		message(":-( Compiler does not support ${_FLAG}")
+	endif()
+
+endmacro()
+
+# Common for gcc and clang
+#SET(CMAKE_EXE_LINKER_FLAGS "-Wl,-z,relro,-z,now,-z,defs -pie")
+SET(CMAKE_C_FLAGS_RELEASE "-DNDEBUG")
+SET(CMAKE_C_FLAGS "-std=c11 -Wno-multichar -fno-strict-aliasing -D_GNU_SOURCE -D_FORTIFY_SOURCE=2 ${EXTRA_C_FLAGS}")
+# Hardening. Try as much as is possible.
+#TRY_ADD_FLAG("-mmitigate-rop")
+#TRY_ADD_FLAG("-fstack-protector-strong")
+#TRY_ADD_FLAG("-fstack-clash-protection")
+#TRY_ADD_FLAG("-Wformat")
+#TRY_ADD_FLAG("-Wformat-security")
+#TRY_ADD_FLAG("-Werror=format-security")
 if(CMAKE_C_COMPILER MATCHES "clang")
 	message( "Using clang flags." )
-	SET(CMAKE_C_FLAGS_DEBUG "-std=c11 -O1 -fno-omit-frame-pointer -g -Wall -Wextra -Wpedantic -Wno-unused-result -D_GNU_SOURCE -D_DEBUG -Wno-multichar -fno-strict-aliasing ${EXTRA_C_FLAGS}")
-	SET(CMAKE_C_FLAGS_RELEASE "-std=c11 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG -Wno-multichar -fno-strict-aliasing ${EXTRA_C_FLAGS}")
+	SET(CMAKE_C_FLAGS_DEBUG " -O1 -fno-omit-frame-pointer -g -Wall -Wextra -Wpedantic -Wno-unused-result -D_DEBUG")
 elseif (CMAKE_C_COMPILER MATCHES "(cc-)|(cc$)")
 	message( "Using (g)cc flags." )
-	SET(CMAKE_C_FLAGS_DEBUG "-std=c11 -O0 -g -Wall -Wextra -Wpedantic -Wconversion -Wno-sign-conversion -D_GNU_SOURCE -D_DEBUG -Wno-multichar -fno-strict-aliasing ${EXTRA_C_FLAGS}")
-	SET(CMAKE_C_FLAGS_RELEASE "-std=c11 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG -Wno-multichar -fno-strict-aliasing ${EXTRA_C_FLAGS}")
+	SET(CMAKE_C_FLAGS_DEBUG " -O0 -g -Wall -Wextra -Wpedantic -Wconversion -Wno-sign-conversion -D_DEBUG")
 else()
 	message( FATAL_ERROR "Could not determine compiler type." )
 endif()
-#SET(CMAKE_CXX_FLAGS_DEBUG "-std=c99 -O0 -g -Wall -Wno-unused-result -D_GNU_SOURCE -D_DEBUG")
-#SET(CMAKE_CXX_FLAGS_RELEASE "-std=c99 -O2 -Wno-unused-result -D_GNU_SOURCE -DNDEBUG" )
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 
 ADD_DEFINITIONS(-D_FILE_OFFSET_BITS=64)
 ADD_DEFINITIONS(-DWITH_IPV6)
+ADD_DEFINITIONS(-DBUILD_TYPE=${CMAKE_BUILD_TYPE})
+if (DEBUG_LOCKS)
+	ADD_DEFINITIONS(-DDEBUG_LOCKS)
+ENDIF()
+if (DEBUG_THREADS)
+	ADD_DEFINITIONS(-DDEBUG_THREADS)
+ENDIF()
 
 FIND_PACKAGE(Threads)
 
@@ -105,15 +134,14 @@ FILE(WRITE ${CMAKE_BINARY_DIR}/version.cmake
  )
  CONFIGURE_FILE(\${SRC} \${DST} @ONLY)
 ")
-ADD_CUSTOM_TARGET(
-	version
+ADD_CUSTOM_COMMAND(OUTPUT fake-file.c ${CMAKE_BINARY_DIR}/generated/version.c
+	COMMAND
 	${CMAKE_COMMAND} -D SRC=${CMAKE_SOURCE_DIR}/src/version.c.in
 						-D DST=${CMAKE_BINARY_DIR}/generated/version.c
 						-D CMD=${CMAKE_SOURCE_DIR}/get-version.sh
 						-P ${CMAKE_BINARY_DIR}/version.cmake
 )
-
-INCLUDE_DIRECTORIES( ${CMAKE_BINARY_DIR}/generated )
+ADD_CUSTOM_TARGET(version ALL DEPENDS fake-file.c)
 
 ################################################################################
 # CLIENT                                                                       #
@@ -121,7 +149,7 @@ INCLUDE_DIRECTORIES( ${CMAKE_BINARY_DIR}/generated )
 
 if(BUILD_KERNEL_MODULE)
 	FILE(GLOB_RECURSE CLIENT_SRCS src/client/*.c)
-	ADD_EXECUTABLE(dnbd3-client ${CLIENT_SRCS})
+	ADD_EXECUTABLE(dnbd3-client ${CMAKE_BINARY_DIR}/generated/version.c ${CLIENT_SRCS})
 	TARGET_LINK_LIBRARIES(dnbd3-client)
 	ADD_DEPENDENCIES(dnbd3-client version)
 	INSTALL(TARGETS dnbd3-client RUNTIME DESTINATION sbin)
@@ -138,7 +166,7 @@ if(BUILD_SERVER)
 		ADD_DEFINITIONS(-DAFL_MODE)
 	ENDIF()
 	FILE(GLOB SERVER_SRCS src/server/*.c src/shared/*.c src/server/picohttpparser/*.c)
-	ADD_EXECUTABLE(dnbd3-server ${SERVER_SRCS})
+	ADD_EXECUTABLE(dnbd3-server ${CMAKE_BINARY_DIR}/generated/version.c ${SERVER_SRCS})
 	TARGET_INCLUDE_DIRECTORIES(dnbd3-server PRIVATE ${JANSSON_INCLUDE_DIR})
 	TARGET_LINK_LIBRARIES(dnbd3-server ${CMAKE_THREAD_LIBS_INIT} ${JANSSON_LIBRARIES})
 	if(UNIX AND NOT APPLE)

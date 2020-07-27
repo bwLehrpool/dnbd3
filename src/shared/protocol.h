@@ -20,7 +20,7 @@
 #define COND_HOPCOUNT(vers,hopcount) ( (vers) >= 3 ? (hopcount) : 0 )
 
 // 2017-11-02: Macro to set flags in select image message properly if we're a server, as BG_REP depends on global var
-#define SI_SERVER_FLAGS ( (_pretendClient ? 0 : FLAGS8_SERVER) | (_backgroundReplication == BGR_FULL ? FLAGS8_BG_REP : 0) )
+#define SI_SERVER_FLAGS ( (uint8_t)( (_pretendClient ? 0 : FLAGS8_SERVER) | (_backgroundReplication == BGR_FULL ? FLAGS8_BG_REP : 0) ) )
 
 #define REPLY_OK (0)
 #define REPLY_ERRNO (-1)
@@ -69,10 +69,8 @@ static inline bool dnbd3_select_image(int sock, const char *name, uint16_t rid, 
 	request.magic = dnbd3_packet_magic;
 	request.cmd = CMD_SELECT_IMAGE;
 	request.size = (uint32_t)len;
-#ifdef _DEBUG
 	request.handle = 0;
 	request.offset = 0;
-#endif
 	fixup_request( request );
 	iov[0].iov_base = &request;
 	iov[0].iov_len = sizeof(request);
