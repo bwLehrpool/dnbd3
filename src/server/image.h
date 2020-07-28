@@ -19,7 +19,7 @@ bool image_ensureOpen(dnbd3_image_t *image);
 
 dnbd3_image_t* image_byId(int imgId);
 
-dnbd3_image_t* image_get(char *name, uint16_t revision, bool checkIfWorking);
+dnbd3_image_t* image_get(const char *name, uint16_t revision, bool checkIfWorking);
 
 bool image_reopenCacheFd(dnbd3_image_t *image, const bool force);
 

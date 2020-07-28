@@ -18,12 +18,15 @@ typedef struct _dnbd3_uplink dnbd3_uplink_t;
 typedef struct _dnbd3_image dnbd3_image_t;
 typedef struct _dnbd3_client dnbd3_client_t;
 
+typedef void (*uplink_callback)(void *data, uint64_t handle, uint64_t start, uint32_t length, const char *buffer);
+
 typedef struct _dnbd3_queue_client
 {
 	struct _dnbd3_queue_client *next;
-	uint64_t handle;    // Handle used by client
+	void* data; // Passed back to callback
+	uint64_t handle;    // Passed back to callback
 	uint64_t from, to;  // Client range
-	dnbd3_client_t * client; // Client to send reply to
+	uplink_callback callback; // Callback function
 } dnbd3_queue_client_t;
 
 typedef struct _dnbd3_queue_entry

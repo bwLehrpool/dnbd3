@@ -58,6 +58,7 @@ static atomic_uint_fast64_t totalBytesSent = 0;
 static bool addToList(dnbd3_client_t *client);
 static void removeFromList(dnbd3_client_t *client);
 static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client);
+static void uplinkCallback(void *data, uint64_t handle, uint64_t start, uint32_t length, const char *buffer);
 
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
@@ -113,7 +114,7 @@ static inline bool recv_request_payload(int sock, uint32_t size, serialized_buff
  * Send reply with optional payload. payload can be null. The caller has to
  * acquire the sendMutex first.
  */
-static inline bool send_reply(int sock, dnbd3_reply_t *reply, void *payload)
+static inline bool send_reply(int sock, dnbd3_reply_t *reply, const void *payload)
 {
 	const uint32_t size = reply->size;
 	fixup_reply( *reply );
@@ -357,7 +358,9 @@ void* net_handleNewConnection(void *clientPtr)
 								goto exit_client_cleanup;
 							}
 						}
-						if ( !uplink_request( NULL, client, request.handle, offset, request.size, request.hops ) ) {
+						client->relayedCount++;
+						if ( !uplink_requestClient( client, &uplinkCallback, request.handle, offset, request.size, request.hops ) ) {
+							client->relayedCount--;
 							logadd( LOG_DEBUG1, "Could not relay uncached request from %s to upstream proxy for image %s:%d",
 									client->hostName, image->name, image->rid );
 							goto exit_client_cleanup;
@@ -682,8 +685,20 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 	if ( client->image != NULL ) {
 		dnbd3_uplink_t *uplink = ref_get_uplink( &client->image->uplinkref );
 		if ( uplink != NULL ) {
-			uplink_removeClient( uplink, client );
+			if ( client->relayedCount != 0 ) {
+				uplink_removeEntry( uplink, client, &uplinkCallback );
+			}
 			ref_put( &uplink->reference );
+		}
+		if ( client->relayedCount != 0 ) {
+			logadd( LOG_DEBUG1, "Client has relayedCount == %"PRIu8" on disconnect..", client->relayedCount );
+			int i;
+			for ( i = 0; i < 1000 && client->relayedCount != 0; ++i ) {
+				usleep( 10000 );
+			}
+			if ( client->relayedCount != 0 ) {
+				logadd( LOG_WARNING, "Client relayedCount still %"PRIu8" after sleeping!", client->relayedCount );
+			}
 		}
 	}
 	mutex_lock( &client->sendMutex );
@@ -726,15 +741,21 @@ static bool addToList(dnbd3_client_t *client)
 	return true;
 }
 
-void net_sendReply(dnbd3_client_t *client, uint16_t cmd, uint64_t handle)
+static void uplinkCallback(void *data, uint64_t handle, uint64_t start UNUSED, uint32_t length, const char *buffer)
 {
-	dnbd3_reply_t reply;
-	reply.magic = dnbd3_packet_magic;
-	reply.cmd = cmd;
-	reply.handle = handle;
-	reply.size = 0;
+	dnbd3_client_t *client = (dnbd3_client_t*)data;
+	dnbd3_reply_t reply = {
+		.magic = dnbd3_packet_magic,
+		.cmd = buffer == NULL ? CMD_ERROR : CMD_GET_BLOCK,
+		.handle = handle,
+		.size = length,
+	};
 	mutex_lock( &client->sendMutex );
-	send_reply( client->sock, &reply, NULL );
+	send_reply( client->sock, &reply, buffer );
+	if ( buffer == NULL ) {
+		shutdown( client->sock, SHUT_RDWR );
+	}
+	client->relayedCount--;
 	mutex_unlock( &client->sendMutex );
 }
 

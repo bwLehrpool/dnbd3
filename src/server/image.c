@@ -339,7 +339,7 @@ dnbd3_image_t* image_byId(int imgId)
  * point...
  * Locks on: imageListLock, _images[].lock
  */
-dnbd3_image_t* image_get(char *name, uint16_t revision, bool ensureFdOpen)
+dnbd3_image_t* image_get(const char *name, uint16_t revision, bool ensureFdOpen)
 {
 	int i;
 	dnbd3_image_t *candidate = NULL;

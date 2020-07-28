@@ -23,6 +23,8 @@
 #define LOCK_UPLINK_RTT 200
 #define LOCK_UPLINK_SEND 210
 #define LOCK_RPC_ACL 220
+#define LOCK_FUSE_INIT 300
+#define LOCK_FUSE_DIR 310
 
 //
 

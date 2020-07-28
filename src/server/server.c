@@ -29,6 +29,7 @@
 #include "integrity.h"
 #include "threadpool.h"
 #include "rpc.h"
+#include "fuse.h"
 
 #include "../version.h"
 #include "../shared/sockhelper.h"
@@ -108,6 +109,9 @@ void dnbd3_printHelp(char *argv_0)
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
 	printf( "-c or --config      Configuration directory (default /etc/dnbd3-server/)\n" );
+#ifdef BUILD_SERVER_FUSE
+	printf( "-m or --mount       FUSE mount point\n ");
+#endif
 	printf( "-n or --nodaemon    Start server in foreground\n" );
 	printf( "-b or --bind        Local Address to bind to\n" );
 	printf( "-h or --help        Show this help text and quit\n" );
@@ -139,6 +143,8 @@ _Noreturn static void dnbd3_cleanup()
 
 	_shutdown = true;
 	logadd( LOG_INFO, "Cleanup..." );
+
+	dfuse_shutdown();
 
 	if ( hasTimerThread ) {
 		pthread_kill( timerThread, SIGINT );
@@ -190,11 +196,13 @@ int main(int argc, char *argv[])
 	char *paramCreate = NULL;
 	char *bindAddress = NULL;
 	char *errorMsg = NULL;
+	char *mountDir = NULL;
 	int64_t paramSize = -1;
 	int paramRevision = -1;
-	static const char *optString = "b:c:d:hnv?";
+	static const char *optString = "b:c:m:d:hnv?";
 	static const struct option longOpts[] = {
 			{ "config", required_argument, NULL, 'c' },
+			{ "mount", required_argument, NULL, 'm' },
 			{ "nodaemon", no_argument, NULL, 'n' },
 			{ "reload", no_argument, NULL, 'r' },
 			{ "help", no_argument, NULL, 'h' },
@@ -217,6 +225,13 @@ int main(int argc, char *argv[])
 		switch ( opt ) {
 		case 'c':
 			_configDir = strdup( optarg );
+			break;
+		case 'm':
+#ifndef BUILD_SERVER_FUSE
+			fprintf( "FUSE support not enabled at build time.\n" );
+			return 8;
+#endif
+			mountDir = strdup( optarg );
 			break;
 		case 'n':
 			demonize = 0;
@@ -342,6 +357,11 @@ int main(int argc, char *argv[])
 	net_init();
 	uplink_globalsInit();
 	rpc_init();
+	if ( mountDir != NULL && !dfuse_init( NULL, mountDir ) ) {
+		logadd( LOG_ERROR, "Cannot mount fuse directory to %s", mountDir );
+		dnbd3_cleanup();
+		return EXIT_FAILURE;
+	}
 	logadd( LOG_INFO, "DNBD3 server starting...." );
 	logadd( LOG_INFO, "Machine type: " ENDIAN_MODE );
 	logadd( LOG_INFO, "Build Type: " TOSTRING( BUILD_TYPE ) );
@@ -385,6 +405,7 @@ int main(int argc, char *argv[])
 	// Initialize thread pool
 	if ( !threadpool_init( 8 ) ) {
 		logadd( LOG_ERROR, "Could not init thread pool!\n" );
+		dnbd3_cleanup();
 		exit( EXIT_FAILURE );
 	}
 
@@ -526,10 +547,11 @@ static void dnbd3_handleSignal2(int signum, siginfo_t *info, void *data UNUSED)
 		if ( info->si_pid != 0 && !pthread_equal( pthread_self(), mainThread ) ) {
 			pthread_kill( mainThread, info->si_signo ); // And relay signal if we're not the main thread
 		}
-	}
-	if ( pthread_equal( pthread_self(), mainThread ) ) {
-		// Signal received by main thread -- handle
-		dnbd3_handleSignal( signum );
+		// Source is not this process -- only then do we honor signals
+		if ( pthread_equal( pthread_self(), mainThread ) ) {
+			// Signal received by main thread -- handle
+			dnbd3_handleSignal( signum );
+		}
 	}
 }
 
