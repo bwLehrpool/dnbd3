@@ -228,7 +228,7 @@ int main(int argc, char *argv[])
 			break;
 		case 'm':
 #ifndef BUILD_SERVER_FUSE
-			fprintf( "FUSE support not enabled at build time.\n" );
+			fprintf( stderr, "FUSE support not enabled at build time.\n" );
 			return 8;
 #endif
 			mountDir = strdup( optarg );
