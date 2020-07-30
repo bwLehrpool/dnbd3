@@ -44,7 +44,6 @@ static const char *NAME_DIR = "images";
 
 typedef struct {
 	fuse_req_t req;
-	size_t fuseWriteSize;
 	uint16_t rid;
 	char name[PATHLEN];
 } lookup_t;
@@ -61,8 +60,6 @@ typedef struct _dfuse_dir {
 } dfuse_entry_t;
 
 typedef struct {
-	fuse_req_t req;
-	struct fuse_file_info fi;
 	dfuse_entry_t *entry;
 	dnbd3_image_t *image;
 } cmdopen_t;
@@ -90,8 +87,6 @@ static struct timespec startupTime;
 
 static dfuse_entry_t* dirLookup(dfuse_entry_t *dir, const char *name);
 static dfuse_entry_t* inoRecursive(dfuse_entry_t *dir, fuse_ino_t ino);
-static void *imageLookup(void *data);
-static void *imageOpen(void *data);
 
 static void uplinkCallback(void *data, uint64_t handle, uint64_t start UNUSED, uint32_t length, const char *buffer);
 static void cleanupFuse();
@@ -122,44 +117,28 @@ static void ll_open(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi)
 		} else if ( entry->img == NULL ) {
 			mutex_unlock( &dirLock );
 			fuse_reply_err( req, EISDIR );
+		} else if ( entry->img->rid == 0 ) {
+			mutex_unlock( &dirLock );
+			fuse_reply_err( req, ENOENT );
 		} else {
 			entry->refcount++;
 			mutex_unlock( &dirLock );
-			cmdopen_t *handle = malloc( sizeof(cmdopen_t) );
-			handle->req = req;
-			handle->fi = *fi;
-			handle->entry = entry;
-			handle->image = NULL;
-			if ( !threadpool_run( &imageOpen, (void*)handle, "fuse-open" ) ) {
-				free( handle );
+			dnbd3_image_t *image = image_get( entry->img->name, entry->img->rid, true );
+			if ( image == NULL ) {
+				fuse_reply_err( req, ENOENT );
 				mutex_lock( &dirLock );
 				entry->refcount--;
 				mutex_unlock( &dirLock );
-				fuse_reply_err( req, ENOMEM );
+			} else {
+				cmdopen_t *handle = malloc( sizeof(cmdopen_t) );
+				handle->entry = entry;
+				handle->image = image;
+				fi->fh = (uintptr_t)handle;
+				fi->keep_cache = 1;
+				fuse_reply_open( req, fi );
 			}
 		}
 	}
-}
-
-static void *imageOpen(void *data)
-{
-	cmdopen_t *handle = (cmdopen_t*)data;
-	assert( handle->image == NULL );
-	assert( handle->entry->img->rid != 0 );
-	handle->image = image_get( handle->entry->img->name, handle->entry->img->rid, true );
-	if ( handle->image == NULL ) {
-		fuse_reply_err( handle->req, ENOENT );
-		mutex_lock( &dirLock );
-		handle->entry->refcount--;
-		mutex_unlock( &dirLock );
-		free( handle );
-	} else {
-		handle->fi.fh = (uintptr_t)handle;
-		handle->fi.keep_cache = 1;
-		fuse_reply_open( handle->req, &handle->fi );
-		handle->req = NULL;
-	}
-	return NULL;
 }
 
 static dfuse_entry_t* addImage(dfuse_entry_t **dir, const char *name, lookup_t *img)
@@ -207,25 +186,6 @@ static dfuse_entry_t* addImage(dfuse_entry_t **dir, const char *name, lookup_t *
 static void *imageLookup(void *data)
 {
 	lookup_t *lu = (lookup_t*)data;
-	dnbd3_image_t *image = image_getOrLoad( lu->name, lu->rid );
-	if ( image == NULL ) {
-		fuse_reply_err( lu->req, ENOENT );
-		free( lu );
-	} else {
-		mutex_lock( &dirLock );
-		dfuse_entry_t *entry = addImage( &root->child, lu->name, lu );
-		if ( entry != NULL ) {
-			entry->size = image->virtualFilesize;
-		}
-		lu->rid = image->rid; // In case it was 0
-		mutex_unlock( &dirLock );
-		image_release( image );
-		if ( entry == NULL ) {
-			fuse_reply_err( lu->req, EINVAL );
-		} else {
-			fuse_reply_write( lu->req, lu->fuseWriteSize );
-		}
-	}
 	return NULL;
 }
 
@@ -274,16 +234,31 @@ static void ll_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t siz
 	lookup_t *lu = malloc( sizeof(lookup_t) );
 	lu->rid = (uint16_t)rid;
 	lu->req = req;
-	lu->fuseWriteSize = size;
 	if ( snprintf( lu->name, PATHLEN, "%.*s", (int)colon, buf ) == -1 ) {
 		free( lu );
 		fuse_reply_err( req, ENOSPC );
 		return;
 	}
 	logadd( LOG_DEBUG1, "FUSE: Request for '%s:%d'", lu->name, (int)lu->rid );
-	if ( !threadpool_run( &imageLookup, (void*)lu, "fuse-lookup" ) ) {
+	dnbd3_image_t *image = image_getOrLoad( lu->name, lu->rid );
+	if ( image == NULL ) {
+		fuse_reply_err( lu->req, ENOENT );
 		free( lu );
-		fuse_reply_err( req, EAGAIN );
+	} else {
+		mutex_lock( &dirLock );
+		dfuse_entry_t *entry = addImage( &root->child, lu->name, lu );
+		if ( entry != NULL ) {
+			entry->size = image->virtualFilesize;
+		}
+		lu->rid = image->rid; // In case it was 0
+		mutex_unlock( &dirLock );
+		image_release( image );
+		if ( entry == NULL ) {
+			fuse_reply_err( lu->req, EINVAL );
+			free( lu );
+		} else {
+			fuse_reply_write( lu->req, size );
+		}
 	}
 }
 
@@ -530,6 +505,9 @@ void ll_release(fuse_req_t req, fuse_ino_t ino UNUSED, struct fuse_file_info *fi
 	if ( fi->fh != 0 ) {
 		cmdopen_t *handle = (cmdopen_t*)fi->fh;
 		image_release( handle->image );
+		mutex_lock( &dirLock );
+		handle->entry->refcount--;
+		mutex_unlock( &dirLock );
 		free( handle );
 	}
 	fuse_reply_err( req, 0 );
