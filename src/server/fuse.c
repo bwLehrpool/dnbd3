@@ -183,12 +183,6 @@ static dfuse_entry_t* addImage(dfuse_entry_t **dir, const char *name, lookup_t *
 	}
 }
 
-static void *imageLookup(void *data)
-{
-	lookup_t *lu = (lookup_t*)data;
-	return NULL;
-}
-
 static void ll_write(fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi UNUSED)
 {
 	if ( ino != INO_CTRL ) {
