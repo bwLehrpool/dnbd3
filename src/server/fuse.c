@@ -463,6 +463,45 @@ static void ll_lookup(fuse_req_t req, fuse_ino_t parent, const char *name)
 	fuse_reply_err( req, ENOENT );
 }
 
+struct dirbuf {
+	char *p;
+	size_t size;
+};
+
+static void dirbuf_add( fuse_req_t req, struct dirbuf *b, const char *name, fuse_ino_t ino )
+{
+	struct stat stbuf = { .st_ino = ino };
+	size_t oldsize = b->size;
+	b->size += fuse_add_direntry( req, NULL, 0, name, NULL, 0 );
+	b->p = ( char * ) realloc( b->p, b->size );
+	fuse_add_direntry( req, b->p + oldsize, b->size - oldsize, name, &stbuf, b->size );
+	return;
+}
+
+static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize )
+{
+	if ( off >= 0 && off < (off_t)bufsize ) {
+		return fuse_reply_buf( req, buf + off, MIN( bufsize - off, maxsize ) );
+	}
+	return fuse_reply_buf( req, NULL, 0 );
+}
+
+static void ll_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi UNUSED)
+{
+	if ( ino != INO_ROOT ) {
+		fuse_reply_err( req, EACCES );
+	} else {
+		struct dirbuf b;
+		memset( &b, 0, sizeof( b ) );
+		dirbuf_add( req, &b, ".", INO_ROOT );
+		dirbuf_add( req, &b, "..", INO_ROOT );
+		dirbuf_add( req, &b, NAME_CTRL, INO_CTRL );
+		dirbuf_add( req, &b, NAME_DIR, INO_DIR );
+		reply_buf_limited( req, b.p, b.size, off, size );
+		free( b.p );
+	}
+}
+
 static void ll_getattr(fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi UNUSED)
 {
 	struct stat stbuf = { .st_ino = 0 };
@@ -511,7 +550,7 @@ static struct fuse_lowlevel_ops fuseOps = {
 	.lookup = ll_lookup,
 	.getattr = ll_getattr,
 	.setattr = ll_setattr,
-	//.readdir = ll_readdir,
+	.readdir = ll_readdir,
 	.open = ll_open,
 	.release = ll_release,
 	.read = ll_read,
