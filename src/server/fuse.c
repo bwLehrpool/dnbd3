@@ -543,11 +543,12 @@ bool dfuse_init(const char *opts, const char *dir)
 	mutex_init( &dirLock, LOCK_FUSE_DIR );
 	clock_gettime( CLOCK_REALTIME, &startupTime );
 	struct fuse_args args = FUSE_ARGS_INIT( 0, NULL );
+	fuse_opt_add_arg( &args, "dnbd3fs" ); // argv[0]
 	if ( opts != NULL ) {
 		fuse_opt_add_arg( &args, opts );
 	}
 	fuse_opt_add_arg( &args, "-odefault_permissions" );
-	fuse_opt_add_arg( &args, dir );
+	fuse_opt_add_arg( &args, dir ); // last param is mount point
 	//
 	if ( fuse_parse_cmdline( &args, &fuseMountPoint, NULL, NULL ) == -1 ) {
 		logadd( LOG_ERROR, "FUSE: Error parsing command line" );

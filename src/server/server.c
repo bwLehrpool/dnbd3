@@ -357,7 +357,7 @@ int main(int argc, char *argv[])
 	net_init();
 	uplink_globalsInit();
 	rpc_init();
-	if ( mountDir != NULL && !dfuse_init( NULL, mountDir ) ) {
+	if ( mountDir != NULL && !dfuse_init( "-oallow_other", mountDir ) ) {
 		logadd( LOG_ERROR, "Cannot mount fuse directory to %s", mountDir );
 		dnbd3_cleanup();
 		return EXIT_FAILURE;
