@@ -29,6 +29,7 @@ static char nullbytes[DNBD3_BLOCK_SIZE];
 #include "image.h"
 #include "uplink.h"
 #include "reference.h"
+#include "helper.h"
 
 #include <fuse_lowlevel.h>
 #include <ctype.h>
@@ -632,6 +633,7 @@ static void* fuseMainLoop(void *data UNUSED)
 		logadd( LOG_WARNING, "FUSE: Unexpected state in fuseMainLoop: %d", ex );
 		return NULL;
 	}
+	setThreadName( "fuse" );
 	logadd( LOG_INFO, "FUSE: Starting mainloop" );
 	fuse_session_loop_mt( fuseSession );
 	logadd( LOG_INFO, "FUSE: Left mainloop" );
