@@ -319,7 +319,7 @@ static void ll_read( fuse_req_t req, fuse_ino_t ino UNUSED, size_t size, off_t o
 			.fd = -1,
 		};
 	}
-	fuse_reply_data( req, vec, 0 );
+	fuse_reply_data( req, vec, FUSE_BUF_SPLICE_MOVE );
 	free( vec );
 }
 
@@ -517,6 +517,20 @@ static void uplinkCallback(void *data, uint64_t handle UNUSED, uint64_t start UN
 	}
 }
 
+#define DUMP(key,type) logadd( LOG_DEBUG1, "FUSE: " #key ": " type, conn->key )
+void ll_init(void *userdata, struct fuse_conn_info *conn)
+{
+	DUMP( capable, "%u" );
+	DUMP( congestion_threshold, "%u" );
+	DUMP( max_background, "%u" );
+	//DUMP( max_read, "%u" );
+	DUMP( max_readahead, "%u" );
+	DUMP( max_write, "%u" );
+	DUMP( want, "%u" );
+	conn->want |= FUSE_CAP_SPLICE_READ | FUSE_CAP_SPLICE_WRITE | FUSE_CAP_SPLICE_MOVE;
+}
+#undef DUMP
+
 /* map the implemented fuse operations */
 static struct fuse_lowlevel_ops fuseOps = {
 	.lookup = ll_lookup,
@@ -527,7 +541,7 @@ static struct fuse_lowlevel_ops fuseOps = {
 	.release = ll_release,
 	.read = ll_read,
 	.write = ll_write,
-	//.init = ll_init,
+	.init = ll_init,
 	//.destroy = ll_destroy,
 };
 
