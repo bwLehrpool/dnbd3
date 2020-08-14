@@ -1247,6 +1247,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	const int count = altservers_getHostListForReplication( name, servers, REP_NUM_SRV );
 	uint16_t remoteProtocolVersion;
 	uint16_t remoteRid = revision;
+	uint16_t acceptedRemoteRid = 0;
 	uint64_t remoteImageSize;
 	struct sockaddr_storage sa;
 	socklen_t salen;
@@ -1304,17 +1305,24 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 		if ( !sock_sockaddrToDnbd3( (struct sockaddr*)&sa, &uplinkServer ) ) {
 			uplinkServer.type = 0;
 		}
-		break;
+		acceptedRemoteRid = remoteRid;
+		break; // TODO: Maybe we should try the remaining servers if rid == 0, in case there's an even newer one
 
 server_fail: ;
 		close( sock );
 	}
 	sock_destroyPollList( cons );
 
-	// If we still have a pointer to a local image, release the reference
-	if ( image != NULL ) image_release( image );
+	// If we still have a pointer to a local image, compare rid
+	if ( image != NULL ) {
+		if ( ( revision == 0 && image->rid >= acceptedRemoteRid ) || ( image->rid == revision ) ) {
+			return image;
+		}
+		// release the reference
+		image_release( image );
+	}
 	// If everything worked out, this call should now actually return the image
-	image = image_get( name, remoteRid, false );
+	image = image_get( name, acceptedRemoteRid, false );
 	if ( image != NULL && uplinkSock != -1 ) {
 		// If so, init the uplink and pass it the socket
 		sock_setTimeout( uplinkSock, _uplinkTimeout );
@@ -1340,6 +1348,7 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 {
 	char imageFile[PATHLEN] = "";
 	uint16_t detectedRid = 0;
+	bool isLegacyFile = false;
 
 	if ( requestedRid != 0 ) {
 		snprintf( imageFile, PATHLEN, "%s/%s.r%d", _basePath, name, (int)requestedRid );
@@ -1376,6 +1385,7 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 			&& ( detectedRid == 0 || !file_isReadable( imageFile ) ) ) {
 		snprintf( imageFile, PATHLEN, "%s/%s", _basePath, name );
 		detectedRid = 1;
+		isLegacyFile = true;
 	}
 	logadd( LOG_DEBUG2, "Trying to load %s:%d ( -> %d) as %s", name, (int)requestedRid, (int)detectedRid, imageFile );
 	// No file was determined, or it doesn't seem to exist/be readable
@@ -1383,7 +1393,7 @@ static dnbd3_image_t *loadImageServer(char * const name, const uint16_t requeste
 		logadd( LOG_DEBUG2, "Not found, bailing out" );
 		return image_get( name, requestedRid, true );
 	}
-	if ( !_vmdkLegacyMode && requestedRid == 0 ) {
+	if ( !isLegacyFile && requestedRid == 0 ) {
 		// rid 0 requested - check if detected rid is readable, decrease rid if not until we reach 0
 		while ( detectedRid != 0 ) {
 			dnbd3_image_t *image = image_get( name, detectedRid, true );
