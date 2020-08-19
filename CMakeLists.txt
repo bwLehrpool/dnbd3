@@ -224,7 +224,7 @@ IF(BUILD_KERNEL_MODULE)
 	SET(MODULE_NAME dnbd3)
 	SET(MODULE_FILE ${MODULE_NAME}.ko)
 	FILE(GLOB MODULE_SOURCE_FILES src/kernel/*.c src/serialize.c)
-	FILE(GLOB MODULE_HEADER_FILES src/kernel/*.h)
+	FILE(GLOB MODULE_HEADER_FILES src/kernel/*.h src/*.h)
 
 	SET(KERNEL_DIR "" CACHE PATH "Path to kernel sources to compile against")
 	IF(KERNEL_DIR STREQUAL "")
