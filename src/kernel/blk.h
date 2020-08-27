@@ -27,12 +27,6 @@
 #define REQ_TYPE_SPECIAL REQ_TYPE_DRV_PRIV
 #endif
 
-extern struct block_device_operations dnbd3_blk_ops;
-
-int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg);
-
-void dnbd3_blk_request(struct request_queue *q);
-
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor);
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev);

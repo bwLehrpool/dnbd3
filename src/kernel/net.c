@@ -25,12 +25,14 @@
 
 #include "serialize.h"
 
-#include <linux/time.h>
+#include <linux/ktime.h>
 #include <linux/signal.h>
 
 #ifndef MIN
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
+
+#define ktime_to_s(kt) ktime_divns(kt, NSEC_PER_SEC)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
 #define dnbd3_sock_create(af,type,proto,sock) sock_create_kern(&init_net, (af) == HOST_IP4 ? AF_INET : AF_INET6, type, proto, sock)
@@ -203,8 +205,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		if (dnbd3_sock_create(dev->cur_server.host.type, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
 			error_dev("ERROR: Couldn't create socket (v6).");
 
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
 		dev->sock->sk->sk_allocation = GFP_NOIO;
 		if (dev->cur_server.host.type == HOST_IP4)
 		{
@@ -289,8 +291,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		debug_dev("INFO: On-the-fly server change.");
 		dev->sock = dev->better_sock;
 		dev->better_sock = NULL;
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
 	}
 
 	dev->panic = 0;
@@ -459,7 +461,7 @@ int dnbd3_net_discover(void *data)
 	uint64_t filesize;
 	uint16_t rid;
 
-	struct timeval start, end;
+	ktime_t start, end;
 	unsigned long rtt, best_rtt = 0;
 	unsigned long irqflags;
 	int i, j, isize, best_server, current_server;
@@ -565,7 +567,7 @@ int dnbd3_net_discover(void *data)
 		}
 		if (NUMBER_SERVERS > isize) {
 			for (i = 0; i < isize; ++i) {
-				j = ((start.tv_sec >> i) ^ (start.tv_usec >> j)) % NUMBER_SERVERS;
+				j = ((ktime_to_s(start) >> i) ^ (ktime_to_us(start) >> j)) % NUMBER_SERVERS;
 				if (j != i) {
 					mlen = check_order[i];
 					check_order[i] = check_order[j];
@@ -579,7 +581,7 @@ int dnbd3_net_discover(void *data)
 			i = check_order[j];
 			if (dev->alt_servers[i].host.type == 0) // Empty slot
 				continue;
-			if (!dev->panic && dev->alt_servers[i].failures > 50 && (start.tv_usec & 7) != 0) // If not in panic mode, skip server if it failed too many times
+			if (!dev->panic && dev->alt_servers[i].failures > 50 && (ktime_to_us(start) & 7) != 0) // If not in panic mode, skip server if it failed too many times
 				continue;
 			if (isize-- <= 0 && !is_same_server(&dev->cur_server, &dev->alt_servers[i]))
 				continue;
@@ -591,8 +593,8 @@ int dnbd3_net_discover(void *data)
 				sock = NULL;
 				continue;
 			}
-			kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout));
-			kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+			kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+			kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
 			sock->sk->sk_allocation = GFP_NOIO;
 			if (dev->alt_servers[i].host.type == HOST_IP4)
 			{
@@ -693,7 +695,7 @@ int dnbd3_net_discover(void *data)
 			iov[0].iov_len = sizeof(dnbd3_request);
 
 			// start rtt measurement
-			do_gettimeofday(&start);
+			start = ktime_get_real();
 
 			if (kernel_sendmsg(sock, &msg, iov, 1, sizeof(dnbd3_request)) <= 0)
 				error_alt("ERROR: Requesting test block failed (discover).");
@@ -715,10 +717,9 @@ int dnbd3_net_discover(void *data)
 			if (kernel_recvmsg(sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != RTT_BLOCK_SIZE)
 				error_alt("ERROR: Receiving test block payload failed (discover).");
 
-			do_gettimeofday(&end); // end rtt measurement
+			end = ktime_get_real(); // end rtt measurement
 
-			dev->alt_servers[i].rtts[turn] = (unsigned long)((end.tv_sec - start.tv_sec) * 1000000ull
-			   + (end.tv_usec - start.tv_usec));
+			dev->alt_servers[i].rtts[turn] = (unsigned long) ktime_us_delta(end, start);
 
 			rtt = (dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1] + dev->alt_servers[i].rtts[2]
 			   + dev->alt_servers[i].rtts[3]) / 4;
@@ -781,7 +782,7 @@ int dnbd3_net_discover(void *data)
 			continue;
 		}
 
-		do_change = ready && best_server != current_server && (start.tv_usec & 3) != 0
+		do_change = ready && best_server != current_server && (ktime_to_us(start) & 3) != 0
 				   && RTT_THRESHOLD_FACTOR(dev->cur_rtt) > best_rtt + 1500;
 
 		if (ready && !do_change) {
@@ -823,7 +824,7 @@ int dnbd3_net_discover(void *data)
 			best_sock = NULL;
 		}
 
-		if (!ready || (start.tv_usec & 15) != 0)
+		if (!ready || (ktime_to_us(start) & 15) != 0)
 			turn = (turn + 1) % 4;
 		if (turn == 2) // Set ready when we only have 2 of 4 measurements for quicker load balancing
 			ready = 1;
@@ -1032,7 +1033,7 @@ int dnbd3_net_receive(void *data)
 			}
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			list_del_init(&blk_request->queuelist);
-			__blk_end_request_all(blk_request, 0);
+			blk_mq_end_request(blk_request, BLK_STS_OK);
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			continue;
 
@@ -1120,4 +1121,3 @@ int dnbd3_net_receive(void *data)
 	dev->thread_receive = NULL;
 	return -1;
 }
-

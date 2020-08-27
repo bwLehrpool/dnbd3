@@ -25,6 +25,7 @@
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/blkdev.h>
+#include <linux/blk-mq.h>
 #include <net/sock.h>
 
 #define KERNEL_MODULE
@@ -46,6 +47,8 @@ typedef struct
 {
 	// block
 	struct gendisk *disk;
+	struct blk_mq_tag_set tag_set;
+	struct request_queue *queue;
 	spinlock_t blk_lock;
 
 	// sysfs
