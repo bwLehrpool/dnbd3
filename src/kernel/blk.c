@@ -25,21 +25,12 @@
 
 #include <linux/pagemap.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 #define dnbd3_req_read(req) \
 	req_op(req) == REQ_OP_READ
 #define dnbd3_req_fs(req) \
 	dnbd3_req_read(req) || req_op(req) == REQ_OP_WRITE
 #define dnbd3_req_special(req) \
 	blk_rq_is_private(req)
-#else
-#define dnbd3_req_read(req) \
-	rq_data_dir(req) == READ
-#define dnbd3_req_fs(req) \
-	req->cmd_type == REQ_TYPE_FS
-#define dnbd3_req_special(req) \
-	req->cmd_type == REQ_TYPE_SPECIAL
-#endif
 
 static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
@@ -48,12 +39,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	struct request_queue *blk_queue = dev->disk->queue;
 	char *imgname = NULL;
 	dnbd3_ioctl_t *msg = NULL;
-	//unsigned long irqflags;
 
-	while (dev->disconnecting)
-	{
-		// do nothing
-	}
+	while (dev->disconnecting) { /* do nothing */ }
 
 	if (arg != 0)
 	{
@@ -83,7 +70,6 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				goto cleanup_return;
 			}
 			imgname[msg->imgnamelen] = '\0';
-			//printk("IOCTL Image name of len %d is %s\n", (int)msg->imgnamelen, imgname);
 		}
 	}
 
@@ -106,7 +92,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		else
 		{
 			if (sizeof(msg->host) != sizeof(dev->cur_server.host))
-				printk("Odd size bug#1 triggered in IOCTL\n");
+				dev_info(dnbd3_device_to_dev(dev), "odd size bug triggered in IOCTL\n");
 			memcpy(&dev->cur_server.host, &msg->host, sizeof(msg->host));
 			dev->cur_server.failures = 0;
 			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
@@ -116,13 +102,11 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			// Forget all alt servers on explicit connect, set first al server to initial server
 			memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
 			memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+
 			if (blk_queue->backing_dev_info != NULL) {
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
 			}
-#else
-			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
-#endif
+
 			if (dnbd3_net_connect(dev) == 0)
 			{
 				result = 0;
@@ -284,7 +268,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	ret = blk_mq_alloc_tag_set(&dev->tag_set);
 	if (ret)
 	{
-		printk(KERN_ERR "ERROR: dnbd3 blk_mq_alloc_tag_set failed.\n");
+		dev_err(dnbd3_device_to_dev(dev), "blk_mq_alloc_tag_set failed\n");
 		goto out;
 	}
 
@@ -292,19 +276,15 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->queue = blk_mq_init_queue(&dev->tag_set);
 	if (IS_ERR(dev->queue)) {
 		ret = PTR_ERR(dev->queue);
+		dev_err(dnbd3_device_to_dev(dev), "blk_mq_init_queue failed\n");
 		goto out_cleanup_tags;
 	}
 	dev->queue->queuedata = dev;
 
 	blk_queue_logical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
 	blk_queue_physical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, dev->queue);
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, dev->queue);
-#else
-	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, dev->queue);
-#endif
 #define ONE_MEG (1048576)
 	blk_queue_max_segment_size(dev->queue, ONE_MEG);
 	blk_queue_max_segments(dev->queue, 0xffff);
@@ -315,7 +295,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	// set up disk
 	if (!(dev->disk = alloc_disk(1)))
 	{
-		printk(KERN_ERR "ERROR: dnbd3 alloc_disk failed.\n");
+		dev_err(dnbd3_device_to_dev(dev), "alloc_disk failed\n");
 		ret = -ENOMEM;
 		goto out_cleanup_queue;
 	}
@@ -374,7 +354,7 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 			{
 				if (blk_request == blk_request2)
 				{
-					printk("WARNING: Request is in both lists!\n");
+					dev_warn(dnbd3_device_to_dev(dev), "request is in both lists\n");
 					dup = 1;
 					break;
 				}
@@ -392,7 +372,7 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 			{
 				if (blk_request == blk_request2)
 				{
-					printk("WARNING: Request is in both lists!\n");
+					dev_warn(dnbd3_device_to_dev(dev), "request is in both lists\n");
 					dup = 1;
 					break;
 				}

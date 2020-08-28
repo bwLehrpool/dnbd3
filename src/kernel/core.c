@@ -18,42 +18,51 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include "clientconfig.h"
 #include "dnbd3.h"
 #include "blk.h"
 
 int major;
 static unsigned int max_devs = NUMBER_DEVICES;
-static dnbd3_device_t *dnbd3_device;
+static dnbd3_device_t *dnbd3_devices;
+
+struct device *dnbd3_device_to_dev(dnbd3_device_t *dev)
+{
+	return disk_to_dev(dev->disk);
+}
 
 static int __init dnbd3_init(void)
 {
 	int i;
 
-	dnbd3_device = kcalloc(max_devs, sizeof(*dnbd3_device), GFP_KERNEL);
-	if (!dnbd3_device)
+	dnbd3_devices = kcalloc(max_devs, sizeof(*dnbd3_devices), GFP_KERNEL);
+	if (!dnbd3_devices)
 		return -ENOMEM;
 
 	// initialize block device
 	if ((major = register_blkdev(0, "dnbd3")) == 0)
 	{
-		printk("ERROR: dnbd3 register_blkdev failed.\n");
+		pr_err("register_blkdev failed\n");
 		return -EIO;
 	}
 
-	printk("DNBD3 kernel module loaded. Machine type: " ENDIAN_MODE "\n");
+	pr_info("kernel module loaded\n");
+	pr_debug("machine type " ENDIAN_MODE "\n");
 
 	// add MAX_NUMBER_DEVICES devices
 	for (i = 0; i < max_devs; i++)
 	{
-		if (dnbd3_blk_add_device(&dnbd3_device[i], i) != 0)
+		if (dnbd3_blk_add_device(&dnbd3_devices[i], i) != 0)
 		{
-			printk("ERROR: adding device failed.\n");
+			pr_err("dnbd3_blk_add_device failed\n");
 			return -EIO; // TODO: delete all devices added so far. it could happen that it's not the first one that fails. also call unregister_blkdev and free memory
 		}
 	}
 
-	printk("INFO: dnbd3 init successful (%i devices).\n", max_devs);
+	pr_info("init successful (%i devices)\n", max_devs);
+
 	return 0;
 }
 
@@ -63,16 +72,17 @@ static void __exit dnbd3_exit(void)
 
 	for (i = 0; i < max_devs; i++)
 	{
-		dnbd3_blk_del_device(&dnbd3_device[i]);
+		dnbd3_blk_del_device(&dnbd3_devices[i]);
 	}
 
 	unregister_blkdev(major, "dnbd3");
-	kfree(dnbd3_device);
-	printk("INFO: dnbd3 exit.\n");
+	kfree(dnbd3_devices);
+
+	pr_info("exit kernel module\n");
 }
 
-module_init( dnbd3_init);
-module_exit( dnbd3_exit);
+module_init(dnbd3_init);
+module_exit(dnbd3_exit);
 
 MODULE_DESCRIPTION("Distributed Network Block Device 3");
 MODULE_LICENSE("GPL");

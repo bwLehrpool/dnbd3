@@ -84,4 +84,6 @@ typedef struct
 
 } dnbd3_device_t;
 
+extern inline struct device *dnbd3_device_to_dev(dnbd3_device_t *dev);
+
 #endif /* DNBD_H_ */

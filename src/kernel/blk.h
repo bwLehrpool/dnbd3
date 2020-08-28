@@ -23,9 +23,7 @@
 
 #include "dnbd3.h"
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
 #define REQ_TYPE_SPECIAL REQ_TYPE_DRV_PRIV
-#endif
 
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor);
 

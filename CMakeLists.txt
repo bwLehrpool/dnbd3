@@ -231,8 +231,8 @@ IF(BUILD_KERNEL_MODULE)
 		SET(KERNEL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build")
 	ENDIF()
 
-	SET(KERNEL_C_FLAGS "")
-	IF(KERNEL_C_FLAGS MATCHES Debug)
+	SET(KERNEL_C_FLAGS "" CACHE STRING "Additional C flags to be used for building the kernel module")
+	IF(CMAKE_BUILD_TYPE MATCHES Debug)
 		SET(KERNEL_C_FLAGS "-g -DDEBUG")
 	ENDIF()
 
