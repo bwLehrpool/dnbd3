@@ -114,289 +114,7 @@ static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t * const dev)
 	return NULL ;
 }
 
-int dnbd3_net_connect(dnbd3_device_t *dev)
-{
-	struct request *req1 = NULL;
-	struct timeval timeout;
-
-	if (dev->disconnecting) {
-		dnbd3_dev_dbg_host_cur(dev, "CONNECT: still disconnecting!\n");
-		while (dev->disconnecting)
-			schedule();
-	}
-	if (dev->thread_receive != NULL) {
-		dnbd3_dev_dbg_host_cur(dev, "CONNECT: still receiving!\n");
-		while (dev->thread_receive != NULL)
-			schedule();
-	}
-	if (dev->thread_send != NULL) {
-		dnbd3_dev_dbg_host_cur(dev, "CONNECT: still sending!\n");
-		while (dev->thread_send != NULL)
-			schedule();
-	}
-
-	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
-	timeout.tv_usec = 0;
-
-	// do some checks before connecting
-	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
-	if (!req1)
-	{
-		dnbd3_dev_err_host_cur(dev, "kmalloc failed\n");
-		goto error;
-	}
-
-	if (dev->cur_server.host.port == 0 || dev->cur_server.host.type == 0 || dev->imgname == NULL )
-	{
-		dnbd3_dev_err_host_cur(dev, "host, port or image name not set\n");
-		goto error;
-	}
-
-	if (dev->sock)
-	{
-		dnbd3_dev_err_host_cur(dev, "socket already connected\n");
-		goto error;
-	}
-
-	if (dev->cur_server.host.type != HOST_IP4 && dev->cur_server.host.type != HOST_IP6)
-	{
-		dnbd3_dev_err_host_cur(dev, "unknown address type %d\n", (int)dev->cur_server.host.type);
-		goto error;
-	}
-
-	dnbd3_dev_dbg_host_cur(dev, "connecting ...\n");
-
-	if (dev->better_sock == NULL )
-	{
-		//  no established connection yet from discovery thread, start new one
-		dnbd3_request_t dnbd3_request;
-		dnbd3_reply_t dnbd3_reply;
-		struct msghdr msg;
-		struct kvec iov[2];
-		uint16_t rid;
-		char *name;
-		int mlen;
-		init_msghdr(msg);
-
-		if (dnbd3_sock_create(dev->cur_server.host.type, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
-		{
-			dnbd3_dev_err_host_cur(dev, "couldn't create socket (v6)\n");
-			goto error;
-		}
-
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
-		dev->sock->sk->sk_allocation = GFP_NOIO;
-		if (dev->cur_server.host.type == HOST_IP4)
-		{
-			struct sockaddr_in sin;
-			memset(&sin, 0, sizeof(sin));
-			sin.sin_family = AF_INET;
-			memcpy(&(sin.sin_addr), dev->cur_server.host.addr, 4);
-			sin.sin_port = dev->cur_server.host.port;
-			if (kernel_connect(dev->sock, (struct sockaddr *)&sin, sizeof(sin), 0) != 0)
-			{
-				dnbd3_dev_err_host_cur(dev, "connection to host failed (v4)\n");
-				goto error;
-			}
-		}
-		else
-		{
-			struct sockaddr_in6 sin;
-			memset(&sin, 0, sizeof(sin));
-			sin.sin6_family = AF_INET6;
-			memcpy(&(sin.sin6_addr), dev->cur_server.host.addr, 16);
-			sin.sin6_port = dev->cur_server.host.port;
-			if (kernel_connect(dev->sock, (struct sockaddr *)&sin, sizeof(sin), 0) != 0)
-			{
-				dnbd3_dev_err_host_cur(dev, "connection to host failed (v6)\n");
-			}
-		}
-
-		// Request filesize
-		dnbd3_request.magic = dnbd3_packet_magic;
-		dnbd3_request.cmd = CMD_SELECT_IMAGE;
-		iov[0].iov_base = &dnbd3_request;
-		iov[0].iov_len = sizeof(dnbd3_request);
-		serializer_reset_write(&dev->payload_buffer);
-		serializer_put_uint16(&dev->payload_buffer, PROTOCOL_VERSION);
-		serializer_put_string(&dev->payload_buffer, dev->imgname);
-		serializer_put_uint16(&dev->payload_buffer, dev->rid);
-		serializer_put_uint8(&dev->payload_buffer, 0); // is_server = false
-		iov[1].iov_base = &dev->payload_buffer;
-		dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
-		fixup_request(dnbd3_request);
-		mlen = sizeof(dnbd3_request) + iov[1].iov_len;
-		if (kernel_sendmsg(dev->sock, &msg, iov, 2, mlen) != mlen)
-		{
-			dnbd3_dev_err_host_cur(dev, "couldn't send CMD_SIZE_REQUEST\n");
-			goto error;
-		}
-		// receive reply header
-		iov[0].iov_base = &dnbd3_reply;
-		iov[0].iov_len = sizeof(dnbd3_reply);
-		if (kernel_recvmsg(dev->sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
-		{
-			dnbd3_dev_err_host_cur(dev, "received corrupted reply header after CMD_SIZE_REQUEST\n");
-			goto error;
-		}
-		// check reply header
-		fixup_reply(dnbd3_reply);
-		if (dnbd3_reply.cmd != CMD_SELECT_IMAGE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD
-		   || dnbd3_reply.magic != dnbd3_packet_magic)
-		{
-			dnbd3_dev_err_host_cur(dev, "received invalid reply to CMD_SIZE_REQUEST, image doesn't exist on server\n");
-			goto error;
-		}
-		// receive reply payload
-		iov[0].iov_base = &dev->payload_buffer;
-		iov[0].iov_len = dnbd3_reply.size;
-		if (kernel_recvmsg(dev->sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size)
-		{
-			dnbd3_dev_err_host_cur(dev, "cold not read CMD_SELECT_IMAGE payload on handshake\n");
-			goto error;
-		}
-		// handle/check reply payload
-		serializer_reset_read(&dev->payload_buffer, dnbd3_reply.size);
-		dev->cur_server.protocol_version = serializer_get_uint16(&dev->payload_buffer);
-		if (dev->cur_server.protocol_version < MIN_SUPPORTED_SERVER)
-		{
-			dnbd3_dev_err_host_cur(dev, "server version is lower than min supported version\n");
-			goto error;
-		}
-		name = serializer_get_string(&dev->payload_buffer);
-		if (dev->rid != 0 && strcmp(name, dev->imgname) != 0)
-		{
-			dnbd3_dev_err_host_cur(dev, "server offers image '%s', requested '%s'\n", name, dev->imgname);
-			goto error;
-		}
-		if (strlen(dev->imgname) < strlen(name))
-		{
-			dev->imgname = krealloc(dev->imgname, strlen(name) + 1, GFP_ATOMIC );
-			if (dev->imgname == NULL)
-			{
-				dnbd3_dev_err_host_cur(dev, "reallocating buffer for new image name failed\n");
-				goto error;
-			}
-		}
-		strcpy(dev->imgname, name);
-		rid = serializer_get_uint16(&dev->payload_buffer);
-		if (dev->rid != 0 && dev->rid != rid)
-		{
-			dnbd3_dev_err_host_cur(dev, "server provides rid %d, requested was %d\n", (int)rid, (int)dev->rid);
-			goto error;
-		}
-		dev->rid = rid;
-		dev->reported_size = serializer_get_uint64(&dev->payload_buffer);
-		if (dev->reported_size < 4096)
-		{
-			dnbd3_dev_err_host_cur(dev, "reported size by server is < 4096\n");
-			goto error;
-		}
-		// store image information
-		set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
-		dnbd3_dev_dbg_host_cur(dev, "filesize: %llu\n", dev->reported_size);
-		dev->update_available = 0;
-	}
-	else // Switching server, connection is already established and size request was executed
-	{
-		dnbd3_dev_dbg_host_cur(dev, "on-the-fly server change ...\n");
-		dev->sock = dev->better_sock;
-		dev->better_sock = NULL;
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
-	}
-
-	dev->panic = 0;
-	dev->panic_count = 0;
-
-	// Enqueue request to request_queue_send for a fresh list of alt servers
-	dnbd3_cmd_to_priv(req1, CMD_GET_SERVERS);
-	list_add(&req1->queuelist, &dev->request_queue_send);
-
-	// create required threads
-	dev->thread_send = kthread_create(dnbd3_net_send, dev, dev->disk->disk_name);
-	dev->thread_receive = kthread_create(dnbd3_net_receive, dev, dev->disk->disk_name);
-	dev->thread_discover = kthread_create(dnbd3_net_discover, dev, dev->disk->disk_name);
-	// start them up
-	wake_up_process(dev->thread_send);
-	wake_up_process(dev->thread_receive);
-	wake_up_process(dev->thread_discover);
-
-	wake_up(&dev->process_queue_send);
-
-	// add heartbeat timer
-	dev->heartbeat_count = 0;
-	timer_setup(&dev->hb_timer, dnbd3_net_heartbeat, 0);
-	dev->hb_timer.expires = jiffies + HZ;
-	add_timer(&dev->hb_timer);
-
-	return 0;
-
-error:
-	if (dev->sock)
-	{
-		sock_release(dev->sock);
-		dev->sock = NULL;
-	}
-	dev->cur_server.host.type = 0;
-	dev->cur_server.host.port = 0;
-	if (req1)
-		kfree(req1);
-
-	return -1;
-}
-
-int dnbd3_net_disconnect(dnbd3_device_t *dev)
-{
-	if (dev->disconnecting)
-		return 0;
-
-	if (dev->cur_server.host.port)
-		dnbd3_dev_dbg_host_cur(dev, "disconnecting device\n");
-
-	dev->disconnecting = 1;
-
-	// clear heartbeat timer
-	del_timer(&dev->hb_timer);
-
-	dev->discover = 0;
-
-	if (dev->sock)
-		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
-
-	// kill sending and receiving threads
-	if (dev->thread_send)
-	{
-		kthread_stop(dev->thread_send);
-	}
-
-	if (dev->thread_receive)
-	{
-		kthread_stop(dev->thread_receive);
-	}
-
-	if (dev->thread_discover)
-	{
-		kthread_stop(dev->thread_discover);
-		dev->thread_discover = NULL;
-	}
-
-	// clear socket
-	if (dev->sock)
-	{
-		sock_release(dev->sock);
-		dev->sock = NULL;
-	}
-	dev->cur_server.host.type = 0;
-	dev->cur_server.host.port = 0;
-
-	dev->disconnecting = 0;
-
-	return 0;
-}
-
-void dnbd3_net_heartbeat(struct timer_list *arg)
+static void dnbd3_net_heartbeat(struct timer_list *arg)
 {
 	dnbd3_device_t *dev = (dnbd3_device_t *)container_of(arg, dnbd3_device_t, hb_timer);
 
@@ -444,7 +162,7 @@ void dnbd3_net_heartbeat(struct timer_list *arg)
 #undef timeout_seconds
 }
 
-int dnbd3_net_discover(void *data)
+static int dnbd3_net_discover(void *data)
 {
 	dnbd3_device_t *dev = data;
 	struct sockaddr_in sin4;
@@ -877,7 +595,7 @@ int dnbd3_net_discover(void *data)
 	return 0;
 }
 
-int dnbd3_net_send(void *data)
+static int dnbd3_net_send(void *data)
 {
 	dnbd3_device_t *dev = data;
 	struct request *blk_request, *tmp_request;
@@ -983,7 +701,7 @@ int dnbd3_net_send(void *data)
 	return -1;
 }
 
-int dnbd3_net_receive(void *data)
+static int dnbd3_net_receive(void *data)
 {
 	dnbd3_device_t *dev = data;
 	struct request *blk_request, *tmp_request, *received_request;
@@ -1185,4 +903,286 @@ error:
 	}
 	dev->thread_receive = NULL;
 	return -1;
+}
+
+int dnbd3_net_connect(dnbd3_device_t *dev)
+{
+	struct request *req1 = NULL;
+	struct timeval timeout;
+
+	if (dev->disconnecting) {
+		dnbd3_dev_dbg_host_cur(dev, "CONNECT: still disconnecting!\n");
+		while (dev->disconnecting)
+			schedule();
+	}
+	if (dev->thread_receive != NULL) {
+		dnbd3_dev_dbg_host_cur(dev, "CONNECT: still receiving!\n");
+		while (dev->thread_receive != NULL)
+			schedule();
+	}
+	if (dev->thread_send != NULL) {
+		dnbd3_dev_dbg_host_cur(dev, "CONNECT: still sending!\n");
+		while (dev->thread_send != NULL)
+			schedule();
+	}
+
+	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
+	timeout.tv_usec = 0;
+
+	// do some checks before connecting
+	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
+	if (!req1)
+	{
+		dnbd3_dev_err_host_cur(dev, "kmalloc failed\n");
+		goto error;
+	}
+
+	if (dev->cur_server.host.port == 0 || dev->cur_server.host.type == 0 || dev->imgname == NULL )
+	{
+		dnbd3_dev_err_host_cur(dev, "host, port or image name not set\n");
+		goto error;
+	}
+
+	if (dev->sock)
+	{
+		dnbd3_dev_err_host_cur(dev, "socket already connected\n");
+		goto error;
+	}
+
+	if (dev->cur_server.host.type != HOST_IP4 && dev->cur_server.host.type != HOST_IP6)
+	{
+		dnbd3_dev_err_host_cur(dev, "unknown address type %d\n", (int)dev->cur_server.host.type);
+		goto error;
+	}
+
+	dnbd3_dev_dbg_host_cur(dev, "connecting ...\n");
+
+	if (dev->better_sock == NULL )
+	{
+		//  no established connection yet from discovery thread, start new one
+		dnbd3_request_t dnbd3_request;
+		dnbd3_reply_t dnbd3_reply;
+		struct msghdr msg;
+		struct kvec iov[2];
+		uint16_t rid;
+		char *name;
+		int mlen;
+		init_msghdr(msg);
+
+		if (dnbd3_sock_create(dev->cur_server.host.type, SOCK_STREAM, IPPROTO_TCP, &dev->sock) < 0)
+		{
+			dnbd3_dev_err_host_cur(dev, "couldn't create socket (v6)\n");
+			goto error;
+		}
+
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+		dev->sock->sk->sk_allocation = GFP_NOIO;
+		if (dev->cur_server.host.type == HOST_IP4)
+		{
+			struct sockaddr_in sin;
+			memset(&sin, 0, sizeof(sin));
+			sin.sin_family = AF_INET;
+			memcpy(&(sin.sin_addr), dev->cur_server.host.addr, 4);
+			sin.sin_port = dev->cur_server.host.port;
+			if (kernel_connect(dev->sock, (struct sockaddr *)&sin, sizeof(sin), 0) != 0)
+			{
+				dnbd3_dev_err_host_cur(dev, "connection to host failed (v4)\n");
+				goto error;
+			}
+		}
+		else
+		{
+			struct sockaddr_in6 sin;
+			memset(&sin, 0, sizeof(sin));
+			sin.sin6_family = AF_INET6;
+			memcpy(&(sin.sin6_addr), dev->cur_server.host.addr, 16);
+			sin.sin6_port = dev->cur_server.host.port;
+			if (kernel_connect(dev->sock, (struct sockaddr *)&sin, sizeof(sin), 0) != 0)
+			{
+				dnbd3_dev_err_host_cur(dev, "connection to host failed (v6)\n");
+			}
+		}
+
+		// Request filesize
+		dnbd3_request.magic = dnbd3_packet_magic;
+		dnbd3_request.cmd = CMD_SELECT_IMAGE;
+		iov[0].iov_base = &dnbd3_request;
+		iov[0].iov_len = sizeof(dnbd3_request);
+		serializer_reset_write(&dev->payload_buffer);
+		serializer_put_uint16(&dev->payload_buffer, PROTOCOL_VERSION);
+		serializer_put_string(&dev->payload_buffer, dev->imgname);
+		serializer_put_uint16(&dev->payload_buffer, dev->rid);
+		serializer_put_uint8(&dev->payload_buffer, 0); // is_server = false
+		iov[1].iov_base = &dev->payload_buffer;
+		dnbd3_request.size = iov[1].iov_len = serializer_get_written_length(&dev->payload_buffer);
+		fixup_request(dnbd3_request);
+		mlen = sizeof(dnbd3_request) + iov[1].iov_len;
+		if (kernel_sendmsg(dev->sock, &msg, iov, 2, mlen) != mlen)
+		{
+			dnbd3_dev_err_host_cur(dev, "couldn't send CMD_SIZE_REQUEST\n");
+			goto error;
+		}
+		// receive reply header
+		iov[0].iov_base = &dnbd3_reply;
+		iov[0].iov_len = sizeof(dnbd3_reply);
+		if (kernel_recvmsg(dev->sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply))
+		{
+			dnbd3_dev_err_host_cur(dev, "received corrupted reply header after CMD_SIZE_REQUEST\n");
+			goto error;
+		}
+		// check reply header
+		fixup_reply(dnbd3_reply);
+		if (dnbd3_reply.cmd != CMD_SELECT_IMAGE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD
+		   || dnbd3_reply.magic != dnbd3_packet_magic)
+		{
+			dnbd3_dev_err_host_cur(dev, "received invalid reply to CMD_SIZE_REQUEST, image doesn't exist on server\n");
+			goto error;
+		}
+		// receive reply payload
+		iov[0].iov_base = &dev->payload_buffer;
+		iov[0].iov_len = dnbd3_reply.size;
+		if (kernel_recvmsg(dev->sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size)
+		{
+			dnbd3_dev_err_host_cur(dev, "cold not read CMD_SELECT_IMAGE payload on handshake\n");
+			goto error;
+		}
+		// handle/check reply payload
+		serializer_reset_read(&dev->payload_buffer, dnbd3_reply.size);
+		dev->cur_server.protocol_version = serializer_get_uint16(&dev->payload_buffer);
+		if (dev->cur_server.protocol_version < MIN_SUPPORTED_SERVER)
+		{
+			dnbd3_dev_err_host_cur(dev, "server version is lower than min supported version\n");
+			goto error;
+		}
+		name = serializer_get_string(&dev->payload_buffer);
+		if (dev->rid != 0 && strcmp(name, dev->imgname) != 0)
+		{
+			dnbd3_dev_err_host_cur(dev, "server offers image '%s', requested '%s'\n", name, dev->imgname);
+			goto error;
+		}
+		if (strlen(dev->imgname) < strlen(name))
+		{
+			dev->imgname = krealloc(dev->imgname, strlen(name) + 1, GFP_ATOMIC );
+			if (dev->imgname == NULL)
+			{
+				dnbd3_dev_err_host_cur(dev, "reallocating buffer for new image name failed\n");
+				goto error;
+			}
+		}
+		strcpy(dev->imgname, name);
+		rid = serializer_get_uint16(&dev->payload_buffer);
+		if (dev->rid != 0 && dev->rid != rid)
+		{
+			dnbd3_dev_err_host_cur(dev, "server provides rid %d, requested was %d\n", (int)rid, (int)dev->rid);
+			goto error;
+		}
+		dev->rid = rid;
+		dev->reported_size = serializer_get_uint64(&dev->payload_buffer);
+		if (dev->reported_size < 4096)
+		{
+			dnbd3_dev_err_host_cur(dev, "reported size by server is < 4096\n");
+			goto error;
+		}
+		// store image information
+		set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
+		dnbd3_dev_dbg_host_cur(dev, "filesize: %llu\n", dev->reported_size);
+		dev->update_available = 0;
+	}
+	else // Switching server, connection is already established and size request was executed
+	{
+		dnbd3_dev_dbg_host_cur(dev, "on-the-fly server change ...\n");
+		dev->sock = dev->better_sock;
+		dev->better_sock = NULL;
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+	}
+
+	dev->panic = 0;
+	dev->panic_count = 0;
+
+	// Enqueue request to request_queue_send for a fresh list of alt servers
+	dnbd3_cmd_to_priv(req1, CMD_GET_SERVERS);
+	list_add(&req1->queuelist, &dev->request_queue_send);
+
+	// create required threads
+	dev->thread_send = kthread_create(dnbd3_net_send, dev, dev->disk->disk_name);
+	dev->thread_receive = kthread_create(dnbd3_net_receive, dev, dev->disk->disk_name);
+	dev->thread_discover = kthread_create(dnbd3_net_discover, dev, dev->disk->disk_name);
+	// start them up
+	wake_up_process(dev->thread_send);
+	wake_up_process(dev->thread_receive);
+	wake_up_process(dev->thread_discover);
+
+	wake_up(&dev->process_queue_send);
+
+	// add heartbeat timer
+	dev->heartbeat_count = 0;
+	timer_setup(&dev->hb_timer, dnbd3_net_heartbeat, 0);
+	dev->hb_timer.expires = jiffies + HZ;
+	add_timer(&dev->hb_timer);
+
+	return 0;
+
+error:
+	if (dev->sock)
+	{
+		sock_release(dev->sock);
+		dev->sock = NULL;
+	}
+	dev->cur_server.host.type = 0;
+	dev->cur_server.host.port = 0;
+	if (req1)
+		kfree(req1);
+
+	return -1;
+}
+
+int dnbd3_net_disconnect(dnbd3_device_t *dev)
+{
+	if (dev->disconnecting)
+		return 0;
+
+	if (dev->cur_server.host.port)
+		dnbd3_dev_dbg_host_cur(dev, "disconnecting device\n");
+
+	dev->disconnecting = 1;
+
+	// clear heartbeat timer
+	del_timer(&dev->hb_timer);
+
+	dev->discover = 0;
+
+	if (dev->sock)
+		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
+
+	// kill sending and receiving threads
+	if (dev->thread_send)
+	{
+		kthread_stop(dev->thread_send);
+	}
+
+	if (dev->thread_receive)
+	{
+		kthread_stop(dev->thread_receive);
+	}
+
+	if (dev->thread_discover)
+	{
+		kthread_stop(dev->thread_discover);
+		dev->thread_discover = NULL;
+	}
+
+	// clear socket
+	if (dev->sock)
+	{
+		sock_release(dev->sock);
+		dev->sock = NULL;
+	}
+	dev->cur_server.host.type = 0;
+	dev->cur_server.host.port = 0;
+
+	dev->disconnecting = 0;
+
+	return 0;
 }
