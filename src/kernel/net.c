@@ -25,6 +25,7 @@
 
 #include "serialize.h"
 
+#include <linux/time.h>
 #include <linux/ktime.h>
 #include <linux/signal.h>
 
@@ -191,9 +192,20 @@ static int dnbd3_net_discover(void *data)
 
 	struct request *last_request = (struct request *)123, *cur_request = (struct request *)456;
 
-	struct timeval timeout;
+	struct __kernel_sock_timeval timeout;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+	sockptr_t timeout_ptr;
+#else
+	char *timeout_ptr;
+#endif
+
 	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DISCOVERY;
 	timeout.tv_usec = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+	timeout_ptr = KERNEL_SOCKPTR(&timeout);
+#else
+	timeout_ptr = (char *)&timeout;
+#endif
 
 	memset(&sin4, 0, sizeof(sin4));
 	memset(&sin6, 0, sizeof(sin6));
@@ -312,8 +324,8 @@ static int dnbd3_net_discover(void *data)
 				sock = NULL;
 				continue;
 			}
-			kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
-			kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+			sock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO_NEW, timeout_ptr, sizeof(timeout));
+			sock_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO_NEW, timeout_ptr, sizeof(timeout));
 			sock->sk->sk_allocation = GFP_NOIO;
 			if (dev->alt_servers[i].host.type == HOST_IP4)
 			{
@@ -908,7 +920,12 @@ error:
 int dnbd3_net_connect(dnbd3_device_t *dev)
 {
 	struct request *req1 = NULL;
-	struct timeval timeout;
+	struct __kernel_sock_timeval timeout;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+	sockptr_t timeout_ptr;
+#else
+	char *timeout_ptr;
+#endif
 
 	if (dev->disconnecting) {
 		dnbd3_dev_dbg_host_cur(dev, "CONNECT: still disconnecting!\n");
@@ -928,6 +945,11 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
 	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
 	timeout.tv_usec = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
+	timeout_ptr = KERNEL_SOCKPTR(&timeout);
+#else
+	timeout_ptr = (char *)&timeout;
+#endif
 
 	// do some checks before connecting
 	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
@@ -975,8 +997,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 			goto error;
 		}
 
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, timeout_ptr, sizeof(timeout));
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, timeout_ptr, sizeof(timeout));
 		dev->sock->sk->sk_allocation = GFP_NOIO;
 		if (dev->cur_server.host.type == HOST_IP4)
 		{
@@ -1094,8 +1116,8 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		dnbd3_dev_dbg_host_cur(dev, "on-the-fly server change ...\n");
 		dev->sock = dev->better_sock;
 		dev->better_sock = NULL;
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, (char *)&timeout, sizeof(timeout));
-		kernel_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, (char *)&timeout, sizeof(timeout));
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, timeout_ptr, sizeof(timeout));
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, timeout_ptr, sizeof(timeout));
 	}
 
 	dev->panic = 0;
