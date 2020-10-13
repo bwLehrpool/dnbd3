@@ -181,7 +181,7 @@ static int dnbd3_net_discover(void *data)
 	uint64_t filesize;
 	uint16_t rid;
 
-	ktime_t start, end;
+	ktime_t start = 0, end = 0;
 	unsigned long rtt, best_rtt = 0;
 	unsigned long irqflags;
 	int i, j, isize, best_server, current_server;
@@ -192,7 +192,11 @@ static int dnbd3_net_discover(void *data)
 
 	struct request *last_request = (struct request *)123, *cur_request = (struct request *)456;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,1,0)
 	struct __kernel_sock_timeval timeout;
+#else
+	struct timeval timeout;
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
 	sockptr_t timeout_ptr;
 #else
@@ -324,8 +328,13 @@ static int dnbd3_net_discover(void *data)
 				sock = NULL;
 				continue;
 			}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,1,0)
 			sock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO_NEW, timeout_ptr, sizeof(timeout));
 			sock_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO_NEW, timeout_ptr, sizeof(timeout));
+#else
+			sock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, timeout_ptr, sizeof(timeout));
+			sock_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout_ptr, sizeof(timeout));
+#endif
 			sock->sk->sk_allocation = GFP_NOIO;
 			if (dev->alt_servers[i].host.type == HOST_IP4)
 			{
@@ -920,7 +929,11 @@ error:
 int dnbd3_net_connect(dnbd3_device_t *dev)
 {
 	struct request *req1 = NULL;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,1,0)
 	struct __kernel_sock_timeval timeout;
+#else
+	struct timeval timeout;
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,9,0)
 	sockptr_t timeout_ptr;
 #else
@@ -997,8 +1010,13 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 			goto error;
 		}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,1,0)
 		sock_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, timeout_ptr, sizeof(timeout));
 		sock_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, timeout_ptr, sizeof(timeout));
+#else
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, timeout_ptr, sizeof(timeout));
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, timeout_ptr, sizeof(timeout));
+#endif
 		dev->sock->sk->sk_allocation = GFP_NOIO;
 		if (dev->cur_server.host.type == HOST_IP4)
 		{
@@ -1116,8 +1134,13 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		dnbd3_dev_dbg_host_cur(dev, "on-the-fly server change ...\n");
 		dev->sock = dev->better_sock;
 		dev->better_sock = NULL;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,1,0)
 		sock_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO_NEW, timeout_ptr, sizeof(timeout));
 		sock_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO_NEW, timeout_ptr, sizeof(timeout));
+#else
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_SNDTIMEO, timeout_ptr, sizeof(timeout));
+		sock_setsockopt(dev->sock, SOL_SOCKET, SO_RCVTIMEO, timeout_ptr, sizeof(timeout));
+#endif
 	}
 
 	dev->panic = 0;
