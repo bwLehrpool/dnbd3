@@ -1,7 +1,7 @@
 #ifndef _SERVERCONFIG_H_
 #define _SERVERCONFIG_H_
 
-#include "config.h"
+#include <dnbd3/config.h>
 
 // +++++ Performance/memory related
 #define SERVER_MAX_CLIENTS 4000

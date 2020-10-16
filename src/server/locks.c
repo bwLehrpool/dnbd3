@@ -7,9 +7,9 @@
 
 #include "locks.h"
 #include "helper.h"
-#include "../shared/timing.h"
+#include <dnbd3/shared/timing.h>
 
-#ifdef DEBUG_LOCKS
+#ifdef DNBD3_SERVER_DEBUG_LOCKS
 #define MAXLOCKS (SERVER_MAX_CLIENTS * 2 + SERVER_MAX_ALTS + 200 + SERVER_MAX_IMAGES)
 #define MAXTHREADS (SERVER_MAX_CLIENTS + 100)
 #define MAXLPT 20

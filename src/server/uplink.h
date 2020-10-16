@@ -2,7 +2,7 @@
 #define _UPLINK_H_
 
 #include "globals.h"
-#include "../types.h"
+#include <dnbd3/types.h>
 
 void uplink_globalsInit();
 

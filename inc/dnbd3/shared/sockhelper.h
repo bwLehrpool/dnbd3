@@ -6,7 +6,7 @@
  * abstract from the IP version by using getaddrinfo() and thelike.
  */
 
-#include "../types.h"
+#include <dnbd3/types.h>
 #include <stdint.h>
 #include <sys/socket.h>
 #include <string.h>

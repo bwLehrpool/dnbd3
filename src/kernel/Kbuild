@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0
+
+# Linux kernel module dnbd3
+obj-$(CONFIG_BLK_DEV_DNBD3) := dnbd3.o
+dnbd3-y                     += dnbd3_main.o blk.o net.o serialize.o sysfs.o utils.o

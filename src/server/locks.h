@@ -28,7 +28,7 @@
 
 //
 
-#ifdef DEBUG_LOCKS
+#ifdef DNBD3_SERVER_DEBUG_LOCKS
 
 #define mutex_init( lock, prio ) debug_mutex_init( #lock, __FILE__, __LINE__, lock, prio)
 #define mutex_lock( lock ) debug_mutex_lock( #lock, __FILE__, __LINE__, lock, false)
@@ -57,7 +57,7 @@ void debug_dump_lock_stats();
 
 #endif
 
-#ifdef DEBUG_THREADS
+#ifdef DNBD3_SERVER_DEBUG_THREADS
 
 extern int debugThreadCount;
 #define thread_create(thread,attr,routine,arg) (logadd( LOG_THREAD CREATE, "%d @ %s:%d\n", debugThreadCount, __FILE__, (int)__LINE__), debug_thread_create(thread, attr, routine, arg))
@@ -101,6 +101,6 @@ static inline int debug_thread_join(pthread_t thread, void **value_ptr)
 #define thread_detach(thread) pthread_detach( thread )
 #define thread_join(thread,value) pthread_join( thread, value )
 
-#endif
+#endif  /* DNBD3_SERVER_DEBUG_THREADS */
 
 #endif /* LOCKS_H_ */

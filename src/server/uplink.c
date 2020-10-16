@@ -4,10 +4,10 @@
 #include "image.h"
 #include "altservers.h"
 #include "net.h"
-#include "../shared/sockhelper.h"
-#include "../shared/protocol.h"
-#include "../shared/timing.h"
-#include "../shared/crc32.h"
+#include <dnbd3/shared/sockhelper.h>
+#include <dnbd3/shared/protocol.h>
+#include <dnbd3/shared/timing.h>
+#include <dnbd3/shared/crc32.h>
 #include "threadpool.h"
 #include "reference.h"
 
@@ -358,7 +358,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 			request->handle = ++uplink->queueId;
 			request->from = start & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
 			request->to = (end + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1);
-#ifdef _DEBUG
+#ifdef DEBUG
 			timing_get( &request->entered );
 #endif
 			request->hopCount = hops;
@@ -650,7 +650,7 @@ static void* uplink_mainloop(void *data)
 			}
 			timing_set( &nextAltCheck, &now, (discoverFailCount < SERVER_RTT_MAX_UNREACH) ? altCheckInterval : SERVER_RTT_INTERVAL_FAILED );
 		}
-#ifdef _DEBUG
+#ifdef DEBUG
 		if ( uplink->current.fd != -1 && !uplink->shutdown ) {
 			bool resend = false;
 			ticks deadline;
@@ -662,7 +662,7 @@ static void* uplink_mainloop(void *data)
 							" (from %" PRIu64 " to %" PRIu64 ", sent: %d) %s:%d",
 							it->from, it->to, (int)it->sent, PIMG(uplink->image) );
 					it->entered = now;
-#ifdef _DEBUG_RESEND_STARVING
+#ifdef DEBUG_RESEND_STARVING
 					it->sent = false;
 					resend = true;
 #endif

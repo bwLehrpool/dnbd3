@@ -31,9 +31,9 @@
 #include "rpc.h"
 #include "fuse.h"
 
-#include "../version.h"
-#include "../shared/sockhelper.h"
-#include "../shared/timing.h"
+#include <dnbd3/version.h>
+#include <dnbd3/shared/sockhelper.h>
+#include <dnbd3/shared/timing.h>
 
 #include <signal.h>
 #include <getopt.h>
@@ -105,11 +105,11 @@ static void queueJobInternal(job_t *job);
  */
 void dnbd3_printHelp(char *argv_0)
 {
-	printf( "Version: %s\n\n", VERSION_STRING );
+	printf( "Version: %s\n\n", DNBD3_VERSION );
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
 	printf( "-c or --config      Configuration directory (default /etc/dnbd3-server/)\n" );
-#ifdef BUILD_SERVER_FUSE
+#ifdef DNBD3_SERVER_WITH_FUSE
 	printf( "-m or --mount       FUSE mount point\n ");
 #endif
 	printf( "-n or --nodaemon    Start server in foreground\n" );
@@ -130,7 +130,7 @@ void dnbd3_printHelp(char *argv_0)
  */
 void dnbd3_printVersion()
 {
-	printf( "Version: %s\n", VERSION_STRING );
+	printf( "dnbd3-server version: %s\n", DNBD3_VERSION );
 	exit( 0 );
 }
 
@@ -227,7 +227,7 @@ int main(int argc, char *argv[])
 			_configDir = strdup( optarg );
 			break;
 		case 'm':
-#ifndef BUILD_SERVER_FUSE
+#ifndef DNBD3_SERVER_WITH_FUSE
 			fprintf( stderr, "FUSE support not enabled at build time.\n" );
 			return 8;
 #endif
@@ -290,7 +290,7 @@ int main(int argc, char *argv[])
 	timing_setBase();
 	timing_get( &startupTime );
 
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 	// ###### AFL
 	//
 	image_serverStartup();
@@ -365,7 +365,7 @@ int main(int argc, char *argv[])
 	logadd( LOG_INFO, "DNBD3 server starting...." );
 	logadd( LOG_INFO, "Machine type: " ENDIAN_MODE );
 	logadd( LOG_INFO, "Build Type: " TOSTRING( BUILD_TYPE ) );
-	logadd( LOG_INFO, "Version: %s", VERSION_STRING );
+	logadd( LOG_INFO, "Version: %s", DNBD3_VERSION );
 
 	if ( altservers_load() < 0 ) {
 		logadd( LOG_WARNING, "Could not load alt-servers. Does the file exist in %s?", _configDir );

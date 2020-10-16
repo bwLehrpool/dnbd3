@@ -21,7 +21,7 @@
 #ifndef SYSFS_H_
 #define SYSFS_H_
 
-#include "dnbd3.h"
+#include "dnbd3_main.h"
 
 void dnbd3_sysfs_init(dnbd3_device_t *dev);
 

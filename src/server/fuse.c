@@ -1,8 +1,8 @@
 #include "fuse.h"
-#include "../types.h"
-#include "../shared/log.h"
+#include <dnbd3/types.h>
+#include <dnbd3/shared/log.h>
 
-#ifndef BUILD_SERVER_FUSE
+#ifndef DNBD3_SERVER_FUSE
 
 //
 bool dfuse_init(const char *opts UNUSED, const char *dir UNUSED)
@@ -23,7 +23,7 @@ static char nullbytes[DNBD3_BLOCK_SIZE];
 // FUSE ENABLED
 #define FUSE_USE_VERSION 30
 //
-#include "../config.h"
+#include <dnbd3/config.h>
 #include "locks.h"
 #include "threadpool.h"
 #include "image.h"
@@ -658,4 +658,4 @@ static void cleanupFuse()
 	fuseChannel = NULL;
 }
 
-#endif
+#endif  // DNBD3_SERVER_FUSE

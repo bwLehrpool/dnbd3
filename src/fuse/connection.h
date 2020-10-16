@@ -1,8 +1,8 @@
 #ifndef _CONNECTION_H_
 #define _CONNECTION_H_
 
-#include "../shared/fdsignal.h"
-#include "../shared/timing.h"
+#include <dnbd3/shared/fdsignal.h>
+#include <dnbd3/shared/timing.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdbool.h>

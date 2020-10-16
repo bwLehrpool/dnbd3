@@ -63,7 +63,7 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg, const char *name)
 		logadd( LOG_MINOR, "Cannot submit work to threadpool while shutting down!" );
 		return false;
 	}
-#ifdef _DEBUG
+#ifdef DEBUG
 	if ( unlikely( startRoutine == NULL ) ) {
 		logadd( LOG_ERROR, "Trying to queue work for thread pool with NULL startRoutine" );
 		return false; // Or bail out!?
@@ -123,7 +123,7 @@ keep_going:;
 			logadd( LOG_DEBUG1, "Unexpected return value %d for signal_wait in threadpool worker!", ret );
 			continue;
 		}
-#ifdef _DEBUG
+#ifdef DEBUG
 		if ( entry->startRoutine == NULL ) {
 			logadd( LOG_ERROR, "Worker woke up but has no work to do!" );
 			exit( 1 );

@@ -18,7 +18,7 @@
  *
  */
 
-#include "clientconfig.h"
+#include <dnbd3/config/client.h>
 #include "blk.h"
 #include "net.h"
 #include "sysfs.h"

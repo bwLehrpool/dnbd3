@@ -1,9 +1,9 @@
 #ifndef _GLOBALS_H_
 #define _GLOBALS_H_
 
-#include "../types.h"
-#include "../shared/fdsignal.h"
-#include "../serverconfig.h"
+#include <dnbd3/types.h>
+#include <dnbd3/shared/fdsignal.h>
+#include <dnbd3/config/server.h>
 #include <stdint.h>
 #include <stdatomic.h>
 #include <time.h>
@@ -36,7 +36,7 @@ typedef struct _dnbd3_queue_entry
 	uint64_t   from;     // First byte offset of requested block (ie. 4096)
 	uint64_t   to;       // Last byte + 1 of requested block (ie. 8192, if request len is 4096, resulting in bytes 4096-8191)
 	dnbd3_queue_client_t *clients;
-#ifdef _DEBUG
+#ifdef DEBUG
 	ticks      entered;  // When this request entered the queue (for debugging)
 #endif
 	uint8_t    hopCount; // How many hops this request has already taken across proxies

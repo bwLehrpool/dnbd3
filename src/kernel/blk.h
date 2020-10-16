@@ -21,7 +21,7 @@
 #ifndef BLK_H_
 #define BLK_H_
 
-#include "dnbd3.h"
+#include "dnbd3_main.h"
 
 #define REQ_TYPE_SPECIAL REQ_TYPE_DRV_PRIV
 

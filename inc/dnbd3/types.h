@@ -21,10 +21,15 @@
 #ifndef TYPES_H_
 #define TYPES_H_
 
-#include "config.h"
-#ifndef KERNEL_MODULE
+#include <dnbd3/config.h>
+#ifdef DNBD3_KERNEL_MODULE
+#include <linux/kernel.h>
+#include <linux/string.h>
+#else
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
 #endif
 
 #ifndef MIN
@@ -65,7 +70,7 @@
 #include <netinet/in.h>
 #endif
 
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 #define send(a,b,c,d) write(a,b,c)
 #define recv(a,b,c,d) read(a,b,c)
 #endif

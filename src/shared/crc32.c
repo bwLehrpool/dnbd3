@@ -38,7 +38,7 @@
 
 */
 
-#include "../types.h"
+#include <dnbd3/types.h>
 #include <stddef.h>
 
 #if defined(__x86_64__) || defined(__amd64__)

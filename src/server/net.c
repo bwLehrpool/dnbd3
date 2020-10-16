@@ -26,10 +26,10 @@
 #include "altservers.h"
 #include "reference.h"
 
-#include "../shared/sockhelper.h"
-#include "../shared/timing.h"
-#include "../shared/protocol.h"
-#include "../serialize.h"
+#include <dnbd3/shared/sockhelper.h>
+#include <dnbd3/shared/timing.h>
+#include <dnbd3/shared/protocol.h>
+#include <dnbd3/shared/serialize.h>
 
 #include <assert.h>
 
@@ -63,7 +63,7 @@ static void uplinkCallback(void *data, uint64_t handle, uint64_t start, uint32_t
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
 	ssize_t ret, fails = 0;
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 	sock = 0;
 #endif
 	// Read request header from socket
@@ -90,7 +90,7 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 
 static inline bool recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
 {
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 	sock = 0;
 #endif
 	if ( size == 0 ) {
@@ -160,7 +160,7 @@ void* net_handleNewConnection(void *clientPtr)
 	// Await data from client. Since this is a fresh connection, we expect data right away
 	sock_setTimeout( client->sock, _clientTimeout );
 	do {
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 		const int ret = (int)recv( 0, &request, sizeof(request), MSG_WAITALL );
 #else
 		const int ret = (int)recv( client->sock, &request, sizeof(request), MSG_WAITALL );
@@ -396,7 +396,7 @@ void* net_handleNewConnection(void *clientPtr)
 						// TODO: Should we consider EOPNOTSUPP on BSD for sendfile and fallback to read/write?
 						// Linux would set EINVAL or ENOSYS instead, which it unfortunately also does for a couple of other failures :/
 						// read/write would kill performance anyways so a fallback would probably be of little use either way.
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 						char buf[1000];
 						size_t cnt = realBytes - done;
 						if ( cnt > 1000 ) {

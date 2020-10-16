@@ -1,10 +1,10 @@
 #include "connection.h"
 #include "helper.h"
-#include "../clientconfig.h"
-#include "../shared/protocol.h"
-#include "../shared/fdsignal.h"
-#include "../shared/sockhelper.h"
-#include "../shared/log.h"
+#include <dnbd3/config/client.h>
+#include <dnbd3/shared/protocol.h>
+#include <dnbd3/shared/fdsignal.h>
+#include <dnbd3/shared/sockhelper.h>
+#include <dnbd3/shared/log.h>
 
 #include <stdlib.h>
 #include <pthread.h>

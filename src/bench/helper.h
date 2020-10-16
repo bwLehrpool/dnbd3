@@ -1,7 +1,7 @@
 #ifndef IMAGEHELPER_H
 #define IMAGEHELPER_H
 
-#include "../types.h"
+#include <dnbd3/types.h>
 
 #include <netdb.h>
 #include <stdbool.h>

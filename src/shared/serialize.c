@@ -1,6 +1,5 @@
-#include "serialize.h"
-#include "types.h"
-
+#include <dnbd3/shared/serialize.h>
+#include <dnbd3/types.h>
 
 void serializer_reset_read(serialized_buffer_t *buffer, size_t data_len)
 {

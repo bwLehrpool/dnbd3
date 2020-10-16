@@ -1,4 +1,4 @@
-#include "fdsignal.h"
+#include <dnbd3/shared/fdsignal.h>
 
 #if defined(__linux__)
 //#warning "Using eventfd based signalling"

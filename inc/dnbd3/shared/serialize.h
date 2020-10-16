@@ -1,8 +1,8 @@
 #ifndef SERIALIZER_H_
 #define SERIALIZER_H_
 
-// Careful with includes - this is used in kernel module too
-#include "config.h"
+#include <dnbd3/config.h>
+#include <dnbd3/types.h>
 
 typedef struct
 {

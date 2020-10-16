@@ -21,7 +21,7 @@
 #ifndef NET_H_
 #define NET_H_
 
-#include "dnbd3.h"
+#include "dnbd3_main.h"
 
 #define init_msghdr(h) do { \
         h.msg_name = NULL; \

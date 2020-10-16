@@ -1,7 +1,7 @@
 #include "globals.h"
 #include "ini.h"
 #include "locks.h"
-#include "../shared/log.h"
+#include <dnbd3/shared/log.h>
 #include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>

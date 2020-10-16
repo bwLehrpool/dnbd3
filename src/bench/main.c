@@ -4,8 +4,9 @@
 
 #include "connection.h"
 #include "helper.h"
-#include "../shared/protocol.h"
-#include "../shared/log.h"
+#include <dnbd3/shared/protocol.h>
+#include <dnbd3/shared/log.h>
+#include <dnbd3/version.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@
 
 static void printUsage(char *argv0, int exitCode)
 {
+	printf( "Version: %s\n", DNBD3_VERSION );
 	printf( "Usage: %s [--debug] --host <serverAddress(es)> --image <imageName> [--rid revision]\n", argv0 );
 	printf( "Or:    %s [-d] -h <serverAddress(es)> -i <imageName> [-r revision]\n", argv0 );
 	printf( "   -h --host       List of space separated hosts to use\n" );

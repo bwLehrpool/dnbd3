@@ -1,10 +1,9 @@
 #ifndef _PROTOCOL_H_
 #define _PROTOCOL_H_
 
-#include "sockhelper.h"
-
-#include "../types.h"
-#include "../serialize.h"
+#include <dnbd3/types.h>
+#include <dnbd3/shared/serialize.h>
+#include <dnbd3/shared/sockhelper.h>
 
 #include <errno.h>
 #include <sys/types.h>

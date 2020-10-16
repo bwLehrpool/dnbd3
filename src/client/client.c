@@ -18,9 +18,9 @@
  *
  */
 
-#include "../clientconfig.h"
-#include "../types.h"
-#include "../version.h"
+#include <dnbd3/config/client.h>
+#include <dnbd3/types.h>
+#include <dnbd3/version.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -643,7 +643,7 @@ static int dnbd3_daemon_send(int argc, char **argv)
 
 static void dnbd3_print_help(char *argv_0)
 {
-	printf( "Version: %s\n\n", VERSION_STRING );
+	printf( "Version: %s\n", DNBD3_VERSION );
 	printf( "\nUsage: %s\n"
 			"\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c -d <device>\n\n", argv_0 );
 	printf( "Start the DNBD3 client.\n" );
@@ -665,6 +665,6 @@ static void dnbd3_print_help(char *argv_0)
 
 void dnbd3_print_version()
 {
-	printf( "Version: %s\n", VERSION_STRING );
+	printf( "dnbd3-client version: %s\n", DNBD3_VERSION );
 	exit( EXIT_SUCCESS );
 }

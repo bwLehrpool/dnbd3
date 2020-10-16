@@ -4,5 +4,3 @@ build/
 *.swp
 .autotools
 .idea
-/version.txt
-

@@ -5,9 +5,9 @@
 #include "locks.h"
 #include "integrity.h"
 #include "altservers.h"
-#include "../shared/protocol.h"
-#include "../shared/timing.h"
-#include "../shared/crc32.h"
+#include <dnbd3/shared/protocol.h>
+#include <dnbd3/shared/timing.h>
+#include <dnbd3/shared/crc32.h>
 #include "reference.h"
 
 #include <assert.h>

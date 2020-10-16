@@ -18,12 +18,12 @@
  *
  */
 
-#include "clientconfig.h"
+#include <dnbd3/config/client.h>
 #include "net.h"
 #include "blk.h"
 #include "utils.h"
 
-#include "serialize.h"
+#include <dnbd3/shared/serialize.h>
 
 #include <linux/time.h>
 #include <linux/ktime.h>

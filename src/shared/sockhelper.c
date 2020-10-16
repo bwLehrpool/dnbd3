@@ -1,5 +1,6 @@
-#include "sockhelper.h"
-#include "log.h"
+#include <dnbd3/shared/sockhelper.h>
+#include <dnbd3/shared/log.h>
+#include <dnbd3/types.h>
 #include <arpa/inet.h> // inet_ntop
 #include <netdb.h>
 #include <stdio.h>
@@ -19,8 +20,7 @@ struct _poll_list {
 int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const int rw_ms)
 {
 	// TODO: Move out of here, this unit should contain general socket functions
-	// TODO: Abstract away from sockaddr_in* like the rest of the functions here do,
-	// so WITH_IPV6 can finally be removed as everything is transparent. b- but how?
+	// TODO: Abstract away from sockaddr_in* like the rest of the functions here
 	struct sockaddr_storage ss;
 	int proto, addrlen;
 	memset( &ss, 0, sizeof ss );
@@ -32,9 +32,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 		addr4->sin_port = addr->port;
 		proto = PF_INET;
 		addrlen = sizeof *addr4;
-	}
-#ifdef WITH_IPV6
-	else if ( addr->type == HOST_IP6 ) {
+	} else if ( addr->type == HOST_IP6 ) {
 		// Set host (IPv6)
 		struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)&ss;
 		addr6->sin6_family = AF_INET6;
@@ -42,9 +40,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 		addr6->sin6_port = addr->port;
 		proto = PF_INET6;
 		addrlen = sizeof *addr6;
-	}
-#endif
-	else {
+	} else {
 		logadd( LOG_DEBUG1, "Unsupported address type: %d\n", (int)addr->type );
 		errno = EAFNOSUPPORT;
 		return -1;
@@ -165,7 +161,7 @@ bool sock_sockaddrToDnbd3(struct sockaddr* sa, dnbd3_host_t *host)
 		memcpy( host->addr, &addr4->sin_addr, 4 );
 		return true;
 	}
-#ifdef WITH_IPV6
+
 	if ( sa->sa_family == AF_INET6 ) {
 		// Set host (IPv6)
 		struct sockaddr_in6 *addr6 = (struct sockaddr_in6*)sa;
@@ -174,7 +170,7 @@ bool sock_sockaddrToDnbd3(struct sockaddr* sa, dnbd3_host_t *host)
 		memcpy( host->addr, &addr6->sin6_addr, 16 );
 		return true;
 	}
-#endif
+
 	return false;
 }
 

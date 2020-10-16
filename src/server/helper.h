@@ -2,8 +2,8 @@
 #define HELPER_H_
 
 #include "server.h"
-#include "../shared/log.h"
-#include "../types.h"
+#include <dnbd3/shared/log.h>
+#include <dnbd3/types.h>
 #include <netinet/in.h>
 #include <string.h>
 #include <unistd.h>

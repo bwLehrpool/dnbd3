@@ -18,7 +18,7 @@
  *
  */
 
-#include "log.h"
+#include <dnbd3/shared/log.h>
 #include <stdarg.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -136,7 +136,7 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 	}
 	if ( toStdout ) {
 		if ( consoleTimestamps ) stdoutLine = buffer;
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 		fputs( stdoutLine, stderr );
 		fflush( stderr );
 #else

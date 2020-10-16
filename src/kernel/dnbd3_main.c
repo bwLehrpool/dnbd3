@@ -20,8 +20,9 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include "clientconfig.h"
-#include "dnbd3.h"
+#include <dnbd3/config/client.h>
+#include <dnbd3/version.h>
+#include "dnbd3_main.h"
 #include "blk.h"
 
 int major;
@@ -48,7 +49,7 @@ static int __init dnbd3_init(void)
 		return -EIO;
 	}
 
-	pr_info("kernel module loaded\n");
+	pr_info("kernel module in version %s loaded\n", DNBD3_VERSION);
 	pr_debug("machine type " ENDIAN_MODE "\n");
 
 	// add MAX_NUMBER_DEVICES devices
@@ -86,6 +87,7 @@ module_exit(dnbd3_exit);
 
 MODULE_DESCRIPTION("Distributed Network Block Device 3");
 MODULE_LICENSE("GPL");
+MODULE_VERSION(DNBD3_VERSION);
 
 module_param(max_devs, int, 0444);
 MODULE_PARM_DESC(max_devs, "number of network block devices to initialize (default: 8)");

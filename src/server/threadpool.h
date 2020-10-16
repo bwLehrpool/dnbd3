@@ -1,7 +1,7 @@
 #ifndef _THREADPOOL_H_
 #define _THREADPOOL_H_
 
-#include "../types.h"
+#include <dnbd3/types.h>
 
 /**
  * Initialize the thread pool. This must be called before using

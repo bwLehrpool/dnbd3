@@ -5,9 +5,9 @@
 #include "helper.h"
 #include "image.h"
 #include "fileutil.h"
-#include "../shared/protocol.h"
-#include "../shared/timing.h"
-#include "../serverconfig.h"
+#include <dnbd3/shared/protocol.h>
+#include <dnbd3/shared/timing.h>
+#include <dnbd3/config/server.h>
 #include "reference.h"
 
 #include <assert.h>

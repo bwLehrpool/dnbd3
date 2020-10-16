@@ -5,8 +5,8 @@
 #include "locks.h"
 #include "image.h"
 #include "altservers.h"
-#include "../shared/sockhelper.h"
-#include "../version.h"
+#include <dnbd3/shared/sockhelper.h>
+#include <dnbd3/version.h>
 #include "fileutil.h"
 #include "picohttpparser/picohttpparser.h"
 #include "urldecode.h"
@@ -175,7 +175,7 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 			// Reaching here means partial request or parse error
 			if ( pret == -2 ) { // Partial, keep reading
 				prevLen = hoff;
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 				ssize_t ret = recv( 0, headerBuf + hoff, sizeof(headerBuf) - hoff, 0 );
 #else
 				ssize_t ret = recv( sock, headerBuf + hoff, sizeof(headerBuf) - hoff, 0 );
@@ -311,7 +311,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 				"runId", randomRunId );
 	}
 	if ( version ) {
-		json_object_set_new( statisticsJson, "version", json_string( VERSION_STRING ) );
+		json_object_set_new( statisticsJson, "version", json_string( DNBD3_VERSION ) );
 		json_object_set_new( statisticsJson, "build", json_string( TOSTRING( BUILD_TYPE ) ) );
 	}
 	if ( space ) {
@@ -411,7 +411,7 @@ static bool sendReply(int sock, const char *status, const char *ctype, const cha
 	if ( keepAlive == HTTP_CLOSE ) {
 		// Wait for flush
 		shutdown( sock, SHUT_WR );
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 		sock = 0;
 #endif
 		// Don't wait too long in case other side ignores the shutdown
@@ -459,7 +459,7 @@ static int getacl(dnbd3_host_t *host)
 		if ( aclRules[i].bitMask != 0 && aclRules[i].host[aclRules[i].bytes] != ( host->addr[aclRules[i].bytes] & aclRules[i].bitMask ) ) continue;
 		return aclRules[i].permissions;
 	}
-#ifdef AFL_MODE
+#ifdef DNBD3_SERVER_AFL
 	return 0x7fffff;
 #else
 	return 0;

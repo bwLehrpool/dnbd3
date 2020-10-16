@@ -28,10 +28,9 @@
 #include <linux/blk-mq.h>
 #include <net/sock.h>
 
-#define KERNEL_MODULE
-#include "config.h"
-#include "types.h"
-#include "serialize.h"
+#include <dnbd3/config.h>
+#include <dnbd3/types.h>
+#include <dnbd3/shared/serialize.h>
 
 extern int major;
 

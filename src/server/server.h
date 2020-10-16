@@ -22,7 +22,7 @@
 #define SERVER_H_
 
 #include "globals.h"
-#include "../types.h"
+#include <dnbd3/types.h>
 
 uint32_t dnbd3_serverUptime();
 void server_addJob(void *(*startRoutine)(void *), void *arg, int delaySecs, int intervalSecs);
