@@ -99,7 +99,7 @@
 	(a).cmd = net_order_16((a).cmd); \
 	(a).size = net_order_32((a).size); \
 } while (0)
-#define ENDIAN_MODE "Big Endian"
+#define DNBD3_ENDIAN_MODE "Big Endian"
 #define DNBD3_BIG_ENDIAN
 #elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(__i386__) || defined(__i386) || defined(__x86_64)
 #define dnbd3_packet_magic ((uint16_t)( (0x73) | (0x72 << 8) ))
@@ -109,7 +109,7 @@
 #define net_order_16(a) (a)
 #define fixup_request(a) while(0)
 #define fixup_reply(a)   while(0)
-#define ENDIAN_MODE "Little Endian"
+#define DNBD3_ENDIAN_MODE "Little Endian"
 #define DNBD3_LITTLE_ENDIAN
 #else
 #error "Unknown Endianness"

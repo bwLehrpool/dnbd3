@@ -12,9 +12,6 @@ endif(NOT JANSSON_FOUND)
 # add compile option to enable enhanced POSIX features
 add_definitions(-D_GNU_SOURCE)
 
-# export project build type to source code
-add_definitions(-DBUILD_TYPE=${CMAKE_BUILD_TYPE})
-
 if(DNBD3_SERVER_AFL)
     # build dnbd3-server with AFL support
     message(STATUS "Building dnbd3-server with AFL support")

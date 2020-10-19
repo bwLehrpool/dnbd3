@@ -4,6 +4,7 @@
 #ifndef VERSION_H_
 #define VERSION_H_
 
-#define DNBD3_VERSION "@DNBD3_VERSION@"
+#define DNBD3_BUILD_VERSION "@DNBD3_BUILD_VERSION@"
+#define DNBD3_BUILD_TYPE    "@DNBD3_BUILD_TYPE@"
 
 #endif /* VERSION_H_ */

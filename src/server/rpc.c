@@ -311,8 +311,8 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 				"runId", randomRunId );
 	}
 	if ( version ) {
-		json_object_set_new( statisticsJson, "version", json_string( DNBD3_VERSION ) );
-		json_object_set_new( statisticsJson, "build", json_string( TOSTRING( BUILD_TYPE ) ) );
+		json_object_set_new( statisticsJson, "version", json_string( DNBD3_BUILD_VERSION ) );
+		json_object_set_new( statisticsJson, "build", json_string( DNBD3_BUILD_TYPE ) );
 	}
 	if ( space ) {
 		uint64_t spaceTotal = 0, spaceAvail = 0;

@@ -14,6 +14,7 @@ macro(gen_project_version VERSION_INPUT_FILE VERSION_OUTPUT_FILE)
     add_custom_command(OUTPUT ${VERSION_OUTPUT_FILE}
                        COMMAND ${CMAKE_COMMAND} -D VERSION_INPUT_FILE=${VERSION_INPUT_FILE}
                                                 -D VERSION_OUTPUT_FILE=${VERSION_OUTPUT_FILE}
+                                                -D VERSION_BUILD_TYPE=${CMAKE_BUILD_TYPE}
                                                 -P ${PROJECT_MODULES_DIR}/GenerateVersion.cmake
                        COMMENT "Generating ${VERSION_OUTPUT_FILENAME}"
                        DEPENDS regenerate-version-file)

@@ -49,8 +49,8 @@ static int __init dnbd3_init(void)
 		return -EIO;
 	}
 
-	pr_info("kernel module in version %s loaded\n", DNBD3_VERSION);
-	pr_debug("machine type " ENDIAN_MODE "\n");
+	pr_info("kernel module in version %s loaded\n", DNBD3_BUILD_VERSION);
+	pr_debug("machine type %s\n", DNBD3_ENDIAN_MODE);
 
 	// add MAX_NUMBER_DEVICES devices
 	for (i = 0; i < max_devs; i++)
@@ -87,7 +87,7 @@ module_exit(dnbd3_exit);
 
 MODULE_DESCRIPTION("Distributed Network Block Device 3");
 MODULE_LICENSE("GPL");
-MODULE_VERSION(DNBD3_VERSION);
+MODULE_VERSION(DNBD3_BUILD_VERSION);
 
 module_param(max_devs, int, 0444);
 MODULE_PARM_DESC(max_devs, "number of network block devices to initialize (default: 8)");
