@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.10)
 project(dnbd3-fuse)
 
 # add compile option to enable enhanced POSIX pthread features
-add_compile_options(-D_GNU_SOURCE)
+add_definitions(-D_GNU_SOURCE)
 
 add_executable(dnbd3-fuse ${CMAKE_CURRENT_SOURCE_DIR}/connection.c
                           ${CMAKE_CURRENT_SOURCE_DIR}/helper.c

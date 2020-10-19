@@ -31,13 +31,17 @@ endif()
 if(CMAKE_SYSTEM_NAME MATCHES "BSD")
     message(STATUS "Detected BSD System: Disable build of the dnbd3 Linux kernel module")
     set(DNBD3_KERNEL_MODULE OFF)
-endif(CMAKE_SYSTEM_NAME MATCHES "BSD")
+else(CMAKE_SYSTEM_NAME MATCHES "BSD")
+    # set Linux kernel directories
+    set(KERNEL_BUILD_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build"
+        CACHE PATH "Path to Linux kernel modules to compile against")
+    set(KERNEL_INSTALL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/extra"
+        CACHE PATH "Path to install Linux kernel modules")
 
-# set Linux kernel directories
-set(KERNEL_BUILD_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build"
-    CACHE PATH "Path to Linux kernel modules to compile against")
-set(KERNEL_INSTALL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/extra"
-    CACHE PATH "Path to install Linux kernel modules")
+    # print configured settings
+    message(STATUS "Path to Linux kernel modules to compile against is " ${KERNEL_BUILD_DIR})
+    message(STATUS "Path to install Linux kernel modules is " ${KERNEL_INSTALL_DIR})
+endif(CMAKE_SYSTEM_NAME MATCHES "BSD")
 
 # search for required packages
 find_package(Git)
@@ -60,9 +64,6 @@ include(KernelVersion)
 # include project version related macros
 include(ProjectVersion)
 
-# get Linux kernel version from path
-get_kernel_version(LINUX_KERNEL_VERSION ${KERNEL_BUILD_DIR})
-
 # set include directories
 set(PROJECT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/inc)
 set(PROJECT_INCLUDE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/inc)
@@ -71,10 +72,6 @@ include_directories(${PROJECT_INCLUDE_DIR})
 # generate project version C header file from template
 # exposes dnbd3-generate-version and dnbd3-version target
 gen_project_version(${PROJECT_INCLUDE_DIR}/dnbd3/version.h.in ${PROJECT_INCLUDE_TMP_DIR}/dnbd3/version.h)
-
-# print configured settings
-message(STATUS "Path to Linux kernel modules to compile against is " ${KERNEL_BUILD_DIR})
-message(STATUS "Path to install Linux kernel modules is " ${KERNEL_INSTALL_DIR})
 
 # add compile option to handle files greater than 2GB on a 32bit system
 add_definitions(-D_FILE_OFFSET_BITS=64)

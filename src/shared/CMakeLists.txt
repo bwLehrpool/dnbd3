@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.10)
 project(dnbd3-shared)
 
 # add compile option to get POLLRDHUP support for signals
-add_compile_options(-D_GNU_SOURCE)
+add_definitions(-D_GNU_SOURCE)
 
 add_library(dnbd3-shared STATIC ${CMAKE_CURRENT_SOURCE_DIR}/crc32.c
                                 ${CMAKE_CURRENT_SOURCE_DIR}/fdsignal.c

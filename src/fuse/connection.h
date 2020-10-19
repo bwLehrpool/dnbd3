@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/socket.h>
 #define FUSE_USE_VERSION 30
 #include <fuse_lowlevel.h>
 

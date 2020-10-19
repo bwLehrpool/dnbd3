@@ -7,7 +7,7 @@ project(dnbd3-client)
 add_compile_options(-Wno-multichar)
 
 # add compile option to enable enhanced BSD netdb features
-add_compile_options(-D_GNU_SOURCE)
+add_definitions(-D_GNU_SOURCE)
 
 add_executable(dnbd3-client ${CMAKE_CURRENT_SOURCE_DIR}/client.c)
 target_link_libraries(dnbd3-client dnbd3-version dnbd3-shared)

@@ -73,7 +73,7 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 				errno = e2;
 				return -1;
 			}
-			sockaddr_storage junk;
+			struct sockaddr_storage junk;
 			socklen_t more_junk = sizeof(junk);
 			if ( getpeername( client_sock, (struct sockaddr*)&junk, &more_junk ) == -1 ) {
 				e2 = errno;
