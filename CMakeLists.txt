@@ -27,22 +27,6 @@ if(NOT CMAKE_BUILD_TYPE)
     message(STATUS "Build type is not set. Defaulting to ${CMAKE_BUILD_TYPE} build!")
 endif()
 
-# disable build of the dnbd3 Linux kernel module on a BSD system
-if(CMAKE_SYSTEM_NAME MATCHES "BSD")
-    message(STATUS "Detected BSD System: Disable build of the dnbd3 Linux kernel module")
-    set(DNBD3_KERNEL_MODULE OFF)
-else(CMAKE_SYSTEM_NAME MATCHES "BSD")
-    # set Linux kernel directories
-    set(KERNEL_BUILD_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build"
-        CACHE PATH "Path to Linux kernel modules to compile against")
-    set(KERNEL_INSTALL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/extra"
-        CACHE PATH "Path to install Linux kernel modules")
-
-    # print configured settings
-    message(STATUS "Path to Linux kernel modules to compile against is " ${KERNEL_BUILD_DIR})
-    message(STATUS "Path to install Linux kernel modules is " ${KERNEL_INSTALL_DIR})
-endif(CMAKE_SYSTEM_NAME MATCHES "BSD")
-
 # search for required packages
 find_package(Git)
 find_package(Threads)
@@ -59,8 +43,26 @@ if(NOT FUSE_FOUND)
 	message(FATAL_ERROR "No Fuse found, can't build dnbd3 project!")
 endif(NOT FUSE_FOUND)
 
-# include project version related macros
-include(KernelVersion)
+# check for system and enable or disable built of Linux kernel module
+if(UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+    # set Linux kernel directories
+    set(KERNEL_BUILD_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build"
+        CACHE PATH "Path to Linux kernel modules to compile against")
+    set(KERNEL_INSTALL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/extra"
+        CACHE PATH "Path to install Linux kernel modules")
+
+    # print configured settings
+    message(STATUS "Path to Linux kernel modules to compile against is " ${KERNEL_BUILD_DIR})
+    message(STATUS "Path to install Linux kernel modules is " ${KERNEL_INSTALL_DIR})
+
+    # include Linux kernel version related macros
+    include(KernelVersion)
+else(UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+    # disable build of the dnbd3 Linux kernel module on a system other than Linux, eg. FreeBSD
+    message(STATUS "Detected BSD System: Disable build of the dnbd3 Linux kernel module")
+    set(DNBD3_KERNEL_MODULE OFF)
+endif(UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+
 # include project version related macros
 include(ProjectVersion)
 
