@@ -329,6 +329,8 @@ int main( int argc, char *argv[] )
 	char *mountpoint;
 	int foreground = 0;
 
+	log_init();
+
 	if ( argc <= 1 || strcmp( argv[1], "--help" ) == 0 || strcmp( argv[1], "--usage" ) == 0 ) {
 		printUsage( argv[0], 0 );
 	}

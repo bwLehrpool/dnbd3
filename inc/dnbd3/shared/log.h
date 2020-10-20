@@ -23,6 +23,7 @@
 
 #include <stdbool.h>
 #include <unistd.h>
+#include <stdio.h>
 
 typedef unsigned int logmask_t;
 #define LOG_ERROR    ((logmask_t)1)  // Fatal error, server will terminate
@@ -32,6 +33,10 @@ typedef unsigned int logmask_t;
 #define LOG_DEBUG1  ((logmask_t)16)  // Debug information, use this for non-spammy stuff
 #define LOG_DEBUG2  ((logmask_t)32)  // Use this for debug messages that will show up a lot
 
+/**
+ * Initialize the logging (constructor)
+ */
+void log_init(void);
 
 /**
  * Check if cansoleMask | fileMask has all of mask set.
@@ -43,6 +48,16 @@ void log_setFileMask(logmask_t mask);
 void log_setConsoleMask(logmask_t mask);
 
 void log_setConsoleTimestamps(bool on);
+
+/**
+ * Set console output stream
+ * The output stream can be either stdout or stderr
+ *
+ * Note: A call of this function is optional and only required if the output
+ *       stream should be changed from stdout to stderr since the log
+ *       implementation defaults to the output stream stdout
+ */
+int log_setConsoleOutputStream(FILE *outputStream);
 
 /**
  * Open or reopen the log file. If path is NULL and the

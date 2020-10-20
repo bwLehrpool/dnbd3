@@ -217,6 +217,16 @@ int main(int argc, char *argv[])
 			{ 0, 0, 0, 0 }
 	};
 
+	log_init();
+
+	/* set proper output stream for AFL */
+#ifdef DNBD3_SERVER_AFL
+	if ( log_setConsoleOutputStream(stderr) < 0 ) {
+		logadd( LOG_ERROR, "Failed to set output stream for AFL to stderr" );
+		exit( EXIT_FAILURE );
+	}
+#endif
+
 	mainPid = getpid();
 	mainThread = pthread_self();
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
@@ -278,6 +288,7 @@ int main(int argc, char *argv[])
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
 
+
 	// Load general config
 
 	if ( _configDir == NULL ) _configDir = strdup( "/etc/dnbd3-server" );
@@ -291,8 +302,6 @@ int main(int argc, char *argv[])
 	timing_get( &startupTime );
 
 #ifdef DNBD3_SERVER_AFL
-	// ###### AFL
-	//
 	image_serverStartup();
 	net_init();
 	uplink_globalsInit();
@@ -316,9 +325,7 @@ int main(int argc, char *argv[])
 		net_handleNewConnection( dnbd3_client );
 		exit( 0 );
 	}
-	//
-	// ###### AFL END
-#endif
+#endif  /* DNBD3_SERVER_AFL */
 
 
 	// One-shots first:

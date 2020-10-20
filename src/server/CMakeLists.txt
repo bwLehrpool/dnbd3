@@ -13,9 +13,27 @@ endif(NOT JANSSON_FOUND)
 add_definitions(-D_GNU_SOURCE)
 
 if(DNBD3_SERVER_AFL)
+    # check if DNBD3_RELEASE_HARDEN is disabled
+    if(DNBD3_RELEASE_HARDEN)
+        message(FATAL_ERROR "DNBD3_SERVER_AFL can only be enabled if DNBD3_RELEASE_HARDEN is disabled")
+    endif(DNBD3_RELEASE_HARDEN)
+
     # build dnbd3-server with AFL support
     message(STATUS "Building dnbd3-server with AFL support")
     add_definitions(-DDNBD3_SERVER_AFL)
+
+    # change compiler for dnbd3-server sources if AFL enabled
+    include(CheckAFLCCompiler)
+    check_afl_c_compiler(AFL_C_COMPILER AFL_C_COMPILER_NAME ${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ID})
+    if(AFL_C_COMPILER)
+        message(STATUS "Check for working AFL C compiler: ${AFL_C_COMPILER} - done")
+        # change C compiler to a corresponding AFL C compiler
+        set(CMAKE_C_COMPILER "${AFL_C_COMPILER}")
+    else(AFL_C_COMPILER)
+        # no corresponding AFL C compiler found
+        message(STATUS "Check for working AFL C compiler: ${AFL_C_COMPILER_NAME} - failed")
+        message(FATAL_ERROR "No corresponding AFL C compiler ${AFL_C_COMPILER_NAME} was found for the C compiler ${CMAKE_C_COMPILER}!")
+    endif(AFL_C_COMPILER)
 endif(DNBD3_SERVER_AFL)
 
 add_executable(dnbd3-server ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c

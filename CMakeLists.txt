@@ -16,7 +16,7 @@ OPTION(DNBD3_SERVER_FUSE "Enable FUSE-Integration for dnbd3-server" OFF)
 OPTION(DNBD3_SERVER_AFL "Build dnbd3-server for usage with afl-fuzz" OFF)
 OPTION(DNBD3_SERVER_DEBUG_LOCKS "Add lock debugging code to dnbd3-server" OFF)
 OPTION(DNBD3_SERVER_DEBUG_THREADS "Add thread debugging code to dnbd3-server" OFF)
-OPTION(DNBD3_RELEASE_HARDENING "Harden dnbd3 programs in Release build configuration" OFF)
+OPTION(DNBD3_RELEASE_HARDEN "Compile dnbd3 programs in Release build with code hardening options" OFF)
 
 # set supported build configurations
 set(CMAKE_CONFIGURATION_TYPES Debug Release)
@@ -89,10 +89,17 @@ set(CMAKE_C_FLAGS_RELEASE "-Wno-error")
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g -Og -DDEBUG")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -DNDEBUG")
 
-if(DNBD3_RELEASE_HARDENING)
-	# harden Release builds with specific C flags
-	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fstack-clash-protection -mfunction-return=thunk -mindirect-branch=thunk")
-endif(DNBD3_RELEASE_HARDENING)
+if(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
+	# harden builds with specific C flags
+	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -D_FORTIFY_SOURCE=2 -fstack-protector-all -fstack-clash-protection -mfunction-return=thunk -mindirect-branch=thunk")
+    # set specific hardened linker flags
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro,-z,now,-z,defs -pie")
+    # print status message of configuration
+    message(STATUS "Set compilation of DNBD3 with hardened code options - done")
+else(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
+    # print status message of disabled configuration
+    message(STATUS "Disabled compilation of DNBD3 with hardened code options - done")
+endif(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
 
 # add all dnbd3 related projects from the source code directory
 add_subdirectory(src)

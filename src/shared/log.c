@@ -36,12 +36,17 @@ static _Atomic logmask_t maskCon  = 15;
 
 static char *logFile = NULL;
 static int logFd = -1;
+static FILE *logOutStream;
 
 static bool consoleTimestamps = false;
 
 
 static int writeLevel(char *buffer, logmask_t level);
 
+
+void log_init(void) {
+	logOutStream = stdout;
+}
 
 bool log_hasMask(const logmask_t mask)
 {
@@ -61,6 +66,15 @@ void log_setConsoleMask(logmask_t mask)
 void log_setConsoleTimestamps(bool on)
 {
 	consoleTimestamps = on;
+}
+
+int log_setConsoleOutputStream(FILE *outputStream)
+{
+	if ( outputStream != stdout && outputStream != stderr )
+		return -EINVAL;
+
+	logOutStream = outputStream;
+	return 0;
 }
 
 bool log_openLogFile(const char *path)
@@ -93,10 +107,10 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 	struct tm timeinfo;
 	char buffer[LINE_LEN];
 	bool toFile = maskFile & mask;
-	bool toStdout = maskCon & mask;
+	bool toOutStream = maskCon & mask;
 	size_t offset;
 
-	if ( toFile || ( toStdout && consoleTimestamps ) ) {
+	if ( toFile || ( toOutStream && consoleTimestamps ) ) {
 		time( &rawtime );
 		localtime_r( &rawtime, &timeinfo );
 		offset = strftime( buffer, LINE_LEN, "[%d.%m. %H:%M:%S] ", &timeinfo );
@@ -134,15 +148,11 @@ void logadd(const logmask_t mask, const char *fmt, ...)
 		}
 		pthread_mutex_unlock( &logLock );
 	}
-	if ( toStdout ) {
-		if ( consoleTimestamps ) stdoutLine = buffer;
-#ifdef DNBD3_SERVER_AFL
-		fputs( stdoutLine, stderr );
-		fflush( stderr );
-#else
-		fputs( stdoutLine, stdout );
-		fflush( stdout );
-#endif
+	if ( toOutStream ) {
+		if ( consoleTimestamps )
+			stdoutLine = buffer;
+		fputs( stdoutLine, logOutStream );
+		fflush( logOutStream );
 	}
 }
 
