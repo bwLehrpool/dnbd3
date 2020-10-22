@@ -1,0 +1,12 @@
+[Unit]
+Description=DNBD3 server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/dnbd3-server -n -c /etc/dnbd3-server
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

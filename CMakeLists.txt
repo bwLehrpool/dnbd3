@@ -161,7 +161,11 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
                                                       "/lib/modules"
                                                       "/lib/modules/${CMAKE_SYSTEM_VERSION}"
                                                       "/lib/modules/${CMAKE_SYSTEM_VERSION}/extra"
-                                                      "/etc")
+                                                      "/etc"
+                                                      "/usr"
+                                                      "/usr/lib"
+                                                      "/usr/lib/systemd"
+                                                      "/usr/lib/systemd/system")
     if(DNBD3_KERNEL_MODULE)
         file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/rpm/post "depmod -a\n")
         file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/rpm/postun "depmod -a\n")
@@ -195,5 +199,5 @@ endif(CMAKE_BUILD_TYPE MATCHES Release)
 # add all dnbd3 related projects from the source code directory
 add_subdirectory(src)
 
-# add configuration files for packaging purposes
-add_subdirectory(conf)
+# add configuration and operational files for packaging purposes
+add_subdirectory(pkg)
