@@ -25,7 +25,7 @@ set(CMAKE_CONFIGURATION_TYPES Debug Release)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
     message(STATUS "Build type is not set. Defaulting to ${CMAKE_BUILD_TYPE} build!")
-endif()
+endif(NOT CMAKE_BUILD_TYPE)
 
 # search for required packages
 find_package(Git)
@@ -43,8 +43,12 @@ if(NOT FUSE_FOUND)
 	message(FATAL_ERROR "No Fuse found, can't build dnbd3 project!")
 endif(NOT FUSE_FOUND)
 
+# include project version and build type related macros
+include(Version)
+include(Build)
+
 # check for system and enable or disable built of Linux kernel module
-if(UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+if(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     # set Linux kernel directories
     set(KERNEL_BUILD_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build"
         CACHE PATH "Path to Linux kernel modules to compile against")
@@ -55,25 +59,34 @@ if(UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     message(STATUS "Path to Linux kernel modules to compile against is " ${KERNEL_BUILD_DIR})
     message(STATUS "Path to install Linux kernel modules is " ${KERNEL_INSTALL_DIR})
 
-    # include Linux kernel version related macros
-    include(KernelVersion)
-else(UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+    # get the Linux kernel version
+    get_kernel_version(LINUX_KERNEL_VERSION ${KERNEL_BUILD_DIR})
+else(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     # disable build of the dnbd3 Linux kernel module on a system other than Linux, eg. FreeBSD
     message(STATUS "Detected BSD System: Disable build of the dnbd3 Linux kernel module")
     set(DNBD3_KERNEL_MODULE OFF)
-endif(UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
-
-# include project version related macros
-include(ProjectVersion)
+endif(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
 
 # set include directories
-set(PROJECT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/inc)
-set(PROJECT_INCLUDE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/inc)
+set(PROJECT_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
+set(PROJECT_INCLUDE_DIR_PREFIX inc)
+set(PROJECT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/${PROJECT_INCLUDE_DIR_PREFIX})
+set(PROJECT_INCLUDE_GEN_DIR ${PROJECT_GEN_DIR}/${PROJECT_INCLUDE_DIR_PREFIX})
 include_directories(${PROJECT_INCLUDE_DIR})
 
 # generate project version C header file from template
 # exposes dnbd3-generate-version and dnbd3-version target
-gen_project_version(${PROJECT_INCLUDE_DIR}/dnbd3/version.h.in ${PROJECT_INCLUDE_TMP_DIR}/dnbd3/version.h)
+set(INCLUDE_VERSION_HEADER ${PROJECT_INCLUDE_DIR}/dnbd3/version.h)
+set(INCLUDE_VERSION_HEADER_TEMPLATE ${PROJECT_INCLUDE_DIR}/dnbd3/version.h.in)
+set(INCLUDE_VERSION_HEADER_GENERATE ${PROJECT_INCLUDE_GEN_DIR}/dnbd3/version.h)
+set(INCLUDE_VERSION_HEADER_GENERATE_PREFIX ${PROJECT_INCLUDE_DIR_PREFIX}/dnbd3)
+gen_project_version(${INCLUDE_VERSION_HEADER} ${INCLUDE_VERSION_HEADER_TEMPLATE} ${INCLUDE_VERSION_HEADER_GENERATE})
+
+# generate project build tpye C header file from template
+# exposes dnbd3-generate-build and dnbd3-build target
+set(INCLUDE_BUILD_HEADER_TEMPLATE ${PROJECT_INCLUDE_DIR}/dnbd3/build.h.in)
+set(INCLUDE_BUILD_HEADER_GENERATE ${PROJECT_INCLUDE_GEN_DIR}/dnbd3/build.h)
+gen_build_type(${INCLUDE_BUILD_HEADER_TEMPLATE} ${INCLUDE_BUILD_HEADER_GENERATE})
 
 # add compile option to handle files greater than 2GB on a 32bit system
 add_definitions(-D_FILE_OFFSET_BITS=64)
@@ -98,12 +111,89 @@ if(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
     message(STATUS "Set compilation of DNBD3 with hardened code options - done")
 else(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
     # print status message of disabled configuration
-    message(STATUS "Disabled compilation of DNBD3 with hardened code options - done")
+    message(STATUS "Disabled compilation of dnbd3 with hardened code options - done")
 endif(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
+
+# define packaging if Release build is enabled
+if(CMAKE_BUILD_TYPE MATCHES Release)
+    # get version source package or Git repository
+    get_repository_version(REPOSITORY_VERSION ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE})
+
+    # define project version
+    if(LINUX_KERNEL_VERSION)
+        set(REPOSITORY_VERSION_FULL ${REPOSITORY_VERSION}-${LINUX_KERNEL_VERSION})
+    else(LINUX_KERNEL_VERSION)
+        set(REPOSITORY_VERSION_FULL ${REPOSITORY_VERSION})
+    endif(LINUX_KERNEL_VERSION)
+
+    set(CPACK_GENERATOR "DEB;RPM;TGZ")
+    set(CPACK_PACKAGE_NAME ${CMAKE_PROJECT_NAME})
+    set(CPACK_MONOLITHIC_INSTALL True)
+    set(CPACK_PACKAGE_VERSION ${REPOSITORY_VERSION})
+    set(CPACK_PACKAGE_VERSION_FULL ${REPOSITORY_VERSION_FULL})
+    set(CPACK_PACKAGE_SECTION admin)
+    set(CPACK_PACKAGE_VENDOR "University of Freiburg")
+    set(CPACK_PACKAGE_CONTACT "Christian Rößler <christian.roessler@rz.uni-freiburg.de>")
+    set(CPACK_PACKAGE_HOMEPAGE_URL "https://git.openslx.org/dnbd3.git/")
+    set(CPACK_PACKAGE_CHECKSUM SHA256)
+    set(CPACK_PACKAGE_FILE_NAME ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR})
+    set(CPACK_SOURCE_PACKAGE_FILE_NAME ${CPACK_PACKAGE_NAME}_${CPACK_PACKAGE_VERSION}_source)
+    set(CPACK_STRIP_FILES True)
+    set(CPACK_PACKAGE_RELOCATABLE False)
+    set(CPACK_SET_DESTDIR True)
+    set(CMAKE_INSTALL_PREFIX "/usr")
+    set(CPACK_PACKAGING_INSTALL_PREFIX ${CMAKE_INSTALL_PREFIX})
+    set(CPACK_RESOURCE_FILE_LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/COPYING)
+    set(CPACK_RESOURCE_FILE_README ${CMAKE_CURRENT_SOURCE_DIR}/README.md)
+
+    # set DEB generator specific packaging options
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libfuse2, libjansson")
+    if(DNBD3_KERNEL_MODULE)
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postinst "depmod -a\n")
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postrm "depmod -a\n")
+        set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postinst
+                                               ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postrm)
+    endif(DNBD3_KERNEL_MODULE)
+
+    # set RPM generator specific packaging options
+    set(CPACK_RPM_PACKAGE_REQUIRES "glibc, fuse-libs, jansson")
+    set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/lib"
+                                                      "/lib/modules"
+                                                      "/lib/modules/${CMAKE_SYSTEM_VERSION}"
+                                                      "/lib/modules/${CMAKE_SYSTEM_VERSION}/extra"
+                                                      "/etc")
+    if(DNBD3_KERNEL_MODULE)
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/rpm/post "depmod -a\n")
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/rpm/postun "depmod -a\n")
+        set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE ${CMAKE_CURRENT_BINARY_DIR}/package/rpm/post)
+        set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE ${CMAKE_CURRENT_BINARY_DIR}/package/rpm/postun)
+    endif(DNBD3_KERNEL_MODULE)
+
+    # configure source packaging
+    set(CPACK_SOURCE_GENERATOR "TGZ;ZIP")
+    set(CPACK_SOURCE_INSTALLED_DIRECTORIES "${CMAKE_SOURCE_DIR}" "/"
+                                           "${PROJECT_GEN_DIR}" "/")
+    set(CPACK_SOURCE_IGNORE_FILES "/build/;/.git/;.gitignore$;.*~;version.h.in$")
+
+    # generate install script for CPack to install generated files
+    configure_file(${PROJECT_MODULES_DIR}/InstallVersionFile.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/package/InstallVersionFile.cmake)
+
+    # set CPack install script
+    set(CPACK_INSTALL_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/package/InstallVersionFile.cmake)
+
+    # include CPack functionality
+    include(CPack)
+
+    # create custom target to build package source
+    add_custom_target(source
+                      COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target package_source
+                      DEPENDS dnbd3-generate-version
+                      VERBATIM
+                      USES_TERMINAL)
+endif(CMAKE_BUILD_TYPE MATCHES Release)
 
 # add all dnbd3 related projects from the source code directory
 add_subdirectory(src)
 
-# install config files into sample directory
-file(GLOB DNBD3_CONF_FILES "${CMAKE_CURRENT_SOURCE_DIR}/conf/*")
-install(FILES ${DNBD3_CONF_FILES} DESTINATION /etc/dnbd3-server/sample)
+# add configuration files for packaging purposes
+add_subdirectory(conf)

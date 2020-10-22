@@ -7,7 +7,7 @@ project(dnbd3-kernel-module)
 include(Kernel)
 
 # set C flags for a Linux kernel module
-set(KERNEL_C_FLAGS "-DDNBD3_KERNEL_MODULE -I ${PROJECT_INCLUDE_TMP_DIR}"
+set(KERNEL_C_FLAGS "-DDNBD3_KERNEL_MODULE -I ${PROJECT_INCLUDE_GEN_DIR}"
       CACHE STRING "C flags to be used for building the dnbd3 kernel module")
 # set C flags for the debug mode of a Linux kernel module
 set(KERNEL_C_FLAGS_DEBUG "-g -DDEBUG"

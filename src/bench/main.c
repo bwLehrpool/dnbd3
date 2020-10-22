@@ -20,7 +20,7 @@
 
 static void printUsage(char *argv0, int exitCode)
 {
-	printf( "Version: %s\n", DNBD3_BUILD_VERSION );
+	printf( "Version: %s\n", DNBD3_VERSION );
 	printf( "Usage: %s [--debug] --host <serverAddress(es)> --image <imageName> [--rid revision]\n", argv0 );
 	printf( "Or:    %s [-d] -h <serverAddress(es)> -i <imageName> [-r revision]\n", argv0 );
 	printf( "   -h --host       List of space separated hosts to use\n" );

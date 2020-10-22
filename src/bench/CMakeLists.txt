@@ -10,4 +10,5 @@ add_executable(dnbd3-bench ${CMAKE_CURRENT_SOURCE_DIR}/connection.c
                            ${CMAKE_CURRENT_SOURCE_DIR}/helper.c
                            ${CMAKE_CURRENT_SOURCE_DIR}/main.c)
 target_link_libraries(dnbd3-bench dnbd3-version dnbd3-shared ${CMAKE_THREAD_LIBS_INIT})
-install(TARGETS dnbd3-bench RUNTIME DESTINATION bin)
+install(TARGETS dnbd3-bench RUNTIME DESTINATION bin
+        COMPONENT bench)

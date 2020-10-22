@@ -11,4 +11,5 @@ add_executable(dnbd3-fuse ${CMAKE_CURRENT_SOURCE_DIR}/connection.c
                           ${CMAKE_CURRENT_SOURCE_DIR}/main.c)
 target_include_directories(dnbd3-fuse PRIVATE ${FUSE_INCLUDE_DIRS})
 target_link_libraries(dnbd3-fuse dnbd3-version dnbd3-shared ${FUSE_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
-install(TARGETS dnbd3-fuse RUNTIME DESTINATION bin)
+install(TARGETS dnbd3-fuse RUNTIME DESTINATION bin
+        COMPONENT fuse)
