@@ -1,17 +1,17 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-kernel-module)
+project(dnbd3-kernel)
 
 # include macros to define Linux kernel build targets
 include(Kernel)
 
 # set C flags for a Linux kernel module
 set(KERNEL_C_FLAGS "-DDNBD3_KERNEL_MODULE -I ${PROJECT_INCLUDE_GEN_DIR}"
-      CACHE STRING "C flags to be used for building the dnbd3 kernel module")
+    CACHE STRING "C flags to be used for building the dnbd3 kernel module")
 # set C flags for the debug mode of a Linux kernel module
 set(KERNEL_C_FLAGS_DEBUG "-g -DDEBUG"
-            CACHE STRING "Additional C flags to be used for building the dnbd3 kernel module in debug mode")
+    CACHE STRING "Additional C flags to be used for building the dnbd3 kernel module in debug mode")
 
 # append include directories to the C flags
 get_property(KERNEL_INCLUDE_DIRS DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
@@ -30,8 +30,7 @@ set(KERNEL_MODULE_DNBD3_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/blk.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/net.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/serialize.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/sysfs.c
-                                     ${CMAKE_CURRENT_SOURCE_DIR}/utils.c
-                                     ${PROJECT_VERSION_FILE})
+                                     ${CMAKE_CURRENT_SOURCE_DIR}/utils.c)
 set(KERNEL_MODULE_DNBD3_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/blk.h
                                      ${CMAKE_CURRENT_SOURCE_DIR}/dnbd3_main.h
                                      ${CMAKE_CURRENT_SOURCE_DIR}/net.h
@@ -44,5 +43,5 @@ add_kernel_module(dnbd3 "${KERNEL_BUILD_DIR}"
                         "${KERNEL_MODULE_DNBD3_HEADER_FILES}"
                         ${CMAKE_CURRENT_SOURCE_DIR}/Kbuild)
 
-# add dependency to generate ${PROJECT_VERSION_FILE} before dnbd3.ko is built
+# add dependency to generate project version header before dnbd3.ko is built
 add_dependencies(dnbd3 dnbd3-generate-version)

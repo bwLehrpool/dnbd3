@@ -63,7 +63,7 @@ if(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     get_kernel_version(LINUX_KERNEL_VERSION ${KERNEL_BUILD_DIR})
 else(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     # disable build of the dnbd3 Linux kernel module on a system other than Linux, eg. FreeBSD
-    message(STATUS "Detected BSD System: Disable build of the dnbd3 Linux kernel module")
+    message(STATUS "Detected non-Linux system: Disable build of the dnbd3 Linux kernel module")
     set(DNBD3_KERNEL_MODULE OFF)
 endif(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
 
@@ -82,7 +82,7 @@ set(INCLUDE_VERSION_HEADER_GENERATE ${PROJECT_INCLUDE_GEN_DIR}/dnbd3/version.h)
 set(INCLUDE_VERSION_HEADER_GENERATE_PREFIX ${PROJECT_INCLUDE_DIR_PREFIX}/dnbd3)
 gen_project_version(${INCLUDE_VERSION_HEADER} ${INCLUDE_VERSION_HEADER_TEMPLATE} ${INCLUDE_VERSION_HEADER_GENERATE})
 
-# generate project build tpye C header file from template
+# generate project build type C header file from template
 # exposes dnbd3-generate-build and dnbd3-build target
 set(INCLUDE_BUILD_HEADER_TEMPLATE ${PROJECT_INCLUDE_DIR}/dnbd3/build.h.in)
 set(INCLUDE_BUILD_HEADER_GENERATE ${PROJECT_INCLUDE_GEN_DIR}/dnbd3/build.h)
