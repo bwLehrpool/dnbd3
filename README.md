@@ -1,3 +1,150 @@
+# dnbd3 - distributed network block device (version 3)
+
+The distributed network block device in version 3 (dnbd3) is a network protocol similar to [nbd](https://github.com/NetworkBlockDevice/nbd) to implement a distributed block-based storage system. Such a distributed block-based storage system consists of dnbd3 components, namly one or more servers and several clients. Servers are meant to expose virtual disk images as block devices to clients using dnbd3. Clients request data blocks from servers and can implement a load balancing mechanism to connect to the fastest available server for data exchange.
+
+This repository contains the source code for the following dnbd3 components:
+
+  - **dnbd3**: Linux kernel module client for dnbd3
+  - **dnbd3-bench**: Benchmark utility to test dnbd3
+  - **dnbd3-fuse**: Fuse client for dnbd3
+  - **dnbd3-server**: Server to serve virtual disk images for dnbd3 
+
+The dnbd3 components can be built for the following Linux kernel versions and Unix distributions:
+
+  - Archlinux with **Linux kernel 5.9.x** or **5.4.x**
+  - Ubuntu 20.04 with **Linux kernel 5.4.x**
+  - CentOS 8 with **Linux kernel 4.18.x**
+  - FreeBSD 12.1 (only user space programs, eg. dnbd3-server)
+
+
+## Build
+
+### Preliminaries
+A build of the dnbd3 components requires the installation of the following build tools and libraries under your supported Unix distribution.
+
+#### Archlinux with Linux kernel 5.9.x or 5.4.x
+```shell
+pacman -S git \
+          make \
+          cmake \
+          gcc \
+          linux-headers \  # or linux-lts-headers
+		  fuse2 \
+		  jansson \
+		  afl \
+          dpkg \
+          rpm-tools
+```
+
+#### Ubuntu 20.04 with Linux kernel 5.4.x
+```shell
+apt-get install git \
+                make \
+                cmake \
+                gcc \
+                g++ \
+                linux-headers-generic \
+				libfuse-dev \
+				libjansson-dev \
+                rpm
+```
+
+Note that `afl` is not available on Ubuntu 20.04 and should be built from the [original sources](https://github.com/google/AFL).
+
+#### CentOS 8 with Linux kernel 4.18.x
+```shell
+yum install git \
+            make \
+            cmake \
+            gcc \
+            gcc-c++ \
+            kernel-devel \
+            elfutils-libelf-devel \
+			fuse-devel \
+			jansson-devel \
+            rpm-build
+```
+
+Note that `afl` is not available on CentOS 8 and should be built from the [original sources](https://github.com/google/AFL).
+
+#### FreeBSD 12.1
+```shell
+pkg install git \
+            cmake \
+			pkgconf \
+			fusefs-libs \
+			jansson \
+			afl \
+			rpm4
+```
+
+
+### Preparation
+Before a build takes place, you should create a `build` directory inside the root folder of the repository. After that, change your working directory to that new directory as follows:
+
+```shell
+mkdir build
+cd build
+```
+
+
+### Configuration
+A build of the dnbd3 components can be configured and customized by the following configuration variables (CMake cache entries):
+
+| Variable                     | Type   | Values                                  | Default value                 | Description                                                          |
+|:-----------------------------|:-------|:----------------------------------------|:------------------------------|----------------------------------------------------------------------|
+| `CMAKE_BUILD_TYPE`           | STRING | {`Debug`, `Release`}                    | `Debug`                       | Build configuration of the dnbd3 project.                            |
+| `KERNEL_BUILD_DIR`           | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/build | Path to Linux kernel modules to compile against.                     |
+| `KERNEL_INSTALL_DIR`         | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/extra | Path to install Linux kernel modules.                                |
+| `DNBD3_KERNEL_MODULE`        | OPTION | {`ON`, `OFF`}                           | `ON`                          | Build the dnbd3 Linux kernel module.                                 |
+| `DNBD3_SERVER_FUSE`          | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Enable FUSE-Integration for dnbd3-server.                            |
+| `DNBD3_SERVER_AFL`           | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Build dnbd3-server for usage with afl-fuzz.                          |
+| `DNBD3_SERVER_DEBUG_LOCKS`   | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Add lock debugging code to dnbd3-server.                             |
+| `DNBD3_SERVER_DEBUG_THREADS` | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Add thread debugging code to dnbd3-server.                           |
+| `DNBD3_RELEASE_HARDEN`       | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Compile dnbd3 programs in Release build with code hardening options. |
+
+A value from the range of appropriate values can be assigend to each configuration variable by executing CMake once with the following command pattern:
+
+```shell
+cmake -D<VARIABLE>=<VALUE> [-D ...] ../.
+```
+
+
+### Debug
+In the `Debug` build configuration, all dnbd3 components can be built by calling `make`:
+
+```shell
+make
+```
+
+Optionally, the output files can be installed with superuser permissions on the local system using the Makefile target `install`:
+
+```shell
+sudo make install
+sudo depmod -a  # only required if DNBD3_KERNEL_MODULE is enabled
+```
+
+
+### Packages
+In the `Release` build configuration, installation packages can be built by calling the make target `package`:
+
+```shell
+make package
+```
+
+This target creates a Debian installation package (\*.deb), a RPM installation package (\*.rpm) and a compressed archive (\*.tar.gz) containing the built dnbd3 components.
+
+
+### Sources
+In the `Release` build configuration, sources can be built by calling the make target `source`:
+
+```shell
+make source
+```
+
+This target creates compressed archives (\*_source.tar.gz and \*_source.zip) containing the source code of this repository for code distribution purposes.
+
+
 ## Configuration of _dnbd3-server_
 The dnbd3-server is started according to the following command line call.
 
@@ -8,7 +155,7 @@ dnbd3-server -c <CONFIG_DIR>
 An operation of the dnbd3-server requires a configuration directory to provide proper functionality. The configuration directory should contain two configuration files, namely the _alt-servers_ and the _server.conf_ file.
 
 
-## Configuration file _alt-servers_
+### Configuration file _alt-servers_
 The _alt-servers_ configuration file specifies the list of known alt-servers for the dnbd3-server. The configuration in the file is specified the INI file format as shown in the following.
 
 ```ini
@@ -23,7 +170,7 @@ All fields in an INI section are optional. If the `for` key is missing, the dnbd
 If the dnbd3-server is not running in proxy mode, this file won't do much.
 
 
-## Configuration file _server.conf_
+### Configuration file _server.conf_
 The _server.conf_ file is the main configuration file of the dnbd3-server. The configuration in the file is specified the INI file format as shown in the following.
 
 ```ini
@@ -34,6 +181,29 @@ clientPenalty=2345 # artificial acceptance delay for incoming client connection 
 isProxy=true # enable proxy mode - will try to replicate from alt-servers if a client requests unknown image
 uplinkTimeout=1250 # r/w timeout for connections to uplink servers
 ```
+
+
+## Debugging
+Debugging of the Linux kernel modules and the user space utility requires this project to be built in the `Debug` configuration.
+
+### Linux kernel module
+The Linux kernel module **dnbd3** supports the Linux kernel's dynamic debug feature if the Linux kernel is built with the enabled kernel configuration `CONFIG_DYNAMIC_DEBUG`. The dynamic debug feature allows the printing of customizable debug messages into the Linux kernel's message buffer.
+
+Dynamic debug for the modules can be either enabled at module initialization or during operation. At module initialization, dynamic debug can be enabled by modprobe using the "fake" module parameter `dyndbg`:
+
+```shell
+modprobe dnbd3 dyndbg=+pflmt
+```
+
+The module parameter `dyndbg` customizes the debug messages written into the Linux kernel's message buffer. The specific value `+pflmt` enables all debug messages in the source code and includes function name (`f`), line number (`l`), module name (`m`) and thread ID (`t`) for each executed debug statement from the source code.
+
+During operation, debug messages from debug statements in the code can be customized and enabled dynamically as well using the debugfs control file `<DEBUG_FS>/dynamic_debug/control` where `DEBUG_FS` is the mount point of a mounted DebugFS, eg. `/sys/kernel/debug`:
+
+```shell
+echo "module dnbd3 +pflmt" > <DEBUG_FS>/dynamic_debug/control
+```
+
+More information regarding the Linux kernel's dynamic debug feature can be found in the (https://www.kernel.org/doc/html/latest/admin-guide/dynamic-debug-howto.html)[Linux kernel documentation].
 
 
 ## Development notes
