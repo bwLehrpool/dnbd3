@@ -203,7 +203,7 @@ During operation, debug messages from debug statements in the code can be custom
 echo "module dnbd3 +pflmt" > <DEBUG_FS>/dynamic_debug/control
 ```
 
-More information regarding the Linux kernel's dynamic debug feature can be found in the (https://www.kernel.org/doc/html/latest/admin-guide/dynamic-debug-howto.html)[Linux kernel documentation].
+More information regarding the Linux kernel's dynamic debug feature can be found in the [Linux kernel documentation](https://www.kernel.org/doc/html/latest/admin-guide/dynamic-debug-howto.html).
 
 
 ## Development notes
