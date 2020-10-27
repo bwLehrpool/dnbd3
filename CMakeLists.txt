@@ -171,24 +171,37 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
     # configure source packaging
     set(CPACK_SOURCE_GENERATOR "TGZ;ZIP")
     set(CPACK_SOURCE_INSTALLED_DIRECTORIES "${CMAKE_SOURCE_DIR}" "/"
-                                           "${PROJECT_GEN_DIR}" "/")
-    set(CPACK_SOURCE_IGNORE_FILES "/build/;/.git/;.gitignore$;.*~;version.h.in$")
-
-    # generate install script for CPack to install generated files
-    configure_file(${PROJECT_MODULES_DIR}/InstallVersionFile.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/package/InstallVersionFile.cmake)
-
-    # set CPack install script
-    set(CPACK_INSTALL_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/package/InstallVersionFile.cmake)
+                                           "${PROJECT_GEN_DIR}"  "/")
+    set(CPACK_SOURCE_IGNORE_FILES "/build/"
+                                  "/.git/"
+                                  ".gitignore"
+                                  "version.h.in")
 
     # include CPack functionality
     include(CPack)
 
-    # create custom target to build package source
-    add_custom_target(source
+    # prepare source packaging
+    add_custom_command(OUTPUT ${INCLUDE_VERSION_HEADER}
+                       COMMAND ${CMAKE_COMMAND} -D VERSION_HEADER_INPUT_FILE=${INCLUDE_VERSION_HEADER_GENERATE}
+                                                -D VERSION_HEADER_OUTPUT_FILE=${INCLUDE_VERSION_HEADER}
+                                                -P ${PROJECT_MODULES_DIR}/PreVersionPackaging.cmake
+                       COMMENT "Prepare version.h"
+                       DEPENDS dnbd3-generate-version)
+
+    # main source packaging
+    add_custom_target(package_source_main
                       COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target package_source
-                      DEPENDS dnbd3-generate-version
+                      DEPENDS ${INCLUDE_VERSION_HEADER}
                       VERBATIM
                       USES_TERMINAL)
+
+    # post source packaging and exported target to build source packages
+    add_custom_target(source
+                      COMMAND ${CMAKE_COMMAND} -D VERSION_HEADER_INPUT_FILE=${INCLUDE_VERSION_HEADER_GENERATE}
+                                               -D VERSION_HEADER_OUTPUT_FILE=${INCLUDE_VERSION_HEADER}
+                                               -P ${PROJECT_MODULES_DIR}/PostVersionPackaging.cmake
+                      COMMENT "Cleanup version.h"
+                      DEPENDS package_source_main)
 endif(CMAKE_BUILD_TYPE MATCHES Release)
 
 # add all dnbd3 related projects from the source code directory
