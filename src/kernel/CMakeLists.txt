@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-kernel)
+project(dnbd3-kernel
+        LANGUAGES C)
 
 # include macros to define Linux kernel build targets
 include(Kernel)

@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-server)
+project(dnbd3-server
+        LANGUAGES C)
 
 # find Jansson package required by the dnbd3-server
 find_package(Jansson)

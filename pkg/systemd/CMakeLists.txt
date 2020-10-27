@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-systemd)
+project(dnbd3-systemd
+        LANGUAGES C)
 
 # define all systemd related files
 set(DNBD3_SYSTEMD_FILES ${CMAKE_CURRENT_SOURCE_DIR}/dnbd3-server.service)

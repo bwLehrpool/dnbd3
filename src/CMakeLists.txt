@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-src)
+project(dnbd3-src
+        LANGUAGES C)
 
 add_subdirectory(bench)
 if(DNBD3_KERNEL_MODULE)

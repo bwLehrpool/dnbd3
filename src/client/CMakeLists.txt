@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-client)
+project(dnbd3-client
+        LANGUAGES C)
 
 # suppress -Wmultichar warnings
 add_compile_options(-Wno-multichar)

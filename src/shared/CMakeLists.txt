@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-shared)
+project(dnbd3-shared
+        LANGUAGES C)
 
 # add compile option to get POLLRDHUP support for signals
 add_definitions(-D_GNU_SOURCE)

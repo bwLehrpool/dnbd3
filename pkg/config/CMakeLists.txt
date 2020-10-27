@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
 # set the project name
-project(dnbd3-config)
+project(dnbd3-config
+        LANGUAGES C)
 
 # define all configuration files
 set(DNBD3_CONFIG_FILES ${CMAKE_CURRENT_SOURCE_DIR}/alt-servers

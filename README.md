@@ -42,7 +42,6 @@ apt-get install git \
                 make \
                 cmake \
                 gcc \
-                g++ \
                 linux-headers-generic \
 				libfuse-dev \
 				libjansson-dev \
@@ -57,7 +56,6 @@ yum install git \
             make \
             cmake \
             gcc \
-            gcc-c++ \
             kernel-devel \
             elfutils-libelf-devel \
 			fuse-devel \
