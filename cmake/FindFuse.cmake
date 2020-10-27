@@ -53,7 +53,7 @@ set(FUSE_LIBRARIES )
 set(FUSE_DEFINITIONS )
 set(FUSE_INCLUDE_DIRS )
 
-find_package(PkgConfig)
+find_package(PkgConfig QUIET)
 
 set(PC_FUSE_INCLUDE_DIRS )
 set(PC_FUSE_LIBRARY_DIRS )

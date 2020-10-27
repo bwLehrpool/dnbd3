@@ -28,14 +28,6 @@ macro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION
     add_dependencies(dnbd3-version dnbd3-generate-version)
 endmacro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION_OUTPUT_FILE)
 
-# macro to get Linux kernel version from KERNEL_BUILD_DIR string
-macro(get_kernel_version LINUX_KERNEL_VERSION KERNEL_BUILD_DIR)
-    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" LINUX_KERNEL_VERSION ${KERNEL_BUILD_DIR})
-    if(LINUX_KERNEL_VERSION STREQUAL "")
-        set(LINUX_KERNEL_VERSION "unknown")
-    endif(LINUX_KERNEL_VERSION STREQUAL "")
-endmacro(get_kernel_version LINUX_KERNEL_VERSION KERNEL_BUILD_DIR)
-
 # macro to get Git version information
 macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUILD_TYPE)
     # check if generated version header from source package is available

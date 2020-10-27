@@ -28,9 +28,10 @@ if(NOT CMAKE_BUILD_TYPE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 # search for required packages
-find_package(Git)
-find_package(Threads)
-find_package(Fuse)
+find_package(Git REQUIRED)
+find_package(Threads REQUIRED)
+find_package(Fuse REQUIRED)
+find_package(Jansson REQUIRED)
 
 # abort if a required package is not available
 if(NOT GIT_FOUND)
@@ -49,18 +50,12 @@ include(Build)
 
 # check for system and enable or disable built of Linux kernel module
 if(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
-    # set Linux kernel directories
-    set(KERNEL_BUILD_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build"
-        CACHE PATH "Path to Linux kernel modules to compile against")
-    set(KERNEL_INSTALL_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/extra"
-        CACHE PATH "Path to install Linux kernel modules")
+    # require Linux kernel headers
+    find_package(KernelHeaders REQUIRED)
 
     # print configured settings
     message(STATUS "Path to Linux kernel modules to compile against is " ${KERNEL_BUILD_DIR})
     message(STATUS "Path to install Linux kernel modules is " ${KERNEL_INSTALL_DIR})
-
-    # get the Linux kernel version
-    get_kernel_version(LINUX_KERNEL_VERSION ${KERNEL_BUILD_DIR})
 else(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     # disable build of the dnbd3 Linux kernel module on a system other than Linux, eg. FreeBSD
     message(STATUS "Detected non-Linux system: Disable build of the dnbd3 Linux kernel module")
@@ -120,11 +115,11 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
     get_repository_version(REPOSITORY_VERSION ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE})
 
     # define project version
-    if(LINUX_KERNEL_VERSION)
-        set(REPOSITORY_VERSION_FULL ${REPOSITORY_VERSION}-${LINUX_KERNEL_VERSION})
-    else(LINUX_KERNEL_VERSION)
+    if(KernelHeaders_VERSION)
+        set(REPOSITORY_VERSION_FULL ${REPOSITORY_VERSION}-${KernelHeaders_VERSION})
+    else(KernelHeaders_VERSION)
         set(REPOSITORY_VERSION_FULL ${REPOSITORY_VERSION})
-    endif(LINUX_KERNEL_VERSION)
+    endif(KernelHeaders_VERSION)
 
     set(CPACK_GENERATOR "DEB;RPM;TGZ")
     set(CPACK_PACKAGE_NAME ${CMAKE_PROJECT_NAME})
