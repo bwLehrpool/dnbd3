@@ -33,17 +33,6 @@ find_package(Threads REQUIRED)
 find_package(Fuse REQUIRED)
 find_package(Jansson REQUIRED)
 
-# abort if a required package is not available
-if(NOT GIT_FOUND)
-	message(FATAL_ERROR "No Git found, can't determine dnbd3 project version number!")
-endif(NOT GIT_FOUND)
-if(NOT THREADS_FOUND)
-	message(FATAL_ERROR "No threads found, can't build dnbd3 project!")
-endif(NOT THREADS_FOUND)
-if(NOT FUSE_FOUND)
-	message(FATAL_ERROR "No Fuse found, can't build dnbd3 project!")
-endif(NOT FUSE_FOUND)
-
 # include project version and build type related macros
 include(Version)
 include(Build)
