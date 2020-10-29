@@ -1879,8 +1879,13 @@ static void* saveLoadAllCacheMaps(void* nix UNUSED)
 	static ticks nextSave;
 	declare_now;
 	bool full = timing_reached( &nextSave, &now );
-	time_t walltime = full ? time( NULL ) : 0;
+	time_t walltime = 0;
 	setThreadName( "cache-mapper" );
+	if ( full ) {
+		walltime = time( NULL );
+		// Update at start to avoid concurrent runs
+		timing_addSeconds( &nextSave, &now, CACHE_MAP_MAX_SAVE_DELAY );
+	}
 	mutex_lock( &imageListLock );
 	for ( int i = 0; i < _num_images; ++i ) {
 		dnbd3_image_t * const image = _images[i];
@@ -1950,9 +1955,6 @@ static void* saveLoadAllCacheMaps(void* nix UNUSED)
 		mutex_lock( &imageListLock );
 	}
 	mutex_unlock( &imageListLock );
-	if ( full ) {
-		timing_addSeconds( &nextSave, &now, CACHE_MAP_MAX_SAVE_DELAY );
-	}
 	return NULL;
 }
 
