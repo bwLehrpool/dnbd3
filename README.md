@@ -144,30 +144,39 @@ This target creates compressed archives (\*_source.tar.gz and \*_source.zip) con
 
 
 ### Docker image
-A docker image of the built dnbd3 components can be created in the `Release` build configuration with the option `DNBD3_KERNEL_MODULE=OFF`.
+A docker image of the built dnbd3 components can be created in the `Release` build configuration with the option `DNBD3_KERNEL_MODULE=OFF`. The image is based on Ubuntu 20.04 and starts the embedded dnbd3-server automatically.
 
-Make sure that your docker daemon runs and you are a member of the `docker` group to access the docker deamon without any super user privileges. Then build the docker image by calling the following Make target:
+Before the image is built, make sure that your docker daemon runs and you are a member of the `docker` group to access the docker deamon without any super user privileges. Then, build the docker image by calling the following Make target:
 
 ```
 make docker-ubuntu-20-04
 ```
 
-The built docker image is saved as archive file (\*_ubuntu-20-04_docker.tar) and can be deployed to other machines and can be loaded with the following docker client call:
+The built docker image is saved as archive file (\*_ubuntu-20-04_docker.tar) and can be deployed to other machines. On each machine, the created image can be loaded with the following docker client call:
 
 ```shell
 docker image load -i *_ubuntu-20-04_docker.tar
 ```
 
-After the loading of an image, a docker container named `NAME` and with the IPv4 adrress `IPv4_ADDRESS` can be created with the following docker client call:
+After the image is loaded, a docker network needs to be available so that each docker container based on this image can establish a network connection. Therefore, a docker network called `dnbd3` is created with the following docker client call:
+
+```shell
+docker network create --driver=bridge --subnet=192.168.100.0/24 dnbd3
+```
+
+If the network is present, docker containers with a name of form `dnbd3-server<NUMBER>` and an IPv4 address from the network's subnet can be created using docker client calls like the following ones:
 
 ```
-docker container create --name <NAME> --ip <IPv4_ADDRESS> <IMAGE_TAG>
+docker container create --name dnbd3-server1 --ip 192.168.100.10  --network dnbd3 <IMAGE_TAG>
+docker container create --name dnbd3-server2 --ip 192.168.100.50  --network dnbd3 <IMAGE_TAG>
+docker container create --name dnbd3-server3 --ip 192.168.100.100 --network dnbd3 <IMAGE_TAG>
+docker container create --name dnbd3-server4 --ip 192.168.100.123 --network dnbd3 <IMAGE_TAG>
 ```
 
-Note that the image is already tagged with a `IMAGE_TAG` that is set to the current dnbd3 package version number. The image tag `IMAGE_TAG` can be reused to create a container. Finally, this container can be started to execute the dnbd3-server in this container with the following docker client call:
+Note that the image is already tagged with an `IMAGE_TAG` which is set to the current dnbd3 package version number and follows the format `dnbd3:<DNBD3_VERSION>`. The `IMAGE_TAG` can be reused to create a docker container. Finally, each container based on the image can be started with the following docker client call:
 
 ```
-docker container start -a <NAME>
+docker container start -a dnbd3-server<MUNBER>
 ```
 
 
