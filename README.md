@@ -143,6 +143,34 @@ make source
 This target creates compressed archives (\*_source.tar.gz and \*_source.zip) containing the source code of this repository for code distribution purposes.
 
 
+### Docker image
+A docker image of the built dnbd3 components can be created in the `Release` build configuration with the option `DNBD3_KERNEL_MODULE=OFF`.
+
+Make sure that your docker daemon runs and you are a member of the `docker` group to access the docker deamon without any super user privileges. Then build the docker image by calling the following Make target:
+
+```
+make docker-ubuntu-20-04
+```
+
+The built docker image is saved as archive file (\*_ubuntu-20-04_docker.tar) and can be deployed to other machines and can be loaded with the following docker client call:
+
+```shell
+docker image load -i *_ubuntu-20-04_docker.tar
+```
+
+After the loading of an image, a docker container named `NAME` and with the IPv4 adrress `IPv4_ADDRESS` can be created with the following docker client call:
+
+```
+docker container create --name <NAME> --ip <IPv4_ADDRESS> <IMAGE_TAG>
+```
+
+Note that the image is already tagged with a `IMAGE_TAG` that is set to the current dnbd3 package version number. The image tag `IMAGE_TAG` can be reused to create a container. Finally, this container can be started to execute the dnbd3-server in this container with the following docker client call:
+
+```
+docker container start -a <NAME>
+```
+
+
 ## Configuration of _dnbd3-server_
 The dnbd3-server is started according to the following command line call.
 

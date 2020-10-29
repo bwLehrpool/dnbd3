@@ -131,7 +131,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
     set(CPACK_RESOURCE_FILE_README ${CMAKE_CURRENT_SOURCE_DIR}/README.md)
 
     # set DEB generator specific packaging options
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libfuse2, libjansson")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libfuse2, libjansson4")
     if(DNBD3_KERNEL_MODULE)
         file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postinst "depmod -a\n")
         file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postrm "depmod -a\n")
@@ -191,6 +191,17 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
                                                -P ${PROJECT_MODULES_DIR}/PostVersionPackaging.cmake
                       COMMENT "Cleanup version.h"
                       DEPENDS package_source_main)
+
+    # include target to make docker image
+    if(NOT DNBD3_KERNEL_MODULE)
+        find_package(Docker REQUIRED)
+        include(DockerImage)
+        set(DOCKER_FILE ${CMAKE_SOURCE_DIR}/pkg/docker/Dockerfile)
+        set(DOCKER_TAG ${CPACK_PACKAGE_NAME}:${REPOSITORY_VERSION_FULL})
+        set(PACKAGE_FILE ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR}.deb)
+        set(DOCKER_IMAGE ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR}_ubuntu-20-04_docker.tar)
+        add_docker_image(docker-ubuntu-20-04 ${DOCKER_IMAGE} ${DOCKER_FILE} ${DOCKER_TAG} ${PACKAGE_FILE} ${CMAKE_BINARY_DIR})
+    endif(NOT DNBD3_KERNEL_MODULE)
 endif(CMAKE_BUILD_TYPE MATCHES Release)
 
 # add all dnbd3 related projects from the source code directory
