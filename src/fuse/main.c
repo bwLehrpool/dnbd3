@@ -402,6 +402,12 @@ int main( int argc, char *argv[] )
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 
+	/* abort if sticky mode is set and image will not be opened */
+	if ( !learnNewServers && image_Name == NULL ) {
+		logadd( LOG_ERROR, "sticky mode can only be set if image will be opened.\n" );
+		printUsage( argv[0], EXIT_FAILURE );
+	}
+
 	if ( server_address == NULL || image_Name == NULL ) {
 		printUsage( argv[0], EXIT_FAILURE );
 	}

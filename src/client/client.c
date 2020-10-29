@@ -44,7 +44,7 @@
 
 
 static int openDevices[MAX_DEVS];
-static const char *optString = "f:h:i:r:d:a:cs:HV?k";
+static const char *optString = "f:h:i:r:d:a:cs:SHV?k";
 static const struct option longOpts[] = {
         { "file", required_argument, NULL, 'f' },
         { "host", required_argument, NULL, 'h' },
@@ -54,6 +54,7 @@ static const struct option longOpts[] = {
         { "ahead", required_argument, NULL, 'a' },
         { "close", no_argument, NULL, 'c' },
         { "switch", required_argument, NULL, 's' },
+		{ "sticky", no_argument, NULL, 'S' },
         { "add", required_argument, NULL, 'adds' },
         { "remove", required_argument, NULL, 'rems' },
         { "help", no_argument, NULL, 'H' },
@@ -69,7 +70,7 @@ static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const
 static void dnbd3_client_daemon();
 static void dnbd3_daemon_action(int client, int argc, char **argv);
 static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *actionName, char *host);
-static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead);
+static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead, const bool doLearnNewServers);
 static int dnbd3_daemon_send(int argc, char **argv);
 static void dnbd3_print_help(char *argv_0);
 static void dnbd3_print_version();
@@ -199,6 +200,7 @@ int main(int argc, char *argv[])
 	char host[50];
 
 	int action = -1;
+	bool learnNewServers = true;
 
 	dnbd3_ioctl_t msg;
 	memset( &msg, 0, sizeof(dnbd3_ioctl_t) );
@@ -207,7 +209,6 @@ int main(int argc, char *argv[])
 	msg.host.port = htons( PORT );
 	msg.host.type = 0;
 	msg.imgname = NULL;
-	msg.use_server_provided_alts = true;
 
 	int opt = 0;
 	int longIndex = 0;
@@ -242,6 +243,9 @@ int main(int argc, char *argv[])
 			dnbd3_get_ip( optarg, &msg.host );
 			action = IOCTL_SWITCH;
 			break;
+		case 'S':
+			learnNewServers = false;
+			break;
 		case 'adds':
 			dnbd3_get_ip( optarg, &msg.host );
 			action = IOCTL_ADD_SRV;
@@ -265,6 +269,14 @@ int main(int argc, char *argv[])
 		}
 		opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 	}
+
+	/* abort if sticky mode is set and image will not be opened */
+	if ( !learnNewServers && action != IOCTL_OPEN ) {
+		printf( "ERROR: sticky mode can only be set if image will be opened.\n" );
+		exit( EXIT_FAILURE );
+	}
+
+	msg.use_server_provided_alts = learnNewServers;
 
 	// See if socket exists, if so, try to send to daemon
 	struct stat st;
@@ -420,6 +432,7 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 	int len;
 	int action = -1;
 	const char *actionName = NULL;
+	bool learnNewServers = true;
 
 	optind = 1;
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
@@ -446,6 +459,9 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		case 'c':
 			action = IOCTL_CLOSE;
 			actionName = "Close";
+			break;
+		case 'S':
+			learnNewServers = false;
 			break;
 		case 'adds':
 			action = IOCTL_ADD_SRV;
@@ -487,7 +503,7 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		return;
 	}
 	if ( action == IOCTL_OPEN && host != NULL && image != NULL && rid >= 0 ) {
-		device = dnbd3_daemon_open( uid, host, image, rid, ahead );
+		device = dnbd3_daemon_open( uid, host, image, rid, ahead, learnNewServers);
 		if ( device != NULL ) {
 			len = strlen( device );
 			send( client, &len, sizeof(len), 0 );
@@ -538,7 +554,7 @@ static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *act
 	return false;
 }
 
-static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead)
+static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead, const bool doLearnNewServers)
 {
 	int i, sameUser = 0;
 	struct stat st;
@@ -569,7 +585,7 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int re
 		msg.imgname = image;
 		msg.imgnamelen = strlen( image );
 		msg.rid = rid;
-		msg.use_server_provided_alts = true;
+		msg.use_server_provided_alts = doLearnNewServers;
 		msg.read_ahead_kb = readAhead;
 		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) {
 			openDevices[i] = uid;
@@ -656,6 +672,7 @@ static void dnbd3_print_help(char *argv_0)
 	printf( "-a or --ahead \t\t Read ahead in KByte (default %i).\n", DEFAULT_READ_AHEAD_KB );
 	printf( "-c or --close \t\t Disconnect and close device.\n" );
 	printf( "-s or --switch \t\t Switch dnbd3-server on device (DEBUG).\n" );
+	printf( "-S or --sticky \t\t Use only servers from command line (no learning from servers)\n" );
 	printf( "-H or --help \t\t Show this help text and quit.\n" );
 	printf( "-V or --version \t Show version and quit.\n\n" );
 	printf( "\t--daemon \t Run as helper daemon\n" );
