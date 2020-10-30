@@ -77,7 +77,7 @@ gen_build_type(${INCLUDE_BUILD_HEADER_TEMPLATE} ${INCLUDE_BUILD_HEADER_GENERATE}
 add_definitions(-D_FILE_OFFSET_BITS=64)
 
 # define global C flags for compilation
-set(CMAKE_C_FLAGS "-std=c11")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
 
 # enable all error warnings in Debug build configuration
 set(CMAKE_C_FLAGS_DEBUG "-Wall -Wextra -Wpedantic -Wconversion -Wformat -Wformat-security -Werror=format-security")
