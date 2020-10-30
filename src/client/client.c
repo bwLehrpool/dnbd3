@@ -660,10 +660,10 @@ static int dnbd3_daemon_send(int argc, char **argv)
 
 static void dnbd3_print_help(char *argv_0)
 {
-	printf( "Version: %s\n", DNBD3_VERSION );
-	printf( "\nUsage: %s\n"
-			"\t-h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c -d <device>\n\n", argv_0 );
-	printf( "Start the DNBD3 client.\n" );
+	printf( "Version: %s\n\n", DNBD3_VERSION );
+	printf( "Usage: %s\n", argv_0 );
+	printf( "       -h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c -d <device>\n\n" );
+	printf( "Start the DNBD3 client.\n\n" );
 	//printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
 	printf( "-h or --host \t\t Host running dnbd3-server.\n" );
 	printf( "-i or --image \t\t Image name of exported image.\n" );
@@ -677,10 +677,10 @@ static void dnbd3_print_help(char *argv_0)
 	printf( "-R or --remove \t\t Remove given dnbd3-server on device.\n");
 	printf( "-H or --help \t\t Show this help text and quit.\n" );
 	printf( "-V or --version \t Show version and quit.\n\n" );
-	printf( "\t--daemon \t Run as helper daemon\n" );
-	printf( "\t--kill \t Kill running helper daemon\n" );
+	printf( "      --daemon \t\t Run as helper daemon\n" );
+	printf( "      --kill \t\t Kill running helper daemon\n\n" );
 	printf( "The helper daemon makes it possible for normal users to connect dnbd3 devices.\n" );
-	printf( "The client binary needs to be a setuid program for this to work!\n\n" );
+	printf( "The client binary needs to be a setuid program for this to work!\n" );
 }
 
 void dnbd3_print_version()
