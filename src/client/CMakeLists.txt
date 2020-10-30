@@ -4,9 +4,6 @@ cmake_minimum_required(VERSION 3.10)
 project(dnbd3-client
         LANGUAGES C)
 
-# suppress -Wmultichar warnings
-add_compile_options(-Wno-multichar)
-
 # add compile option to enable enhanced BSD netdb features
 add_definitions(-D_GNU_SOURCE)
 

@@ -44,7 +44,7 @@
 
 
 static int openDevices[MAX_DEVS];
-static const char *optString = "f:h:i:r:d:a:cs:SHV?k";
+static const char *optString = "f:h:i:r:d:a:cs:SA:R:HV?k";
 static const struct option longOpts[] = {
         { "file", required_argument, NULL, 'f' },
         { "host", required_argument, NULL, 'h' },
@@ -55,8 +55,8 @@ static const struct option longOpts[] = {
         { "close", no_argument, NULL, 'c' },
         { "switch", required_argument, NULL, 's' },
 		{ "sticky", no_argument, NULL, 'S' },
-        { "add", required_argument, NULL, 'adds' },
-        { "remove", required_argument, NULL, 'rems' },
+        { "add", required_argument, NULL, 'A' },
+        { "remove", required_argument, NULL, 'R' },
         { "help", no_argument, NULL, 'H' },
         { "version", no_argument, NULL, 'V' },
         { "daemon", no_argument, NULL, 'D' },
@@ -246,11 +246,11 @@ int main(int argc, char *argv[])
 		case 'S':
 			learnNewServers = false;
 			break;
-		case 'adds':
+		case 'A':
 			dnbd3_get_ip( optarg, &msg.host );
 			action = IOCTL_ADD_SRV;
 			break;
-		case 'rems':
+		case 'R':
 			dnbd3_get_ip( optarg, &msg.host );
 			action = IOCTL_REM_SRV;
 			break;
@@ -463,11 +463,11 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 		case 'S':
 			learnNewServers = false;
 			break;
-		case 'adds':
+		case 'A':
 			action = IOCTL_ADD_SRV;
 			actionName = "Add Server";
 			break;
-		case 'rems':
+		case 'R':
 			action = IOCTL_REM_SRV;
 			actionName = "Remove Server";
 			break;
@@ -673,6 +673,8 @@ static void dnbd3_print_help(char *argv_0)
 	printf( "-c or --close \t\t Disconnect and close device.\n" );
 	printf( "-s or --switch \t\t Switch dnbd3-server on device (DEBUG).\n" );
 	printf( "-S or --sticky \t\t Use only servers from command line (no learning from servers)\n" );
+	printf( "-A or --add \t\t Add given dnbd3-server on device.\n");
+	printf( "-R or --remove \t\t Remove given dnbd3-server on device.\n");
 	printf( "-H or --help \t\t Show this help text and quit.\n" );
 	printf( "-V or --version \t Show version and quit.\n\n" );
 	printf( "\t--daemon \t Run as helper daemon\n" );
