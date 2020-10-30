@@ -95,11 +95,14 @@ A build of the dnbd3 components can be configured and customized by the followin
 | `KERNEL_BUILD_DIR`           | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/build | Path to Linux kernel modules to compile against.                     |
 | `KERNEL_INSTALL_DIR`         | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/extra | Path to install Linux kernel modules.                                |
 | `DNBD3_KERNEL_MODULE`        | OPTION | {`ON`, `OFF`}                           | `ON`                          | Build the dnbd3 Linux kernel module.                                 |
+| `DNBD3_CLIENT_FUSE`          | OPTION | {`ON`, `OFF`}                           | `ON`                          | Enable build of dnbd3-fuse.                                          |
+| `DNBD3_SERVER`               | OPTION | {`ON`, `OFF`}                           | `ON`                          | Enable build of dnbd3-server.                                        |
 | `DNBD3_SERVER_FUSE`          | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Enable FUSE-Integration for dnbd3-server.                            |
 | `DNBD3_SERVER_AFL`           | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Build dnbd3-server for usage with afl-fuzz.                          |
 | `DNBD3_SERVER_DEBUG_LOCKS`   | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Add lock debugging code to dnbd3-server.                             |
 | `DNBD3_SERVER_DEBUG_THREADS` | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Add thread debugging code to dnbd3-server.                           |
 | `DNBD3_RELEASE_HARDEN`       | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Compile dnbd3 programs in Release build with code hardening options. |
+| `DNBD3_PACKAGE_DOCKER`       | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Enable packaging of Docker image.                                    |
 
 A value from the range of appropriate values can be assigend to each configuration variable by executing CMake once with the following command pattern:
 
@@ -144,7 +147,7 @@ This target creates compressed archives (\*_source.tar.gz and \*_source.zip) con
 
 
 ### Docker image
-A docker image of the built dnbd3 components can be created in the `Release` build configuration with the option `DNBD3_KERNEL_MODULE=OFF`. The image is based on Ubuntu 20.04 and starts the embedded dnbd3-server automatically.
+A docker image of the built dnbd3 components can be created in the `Release` build configuration with the option `DNBD3_PACKAGE_DOCKER=ON` and `DNBD3_KERNEL_MODULE=OFF`. The image is based on Ubuntu 20.04 and a created docker container from it starts the embedded dnbd3-server automatically.
 
 Before the image is built, make sure that your docker daemon runs and you are a member of the `docker` group to access the docker deamon without any super user privileges. Then, build the docker image by calling the following Make target:
 

@@ -12,11 +12,14 @@ project(dnbd3
 
 # define project options to define build configuration
 OPTION(DNBD3_KERNEL_MODULE "Build the dnbd3 Linux kernel module" ON)
+OPTION(DNBD3_CLIENT_FUSE "Enable build of dnbd3-fuse" ON)
+OPTION(DNBD3_SERVER "Enable build of dnbd3-server" ON)
 OPTION(DNBD3_SERVER_FUSE "Enable FUSE-Integration for dnbd3-server" OFF)
 OPTION(DNBD3_SERVER_AFL "Build dnbd3-server for usage with afl-fuzz" OFF)
 OPTION(DNBD3_SERVER_DEBUG_LOCKS "Add lock debugging code to dnbd3-server" OFF)
 OPTION(DNBD3_SERVER_DEBUG_THREADS "Add thread debugging code to dnbd3-server" OFF)
 OPTION(DNBD3_RELEASE_HARDEN "Compile dnbd3 programs in Release build with code hardening options" OFF)
+OPTION(DNBD3_PACKAGE_DOCKER "Enable packaging of Docker image" OFF)
 
 # set supported build configurations
 set(CMAKE_CONFIGURATION_TYPES Debug Release)
@@ -30,8 +33,6 @@ endif(NOT CMAKE_BUILD_TYPE)
 # search for required packages
 find_package(Git REQUIRED)
 find_package(Threads REQUIRED)
-find_package(Fuse REQUIRED)
-find_package(Jansson REQUIRED)
 
 # include project version and build type related macros
 include(Version)
@@ -193,7 +194,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
                       DEPENDS package_source_main)
 
     # include target to make docker image
-    if(NOT DNBD3_KERNEL_MODULE)
+    if(NOT DNBD3_KERNEL_MODULE AND DNBD3_PACKAGE_DOCKER)
         find_package(Docker REQUIRED)
         include(DockerImage)
         set(DOCKER_FILE ${CMAKE_SOURCE_DIR}/pkg/docker/Dockerfile)
@@ -201,7 +202,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
         set(PACKAGE_FILE ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR}.deb)
         set(DOCKER_IMAGE ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR}_ubuntu-20-04_docker.tar)
         add_docker_image(docker-ubuntu-20-04 ${DOCKER_IMAGE} ${DOCKER_FILE} ${DOCKER_TAG} ${PACKAGE_FILE} ${CMAKE_BINARY_DIR})
-    endif(NOT DNBD3_KERNEL_MODULE)
+    endif(NOT DNBD3_KERNEL_MODULE AND DNBD3_PACKAGE_DOCKER)
 endif(CMAKE_BUILD_TYPE MATCHES Release)
 
 # add all dnbd3 related projects from the source code directory

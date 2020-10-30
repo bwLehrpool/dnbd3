@@ -58,6 +58,7 @@ target_include_directories(dnbd3-server PRIVATE ${JANSSON_INCLUDE_DIR})
 target_link_libraries(dnbd3-server dnbd3-version dnbd3-build dnbd3-shared ${CMAKE_THREAD_LIBS_INIT} ${JANSSON_LIBRARIES})
 
 if(DNBD3_SERVER_FUSE)
+    find_package(Fuse REQUIRED)
     # include Fuse headers and link with Fuse library
     target_compile_options(dnbd3-server PRIVATE DNBD3_SERVER_FUSE)
     target_include_directories(dnbd3-server PRIVATE ${FUSE_INCLUDE_DIRS})

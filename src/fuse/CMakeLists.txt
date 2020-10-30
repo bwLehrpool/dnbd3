@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.10)
 project(dnbd3-fuse
         LANGUAGES C)
 
+find_package(Fuse REQUIRED)
+
 # add compile option to enable enhanced POSIX pthread features
 add_definitions(-D_GNU_SOURCE)
 
