@@ -41,7 +41,7 @@
 #define SOCK_BUFFER 1000
 #define DEV_LEN 15
 #define MAX_DEVS 50
-
+#define TMP_STR_LEN 100
 
 static int openDevices[MAX_DEVS];
 static const char *optString = "f:h:i:r:d:a:cs:SA:R:HV?k";
@@ -194,6 +194,42 @@ static int dnbd3_get_ip(char *hostname, dnbd3_host_t *host)
 	return true;
 }
 
+/* parses hosts from space separated cmdln string, resolves them and saves them into hosts */
+static int dnbd3_get_resolved_hosts(char *hosts_str, dnbd3_host_t *hosts, const size_t hosts_len)
+{
+	char *hosts_current_token = hosts_str;
+	char *hosts_last_host;
+	int hosts_index = 0;
+	char host_str[TMP_STR_LEN];
+	size_t host_str_len = 0;
+
+	do {
+		/* get next host from string */
+		while (*hosts_current_token == ' ') {
+			hosts_current_token++;
+		}
+
+		/* buffer substring of host to get ip from it */
+		hosts_last_host = strchr(hosts_current_token, ' ');
+		host_str_len = (hosts_last_host == NULL ? TMP_STR_LEN : (size_t)(hosts_last_host - hosts_current_token) + 1);
+		if ( host_str_len > TMP_STR_LEN )
+			host_str_len = TMP_STR_LEN;
+
+		snprintf(host_str, host_str_len, "%s", hosts_current_token);
+
+		if (!dnbd3_get_ip(host_str, &hosts[hosts_index]))
+			return false;
+
+		hosts_index++;
+
+		/* continue processing of hosts */
+		hosts_current_token = hosts_last_host + 1;
+
+	} while ( hosts_last_host != NULL && hosts_index < hosts_len );
+
+	return hosts_index;
+}
+
 int main(int argc, char *argv[])
 {
 	char *dev = NULL;
@@ -205,9 +241,8 @@ int main(int argc, char *argv[])
 	dnbd3_ioctl_t msg;
 	memset( &msg, 0, sizeof(dnbd3_ioctl_t) );
 	msg.len = (uint16_t)sizeof(dnbd3_ioctl_t);
+	msg.hosts_num = 0;
 	msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
-	msg.host.port = htons( PORT );
-	msg.host.type = 0;
 	msg.imgname = NULL;
 
 	int opt = 0;
@@ -220,7 +255,9 @@ int main(int argc, char *argv[])
 		case 'f':
 			break;
 		case 'h':
-			if ( !dnbd3_get_ip( optarg, &msg.host ) ) exit( EXIT_FAILURE );
+			msg.hosts_num = dnbd3_get_resolved_hosts(optarg, msg.hosts, MAX_HOSTS_PER_IOCTL);
+			if (!msg.hosts_num)
+				exit( EXIT_FAILURE );
 			break;
 		case 'i':
 			action = IOCTL_OPEN;
@@ -240,18 +277,21 @@ int main(int argc, char *argv[])
 			action = IOCTL_CLOSE;
 			break;
 		case 's':
-			dnbd3_get_ip( optarg, &msg.host );
+			dnbd3_get_ip( optarg, &msg.hosts[0] );
+			msg.hosts_num = 1;
 			action = IOCTL_SWITCH;
 			break;
 		case 'S':
 			learnNewServers = false;
 			break;
 		case 'A':
-			dnbd3_get_ip( optarg, &msg.host );
+			dnbd3_get_ip( optarg, &msg.hosts[0] );
+			msg.hosts_num = 1;
 			action = IOCTL_ADD_SRV;
 			break;
 		case 'R':
-			dnbd3_get_ip( optarg, &msg.host );
+			dnbd3_get_ip( optarg, &msg.hosts[0] );
+			msg.hosts_num = 1;
 			action = IOCTL_REM_SRV;
 			break;
 		case 'H':
@@ -295,10 +335,10 @@ int main(int argc, char *argv[])
 		setuid( getuid() );
 	}
 
-	host_to_string( &msg.host, host, 50 );
+	host_to_string( &msg.hosts[0], host, 50 );
 
 	// close device
-	if ( action == IOCTL_CLOSE && msg.host.type == 0 && dev && (msg.imgname == NULL )) {
+	if ( action == IOCTL_CLOSE && msg.hosts_num == 0 && dev && (msg.imgname == NULL )) {
 		printf( "INFO: Closing device %s\n", dev );
 		if ( dnbd3_ioctl( dev, IOCTL_CLOSE, &msg ) ) exit( EXIT_SUCCESS );
 		printf( "Couldn't close device.\n" );
@@ -306,7 +346,7 @@ int main(int argc, char *argv[])
 	}
 
 	// switch host
-	if ( (action == IOCTL_SWITCH || action == IOCTL_ADD_SRV || action == IOCTL_REM_SRV) && msg.host.type != 0 && dev && (msg.imgname == NULL )) {
+	if ( (action == IOCTL_SWITCH || action == IOCTL_ADD_SRV || action == IOCTL_REM_SRV) && msg.hosts_num == 1 && dev && (msg.imgname == NULL )) {
 		if ( action == IOCTL_SWITCH ) printf( "INFO: Switching device %s to %s\n", dev, host );
 		if ( action == IOCTL_ADD_SRV ) printf( "INFO: %s: adding %s\n", dev, host );
 		if ( action == IOCTL_REM_SRV ) printf( "INFO: %s: removing %s\n", dev, host );
@@ -316,7 +356,7 @@ int main(int argc, char *argv[])
 	}
 
 	// connect
-	if ( action == IOCTL_OPEN && msg.host.type != 0 && dev && (msg.imgname != NULL )) {
+	if ( action == IOCTL_OPEN && msg.hosts_num > 0 && dev && (msg.imgname != NULL )) {
 		printf( "INFO: Connecting device %s to %s for image %s\n", dev, host, msg.imgname );
 		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) exit( EXIT_SUCCESS );
 		printf( "ERROR: connecting device failed. Maybe it's already connected?\n" );
@@ -530,7 +570,7 @@ static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *act
 	memset( &msg, 0, sizeof(msg) );
 	msg.len = (uint16_t)sizeof(msg);
 	if ( host != NULL ) {
-		dnbd3_get_ip( host, &msg.host );
+		dnbd3_get_ip( host, &msg.hosts[0] );
 	}
 	if ( index < 0 || index >= MAX_DEVS ) {
 		printf( "%s request with invalid device id %d\n", actionName, index );
@@ -578,7 +618,7 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int re
 		// Open
 		dnbd3_ioctl_t msg;
 		msg.len = (uint16_t)sizeof(msg);
-		if ( !dnbd3_get_ip( host, &msg.host ) ) {
+		if ( !dnbd3_get_ip( host, &msg.hosts[0] ) ) {
 			printf( "Cannot parse host address %s\n", host );
 			return NULL ;
 		}
@@ -665,7 +705,7 @@ static void dnbd3_print_help(char *argv_0)
 	printf( "       -h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c -d <device>\n\n" );
 	printf( "Start the DNBD3 client.\n\n" );
 	//printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
-	printf( "-h or --host \t\t Host running dnbd3-server.\n" );
+	printf( "-h or --host \t\t List of space separated hosts to use.\n" );
 	printf( "-i or --image \t\t Image name of exported image.\n" );
 	printf( "-r or --rid \t\t Release-ID of exported image (default 0, latest).\n" );
 	printf( "-d or --device \t\t DNBD3 device name.\n" );

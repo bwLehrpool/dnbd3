@@ -128,10 +128,14 @@ typedef struct __attribute__((packed)) dnbd3_host_t
 	dnbd3_af type;        // 1byte (ip version. HOST_IP4 or HOST_IP6. 0 means this struct is empty and should be ignored)
 } dnbd3_host_t;
 
+/* IOCTLs */
+#define MAX_HOSTS_PER_IOCTL NUMBER_SERVERS
+
 typedef struct __attribute__((packed))
 {
 	uint16_t len;
-	dnbd3_host_t host;
+	dnbd3_host_t hosts[MAX_HOSTS_PER_IOCTL];
+	uint8_t hosts_num;
 	uint16_t imgnamelen;
 	char *imgname;
 	int rid;

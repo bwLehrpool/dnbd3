@@ -39,6 +39,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	struct request_queue *blk_queue = dev->disk->queue;
 	char *imgname = NULL;
 	dnbd3_ioctl_t *msg = NULL;
+	int i = 0;
 
 	while (dev->disconnecting) { /* do nothing */ }
 
@@ -91,30 +92,58 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		}
 		else
 		{
-			if (sizeof(msg->host) != sizeof(dev->cur_server.host))
-				dev_info(dnbd3_device_to_dev(dev), "odd size bug triggered in IOCTL\n");
-			memcpy(&dev->cur_server.host, &msg->host, sizeof(msg->host));
-			dev->cur_server.failures = 0;
-			memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
+			if (sizeof(msg->hosts[0]) != sizeof(dev->cur_server.host))
+				dev_warn(dnbd3_device_to_dev(dev), "odd size bug triggered in IOCTL\n");
+
+			/* assert that at least one and not to many hosts are given */
+			if (msg->hosts_num < 1 || msg->hosts_num > NUMBER_SERVERS) {
+				result = -EINVAL;
+				break;
+			}
+
 			dev->imgname = imgname;
 			dev->rid = msg->rid;
 			dev->use_server_provided_alts = msg->use_server_provided_alts;
-			// Forget all alt servers on explicit connect, set first al server to initial server
-			memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
-			memcpy(dev->alt_servers, &dev->initial_server, sizeof(dev->alt_servers[0]));
+
 
 			if (blk_queue->backing_dev_info != NULL) {
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
 			}
 
-			if (dnbd3_net_connect(dev) == 0)
-			{
+			/* probe and add specified servers */
+			/* copy and probe servers in reverse order, so that the first specified server will be remain as inital/current server */
+			for (i = msg->hosts_num - 1; i >= 0; i--) {
+				/* copy provided host into corresponding alt server slot */
+				memset(&dev->alt_servers[i], 0, sizeof(dev->alt_servers[i]));
+				memcpy(&dev->alt_servers[i].host, &msg->hosts[i], sizeof(msg->hosts[i]));
+				dev->alt_servers[i].failures = 0;
+				/* probe added alt server */
+				memcpy(&dev->cur_server, &dev->alt_servers[i], sizeof(dev->cur_server));
+				memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
+				if (dnbd3_net_connect(dev) != 0) {
+					/* probing server failed, abort IOCTL with error */
+					result = -ENOENT;
+					break;
+				}
+
+				/* probing server was successful, go on with other servers */
 				result = 0;
+				/* do not disconnect last server since this is the current/initial server that should be connected */
+				if (i > 0) {
+					dnbd3_blk_fail_all_requests(dev);
+					result = dnbd3_net_disconnect(dev);
+					dnbd3_blk_fail_all_requests(dev);
+				}
+			}
+
+			if (result == 0)
+			{
+				/* probing was successful */
 				imgname = NULL; // Prevent kfree at the end
 			}
 			else
 			{
-				result = -ENOENT;
+				/* probing failed */
 				dev->imgname = NULL;
 			}
 		}
@@ -154,7 +183,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		}
 		else
 		{
-			memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->host, sizeof(msg->host));
+			memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->hosts[0], sizeof(msg->hosts[0]));
 			dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
 			++dev->new_servers_num;
 			result = 0;
@@ -231,7 +260,6 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	int ret;
 
 	init_waitqueue_head(&dev->process_queue_send);
-	init_waitqueue_head(&dev->process_queue_receive);
 	init_waitqueue_head(&dev->process_queue_discover);
 	INIT_LIST_HEAD(&dev->request_queue_send);
 	INIT_LIST_HEAD(&dev->request_queue_receive);

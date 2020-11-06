@@ -76,7 +76,6 @@ typedef struct
 	struct task_struct *thread_discover;
 	struct timer_list hb_timer;
 	wait_queue_head_t process_queue_send;
-	wait_queue_head_t process_queue_receive;
 	wait_queue_head_t process_queue_discover;
 	struct list_head request_queue_send;
 	struct list_head request_queue_receive;
