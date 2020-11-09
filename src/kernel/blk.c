@@ -39,6 +39,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	struct request_queue *blk_queue = dev->disk->queue;
 	char *imgname = NULL;
 	dnbd3_ioctl_t *msg = NULL;
+	unsigned long irqflags;
 	int i = 0;
 
 	while (dev->disconnecting) { /* do nothing */ }
@@ -193,9 +194,11 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		}
 		else
 		{
+			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->hosts[0], sizeof(msg->hosts[0]));
 			dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
 			++dev->new_servers_num;
+			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			result = 0;
 		}
 		break;
