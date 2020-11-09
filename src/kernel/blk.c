@@ -184,23 +184,26 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		{
 			result = -ENOENT;
 		}
-		else if (dev->new_servers_num >= NUMBER_SERVERS)
-		{
-			result = -EAGAIN;
-		}
 		else if (msg == NULL)
 		{
 			result = -EINVAL;
 		}
+
+		/* protect access to 'new_servers_num' and 'new_servers' */
+		spin_lock_irqsave(&dev->blk_lock, irqflags);
+		if (dev->new_servers_num >= NUMBER_SERVERS)
+		{
+			result = -EAGAIN;
+		}
 		else
 		{
-			spin_lock_irqsave(&dev->blk_lock, irqflags);
+			/* add or remove specified server */
 			memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->hosts[0], sizeof(msg->hosts[0]));
 			dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
 			++dev->new_servers_num;
-			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			result = 0;
 		}
+		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 		break;
 
 	case BLKFLSBUF:
