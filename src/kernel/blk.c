@@ -110,35 +110,45 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
 			}
 
-			/* probe and add specified servers */
-			/* copy and probe servers in reverse order, so that the first specified server will be remain as inital/current server */
-			for (i = msg->hosts_num - 1; i >= 0; i--) {
+			/* add specified servers to alt server list */
+			for (i = 0; i < msg->hosts_num; i++) {
 				/* copy provided host into corresponding alt server slot */
 				memset(&dev->alt_servers[i], 0, sizeof(dev->alt_servers[i]));
 				memcpy(&dev->alt_servers[i].host, &msg->hosts[i], sizeof(msg->hosts[i]));
 				dev->alt_servers[i].failures = 0;
+
+				if (dev->alt_servers[i].host.type == HOST_IP4)
+					dev_dbg(dnbd3_device_to_dev(dev), "adding server %pI4\n",   dev->alt_servers[i].host.addr);
+				else
+					dev_dbg(dnbd3_device_to_dev(dev), "adding server [%pI6]\n", dev->alt_servers[i].host.addr);
+			}
+
+			/* probe added alt servers in specified order and choose first working server as initial server */
+			for (i = 0; i < msg->hosts_num; i++) {
 				/* probe added alt server */
 				memcpy(&dev->cur_server, &dev->alt_servers[i], sizeof(dev->cur_server));
-				memcpy(&dev->initial_server, &dev->cur_server, sizeof(dev->initial_server));
-				if (dnbd3_net_connect(dev) != 0) {
-					/* probing server failed, abort IOCTL with error */
-					result = -ENOENT;
-					break;
-				}
 
-				/* probing server was successful, go on with other servers */
-				result = 0;
-				/* do not disconnect last server since this is the current/initial server that should be connected */
-				if (i > 0) {
+				if (dnbd3_net_connect(dev) != 0) {
+					/* probing server failed, cleanup connection and proceed with next specified server */
 					dnbd3_blk_fail_all_requests(dev);
-					result = dnbd3_net_disconnect(dev);
+					dnbd3_net_disconnect(dev);
 					dnbd3_blk_fail_all_requests(dev);
+					result = -ENOENT;
+				} else {
+					/* probing server succeeds, abort probing of other servers */
+					result = 0;
+					break;
 				}
 			}
 
 			if (result == 0)
 			{
 				/* probing was successful */
+				if (dev->cur_server.host.type == HOST_IP4)
+					dev_dbg(dnbd3_device_to_dev(dev), "server %pI4 is initial server\n",   dev->cur_server.host.addr);
+				else
+					dev_dbg(dnbd3_device_to_dev(dev), "server [%pI6] is initial server\n", dev->cur_server.host.addr);
+
 				imgname = NULL; // Prevent kfree at the end
 			}
 			else
@@ -265,7 +275,6 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	INIT_LIST_HEAD(&dev->request_queue_receive);
 
 	memset(&dev->cur_server, 0, sizeof(dev->cur_server));
-	memset(&dev->initial_server, 0, sizeof(dev->initial_server));
 	dev->better_sock = NULL;
 
 	dev->imgname = NULL;

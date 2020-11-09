@@ -56,7 +56,7 @@ typedef struct
 	// network
 	char *imgname;
 	struct socket *sock;
-	dnbd3_server_t cur_server, initial_server;
+	dnbd3_server_t cur_server;
 	unsigned long cur_rtt;
 	serialized_buffer_t payload_buffer;
 	dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
