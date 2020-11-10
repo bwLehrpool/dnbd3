@@ -194,7 +194,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
                       DEPENDS package_source_main)
 
     # include target to make docker image
-    if(NOT DNBD3_KERNEL_MODULE AND DNBD3_PACKAGE_DOCKER)
+    if(NOT DNBD3_KERNEL_MODULE AND DNBD3_SERVER AND DNBD3_PACKAGE_DOCKER)
         find_package(Docker REQUIRED)
         include(DockerImage)
 
@@ -211,7 +211,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
         set(PACKAGE_FILE_ARCHLINUX ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR}.tar.gz)
         set(DOCKER_IMAGE_ARCHLINUX ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR}_archlinux_docker.tar)
         add_docker_image(docker-archlinux ${DOCKER_IMAGE_ARCHLINUX} ${DOCKER_FILE_ARCHLINUX} ${DOCKER_TAG} ${PACKAGE_FILE_ARCHLINUX} ${CMAKE_BINARY_DIR})
-    endif(NOT DNBD3_KERNEL_MODULE AND DNBD3_PACKAGE_DOCKER)
+    endif(NOT DNBD3_KERNEL_MODULE AND DNBD3_SERVER AND DNBD3_PACKAGE_DOCKER)
 endif(CMAKE_BUILD_TYPE MATCHES Release)
 
 # add all dnbd3 related projects from the source code directory

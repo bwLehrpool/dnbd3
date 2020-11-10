@@ -147,12 +147,13 @@ This target creates compressed archives (\*_source.tar.gz and \*_source.zip) con
 
 
 ### Docker image
-A docker image of the built dnbd3 components can be created in the `Release` build configuration with the option `DNBD3_PACKAGE_DOCKER=ON` and `DNBD3_KERNEL_MODULE=OFF`. The image is based on Ubuntu 20.04 and a created docker container from it starts the embedded dnbd3-server automatically.
+A docker image of the built dnbd3 components can be created in the `Release` build configuration with the option `DNBD3_PACKAGE_DOCKER=ON`, `DNBD3_SERVER=ON` and `DNBD3_KERNEL_MODULE=OFF`. The image is based on Ubuntu 20.04 and a created docker container from it starts the embedded dnbd3-server automatically.
 
-Before the image is built, make sure that your docker daemon runs and you are a member of the `docker` group to access the docker deamon without any super user privileges. Then, build the docker image by calling the following Make target:
+Before the image is built, make sure that your docker daemon runs and you are a member of the `docker` group to access the docker deamon without any super user privileges. Then, build the docker image based on either Ubuntu 20.04 or Archlinux by calling one of the following Make target:
 
 ```
 make docker-ubuntu-20-04
+make docker-archlinux
 ```
 
 The built docker image is saved as archive file (\*_ubuntu-20-04_docker.tar) and can be deployed to other machines. On each machine, the created image can be loaded with the following docker client call:
