@@ -34,6 +34,29 @@ struct device *dnbd3_device_to_dev(dnbd3_device_t *dev)
 	return disk_to_dev(dev->disk);
 }
 
+int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b)
+{
+	return (a->host.type == b->host.type) && (a->host.port == b->host.port)
+	   && (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == HOST_IP4 ? 4 : 16)));
+}
+
+dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t * const newserver, dnbd3_device_t * const dev)
+{
+	int i;
+	for (i = 0; i < NUMBER_SERVERS; ++i)
+	{
+		if ((newserver->host.type == dev->alt_servers[i].host.type)
+		   && (newserver->host.port == dev->alt_servers[i].host.port)
+		   && (0
+		      == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr, (newserver->host.type == HOST_IP4 ? 4 : 16))))
+		{
+			return &dev->alt_servers[i];
+			break;
+		}
+	}
+	return NULL ;
+}
+
 static int __init dnbd3_init(void)
 {
 	int i;

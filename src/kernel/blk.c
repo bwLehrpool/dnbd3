@@ -22,6 +22,7 @@
 #include "blk.h"
 #include "net.h"
 #include "sysfs.h"
+#include "dnbd3_main.h"
 
 #include <linux/pagemap.h>
 
@@ -39,6 +40,9 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	struct request_queue *blk_queue = dev->disk->queue;
 	char *imgname = NULL;
 	dnbd3_ioctl_t *msg = NULL;
+	dnbd3_server_entry_t server;
+	dnbd3_server_t old_server;
+	dnbd3_server_t *alt_server;
 	unsigned long irqflags;
 	int i = 0;
 
@@ -175,7 +179,66 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 
 	case IOCTL_SWITCH:
-		result = -EINVAL;
+		if (dev->imgname == NULL)
+		{
+			result = -ENOENT;
+		}
+		else if (msg == NULL)
+		{
+			result = -EINVAL;
+		}
+		else
+		{
+			/* convert host to dnbd3-server for switching */
+			memcpy(&server.host, &msg->hosts[0], sizeof(server.host));
+			server.failures = 0;
+
+			alt_server = get_existing_server(&server, dev);
+			if (alt_server == NULL)
+			{
+				/* specified server is not known, so do not switch */
+				result = -EINVAL;
+			}
+			else
+			{
+				/* specified server is known, so try to switch to it */
+				if (!is_same_server(&dev->cur_server, alt_server))
+				{
+					/* specified server is not working, so switch to it */
+					/* save current working server */
+					/* lock device to get consistent copy of current working server */
+					spin_lock_irqsave(&dev->blk_lock, irqflags);
+					memcpy(&old_server, &dev->cur_server, sizeof(old_server));
+					spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+
+					/* disconnect old server */
+					dnbd3_net_disconnect(dev);
+
+					dev_info(dnbd3_device_to_dev(dev), "switching server ...\n");
+
+					/* connect to new specified server (switching) */
+					memcpy(&dev->cur_server, alt_server, sizeof(dev->cur_server));
+					result = dnbd3_net_connect(dev);
+					if (result != 0)
+					{
+						/* reconnect with old server if switching has failed */
+						memcpy(&dev->cur_server, &old_server, sizeof(dev->cur_server));
+						if (dnbd3_net_connect(dev) != 0)
+						{
+							blk_mq_freeze_queue(dev->queue);
+							set_capacity(dev->disk, 0);
+							blk_mq_unfreeze_queue(dev->queue);
+						}
+						result = -ECONNABORTED;
+					}
+				}
+				else
+				{
+					/* specified server is already working, so do not switch */
+					result = 0;
+				}
+			}
+		}
 		break;
 
 	case IOCTL_ADD_SRV:

@@ -84,4 +84,7 @@ typedef struct
 
 extern inline struct device *dnbd3_device_to_dev(dnbd3_device_t *dev);
 
+extern inline int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b);
+extern inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t * const newserver, dnbd3_device_t * const dev);
+
 #endif /* DNBD_H_ */

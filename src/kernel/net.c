@@ -74,30 +74,6 @@
 #define dnbd3_dev_dbg_host_alt(dev, fmt, ...) __dnbd3_dev_dbg_host((dev), (dev)->alt_servers[i].host, fmt __VA_OPT__(,) __VA_ARGS__)
 #define dnbd3_dev_err_host_alt(dev, fmt, ...) __dnbd3_dev_err_host((dev), (dev)->alt_servers[i].host, fmt __VA_OPT__(,) __VA_ARGS__)
 
-static inline int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b)
-{
-	return (a->host.type == b->host.type) && (a->host.port == b->host.port)
-	   && (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == HOST_IP4 ? 4 : 16)));
-}
-
-static inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t * const newserver,
-   dnbd3_device_t * const dev)
-{
-	int i;
-	for (i = 0; i < NUMBER_SERVERS; ++i)
-	{
-		if ((newserver->host.type == dev->alt_servers[i].host.type)
-		   && (newserver->host.port == dev->alt_servers[i].host.port)
-		   && (0
-		      == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr, (newserver->host.type == HOST_IP4 ? 4 : 16))))
-		{
-			return &dev->alt_servers[i];
-			break;
-		}
-	}
-	return NULL ;
-}
-
 static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t * const dev)
 {
 	int i;
@@ -219,7 +195,7 @@ static int dnbd3_net_discover(void *data)
 	if (!buf)
 	{
 		dev_err(dnbd3_device_to_dev(dev), "kmalloc failed for payload buf (discover)\n");
-		return -1;
+		return -ENOMEM;
 	}
 	payload = (serialized_buffer_t *)buf; // Reuse this buffer to save kernel mem
 
@@ -626,6 +602,7 @@ static int dnbd3_net_send(void *data)
 	struct kvec iov;
 
 	unsigned long irqflags;
+	int ret = 0;
 
 	init_msghdr(msg);
 
@@ -637,7 +614,7 @@ static int dnbd3_net_send(void *data)
 	spin_lock_irqsave(&dev->blk_lock, irqflags);
 	if (!list_empty(&dev->request_queue_receive))
 	{
-		dev_warn(dnbd3_device_to_dev(dev), "request queue was not empty");
+		dev_dbg(dnbd3_device_to_dev(dev), "request queue was not empty");
 		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
 		{
 			list_del_init(&blk_request->queuelist);
@@ -681,7 +658,8 @@ static int dnbd3_net_send(void *data)
 			break;
 
 		default:
-			dev_err(dnbd3_device_to_dev(dev), "unknown command (send %u %u)\n", (int)blk_request->cmd_flags, (int)dnbd3_req_op(blk_request));
+			if (!dev->disconnecting)
+				dev_err(dnbd3_device_to_dev(dev), "unknown command (send %u %u)\n", (int)blk_request->cmd_flags, (int)dnbd3_req_op(blk_request));
 			list_del_init(&blk_request->queuelist);
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			continue;
@@ -695,16 +673,18 @@ static int dnbd3_net_send(void *data)
 		iov.iov_len = sizeof(dnbd3_request);
 		if (kernel_sendmsg(dev->sock, &msg, &iov, 1, sizeof(dnbd3_request)) != sizeof(dnbd3_request))
 		{
-			dnbd3_dev_err_host_cur(dev, "connection to server lost (send)\n");
-			goto error;
+			if (!dev->disconnecting)
+				dnbd3_dev_err_host_cur(dev, "connection to server lost (send)\n");
+			ret = -ESHUTDOWN;
+			goto cleanup;
 		}
 	}
 
 	dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated normally\n");
 	dev->thread_send = NULL;
-	return 0;
+	return ret;
 
-error:
+cleanup:
 	if (dev->sock)
 		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 	if (!dev->disconnecting)
@@ -713,9 +693,14 @@ error:
 		dev->discover = 1;
 		wake_up(&dev->process_queue_discover);
 	}
-	dev_err(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated abnormally\n");
+
+	if (!dev->disconnecting && ret != 0)
+		dev_err(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated abnormally\n");
+	else
+		dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated normally (cleanup)\n");
+
 	dev->thread_send = NULL;
-	return -1;
+	return ret;
 }
 
 static int dnbd3_net_receive(void *data)
@@ -764,14 +749,16 @@ static int dnbd3_net_receive(void *data)
 				if (jiffies < recv_timeout) recv_timeout = jiffies; // Handle overflow
 				if ((jiffies - recv_timeout) / HZ > SOCKET_KEEPALIVE_TIMEOUT)
 				{
-					dnbd3_dev_err_host_cur(dev, "receive timeout reached (%d of %d secs)\n", (int)((jiffies - recv_timeout) / HZ), (int)SOCKET_KEEPALIVE_TIMEOUT);
+					if (!dev->disconnecting)
+						dnbd3_dev_err_host_cur(dev, "receive timeout reached (%d of %d secs)\n", (int)((jiffies - recv_timeout) / HZ), (int)SOCKET_KEEPALIVE_TIMEOUT);
 					ret = -ETIMEDOUT;
 					goto cleanup;
 				}
 				continue;
 			} else {
 				/* for all errors other than -EAGAIN, print message and abort thread */
-				dnbd3_dev_err_host_cur(dev, "connection to server lost (receive)\n");
+				if (!dev->disconnecting)
+					dnbd3_dev_err_host_cur(dev, "connection to server lost (receive)\n");
 				ret = -ESHUTDOWN;
 				goto cleanup;
 			}
@@ -780,7 +767,8 @@ static int dnbd3_net_receive(void *data)
 		/* check if arrived data is valid */
 		if (ret != sizeof(dnbd3_reply))
 		{
-			dnbd3_dev_err_host_cur(dev, "recv msg header\n");
+			if (!dev->disconnecting)
+				dnbd3_dev_err_host_cur(dev, "recv msg header\n");
 			ret = -EINVAL;
 			goto cleanup;
 		}
@@ -789,13 +777,15 @@ static int dnbd3_net_receive(void *data)
 		// check error
 		if (dnbd3_reply.magic != dnbd3_packet_magic)
 		{
-			dnbd3_dev_err_host_cur(dev, "wrong packet magic (receive)\n");
+			if (!dev->disconnecting)
+				dnbd3_dev_err_host_cur(dev, "wrong packet magic (receive)\n");
 			ret = -EINVAL;
 			goto cleanup;
 		}
 		if (dnbd3_reply.cmd == 0)
 		{
-			dnbd3_dev_err_host_cur(dev, "command was 0 (Receive)\n");
+			if (!dev->disconnecting)
+				dnbd3_dev_err_host_cur(dev, "command was 0 (Receive)\n");
 			ret = -EINVAL;
 			goto cleanup;
 		}
@@ -821,8 +811,9 @@ static int dnbd3_net_receive(void *data)
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			if (blk_request == NULL)
 			{
-				dnbd3_dev_err_host_cur(dev, "received block data for unrequested handle (%llu: %llu)\n",
-				   (unsigned long long)dnbd3_reply.handle, (unsigned long long)dnbd3_reply.size);
+				if (!dev->disconnecting)
+					dnbd3_dev_err_host_cur(dev, "received block data for unrequested handle (%llu: %llu)\n",
+						(unsigned long long)dnbd3_reply.handle, (unsigned long long)dnbd3_reply.size);
 				ret = -EINVAL;
 				goto cleanup;
 			}
@@ -832,12 +823,25 @@ static int dnbd3_net_receive(void *data)
 				kaddr = kmap(bvec->bv_page) + bvec->bv_offset;
 				iov.iov_base = kaddr;
 				iov.iov_len = bvec->bv_len;
-				if (kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags) != bvec->bv_len)
+				ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags);
+				if (ret != bvec->bv_len)
 				{
 					kunmap(bvec->bv_page);
-					dnbd3_dev_err_host_cur(dev, "receiving from net to block layer\n");
-					ret = -EINVAL;
-					goto cleanup;
+
+					if (ret == 0)
+					{
+						/* have not received any data, but remote peer is shutdown properly */
+						dnbd3_dev_dbg_host_cur(dev, "remote peer has performed an orderly shutdown\n");
+						ret = 0;
+						goto cleanup;
+					}
+					else
+					{
+						if (!dev->disconnecting)
+							dnbd3_dev_err_host_cur(dev, "receiving from net to block layer\n");
+						ret = -EINVAL;
+						goto cleanup;
+					}
 				}
 				kunmap(bvec->bv_page);
 			}
@@ -865,7 +869,8 @@ static int dnbd3_net_receive(void *data)
 				if (kernel_recvmsg(dev->sock, &msg, &iov, 1, (count * sizeof(dnbd3_server_entry_t)), msg.msg_flags)
 				   != (count * sizeof(dnbd3_server_entry_t)))
 				{
-					dnbd3_dev_err_host_cur(dev, "recv CMD_GET_SERVERS payload\n");
+					if (!dev->disconnecting)
+						dnbd3_dev_err_host_cur(dev, "recv CMD_GET_SERVERS payload\n");
 					ret = -EINVAL;
 					goto cleanup;
 				}
@@ -883,7 +888,8 @@ static int dnbd3_net_receive(void *data)
 				ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags);
 				if (ret <= 0)
 				{
-					dnbd3_dev_err_host_cur(dev, "recv additional payload from CMD_GET_SERVERS\n");
+					if (!dev->disconnecting)
+						dnbd3_dev_err_host_cur(dev, "recv additional payload from CMD_GET_SERVERS\n");
 					ret = -EINVAL;
 					goto cleanup;
 				}
@@ -894,14 +900,16 @@ static int dnbd3_net_receive(void *data)
 		case CMD_LATEST_RID:
 			if (dnbd3_reply.size != 2)
 			{
-				dev_err(dnbd3_device_to_dev(dev), "CMD_LATEST_RID.size != 2\n");
+				if (!dev->disconnecting)
+					dev_err(dnbd3_device_to_dev(dev), "CMD_LATEST_RID.size != 2\n");
 				continue;
 			}
 			iov.iov_base = &rid;
 			iov.iov_len = sizeof(rid);
 			if (kernel_recvmsg(dev->sock, &msg, &iov, 1, iov.iov_len, msg.msg_flags) <= 0)
 			{
-				dev_err(dnbd3_device_to_dev(dev), "could not receive CMD_LATEST_RID payload\n");
+				if (!dev->disconnecting)
+					dev_err(dnbd3_device_to_dev(dev), "could not receive CMD_LATEST_RID payload\n");
 			}
 			else
 			{
@@ -913,17 +921,23 @@ static int dnbd3_net_receive(void *data)
 
 		case CMD_KEEPALIVE:
 			if (dnbd3_reply.size != 0)
-				dev_err(dnbd3_device_to_dev(dev), "keep alive packet with payload\n");
+			{
+				if (!dev->disconnecting)
+					dev_err(dnbd3_device_to_dev(dev), "keep alive packet with payload\n");
+			}
 			continue;
 
 		default:
-			dev_err(dnbd3_device_to_dev(dev), "unknown command (receive)\n");
+			if (!dev->disconnecting)
+				dev_err(dnbd3_device_to_dev(dev), "unknown command (receive)\n");
 			continue;
 
 		}
 	}
 
-	goto out;
+	dev_dbg(dnbd3_device_to_dev(dev), "kthread thread_receive terminated normally\n");
+	dev->thread_receive = NULL;
+	return ret;
 
 cleanup:
 	if (dev->sock)
@@ -935,11 +949,11 @@ cleanup:
 		wake_up(&dev->process_queue_discover);
 	}
 
-out:
-	if (!ret)
-		dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_receive terminated normally\n");
-	else
+	if (!dev->disconnecting && ret != 0)
 		dev_err(dnbd3_device_to_dev(dev), "kthread dnbd3_net_receive terminated abnormally\n");
+	else
+		dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_receive terminated normally (cleanup)\n");
+
 	dev->thread_receive = NULL;
 	return ret;
 }
