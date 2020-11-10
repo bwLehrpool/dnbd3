@@ -141,12 +141,12 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 					result = -ENOENT;
 				} else {
 					/* probing server succeeds, abort probing of other servers */
-					result = 0;
+					result = i;
 					break;
 				}
 			}
 
-			if (result == 0)
+			if (result >= 0)
 			{
 				/* probing was successful */
 				if (dev->cur_server.host.type == HOST_IP4)

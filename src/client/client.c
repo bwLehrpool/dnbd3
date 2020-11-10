@@ -237,6 +237,7 @@ int main(int argc, char *argv[])
 
 	int action = -1;
 	bool learnNewServers = true;
+	int active_device_num = 0;
 
 	dnbd3_ioctl_t msg;
 	memset( &msg, 0, sizeof(dnbd3_ioctl_t) );
@@ -335,32 +336,37 @@ int main(int argc, char *argv[])
 		setuid( getuid() );
 	}
 
-	host_to_string( &msg.hosts[0], host, 50 );
-
 	// close device
 	if ( action == IOCTL_CLOSE && msg.hosts_num == 0 && dev && (msg.imgname == NULL )) {
 		printf( "INFO: Closing device %s\n", dev );
-		if ( dnbd3_ioctl( dev, IOCTL_CLOSE, &msg ) ) exit( EXIT_SUCCESS );
+		if ( dnbd3_ioctl( dev, IOCTL_CLOSE, &msg ) == 0 ) exit( EXIT_SUCCESS );
 		printf( "Couldn't close device.\n" );
 		exit( EXIT_FAILURE );
 	}
 
 	// switch host
 	if ( (action == IOCTL_SWITCH || action == IOCTL_ADD_SRV || action == IOCTL_REM_SRV) && msg.hosts_num == 1 && dev && (msg.imgname == NULL )) {
+		host_to_string( &msg.hosts[0], host, 50 );
 		if ( action == IOCTL_SWITCH ) printf( "INFO: Switching device %s to %s\n", dev, host );
 		if ( action == IOCTL_ADD_SRV ) printf( "INFO: %s: adding %s\n", dev, host );
 		if ( action == IOCTL_REM_SRV ) printf( "INFO: %s: removing %s\n", dev, host );
-		if ( dnbd3_ioctl( dev, action, &msg ) ) exit( EXIT_SUCCESS );
+		if ( dnbd3_ioctl( dev, action, &msg ) == 0 ) exit( EXIT_SUCCESS );
 		printf( "Failed! Maybe the device is not connected?\n" );
 		exit( EXIT_FAILURE );
 	}
 
 	// connect
 	if ( action == IOCTL_OPEN && msg.hosts_num > 0 && dev && (msg.imgname != NULL )) {
-		printf( "INFO: Connecting device %s to %s for image %s\n", dev, host, msg.imgname );
-		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) exit( EXIT_SUCCESS );
-		printf( "ERROR: connecting device failed. Maybe it's already connected?\n" );
-		exit( EXIT_FAILURE );
+		printf( "INFO: Connecting device %s for image %s\n", dev, msg.imgname );
+		active_device_num = dnbd3_ioctl( dev, IOCTL_OPEN, &msg );
+		if ( active_device_num >= 0 ) {
+			host_to_string( &msg.hosts[active_device_num], host, 50 );
+			printf( "INFO: Device %s for image %s is connected to server %s\n", dev, msg.imgname, host);
+			exit( EXIT_SUCCESS );
+		} else {
+			printf( "ERROR: connecting device failed. Maybe it's already connected?\n" );
+			exit( EXIT_FAILURE );
+		}
 	}
 
 	dnbd3_print_help( argv[0] );
@@ -372,7 +378,7 @@ static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const
 	const int fd = open( dev, O_WRONLY );
 	if ( fd < 0 ) {
 		printf( "open() for %s failed.\n", dev );
-		return false;
+		return -ENODEV;
 	}
 	if ( msg != NULL && msg->imgname != NULL ) msg->imgnamelen = (uint16_t)strlen( msg->imgname );
 	const int ret = ioctl( fd, command, msg );
@@ -380,7 +386,7 @@ static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const
 		printf( "ioctl() failed.\n" );
 	}
 	close( fd );
-	return ret >= 0;
+	return ret;
 }
 
 static void dnbd3_client_daemon()
@@ -585,7 +591,7 @@ static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *act
 		printf( "%s: User %d cannot access %s owned by %d\n", actionName, uid, dev, openDevices[index] );
 		return false;
 	}
-	if ( dnbd3_ioctl( dev, action, &msg ) ) {
+	if ( dnbd3_ioctl( dev, action, &msg ) == 0 ) {
 		printf( "%s request for device %s of user %d successful\n", actionName, dev, uid );
 		openDevices[index] = -1;
 		return true;
@@ -627,7 +633,7 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int re
 		msg.rid = rid;
 		msg.use_server_provided_alts = doLearnNewServers;
 		msg.read_ahead_kb = readAhead;
-		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) ) {
+		if ( dnbd3_ioctl( dev, IOCTL_OPEN, &msg ) >= 0 ) {
 			openDevices[i] = uid;
 			printf( "Device %s now occupied by %d\n", dev, uid );
 			return dev;
