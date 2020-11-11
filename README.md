@@ -110,6 +110,26 @@ A value from the range of appropriate values can be assigend to each configurati
 cmake -D<VARIABLE>=<VALUE> [-D ...] ../.
 ```
 
+With the help of CMake, it is also possible to cross-compile the dnbd3 components for a Linux target architecture other than the compiling Linux host architecture. This repository is shipped with two CMake toolchain files to cross-compile all components for the following two Linux target architectures if necessary.
+
+> **Note that all used header files (eg. Linux kernel headers) and libraries (eg. jansson, fuse) for the target architecture are installed and set up properly, so that the cross-compiler can find and use them.**
+
+
+#### Cross-Compiling for _powerpc_ Target
+If you want to cross-compile all dnbd3 components for the _powerpc_ Linux target architecture (eg. for a Mac G5), make sure that the `powerpc-linux-gnu-gcc` cross-compiler is installed on your host system. Then, call CMake with the shipped toolchain file for this specific cross-compiler as follows.
+
+```shell
+cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/PowerpcLinuxGnu.cmake [-D ...] ../.
+```
+
+
+#### Cross-Compiling for _aarch64_ Target
+If you want to cross-compile all dnbd3 components for the _aarch64_ Linux target architecture (eg. for a Raspberry Pi 4), make sure that the `aarch64-linux-gnu-gcc` cross-compiler is installed on your host system. Then, call CMake with the shipped toolchain file for this specific cross-compiler as follows.
+
+```shell
+cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain/Aarch64LinuxGnu.cmake [-D ...] ../.
+```
+
 
 ### Debug
 In the `Debug` build configuration, all dnbd3 components can be built by calling `make`:
