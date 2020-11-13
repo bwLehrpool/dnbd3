@@ -55,7 +55,7 @@ set(FUSE_INCLUDE_DIRS )
 
 find_package(PkgConfig QUIET)
 
-set(PC_FUSE_INCLUDE_DIRS )
+set(PC_FUSE_INCLUDE_DIRS "/usr/include/fuse")
 set(PC_FUSE_LIBRARY_DIRS )
 if(PKG_CONFIG_FOUND)
     pkg_check_modules(PC_FUSE "fuse" QUIET)
