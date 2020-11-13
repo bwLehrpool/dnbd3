@@ -60,7 +60,7 @@ target_link_libraries(dnbd3-server dnbd3-version dnbd3-build dnbd3-shared ${CMAK
 if(DNBD3_SERVER_FUSE)
     find_package(Fuse REQUIRED)
     # include Fuse headers and link with Fuse library
-    target_compile_options(dnbd3-server PRIVATE DNBD3_SERVER_FUSE)
+    target_compile_options(dnbd3-server PRIVATE -DDNBD3_SERVER_FUSE)
     target_include_directories(dnbd3-server PRIVATE ${FUSE_INCLUDE_DIRS})
     target_link_libraries(dnbd3-server ${FUSE_LIBRARIES})
 endif(DNBD3_SERVER_FUSE)
@@ -72,12 +72,12 @@ endif(UNIX AND NOT APPLE)
 
 if(DNBD3_SERVER_DEBUG_LOCKS)
     # enable debugging of locks used in the dnbd3-server
-    target_compile_options(dnbd3-server DNBD3_SERVER_DEBUG_LOCKS)
+    target_compile_options(dnbd3-server PRIVATE -DDNBD3_SERVER_DEBUG_LOCKS)
 endif(DNBD3_SERVER_DEBUG_LOCKS)
 
 if(DNBD3_SERVER_DEBUG_THREADS)
     # enable debugging of threads used in the dnbd3-server
-    target_compile_options(dnbd3-server DNBD3_SERVER_DEBUG_THREADS)
+    target_compile_options(dnbd3-server PRIVATE -DDNBD3_SERVER_DEBUG_THREADS)
 endif(DNBD3_SERVER_DEBUG_THREADS)
 
 install(TARGETS dnbd3-server RUNTIME DESTINATION bin
