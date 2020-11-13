@@ -3,7 +3,7 @@
 # Copyright (C) 2020 Manuel Bentele <development@manuel-bentele.de>
 #
 
-macro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION_OUTPUT_FILE)
+macro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION_OUTPUT_FILE GIT_EXECUTABLE REPOSITORY_DIR)
     get_filename_component(VERSION_OUTPUT_FILENAME ${VERSION_OUTPUT_FILE} NAME)
     # command that will trigger a rebuild of version.h every time
     add_custom_command(OUTPUT regenerate-version-file
@@ -17,6 +17,8 @@ macro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION
                                                 -D VERSION_INPUT_FILE_TEMPLATE=${VERSION_INPUT_FILE_TEMPLATE}
                                                 -D VERSION_OUTPUT_FILE=${VERSION_OUTPUT_FILE}
                                                 -D VERSION_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+                                                -D GIT_EXECUTABLE=${GIT_EXECUTABLE}
+                                                -D REPOSITORY_DIR=${REPOSITORY_DIR}
                                                 -P ${PROJECT_MODULES_DIR}/GenerateVersion.cmake
                        COMMENT "Generating ${VERSION_OUTPUT_FILENAME}"
                        DEPENDS regenerate-version-file)
@@ -29,7 +31,7 @@ macro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION
 endmacro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION_OUTPUT_FILE)
 
 # macro to get Git version information
-macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUILD_TYPE)
+macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUILD_TYPE GIT_EXECUTABLE REPOSITORY_DIR)
     # check if generated version header from source package is available
     if(EXISTS ${VERSION_HEADER_FILE})
         # get version information from the generated version header of the source package
@@ -38,7 +40,8 @@ macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUIL
         set(GIT_VERSION "${CMAKE_MATCH_1}")
     else(EXISTS ${VERSION_HEADER_FILE})
         # get detailed Git version information from Git repository
-        execute_process(COMMAND git describe HEAD
+        execute_process(COMMAND ${GIT_EXECUTABLE} describe HEAD
+                        WORKING_DIRECTORY ${REPOSITORY_DIR}
                         OUTPUT_VARIABLE GIT_VERSION
                         OUTPUT_STRIP_TRAILING_WHITESPACE)
 
@@ -51,7 +54,8 @@ macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUIL
         endif(GIT_VERSION STREQUAL "")
 
         # get status of Git repository
-        execute_process(COMMAND git status --porcelain
+        execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain
+                        WORKING_DIRECTORY ${REPOSITORY_DIR}
                         OUTPUT_VARIABLE GIT_STATUS
                         OUTPUT_STRIP_TRAILING_WHITESPACE)
 

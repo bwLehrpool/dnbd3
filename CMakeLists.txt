@@ -65,7 +65,7 @@ set(INCLUDE_VERSION_HEADER ${PROJECT_INCLUDE_DIR}/dnbd3/version.h)
 set(INCLUDE_VERSION_HEADER_TEMPLATE ${PROJECT_INCLUDE_DIR}/dnbd3/version.h.in)
 set(INCLUDE_VERSION_HEADER_GENERATE ${PROJECT_INCLUDE_GEN_DIR}/dnbd3/version.h)
 set(INCLUDE_VERSION_HEADER_GENERATE_PREFIX ${PROJECT_INCLUDE_DIR_PREFIX}/dnbd3)
-gen_project_version(${INCLUDE_VERSION_HEADER} ${INCLUDE_VERSION_HEADER_TEMPLATE} ${INCLUDE_VERSION_HEADER_GENERATE})
+gen_project_version(${INCLUDE_VERSION_HEADER} ${INCLUDE_VERSION_HEADER_TEMPLATE} ${INCLUDE_VERSION_HEADER_GENERATE} ${GIT_EXECUTABLE} ${CMAKE_SOURCE_DIR})
 
 # generate project build type C header file from template
 # exposes dnbd3-generate-build and dnbd3-build target
@@ -102,7 +102,7 @@ endif(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
 # define packaging if Release build is enabled
 if(CMAKE_BUILD_TYPE MATCHES Release)
     # get version source package or Git repository
-    get_repository_version(REPOSITORY_VERSION ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE})
+    get_repository_version(REPOSITORY_VERSION ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE} ${GIT_EXECUTABLE} ${CMAKE_SOURCE_DIR})
 
     # define project version
     if(KernelHeaders_VERSION)
