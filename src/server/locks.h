@@ -59,8 +59,10 @@ void debug_dump_lock_stats();
 
 #ifdef DNBD3_SERVER_DEBUG_THREADS
 
+#include <dnbd3/shared/log.h>
+
 extern int debugThreadCount;
-#define thread_create(thread,attr,routine,arg) (logadd( LOG_THREAD CREATE, "%d @ %s:%d\n", debugThreadCount, __FILE__, (int)__LINE__), debug_thread_create(thread, attr, routine, arg))
+#define thread_create(thread,attr,routine,arg) (logadd( LOG_INFO, "THREAD_CREATE: %d @ %s:%d\n", debugThreadCount, __FILE__, (int)__LINE__), debug_thread_create(thread, attr, routine, arg))
 static inline pthread_t debug_thread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void*), void *arg)
 {
 	int i;
@@ -70,26 +72,26 @@ static inline pthread_t debug_thread_create(pthread_t *thread, const pthread_att
 	return pthread_create( thread, attr, start_routine, arg );
 }
 
-#define thread_detach(thread) (logadd( LOG_THREAD DETACH, "%d @ %s:%d\n", debugThreadCount, __FILE__, __LINE__), debug_thread_detach(thread))
+#define thread_detach(thread) (logadd( LOG_INFO, "THREAD_DETACH: %d @ %s:%d\n", debugThreadCount, __FILE__, __LINE__), debug_thread_detach(thread))
 static inline int debug_thread_detach(pthread_t thread)
 {
 	const int ret = pthread_detach(thread);
 	if (ret == 0) {
 		--debugThreadCount;
 	} else {
-		logadd( LOG_THREAD DETACH, "Tried to detach invalid thread (error %d)\n", (int)errno);
+		logadd( LOG_INFO, "THREAD_DETACH: Tried to detach invalid thread (error %d)\n", (int)errno);
 		exit(1);
 	}
 	return ret;
 }
-#define thread_join(thread,value) (logadd( LOG_THREAD JOIN, "%d @ %s:%d\n", debugThreadCount, __FILE__, __LINE__), debug_thread_join(thread,value))
+#define thread_join(thread,value) (logadd( LOG_INFO, "THREAD_JOIN: %d @ %s:%d\n", debugThreadCount, __FILE__, __LINE__), debug_thread_join(thread,value))
 static inline int debug_thread_join(pthread_t thread, void **value_ptr)
 {
 	const int ret = pthread_join(thread, value_ptr);
 	if (ret == 0) {
 		--debugThreadCount;
 	} else {
-		logadd( LOG_THREAD JOIN, "Tried to join invalid thread (error %d)\n", (int)errno);
+		logadd( LOG_INFO, "THREAD_JOIN: Tried to join invalid thread (error %d)\n", (int)errno);
 		exit(1);
 	}
 	return ret;
