@@ -80,7 +80,7 @@ add_definitions(-D_FILE_OFFSET_BITS=64)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
 
 # enable all error warnings in Debug build configuration
-set(CMAKE_C_FLAGS_DEBUG "-Wall -Wextra -Wpedantic -Wconversion -Wformat -Wformat-security -Werror=format-security")
+set(CMAKE_C_FLAGS_DEBUG "-Wall -Wextra -Wpedantic -Wconversion -Wformat -Wformat-security -Werror=format-security -Wno-sign-conversion")
 set(CMAKE_C_FLAGS_RELEASE "-Wno-error")
 
 # set compilation optimization
