@@ -55,24 +55,24 @@
  */
 #define __dnbd3_dev_dbg_host(dev, host, fmt, ...) do { \
 	if ((host).type == HOST_IP4) { \
-		dev_dbg(dnbd3_device_to_dev((dev)), "(%pI4:%d): "   fmt, (host).addr, (int)ntohs((host).port) __VA_OPT__(,) __VA_ARGS__); \
+		dev_dbg(dnbd3_device_to_dev((dev)), "(%pI4:%d): "   fmt, (host).addr, (int)ntohs((host).port), ##__VA_ARGS__); \
 	} else { \
-		dev_dbg(dnbd3_device_to_dev((dev)), "([%pI6]:%d): " fmt, (host).addr, (int)ntohs((host).port) __VA_OPT__(,) __VA_ARGS__); \
+		dev_dbg(dnbd3_device_to_dev((dev)), "([%pI6]:%d): " fmt, (host).addr, (int)ntohs((host).port), ##__VA_ARGS__); \
 	} \
 } while (0)
 
 #define __dnbd3_dev_err_host(dev, host, fmt, ...) do { \
 	if ((host).type == HOST_IP4) { \
-		dev_err(dnbd3_device_to_dev((dev)), "(%pI4:%d): "   fmt, (host).addr, (int)ntohs((host).port) __VA_OPT__(,) __VA_ARGS__); \
+		dev_err(dnbd3_device_to_dev((dev)), "(%pI4:%d): "   fmt, (host).addr, (int)ntohs((host).port), ##__VA_ARGS__); \
 	} else { \
-		dev_err(dnbd3_device_to_dev((dev)), "([%pI6]:%d): " fmt, (host).addr, (int)ntohs((host).port) __VA_OPT__(,) __VA_ARGS__); \
+		dev_err(dnbd3_device_to_dev((dev)), "([%pI6]:%d): " fmt, (host).addr, (int)ntohs((host).port), ##__VA_ARGS__); \
 	} \
 } while (0)
 
-#define dnbd3_dev_dbg_host_cur(dev, fmt, ...) __dnbd3_dev_dbg_host((dev), (dev)->cur_server.host,     fmt __VA_OPT__(,) __VA_ARGS__)
-#define dnbd3_dev_err_host_cur(dev, fmt, ...) __dnbd3_dev_err_host((dev), (dev)->cur_server.host,     fmt __VA_OPT__(,) __VA_ARGS__)
-#define dnbd3_dev_dbg_host_alt(dev, fmt, ...) __dnbd3_dev_dbg_host((dev), (dev)->alt_servers[i].host, fmt __VA_OPT__(,) __VA_ARGS__)
-#define dnbd3_dev_err_host_alt(dev, fmt, ...) __dnbd3_dev_err_host((dev), (dev)->alt_servers[i].host, fmt __VA_OPT__(,) __VA_ARGS__)
+#define dnbd3_dev_dbg_host_cur(dev, fmt, ...) __dnbd3_dev_dbg_host((dev), (dev)->cur_server.host,     fmt, ##__VA_ARGS__)
+#define dnbd3_dev_err_host_cur(dev, fmt, ...) __dnbd3_dev_err_host((dev), (dev)->cur_server.host,     fmt, ##__VA_ARGS__)
+#define dnbd3_dev_dbg_host_alt(dev, fmt, ...) __dnbd3_dev_dbg_host((dev), (dev)->alt_servers[i].host, fmt, ##__VA_ARGS__)
+#define dnbd3_dev_err_host_alt(dev, fmt, ...) __dnbd3_dev_err_host((dev), (dev)->alt_servers[i].host, fmt, ##__VA_ARGS__)
 
 static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t * const dev)
 {

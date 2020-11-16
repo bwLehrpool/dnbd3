@@ -13,6 +13,7 @@ The dnbd3 components can be built for the following Linux kernel versions and Un
 
   - Archlinux with **Linux kernel 5.9.x** or **5.4.x**
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
+  - Ubuntu 18.04 with **Linux kernel 4.19.x**
   - CentOS 8 with **Linux kernel 4.18.x**
   - FreeBSD 12.1 (only user space programs, eg. dnbd3-server)
 
@@ -49,6 +50,19 @@ apt-get install git \
 ```
 
 Note that `afl` is not available on Ubuntu 20.04 and should be built from the [original sources](https://github.com/google/AFL).
+
+#### Ubuntu 18.04 with Linux kernel 4.19.x
+```shell
+apt-get install git \
+                make \
+                cmake \
+                gcc \
+                linux-headers-generic \
+				libfuse-dev \
+				libjansson-dev \
+                afl \
+                rpm
+```
 
 #### CentOS 8 with Linux kernel 4.18.x
 ```shell
