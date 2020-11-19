@@ -62,7 +62,8 @@ typedef struct
 	dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
 	int new_servers_num;	// number of new alt servers that are waiting to be copied to above array
 	dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers
-	uint8_t discover, panic, disconnecting, update_available, panic_count;
+	uint8_t discover, panic, update_available, panic_count;
+	atomic_t connection_lock;
 	uint8_t use_server_provided_alts;
 	uint16_t rid;
 	uint32_t heartbeat_count;

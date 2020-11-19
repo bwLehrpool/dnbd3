@@ -33,6 +33,25 @@
 #define dnbd3_req_special(req) \
 	blk_rq_is_private(req)
 
+static int dnbd3_close_device(dnbd3_device_t *dev)
+{
+	int result;
+	dnbd3_blk_fail_all_requests(dev);
+	dev->panic = 0;
+	dev->discover = 0;
+	result = dnbd3_net_disconnect(dev);
+	dnbd3_blk_fail_all_requests(dev);
+	blk_mq_freeze_queue(dev->queue);
+	set_capacity(dev->disk, 0);
+	blk_mq_unfreeze_queue(dev->queue);
+	if (dev->imgname)
+	{
+		kfree(dev->imgname);
+		dev->imgname = NULL;
+	}
+	return result;
+}
+
 static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
 {
 	int result = -100;
@@ -45,8 +64,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	dnbd3_server_t *alt_server;
 	unsigned long irqflags;
 	int i = 0;
-
-	while (dev->disconnecting) { /* do nothing */ }
+	u8 locked = 0;
 
 	if (arg != 0)
 	{
@@ -83,6 +101,12 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	switch (cmd)
 	{
 	case IOCTL_OPEN:
+		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
+		{
+			result = -EBUSY;
+			break;
+		}
+		locked = 1;
 		if (dev->imgname != NULL)
 		{
 			result = -EBUSY;
@@ -165,20 +189,22 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 
 	case IOCTL_CLOSE:
-		dnbd3_blk_fail_all_requests(dev);
-		result = dnbd3_net_disconnect(dev);
-		dnbd3_blk_fail_all_requests(dev);
-		blk_mq_freeze_queue(dev->queue);
-		set_capacity(dev->disk, 0);
-		blk_mq_unfreeze_queue(dev->queue);
-		if (dev->imgname)
+		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
 		{
-			kfree(dev->imgname);
-			dev->imgname = NULL;
+			result = -EBUSY;
+			break;
 		}
+		locked = 1;
+		result = dnbd3_close_device(dev);
 		break;
 
 	case IOCTL_SWITCH:
+		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
+		{
+			result = -EBUSY;
+			break;
+		}
+		locked = 1;
 		if (dev->imgname == NULL)
 		{
 			result = -ENOENT;
@@ -278,6 +304,9 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 	}
 
+	if (locked)
+		atomic_set(&dev->connection_lock, 0);
+
 cleanup_return:
 	if (msg) kfree(msg);
 	if (imgname) kfree(imgname);
@@ -354,7 +383,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->thread_receive = NULL;
 	dev->thread_discover = NULL;
 	dev->discover = 0;
-	dev->disconnecting = 0;
+	atomic_set(&dev->connection_lock, 0);
 	dev->panic = 0;
 	dev->panic_count = 0;
 	dev->reported_size = 0;
@@ -432,8 +461,10 @@ out:
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
+	while (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
+		schedule();
+	dnbd3_close_device(dev);
 	dnbd3_sysfs_exit(dev);
-	dnbd3_net_disconnect(dev);
 	del_gendisk(dev->disk);
 	blk_cleanup_queue(dev->queue);
 	blk_mq_free_tag_set(&dev->tag_set);
