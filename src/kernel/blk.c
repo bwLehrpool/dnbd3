@@ -36,19 +36,25 @@
 static int dnbd3_close_device(dnbd3_device_t *dev)
 {
 	int result;
+	if (dev->imgname) {
+		dev_info(dnbd3_device_to_dev(dev), "closing down device.\n");
+	}
+	/* quickly fail all requests */
 	dnbd3_blk_fail_all_requests(dev);
 	dev->panic = 0;
 	dev->discover = 0;
 	result = dnbd3_net_disconnect(dev);
+	if (dev->imgname) {
+		kfree(dev->imgname);
+		dev->imgname = NULL;
+	}
+	/* new requests might have been queued up, */
+	/* but now that imgname is NULL no new ones can show up */
 	dnbd3_blk_fail_all_requests(dev);
 	blk_mq_freeze_queue(dev->queue);
 	set_capacity(dev->disk, 0);
 	blk_mq_unfreeze_queue(dev->queue);
-	if (dev->imgname)
-	{
-		kfree(dev->imgname);
-		dev->imgname = NULL;
-	}
+	dev->reported_size = 0;
 	return result;
 }
 
@@ -134,7 +140,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			dev->rid = msg->rid;
 			dev->use_server_provided_alts = msg->use_server_provided_alts;
 
-
+			dev_info(dnbd3_device_to_dev(dev), "opening device.\n");
 			if (blk_queue->backing_dev_info != NULL) {
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
 			}
@@ -159,9 +165,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 
 				if (dnbd3_net_connect(dev) != 0) {
 					/* probing server failed, cleanup connection and proceed with next specified server */
-					dnbd3_blk_fail_all_requests(dev);
 					dnbd3_net_disconnect(dev);
-					dnbd3_blk_fail_all_requests(dev);
 					result = -ENOENT;
 				} else {
 					/* probing server succeeds, abort probing of other servers */
@@ -230,7 +234,10 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				/* specified server is known, so try to switch to it */
 				if (!is_same_server(&dev->cur_server, alt_server))
 				{
-					/* specified server is not working, so switch to it */
+					if (alt_server->host.type == HOST_IP4)
+						dev_info(dnbd3_device_to_dev(dev), "manual server switch to %pI4\n",   alt_server->host.addr);
+					else
+						dev_info(dnbd3_device_to_dev(dev), "manual server switch to [%pI6]\n", alt_server->host.addr);
 					/* save current working server */
 					/* lock device to get consistent copy of current working server */
 					spin_lock_irqsave(&dev->blk_lock, irqflags);
@@ -240,8 +247,6 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 					/* disconnect old server */
 					dnbd3_net_disconnect(dev);
 
-					dev_info(dnbd3_device_to_dev(dev), "switching server ...\n");
-
 					/* connect to new specified server (switching) */
 					memcpy(&dev->cur_server, alt_server, sizeof(dev->cur_server));
 					result = dnbd3_net_connect(dev);
@@ -249,13 +254,15 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 					{
 						/* reconnect with old server if switching has failed */
 						memcpy(&dev->cur_server, &old_server, sizeof(dev->cur_server));
-						if (dnbd3_net_connect(dev) != 0)
-						{
-							blk_mq_freeze_queue(dev->queue);
-							set_capacity(dev->disk, 0);
-							blk_mq_unfreeze_queue(dev->queue);
+						if (dnbd3_net_connect(dev) != 0) {
+							/* we couldn't reconnect to the old server */
+							/* device is dangling now and needs another SWITCH call */
+							dev_warn(dnbd3_device_to_dev(dev), "switching failed and could not switch back to old server - dangling device\n");
+							result = -ECONNABORTED;
+						} else {
+							/* switching didn't work but we are back to the old server */
+							result = -EAGAIN;
 						}
-						result = -ECONNABORTED;
 					}
 				}
 				else
@@ -324,38 +331,23 @@ static blk_status_t dnbd3_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_
 	dnbd3_device_t *dev = rq->q->queuedata;
 	unsigned long irqflags;
 
-	blk_mq_start_request(rq);
-
 	if (dev->imgname == NULL)
-	{
-		blk_mq_end_request(rq, BLK_STS_IOERR);
-		goto out;
-	}
+		return BLK_STS_IOERR;
 
 	if (!(dnbd3_req_fs(rq)))
-	{
-		blk_mq_end_request(rq, BLK_STS_IOERR);
-		goto out;
-	}
+		return BLK_STS_IOERR;
 
 	if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count >= PROBE_COUNT_TIMEOUT)
-	{
-		blk_mq_end_request(rq, BLK_STS_TIMEOUT);
-		goto out;
-	}
+		return BLK_STS_TIMEOUT;
 
 	if (!(dnbd3_req_read(rq)))
-	{
-		blk_mq_end_request(rq, BLK_STS_NOTSUPP);
-		goto out;
-	}
+		return BLK_STS_NOTSUPP;
 
+	blk_mq_start_request(rq);
 	spin_lock_irqsave(&dev->blk_lock, irqflags);
 	list_add_tail(&rq->queuelist, &dev->request_queue_send);
 	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 	wake_up(&dev->process_queue_send);
-
-out:
 	return BLK_STS_OK;
 }
 
@@ -461,6 +453,7 @@ out:
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
+	dev_dbg(dnbd3_device_to_dev(dev), "dnbd3_blk_del_device called\n");
 	while (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
 		schedule();
 	dnbd3_close_device(dev);
@@ -491,7 +484,8 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 			{
 				if (blk_request == blk_request2)
 				{
-					dev_warn(dnbd3_device_to_dev(dev), "request is in both lists\n");
+					dev_warn(dnbd3_device_to_dev(dev), "same request is in request_queue_receive multiple times\n");
+					BUG();
 					dup = 1;
 					break;
 				}
@@ -510,6 +504,7 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 				if (blk_request == blk_request2)
 				{
 					dev_warn(dnbd3_device_to_dev(dev), "request is in both lists\n");
+					BUG();
 					dup = 1;
 					break;
 				}
@@ -523,9 +518,7 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 		list_del_init(&blk_request->queuelist);
 		if (dnbd3_req_fs(blk_request))
 		{
-			spin_lock_irqsave(&dev->blk_lock, flags);
 			blk_mq_end_request(blk_request, BLK_STS_IOERR);
-			spin_unlock_irqrestore(&dev->blk_lock, flags);
 		}
 		else if (dnbd3_req_special(blk_request))
 		{

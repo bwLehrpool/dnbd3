@@ -94,6 +94,7 @@ static void __exit dnbd3_exit(void)
 {
 	int i;
 
+	pr_debug("exiting kernel module...\n");
 	for (i = 0; i < max_devs; i++)
 	{
 		dnbd3_blk_del_device(&dnbd3_devices[i]);
@@ -102,7 +103,7 @@ static void __exit dnbd3_exit(void)
 	unregister_blkdev(major, "dnbd3");
 	kfree(dnbd3_devices);
 
-	pr_info("exit kernel module\n");
+	pr_info("exit kernel module done\n");
 }
 
 module_init(dnbd3_init);

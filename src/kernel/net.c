@@ -36,6 +36,19 @@
 #define ktime_to_s(kt) ktime_divns(kt, NSEC_PER_SEC)
 #endif
 
+#if 1 // CONFIG_DEBUG_DRIVER
+#define ASSERT(x)  							\
+do {									\
+	if (!(x)) {							\
+		printk(KERN_EMERG "assertion failed %s: %d: %s\n",	\
+		       __FILE__, __LINE__, #x);				\
+		BUG();							\
+	}								\
+} while (0)
+#else
+#define ASSERT(x) do { } while (0)
+#endif
+
 #define dnbd3_sock_create(af,type,proto,sock) sock_create_kern(&init_net, (af) == HOST_IP4 ? AF_INET : AF_INET6, type, proto, sock)
 
 // cmd_flags and cmd_type are merged into cmd_flags now
@@ -108,8 +121,11 @@ static void dnbd3_net_heartbeat(struct timer_list *arg)
 			// send keepalive
 			if (req)
 			{
+				unsigned long irqflags;
 				dnbd3_cmd_to_priv(req, CMD_KEEPALIVE);
+				spin_lock_irqsave(&dev->blk_lock, irqflags);
 				list_add_tail(&req->queuelist, &dev->request_queue_send);
+				spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 				wake_up(&dev->process_queue_send);
 			}
 			else
@@ -178,7 +194,7 @@ static int dnbd3_net_discover(void *data)
 	if (!buf)
 	{
 		dev_err(dnbd3_device_to_dev(dev), "kmalloc failed for payload buf (discover)\n");
-		return -ENOMEM;
+		return ENOMEM;
 	}
 	payload = (serialized_buffer_t *)buf; // Reuse this buffer to save kernel mem
 
@@ -385,6 +401,7 @@ static int dnbd3_net_discover(void *data)
 
 					dev->better_sock = sock; // Pass over socket to take a shortcut in *_connect();
 					kfree(buf);
+					put_task_struct(dev->thread_discover);
 					dev->thread_discover = NULL;
 					dnbd3_net_disconnect(dev);
 					memcpy(&dev->cur_server, &dev->alt_servers[i], sizeof(dev->cur_server));
@@ -535,6 +552,7 @@ error: ;
 			   (unsigned long long)best_rtt, (unsigned long long)dev->cur_rtt);
 			kfree(buf);
 			dev->better_sock = best_sock; // Take shortcut by continuing to use open connection
+			put_task_struct(dev->thread_discover);
 			dev->thread_discover = NULL;
 			dnbd3_net_disconnect(dev);
 			memcpy(&dev->cur_server, &dev->alt_servers[best_server], sizeof(dev->cur_server));
@@ -559,8 +577,11 @@ error: ;
 	}
 
 	kfree(buf);
-	dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_discover terminated normally\n");
-	dev->thread_discover = NULL;
+	if (kthread_should_stop()) {
+		dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_discover terminated normally\n");
+	} else {
+		dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_discover exited unexpectedly\n");
+	}
 	return 0;
 }
 
@@ -653,26 +674,25 @@ static int dnbd3_net_send(void *data)
 	}
 
 	dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated normally\n");
-	dev->thread_send = NULL;
-	return ret;
+	return 0;
 
 cleanup:
-	if (dev->sock)
-		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 	if (!atomic_read(&dev->connection_lock))
 	{
+		if (dev->sock)
+			kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 		dev->panic = 1;
 		dev->discover = 1;
 		wake_up(&dev->process_queue_discover);
 	}
 
-	if (!atomic_read(&dev->connection_lock) && ret != 0)
-		dev_err(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated abnormally\n");
-	else
+	if (kthread_should_stop() || ret == 0 || atomic_read(&dev->connection_lock)) {
 		dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated normally (cleanup)\n");
+	} else {
+		dev_err(dnbd3_device_to_dev(dev), "kthread dnbd3_net_send terminated abnormally (%d)\n", ret);
+	}
 
-	dev->thread_send = NULL;
-	return ret;
+	return 0;
 }
 
 static int dnbd3_net_receive(void *data)
@@ -816,8 +836,8 @@ static int dnbd3_net_receive(void *data)
 			}
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
 			list_del_init(&blk_request->queuelist);
-			blk_mq_end_request(blk_request, BLK_STS_OK);
 			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+			blk_mq_end_request(blk_request, BLK_STS_OK);
 			continue;
 
 		case CMD_GET_SERVERS:
@@ -902,26 +922,24 @@ static int dnbd3_net_receive(void *data)
 	}
 
 	dev_dbg(dnbd3_device_to_dev(dev), "kthread thread_receive terminated normally\n");
-	dev->thread_receive = NULL;
-	return ret;
+	return 0;
 
 cleanup:
-	if (dev->sock)
-		kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 	if (!atomic_read(&dev->connection_lock))
 	{
+		if (dev->sock)
+			kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 		dev->panic = 1;
 		dev->discover = 1;
 		wake_up(&dev->process_queue_discover);
 	}
 
-	if (!atomic_read(&dev->connection_lock) && ret != 0)
-		dev_err(dnbd3_device_to_dev(dev), "kthread dnbd3_net_receive terminated abnormally\n");
-	else
+	if (kthread_should_stop() || ret == 0 || atomic_read(&dev->connection_lock)) {
 		dev_dbg(dnbd3_device_to_dev(dev), "kthread dnbd3_net_receive terminated normally (cleanup)\n");
-
-	dev->thread_receive = NULL;
-	return ret;
+	} else {
+		dev_err(dnbd3_device_to_dev(dev), "kthread dnbd3_net_receive terminated abnormally (%d)\n", ret);
+	}
+	return 0;
 }
 
 static struct socket* dnbd3_connect(dnbd3_device_t *dev, dnbd3_host_t *host)
@@ -987,7 +1005,7 @@ static struct socket* dnbd3_connect(dnbd3_device_t *dev, dnbd3_host_t *host)
 		}
 	}
 	if (ret != 0) {
-		// XXX How can we do a connect with short timeout? This is dumb
+		/* XXX How can we do a connect with short timeout? This is dumb */
 		ktime_t start = ktime_get_real();
 		while (ktime_ms_delta(ktime_get_real(), start) < SOCKET_TIMEOUT_CLIENT_DATA * 1000) {
 			struct sockaddr_storage addr;
@@ -1010,6 +1028,9 @@ error:
 int dnbd3_net_connect(dnbd3_device_t *dev)
 {
 	struct request *req1 = NULL;
+	unsigned long irqflags;
+
+	ASSERT(atomic_read(&dev->connection_lock));
 
 	// do some checks before connecting
 	req1 = kmalloc(sizeof(*req1), GFP_ATOMIC);
@@ -1037,11 +1058,16 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		goto error;
 	}
 
+	ASSERT(dev->thread_send == NULL);
+	ASSERT(dev->thread_receive == NULL);
+	ASSERT(dev->thread_discover == NULL);
+
 	dnbd3_dev_dbg_host_cur(dev, "connecting ...\n");
 
 	if (dev->better_sock == NULL )
 	{
 		//  no established connection yet from discovery thread, start new one
+		uint64_t reported_size;
 		dnbd3_request_t dnbd3_request;
 		dnbd3_reply_t dnbd3_reply;
 		struct msghdr msg;
@@ -1132,16 +1158,22 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 			goto error;
 		}
 		dev->rid = rid;
-		dev->reported_size = serializer_get_uint64(&dev->payload_buffer);
-		if (dev->reported_size < 4096)
+		reported_size = serializer_get_uint64(&dev->payload_buffer);
+		if (reported_size < 4096)
 		{
 			dnbd3_dev_err_host_cur(dev, "reported size by server is < 4096\n");
 			goto error;
 		}
-		// store image information
-		set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
-		dnbd3_dev_dbg_host_cur(dev, "filesize: %llu\n", dev->reported_size);
-		dev->update_available = 0;
+		if (dev->reported_size != 0 && dev->reported_size != reported_size) {
+			dnbd3_dev_err_host_cur(dev, "newly connected server reports size %llu, but expected is %llu\n", reported_size, dev->reported_size);
+			goto error;
+		} else if (dev->reported_size == 0) {
+			// store image information
+			dev->reported_size = reported_size;
+			set_capacity(dev->disk, dev->reported_size >> 9); /* 512 Byte blocks */
+			dnbd3_dev_dbg_host_cur(dev, "image size: %llu\n", dev->reported_size);
+			dev->update_available = 0;
+		}
 	}
 	else // Switching server, connection is already established and size request was executed
 	{
@@ -1189,7 +1221,9 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 
 	// Enqueue request to request_queue_send for a fresh list of alt servers
 	dnbd3_cmd_to_priv(req1, CMD_GET_SERVERS);
+	spin_lock_irqsave(&dev->blk_lock, irqflags);
 	list_add(&req1->queuelist, &dev->request_queue_send);
+	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 
 	wake_up(&dev->process_queue_send);
 
@@ -1204,6 +1238,24 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 	return 0;
 
 error:
+	if (dev->thread_send)
+	{
+		kthread_stop(dev->thread_send);
+		put_task_struct(dev->thread_send);
+		dev->thread_send = NULL;
+	}
+	if (dev->thread_receive)
+	{
+		kthread_stop(dev->thread_receive);
+		put_task_struct(dev->thread_receive);
+		dev->thread_receive = NULL;
+	}
+	if (dev->thread_discover)
+	{
+		kthread_stop(dev->thread_discover);
+		put_task_struct(dev->thread_discover);
+		dev->thread_discover = NULL;
+	}
 	if (dev->sock)
 	{
 		sock_release(dev->sock);
@@ -1220,11 +1272,10 @@ error:
 int dnbd3_net_disconnect(dnbd3_device_t *dev)
 {
 	struct task_struct* thread = NULL;
-	bool thread_not_terminated = false;
-	int ret = 0;
+	int ret;
 
 	dev_dbg(dnbd3_device_to_dev(dev), "disconnecting device ...\n");
-
+	ASSERT(atomic_read(&dev->connection_lock));
 
 	dev->discover = 0;
 
@@ -1246,9 +1297,8 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 			dev_dbg(dnbd3_device_to_dev(dev), "send thread has never run\n");
 		} else {
 			/* thread has run, check if it has terminated successfully */
-			if (dev->thread_send != NULL) {
+			if (ret < 0) {
 				dev_err(dnbd3_device_to_dev(dev), "send thread was not terminated correctly\n");
-				thread_not_terminated = true;
 			}
 		}
 		dev->thread_send = NULL;
@@ -1265,9 +1315,8 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 			dev_dbg(dnbd3_device_to_dev(dev), "receive thread has never run\n");
 		} else {
 			/* thread has run, check if it has terminated successfully */
-			if (dev->thread_receive != NULL) {
+			if (ret < 0) {
 				dev_err(dnbd3_device_to_dev(dev), "receive thread was not terminated correctly\n");
-				thread_not_terminated = true;
 			}
 		}
 		dev->thread_receive = NULL;
@@ -1284,9 +1333,8 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 			dev_dbg(dnbd3_device_to_dev(dev), "discover thread has never run\n");
 		} else {
 			/* thread has run, check if it has terminated successfully */
-			if (dev->thread_discover != NULL) {
-				dev_err(dnbd3_device_to_dev(dev), "discover thread was not terminated correctly\n");
-				thread_not_terminated = true;
+			if (ret < 0) {
+				dev_err(dnbd3_device_to_dev(dev), "discover thread was not terminated correctly (%d)\n", ret);
 			}
 		}
 		dev->thread_discover = NULL;
@@ -1300,13 +1348,5 @@ int dnbd3_net_disconnect(dnbd3_device_t *dev)
 	dev->cur_server.host.type = 0;
 	dev->cur_server.host.port = 0;
 
-	if (thread_not_terminated) {
-		dev_err(dnbd3_device_to_dev(dev), "failed to disconnect device\n");
-		ret = -ENODEV;
-	} else {
-		dev_dbg(dnbd3_device_to_dev(dev), "device is disconnected\n");
-		ret = 0;
-	}
-
-	return ret;
+	return 0;
 }
