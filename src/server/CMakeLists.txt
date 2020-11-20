@@ -55,7 +55,7 @@ add_executable(dnbd3-server ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c
                             ${CMAKE_CURRENT_SOURCE_DIR}/uplink.c
                             ${CMAKE_CURRENT_SOURCE_DIR}/urldecode.c)
 target_include_directories(dnbd3-server PRIVATE ${JANSSON_INCLUDE_DIR})
-target_link_libraries(dnbd3-server dnbd3-version dnbd3-build dnbd3-shared ${CMAKE_THREAD_LIBS_INIT} ${JANSSON_LIBRARIES})
+target_link_libraries(dnbd3-server dnbd3-version dnbd3-build dnbd3-shared atomic ${CMAKE_THREAD_LIBS_INIT} ${JANSSON_LIBRARIES})
 
 if(DNBD3_SERVER_FUSE)
     find_package(Fuse REQUIRED)

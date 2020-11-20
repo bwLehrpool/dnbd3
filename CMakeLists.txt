@@ -132,7 +132,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
     set(CPACK_RESOURCE_FILE_README ${CMAKE_CURRENT_SOURCE_DIR}/README.md)
 
     # set DEB generator specific packaging options
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libfuse2, libjansson4")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libfuse2, libjansson4, libatomic1")
     if(DNBD3_KERNEL_MODULE)
         file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postinst "depmod -a\n")
         file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/package/deb/postrm "depmod -a\n")
@@ -141,7 +141,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
     endif(DNBD3_KERNEL_MODULE)
 
     # set RPM generator specific packaging options
-    set(CPACK_RPM_PACKAGE_REQUIRES "glibc, fuse-libs, jansson")
+    set(CPACK_RPM_PACKAGE_REQUIRES "glibc, fuse-libs, jansson, libatomic")
     set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/lib"
                                                       "/lib/modules"
                                                       "/lib/modules/${CMAKE_SYSTEM_VERSION}"

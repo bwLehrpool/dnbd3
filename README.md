@@ -12,6 +12,7 @@ This repository contains the source code for the following dnbd3 components:
 The dnbd3 components can be built for the following Linux kernel versions and Unix distributions:
 
   - Archlinux with **Linux kernel 5.9.x** or **5.4.x**
+  - Raspberry Pi OS with **Linux kernel 5.4.x**
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
   - Ubuntu 18.04 with **Linux kernel 4.19.x**
   - CentOS 8 with **Linux kernel 4.18.x**
@@ -35,6 +36,19 @@ pacman -S git \
 		  afl \
           dpkg \
           rpm-tools
+```
+
+#### Raspberry Pi OS with Linux kernel 5.4.x
+```shell
+apt-get install git \
+                make \
+                cmake \
+                gcc \
+                raspberrypi-kernel-headers \
+				libfuse-dev \
+				libjansson-dev \
+                afl \
+                rpm
 ```
 
 #### Ubuntu 20.04 with Linux kernel 5.4.x
