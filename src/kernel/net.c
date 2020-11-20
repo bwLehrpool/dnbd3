@@ -795,6 +795,7 @@ static int dnbd3_net_receive(void *data)
 				if ((uint64_t)(uintptr_t)received_request == dnbd3_reply.handle) // Double cast to prevent warning on 32bit
 				{
 					blk_request = received_request;
+					list_del_init(&blk_request->queuelist);
 					break;
 				}
 			}
@@ -813,30 +814,28 @@ static int dnbd3_net_receive(void *data)
 				iov.iov_base = kaddr;
 				iov.iov_len = bvec->bv_len;
 				ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags);
+				kunmap(bvec->bv_page);
 				if (ret != bvec->bv_len)
 				{
-					kunmap(bvec->bv_page);
-
 					if (ret == 0)
 					{
 						/* have not received any data, but remote peer is shutdown properly */
 						dnbd3_dev_dbg_host_cur(dev, "remote peer has performed an orderly shutdown\n");
 						ret = 0;
-						goto cleanup;
 					}
 					else
 					{
 						if (!atomic_read(&dev->connection_lock))
 							dnbd3_dev_err_host_cur(dev, "receiving from net to block layer\n");
 						ret = -EINVAL;
-						goto cleanup;
 					}
+					// Requeue request
+					spin_lock_irqsave(&dev->blk_lock, irqflags);
+					list_add(&blk_request->queuelist, &dev->request_queue_send);
+					spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+					goto cleanup;
 				}
-				kunmap(bvec->bv_page);
 			}
-			spin_lock_irqsave(&dev->blk_lock, irqflags);
-			list_del_init(&blk_request->queuelist);
-			spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 			blk_mq_end_request(blk_request, BLK_STS_OK);
 			continue;
 
