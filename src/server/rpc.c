@@ -146,7 +146,7 @@ void rpc_sendStatsJson(int sock, dnbd3_host_t* host, const void* data, const int
 	while ( !_shutdown ) {
 		// Read request from client
 		struct phr_header headers[100];
-		size_t numHeaders, prevLen = 0, consumed;
+		size_t numHeaders, prevLen = 0, consumed = 0;
 		struct string method, path;
 		int minorVersion;
 		while ( !_shutdown ) {
@@ -496,7 +496,7 @@ static void addacl(int argc, char **argv, void *data UNUSED)
 		*slash++ = '\0';
 	}
 	if ( !parse_address( argv[0], &host ) ) goto unlock_end;
-	long int bits;
+	long int bits = 0;
 	if ( slash != NULL ) {
 		char *last;
 		bits = strtol( slash, &last, 10 );

@@ -1245,16 +1245,16 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 	int uplinkSock = -1;
 	dnbd3_host_t uplinkServer;
 	const int count = altservers_getHostListForReplication( name, servers, REP_NUM_SRV );
-	uint16_t remoteProtocolVersion;
 	uint16_t remoteRid = revision;
 	uint16_t acceptedRemoteRid = 0;
-	uint64_t remoteImageSize;
+	uint16_t remoteProtocolVersion = 0;
 	struct sockaddr_storage sa;
 	socklen_t salen;
 	poll_list_t *cons = sock_newPollList();
 	logadd( LOG_DEBUG2, "Trying to clone %s:%d from %d hosts", name, (int)revision, count );
 	for (int i = 0; i < count + 5; ++i) { // "i < count + 5" for 5 additional iterations, waiting on pending connects
-		char *remoteName;
+		char *remoteName = NULL;
+		uint64_t remoteImageSize = 0;
 		bool ok = false;
 		int sock;
 		if ( i >= count ) {

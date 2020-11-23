@@ -337,7 +337,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 				break;
 			}
 		}
-		dnbd3_queue_client_t **c;
+		dnbd3_queue_client_t **c = NULL;
 		if ( request == NULL ) {
 			// No existing request to attach to
 			if ( uplink->queueLen >= UPLINK_MAX_QUEUE ) {
@@ -395,6 +395,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 		req.start = request->from;
 		req.end = request->to;
 		if ( callback != NULL ) {
+			assert( c != NULL );
 			*c = malloc( sizeof( *request->clients ) );
 			(**c).next = NULL;
 			(**c).handle = handle;

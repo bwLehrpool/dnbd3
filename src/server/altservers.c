@@ -561,7 +561,8 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 			goto image_failed;
 		}
 		// See if selecting the image succeeded ++++++++++++++++++++++++++++++
-		uint16_t protocolVersion, rid;
+		uint16_t protocolVersion = 0;
+		uint16_t rid;
 		uint64_t imageSize;
 		char *name;
 		serialized_buffer_t serialized;
