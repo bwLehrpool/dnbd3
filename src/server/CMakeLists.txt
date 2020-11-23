@@ -10,6 +10,9 @@ if(NOT JANSSON_FOUND)
     message(FATAL_ERROR "*** No jansson lib found, can't build dnbd3-server!")
 endif(NOT JANSSON_FOUND)
 
+# find atomic library required by the dnbd3-server
+find_package(Libatomic REQUIRED)
+
 # add compile option to enable enhanced POSIX features
 add_definitions(-D_GNU_SOURCE)
 
