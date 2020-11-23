@@ -13,15 +13,18 @@ set(Libatomic_VERSION ${PKG_Libatomic_VERSION})
 
 find_path(Libatomic_INCLUDE_DIR
           NAMES stdatomic.h
-          HINTS ${PKG_Libatomic_INCLUDE_DIRS})
+          HINTS ${CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES}
+                ${PKG_Libatomic_INCLUDE_DIRS})
 find_library(Libatomic_LIBRARY
              NAMES atomic
-             HINTS ${PKG_Libatomic_LIBRARY_DIRS})
+             HINTS ${CMAKE_C_IMPLICIT_LINK_DIRECTORIES}
+                   ${PKG_Libatomic_LIBRARY_DIRS})
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Libatomic
                                   FOUND_VAR Libatomic_FOUND
                                   REQUIRED_VARS Libatomic_LIBRARY
+                                                Libatomic_INCLUDE_DIR
                                   VERSION_VAR Libatomic_VERSION
                                   FAIL_MESSAGE "Library 'atomic' is not available! Please install this required library!")
 

@@ -97,6 +97,7 @@ Note that `afl` is not available on CentOS 8 and should be built from the [origi
 ```shell
 pkg install git \
             cmake \
+            gcc \
 			pkgconf \
 			fusefs-libs \
 			jansson \
@@ -138,6 +139,10 @@ A value from the range of appropriate values can be assigend to each configurati
 cmake -D<VARIABLE>=<VALUE> [-D ...] ../.
 ```
 
+> **Note that the default compiler on FreeBSD 12.1 is clang/llvm and should be changed to gcc by appending the set CMake compiler configuration variable -DCMAKE_C_COMPILER=gcc to the CMake configuration command.**
+
+
+### Cross-Compiling
 With the help of CMake, it is also possible to cross-compile the dnbd3 components for a Linux target architecture other than the compiling Linux host architecture. This repository is shipped with two CMake toolchain files to cross-compile all components for the following two Linux target architectures if necessary.
 
 > **Note that all used header files (eg. Linux kernel headers) and libraries (eg. jansson, fuse) for the target architecture are installed and set up properly, so that the cross-compiler can find and use them.**
