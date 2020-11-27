@@ -110,8 +110,8 @@ void dnbd3_printHelp(char *argv_0)
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
 	printf( "-c or --config      Configuration directory (default /etc/dnbd3-server/)\n" );
-#ifdef DNBD3_SERVER_WITH_FUSE
-	printf( "-m or --mount       FUSE mount point\n ");
+#ifdef DNBD3_SERVER_FUSE
+	printf( "-m or --mount       FUSE mount point\n");
 #endif
 	printf( "-n or --nodaemon    Start server in foreground\n" );
 	printf( "-b or --bind        Local Address to bind to\n" );
@@ -238,7 +238,7 @@ int main(int argc, char *argv[])
 			_configDir = strdup( optarg );
 			break;
 		case 'm':
-#ifndef DNBD3_SERVER_WITH_FUSE
+#ifndef DNBD3_SERVER_FUSE
 			fprintf( stderr, "FUSE support not enabled at build time.\n" );
 			return 8;
 #endif
