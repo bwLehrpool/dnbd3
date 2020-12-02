@@ -8,6 +8,6 @@ project(dnbd3-client
 add_definitions(-D_GNU_SOURCE)
 
 add_executable(dnbd3-client ${CMAKE_CURRENT_SOURCE_DIR}/client.c)
-target_link_libraries(dnbd3-client dnbd3-version dnbd3-shared)
+target_link_libraries(dnbd3-client dnbd3-version dnbd3-build dnbd3-shared)
 install(TARGETS dnbd3-client RUNTIME DESTINATION bin
         COMPONENT kernel)

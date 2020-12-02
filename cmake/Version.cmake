@@ -36,7 +36,7 @@ macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUIL
     if(EXISTS ${VERSION_HEADER_FILE})
         # get version information from the generated version header of the source package
         file(READ ${VERSION_HEADER_FILE} GIT_VERSION)
-        string(REGEX MATCH "DNBD3_VERSION\s+\"([0-9][A-Za-z0-9.+~-]*)\"" GIT_VERSION ${GIT_VERSION})
+        string(REGEX MATCH "DNBD3_VERSION[ \t]+\"([0-9][A-Za-z0-9.+~-]*)\"" GIT_VERSION ${GIT_VERSION})
         set(GIT_VERSION "${CMAKE_MATCH_1}")
     else(EXISTS ${VERSION_HEADER_FILE})
         # get detailed Git version information from Git repository
