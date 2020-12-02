@@ -312,7 +312,7 @@ static bool handleStatus(int sock, int permissions, struct field *fields, size_t
 				"runId", randomRunId );
 	}
 	if ( version ) {
-		json_object_set_new( statisticsJson, "version", json_string( DNBD3_VERSION ) );
+		json_object_set_new( statisticsJson, "version", json_string( DNBD3_VERSION_LONG ", built " DNBD3_BUILD_DATE ) );
 		json_object_set_new( statisticsJson, "build", json_string( DNBD3_BUILD ) );
 	}
 	if ( space ) {

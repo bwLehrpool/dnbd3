@@ -21,6 +21,7 @@
 #include <dnbd3/config/client.h>
 #include <dnbd3/types.h>
 #include <dnbd3/version.h>
+#include <dnbd3/build.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -729,5 +730,6 @@ static void dnbd3_print_help(char *argv_0)
 
 void dnbd3_print_version()
 {
-	printf( "dnbd3-client version: %s\n", DNBD3_VERSION );
+	printf( "dnbd3-client version: %s\n", DNBD3_VERSION_LONG );
+	printf( "Built: %s\n", DNBD3_BUILD_DATE );
 }

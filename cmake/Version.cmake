@@ -36,7 +36,7 @@ macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUIL
     if(EXISTS ${VERSION_HEADER_FILE})
         # get version information from the generated version header of the source package
         file(READ ${VERSION_HEADER_FILE} GIT_VERSION)
-        string(REGEX MATCH "\"(([0-9]+:)?[0-9][A-Za-z0-9.+~-]*)\"" GIT_VERSION ${GIT_VERSION})
+        string(REGEX MATCH "DNBD3_VERSION\s+\"([0-9][A-Za-z0-9.+~-]*)\"" GIT_VERSION ${GIT_VERSION})
         set(GIT_VERSION "${CMAKE_MATCH_1}")
     else(EXISTS ${VERSION_HEADER_FILE})
         # get detailed Git version information from Git repository
@@ -44,14 +44,18 @@ macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUIL
                         WORKING_DIRECTORY ${REPOSITORY_DIR}
                         OUTPUT_VARIABLE GIT_VERSION
                         OUTPUT_STRIP_TRAILING_WHITESPACE)
-
-        # remove the first letter of the version to satisfy packaging rules
-        string(REGEX MATCH "([0-9]+:)?[0-9][A-Za-z0-9.+~-]*" GIT_VERSION ${GIT_VERSION})
+        execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+                        WORKING_DIRECTORY ${REPOSITORY_DIR}
+                        OUTPUT_VARIABLE GIT_BRANCH
+                        OUTPUT_STRIP_TRAILING_WHITESPACE)
 
         # overwrite version from Git if version is unknown
         if(GIT_VERSION STREQUAL "")
             set(GIT_VERSION "unknown")
         endif(GIT_VERSION STREQUAL "")
+        if(GIT_BRANCH STREQUAL "")
+            set(GIT_BRANCH "unknown")
+        endif(GIT_BRANCH STREQUAL "")
 
         # get status of Git repository
         execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain
@@ -62,7 +66,7 @@ macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUIL
         # check if Git repository is dirty
         if(NOT GIT_STATUS STREQUAL "")
             # the Git repository is dirty, thus extend the version information
-            set(GIT_VERSION "${GIT_VERSION}-modified")
+            set(GIT_VERSION "${GIT_VERSION}+MOD")
 
             # print a message in Release build configuration to warn about the dirty repository
             if(${VERSION_BUILD_TYPE} MATCHES "Release")
@@ -71,6 +75,7 @@ macro(get_repository_version REPOSITORY_VERSION VERSION_HEADER_FILE VERSION_BUIL
         endif(NOT GIT_STATUS STREQUAL "")
     endif(EXISTS ${VERSION_HEADER_FILE})
 
-    # return version to caller
-    set(${REPOSITORY_VERSION} ${GIT_VERSION})
+    # remove the first letter of the version to satisfy packaging rules
+    # and return to caller
+    string(REGEX MATCH "([0-9]+:)?[0-9][A-Za-z0-9.+~-]*" ${REPOSITORY_VERSION} ${GIT_VERSION})
 endmacro(get_repository_version)

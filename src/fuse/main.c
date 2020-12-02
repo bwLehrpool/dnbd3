@@ -11,6 +11,7 @@
 #include "connection.h"
 #include "helper.h"
 #include <dnbd3/version.h>
+#include <dnbd3/build.h>
 #include <dnbd3/shared/protocol.h>
 #include <dnbd3/shared/log.h>
 
@@ -273,7 +274,8 @@ static struct fuse_lowlevel_ops image_oper = {
 static void printVersion()
 {
 	char *arg[] = { "foo", "-V" };
-	printf( "dnbd3-fuse version: %s\n", DNBD3_VERSION );
+	printf( "dnbd3-fuse version: %s\n", DNBD3_VERSION_LONG );
+	printf( "Built: %s\n", DNBD3_BUILD_DATE );
 	printf( "Protocol version: %d\n", (int)PROTOCOL_VERSION );
 	struct fuse_args args = FUSE_ARGS_INIT( 2, arg );
 	fuse_parse_cmdline( &args, NULL, NULL, NULL );

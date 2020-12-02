@@ -106,7 +106,8 @@ static void queueJobInternal(job_t *job);
  */
 void dnbd3_printHelp(char *argv_0)
 {
-	printf( "Version: %s\n\n", DNBD3_VERSION );
+	printf( "Version: %s\n\n", DNBD3_VERSION_LONG );
+	printf( "Built: %s\n", DNBD3_BUILD_DATE );
 	printf( "Usage: %s [OPTIONS]...\n", argv_0 );
 	printf( "Start the DNBD3 server\n" );
 	printf( "-c or --config      Configuration directory (default /etc/dnbd3-server/)\n" );
@@ -131,7 +132,8 @@ void dnbd3_printHelp(char *argv_0)
  */
 void dnbd3_printVersion()
 {
-	printf( "dnbd3-server version: %s\n", DNBD3_VERSION );
+	printf( "dnbd3-server version: %s\n", DNBD3_VERSION_LONG );
+	printf( "Built: %s\n", DNBD3_BUILD_DATE );
 	exit( 0 );
 }
 
@@ -373,7 +375,7 @@ int main(int argc, char *argv[])
 	logadd( LOG_INFO, "DNBD3 server starting...." );
 	logadd( LOG_INFO, "Machine type: " DNBD3_ENDIAN_MODE );
 	logadd( LOG_INFO, "Build Type: %s", DNBD3_BUILD );
-	logadd( LOG_INFO, "Version: %s", DNBD3_VERSION );
+	logadd( LOG_INFO, "Version: %s, built %s", DNBD3_VERSION_LONG, DNBD3_BUILD_DATE );
 
 	if ( altservers_load() < 0 ) {
 		logadd( LOG_WARNING, "Could not load alt-servers. Does the file exist in %s?", _configDir );

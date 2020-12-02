@@ -6,5 +6,6 @@
 #define BUILD_H_
 
 #define DNBD3_BUILD "@DNBD3_BUILD@"
+#define DNBD3_BUILD_DATE "@DNBD3_BUILD_DATE@"
 
 #endif /* BUILD_H_ */
