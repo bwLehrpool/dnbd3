@@ -44,9 +44,8 @@
 #define TMP_STR_LEN 100
 
 static int openDevices[MAX_DEVS];
-static const char *optString = "f:h:i:r:d:a:cs:SA:R:HV?k";
+static const char *optString = "h:i:r:d:a:cs:SA:R:HV?k";
 static const struct option longOpts[] = {
-        { "file", required_argument, NULL, 'f' },
         { "host", required_argument, NULL, 'h' },
         { "image", required_argument, NULL, 'i' },
         { "rid", required_argument, NULL, 'r' },
@@ -253,8 +252,6 @@ int main(int argc, char *argv[])
 
 	while ( opt != -1 ) {
 		switch ( opt ) {
-		case 'f':
-			break;
 		case 'h':
 			msg.hosts_num = dnbd3_get_resolved_hosts(optarg, msg.hosts, MAX_HOSTS_PER_IOCTL);
 			if (!msg.hosts_num)
@@ -297,12 +294,15 @@ int main(int argc, char *argv[])
 			break;
 		case 'H':
 			dnbd3_print_help( argv[0] );
+			exit( EXIT_SUCCESS );
 			break;
 		case 'V':
-			dnbd3_print_version();
+			dnbd3_print_version( argv[0] );
+			exit( EXIT_SUCCESS );
 			break;
 		case '?':
 			dnbd3_print_help( argv[0] );
+			exit( EXIT_SUCCESS );
 			break;
 		case 'D':
 			dnbd3_client_daemon();
@@ -706,11 +706,9 @@ static int dnbd3_daemon_send(int argc, char **argv)
 
 static void dnbd3_print_help(char *argv_0)
 {
-	printf( "Version: %s\n\n", DNBD3_VERSION );
 	printf( "Usage: %s\n", argv_0 );
 	printf( "       -h <host> -i <image name> [-r <rid>] -d <device> [-a <KB>] || -c -d <device>\n\n" );
 	printf( "Start the DNBD3 client.\n\n" );
-	//printf("-f or --file \t\t Configuration file (default /etc/dnbd3-client.conf)\n");
 	printf( "-h or --host \t\t List of space separated hosts to use.\n" );
 	printf( "-i or --image \t\t Image name of exported image.\n" );
 	printf( "-r or --rid \t\t Release-ID of exported image (default 0, latest).\n" );
@@ -732,5 +730,4 @@ static void dnbd3_print_help(char *argv_0)
 void dnbd3_print_version()
 {
 	printf( "dnbd3-client version: %s\n", DNBD3_VERSION );
-	exit( EXIT_SUCCESS );
 }
