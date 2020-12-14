@@ -16,7 +16,7 @@ The dnbd3 components can be built for the following Linux kernel versions and Un
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
   - Ubuntu 18.04 with **Linux kernel 4.19.x**
   - CentOS 8 with **Linux kernel 4.18.x**
-  - FreeBSD 12.1 (only user space programs, eg. dnbd3-server)
+  - FreeBSD 12.x and 13.x (only user space programs, eg. dnbd3-server)
 
 
 ## Build
@@ -93,7 +93,7 @@ yum install git \
 
 Note that `afl` is not available on CentOS 8 and should be built from the [original sources](https://github.com/google/AFL).
 
-#### FreeBSD 12.1
+#### FreeBSD 12.x and 13.x
 ```shell
 pkg install git \
             cmake \
@@ -139,7 +139,7 @@ A value from the range of appropriate values can be assigend to each configurati
 cmake -D<VARIABLE>=<VALUE> [-D ...] ../.
 ```
 
-> **Note that the default compiler on FreeBSD 12.1 is clang/llvm and should be changed to gcc by appending the set CMake compiler configuration variable -DCMAKE_C_COMPILER=gcc to the CMake configuration command.**
+> **Note that the default compiler on FreeBSD 12.x and 13.x is clang/llvm and should be changed to gcc by appending the set CMake compiler configuration variable -DCMAKE_C_COMPILER=gcc to the CMake configuration command.**
 
 
 ### Cross-Compiling
