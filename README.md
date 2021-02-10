@@ -16,6 +16,7 @@ The dnbd3 components can be built for the following Linux kernel versions and Un
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
   - Ubuntu 18.04 with **Linux kernel 4.19.x**
   - CentOS 8 with **Linux kernel 4.18.x**
+  - AlmaLinux 8 with **Linux kernel 4.18.x**
   - FreeBSD 12.x and 13.x (only user space programs, eg. dnbd3-server)
 
 
@@ -92,6 +93,23 @@ yum install git \
 ```
 
 Note that `afl` is not available on CentOS 8 and should be built from the [original sources](https://github.com/google/AFL).
+
+#### AlmaLinux 8 with Linux kernel 4.18.x
+```shell
+yum install git \
+            make \
+            cmake \
+            gcc \
+            kernel-devel \
+            elfutils-libelf-devel \
+            fuse-devel \
+            jansson-devel \
+            libatomic \
+            rpm-build
+```
+
+Note that `afl` is not available on AlmaLinux 8 and should be built from the [original sources](https://github.com/google/AFL).
+
 
 #### FreeBSD 12.x and 13.x
 ```shell
