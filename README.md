@@ -32,9 +32,9 @@ pacman -S git \
           cmake \
           gcc \
           linux-headers \  # or linux-lts-headers
-		  fuse2 \
-		  jansson \
-		  afl \
+          fuse2 \
+          jansson \
+          afl \
           dpkg \
           rpm-tools
 ```
@@ -46,8 +46,8 @@ apt-get install git \
                 cmake \
                 gcc \
                 raspberrypi-kernel-headers \
-				libfuse-dev \
-				libjansson-dev \
+                libfuse-dev \
+                libjansson-dev \
                 afl \
                 rpm
 ```
@@ -59,8 +59,8 @@ apt-get install git \
                 cmake \
                 gcc \
                 linux-headers-generic \
-				libfuse-dev \
-				libjansson-dev \
+                libfuse-dev \
+                libjansson-dev \
                 rpm
 ```
 
@@ -73,8 +73,8 @@ apt-get install git \
                 cmake \
                 gcc \
                 linux-headers-generic \
-				libfuse-dev \
-				libjansson-dev \
+                libfuse-dev \
+                libjansson-dev \
                 afl \
                 rpm
 ```
@@ -87,8 +87,8 @@ yum install git \
             gcc \
             kernel-devel \
             elfutils-libelf-devel \
-			fuse-devel \
-			jansson-devel \
+            fuse-devel \
+            jansson-devel \
             rpm-build
 ```
 
@@ -116,11 +116,11 @@ Note that `afl` is not available on AlmaLinux 8 and should be built from the [or
 pkg install git \
             cmake \
             gcc \
-			pkgconf \
-			fusefs-libs \
-			jansson \
-			afl \
-			rpm4
+            pkgconf \
+            fusefs-libs \
+            jansson \
+            afl \
+            rpm4
 ```
 
 
