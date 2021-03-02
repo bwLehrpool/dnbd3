@@ -89,7 +89,7 @@ set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -DNDEBUG")
 
 if(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
 	# harden builds with specific C flags
-	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -D_FORTIFY_SOURCE=2 -fstack-protector-all -fstack-clash-protection -mfunction-return=thunk -mindirect-branch=thunk")
+	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -D_FORTIFY_SOURCE=2 -fstack-protector-all -fstack-clash-protection")
     # set specific hardened linker flags
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-z,relro,-z,now,-z,defs -pie")
     # print status message of configuration
