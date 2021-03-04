@@ -37,6 +37,7 @@ find_package(Threads REQUIRED)
 # include project version and build type related macros
 include(Version)
 include(Build)
+include(Lint)
 
 # check for system and enable or disable built of Linux kernel module
 if(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -58,6 +59,25 @@ set(PROJECT_INCLUDE_DIR_PREFIX inc)
 set(PROJECT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/${PROJECT_INCLUDE_DIR_PREFIX})
 set(PROJECT_INCLUDE_GEN_DIR ${PROJECT_GEN_DIR}/${PROJECT_INCLUDE_DIR_PREFIX})
 include_directories(${PROJECT_INCLUDE_DIR})
+
+# get all global header files for the linter
+set(DNBD3_HEADER_FILES ${PROJECT_INCLUDE_DIR}/dnbd3/build.h.in
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/config/client.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/config.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/config/server.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/shared/crc32.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/shared/fdsignal.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/shared/log.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/shared/protocol.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/shared/serialize.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/shared/sockhelper.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/shared/timing.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/types.h
+                       ${PROJECT_INCLUDE_DIR}/dnbd3/version.h.in)
+
+# add linter for header files
+add_linter(dnbd3-headers-lint "${DNBD3_HEADER_FILES}")
+add_linter_fix(dnbd3-headers-lint-fix "${DNBD3_HEADER_FILES}")
 
 # generate project version C header file from template
 # exposes dnbd3-generate-version and dnbd3-version target
@@ -119,7 +139,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
     set(CPACK_PACKAGE_SECTION admin)
     set(CPACK_PACKAGE_VENDOR "University of Freiburg")
     set(CPACK_PACKAGE_CONTACT "Christian Rößler <christian.roessler@rz.uni-freiburg.de>")
-    set(CPACK_PACKAGE_HOMEPAGE_URL "https://git.openslx.org/dnbd3.git/")
+    set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/bwLehrpool/dnbd3")
     set(CPACK_PACKAGE_CHECKSUM SHA256)
     set(CPACK_PACKAGE_FILE_NAME ${CPACK_PACKAGE_NAME}_${REPOSITORY_VERSION_FULL}_${CMAKE_SYSTEM_PROCESSOR})
     set(CPACK_SOURCE_PACKAGE_FILE_NAME ${CPACK_PACKAGE_NAME}_${CPACK_PACKAGE_VERSION}_source)
@@ -164,6 +184,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
                                            "${PROJECT_GEN_DIR}"  "/")
     set(CPACK_SOURCE_IGNORE_FILES "/build/"
                                   "/.git/"
+                                  "/.github/"
                                   ".gitignore"
                                   "version.h.in")
 

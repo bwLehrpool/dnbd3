@@ -37,6 +37,7 @@ set(KERNEL_MODULE_DNBD3_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/blk.h
                                      ${CMAKE_CURRENT_SOURCE_DIR}/net.h
                                      ${CMAKE_CURRENT_SOURCE_DIR}/sysfs.h
                                      ${CMAKE_CURRENT_SOURCE_DIR}/utils.h)
+
 add_kernel_module(dnbd3 "${KERNEL_BUILD_DIR}"
                         "${KERNEL_INSTALL_DIR}"
                         "CONFIG_BLK_DEV_DNBD3=m"
@@ -46,3 +47,10 @@ add_kernel_module(dnbd3 "${KERNEL_BUILD_DIR}"
 
 # add dependency to generate project version header before dnbd3.ko is built
 add_dependencies(dnbd3 dnbd3-generate-version)
+
+add_kernel_linter(dnbd3-lint "${KERNEL_BUILD_DIR}"
+                             "${KERNEL_MODULE_DNBD3_SOURCE_FILES}"
+                             "${KERNEL_MODULE_DNBD3_HEADER_FILES}")
+add_kernel_linter_fix(dnbd3-lint-fix "${KERNEL_BUILD_DIR}"
+                                     "${KERNEL_MODULE_DNBD3_SOURCE_FILES}"
+                                     "${KERNEL_MODULE_DNBD3_HEADER_FILES}")

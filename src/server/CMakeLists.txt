@@ -40,23 +40,43 @@ if(DNBD3_SERVER_AFL)
     endif(AFL_C_COMPILER)
 endif(DNBD3_SERVER_AFL)
 
-add_executable(dnbd3-server ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/fileutil.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/fuse.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/globals.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/helper.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/image.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/ini.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/integrity.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/locks.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/net.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/picohttpparser/picohttpparser.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/reference.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/rpc.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/server.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/threadpool.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/uplink.c
-                            ${CMAKE_CURRENT_SOURCE_DIR}/urldecode.c)
+set(DNBD3_SERVER_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/fileutil.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/fuse.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/globals.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/helper.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/image.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/ini.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/integrity.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/locks.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/net.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/picohttpparser/picohttpparser.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/reference.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/rpc.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/server.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/threadpool.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/uplink.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/urldecode.c)
+set(DNBD3_SERVER_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/fileutil.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/fuse.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/globals.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/helper.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/image.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/ini.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/integrity.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/locks.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/net.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/picohttpparser/picohttpparser.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/reference.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/reftypes.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/server.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/threadpool.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/uplink.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/urldecode.h)
+
+add_executable(dnbd3-server ${DNBD3_SERVER_SOURCE_FILES})
 target_include_directories(dnbd3-server PRIVATE ${JANSSON_INCLUDE_DIR})
 target_link_libraries(dnbd3-server dnbd3-version dnbd3-build dnbd3-shared Libatomic::Libatomic ${CMAKE_THREAD_LIBS_INIT} ${JANSSON_LIBRARIES})
 
@@ -85,3 +105,6 @@ endif(DNBD3_SERVER_DEBUG_THREADS)
 
 install(TARGETS dnbd3-server RUNTIME DESTINATION bin
         COMPONENT server)
+
+add_linter(dnbd3-server-lint "${DNBD3_SERVER_SOURCE_FILES}" "${DNBD3_SERVER_HEADER_FILES}")
+add_linter_fix(dnbd3-server-lint-fix "${DNBD3_SERVER_SOURCE_FILES}" "${DNBD3_SERVER_HEADER_FILES}")

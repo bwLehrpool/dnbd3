@@ -31,6 +31,7 @@ pacman -S git \
           make \
           cmake \
           gcc \
+          clang \
           linux-headers \  # or linux-lts-headers
           fuse2 \
           jansson \
@@ -45,6 +46,7 @@ apt-get install git \
                 make \
                 cmake \
                 gcc \
+                clang-format \
                 raspberrypi-kernel-headers \
                 libfuse-dev \
                 libjansson-dev \
@@ -58,6 +60,7 @@ apt-get install git \
                 make \
                 cmake \
                 gcc \
+                clang-format \
                 linux-headers-generic \
                 libfuse-dev \
                 libjansson-dev \
@@ -72,6 +75,7 @@ apt-get install git \
                 make \
                 cmake \
                 gcc \
+                clang-format \
                 linux-headers-generic \
                 libfuse-dev \
                 libjansson-dev \
@@ -85,6 +89,7 @@ yum install git \
             make \
             cmake \
             gcc \
+            clang-tools-extra \
             kernel-devel \
             elfutils-libelf-devel \
             fuse-devel \
@@ -100,6 +105,7 @@ yum install git \
             make \
             cmake \
             gcc \
+            clang-tools-extra \
             kernel-devel \
             elfutils-libelf-devel \
             fuse-devel \
@@ -116,6 +122,7 @@ Note that `afl` is not available on AlmaLinux 8 and should be built from the [or
 pkg install git \
             cmake \
             gcc \
+            clang-devel \
             pkgconf \
             fusefs-libs \
             jansson \
@@ -317,6 +324,20 @@ More information regarding the Linux kernel's dynamic debug feature can be found
 
 
 ## Development notes
+
+### Code style of source code files
+The code style fo all source code files can be checked by calling the make target `lint`:
+
+```shell
+make lint
+```
+
+If some source code files do not meet the project's code style, they can be fixed automatically by calling the make target `lint-fix`:
+
+```shell
+make lint-fix
+```
+
 
 ### Resource locking in dnbd3
 The order of aquiring multiple locks is very important, as you'll produce a possible deadlock if you do it in the wrong order. Take very good care of locking order if you have lots of functions that call each other. You might lose track of what's going on.

@@ -4,8 +4,7 @@
 #include <dnbd3/config.h>
 #include <dnbd3/types.h>
 
-typedef struct
-{
+typedef struct {
 	char buffer[MAX_PAYLOAD]; // This MUST be the first member or send_reply() will blow up
 	char *buffer_end;
 	char *buffer_pointer;

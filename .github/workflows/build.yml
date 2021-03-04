@@ -45,6 +45,7 @@ jobs:
         run: |
           sudo apt-get update -y -qq
           sudo apt-get install -y -qq make \
+                                      clang-format \
                                       linux-headers-generic \
                                       libfuse-dev \
                                       libjansson-dev \
