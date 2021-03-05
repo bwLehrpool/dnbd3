@@ -20,6 +20,7 @@ OPTION(DNBD3_SERVER_DEBUG_LOCKS "Add lock debugging code to dnbd3-server" OFF)
 OPTION(DNBD3_SERVER_DEBUG_THREADS "Add thread debugging code to dnbd3-server" OFF)
 OPTION(DNBD3_RELEASE_HARDEN "Compile dnbd3 programs in Release build with code hardening options" OFF)
 OPTION(DNBD3_PACKAGE_DOCKER "Enable packaging of Docker image" OFF)
+OPTION(DNBD3_LINT "Enable source code linting and formatting with clang-format" OFF)
 
 # set supported build configurations
 set(CMAKE_CONFIGURATION_TYPES Debug Release)
@@ -37,7 +38,18 @@ find_package(Threads REQUIRED)
 # include project version and build type related macros
 include(Version)
 include(Build)
-include(Lint)
+if(DNBD3_LINT)
+    include(Lint)
+else()
+    macro(add_linter LINT_NAME LINT_SOURCE_FILES)
+    endmacro()
+    macro(add_linter_fix LINT_NAME LINT_SOURCE_FILES)
+    endmacro()
+    macro(add_kernel_linter LINT_NAME LINT_SOURCE_FILES)
+    endmacro()
+    macro(add_kernel_linter_fix LINT_NAME LINT_SOURCE_FILES)
+    endmacro()
+endif(DNBD3_LINT)
 
 # check for system and enable or disable built of Linux kernel module
 if(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
