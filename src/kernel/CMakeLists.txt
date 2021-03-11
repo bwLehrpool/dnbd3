@@ -48,9 +48,21 @@ add_kernel_module(dnbd3 "${KERNEL_BUILD_DIR}"
 # add dependency to generate project version header before dnbd3.ko is built
 add_dependencies(dnbd3 dnbd3-generate-version)
 
-add_kernel_linter(dnbd3-lint "${KERNEL_BUILD_DIR}"
+set(CHECKPATCH_IGNORE_WARNINGS "NEW_TYPEDEFS"
+                               "MSLEEP"
+                               "CONSTANT_COMPARISON"
+                               "DEEP_INDENTATION"
+                               "PREFER_PR_LEVEL"
+                               "LINUX_VERSION_CODE"
+                               "JIFFIES_COMPARISON"
+                               "KREALLOC_ARG_REUSE")
+
+add_kernel_linter(dnbd3-lint "${CHECKPATCH_IGNORE_WARNINGS}"
                              "${KERNEL_MODULE_DNBD3_SOURCE_FILES}"
                              "${KERNEL_MODULE_DNBD3_HEADER_FILES}")
-add_kernel_linter_fix(dnbd3-lint-fix "${KERNEL_BUILD_DIR}"
+add_kernel_linter_fix(dnbd3-lint-fix "${CHECKPATCH_IGNORE_WARNINGS}"
                                      "${KERNEL_MODULE_DNBD3_SOURCE_FILES}"
                                      "${KERNEL_MODULE_DNBD3_HEADER_FILES}")
+
+add_linter_fix(dnbd3-lint-fix-clang "${KERNEL_MODULE_DNBD3_SOURCE_FILES}"
+                                    "${KERNEL_MODULE_DNBD3_HEADER_FILES}")

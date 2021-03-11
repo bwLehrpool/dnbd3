@@ -143,20 +143,21 @@ cd build
 ### Configuration
 A build of the dnbd3 components can be configured and customized by the following configuration variables (CMake cache entries):
 
-| Variable                     | Type   | Values                                  | Default value                 | Description                                                          |
-|:-----------------------------|:-------|:----------------------------------------|:------------------------------|----------------------------------------------------------------------|
-| `CMAKE_BUILD_TYPE`           | STRING | {`Debug`, `Release`}                    | `Debug`                       | Build configuration of the dnbd3 project.                            |
-| `KERNEL_BUILD_DIR`           | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/build | Path to Linux kernel modules to compile against.                     |
-| `KERNEL_INSTALL_DIR`         | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/extra | Path to install Linux kernel modules.                                |
-| `DNBD3_KERNEL_MODULE`        | OPTION | {`ON`, `OFF`}                           | `ON`                          | Build the dnbd3 Linux kernel module.                                 |
-| `DNBD3_CLIENT_FUSE`          | OPTION | {`ON`, `OFF`}                           | `ON`                          | Enable build of dnbd3-fuse.                                          |
-| `DNBD3_SERVER`               | OPTION | {`ON`, `OFF`}                           | `ON`                          | Enable build of dnbd3-server.                                        |
-| `DNBD3_SERVER_FUSE`          | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Enable FUSE-Integration for dnbd3-server.                            |
-| `DNBD3_SERVER_AFL`           | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Build dnbd3-server for usage with afl-fuzz.                          |
-| `DNBD3_SERVER_DEBUG_LOCKS`   | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Add lock debugging code to dnbd3-server.                             |
-| `DNBD3_SERVER_DEBUG_THREADS` | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Add thread debugging code to dnbd3-server.                           |
-| `DNBD3_RELEASE_HARDEN`       | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Compile dnbd3 programs in Release build with code hardening options. |
-| `DNBD3_PACKAGE_DOCKER`       | OPTION | {`ON`, `OFF`}                           | `OFF`                         | Enable packaging of Docker image.                                    |
+| Variable                     | Type   | Values                                  | Default value                         | Description                                                          |
+|:-----------------------------|:-------|:----------------------------------------|:--------------------------------------|----------------------------------------------------------------------|
+| `CMAKE_BUILD_TYPE`           | STRING | {`Debug`, `Release`}                    | `Debug`                               | Build configuration of the dnbd3 project.                            |
+| `KERNEL_BUILD_DIR`           | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/build         | Path to Linux kernel modules to compile against.                     |
+| `KERNEL_INSTALL_DIR`         | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/extra         | Path to install Linux kernel modules.                                |
+| `KERNEL_SCRIPTS_DIR`         | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/build/scripts | Path to Linux kernel scripts directory.                              |
+| `DNBD3_KERNEL_MODULE`        | OPTION | {`ON`, `OFF`}                           | `ON`                                  | Build the dnbd3 Linux kernel module.                                 |
+| `DNBD3_CLIENT_FUSE`          | OPTION | {`ON`, `OFF`}                           | `ON`                                  | Enable build of dnbd3-fuse.                                          |
+| `DNBD3_SERVER`               | OPTION | {`ON`, `OFF`}                           | `ON`                                  | Enable build of dnbd3-server.                                        |
+| `DNBD3_SERVER_FUSE`          | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Enable FUSE-Integration for dnbd3-server.                            |
+| `DNBD3_SERVER_AFL`           | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Build dnbd3-server for usage with afl-fuzz.                          |
+| `DNBD3_SERVER_DEBUG_LOCKS`   | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Add lock debugging code to dnbd3-server.                             |
+| `DNBD3_SERVER_DEBUG_THREADS` | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Add thread debugging code to dnbd3-server.                           |
+| `DNBD3_RELEASE_HARDEN`       | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Compile dnbd3 programs in Release build with code hardening options. |
+| `DNBD3_PACKAGE_DOCKER`       | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Enable packaging of Docker image.                                    |
 
 A value from the range of appropriate values can be assigend to each configuration variable by executing CMake once with the following command pattern:
 

@@ -17,5 +17,4 @@ find_package_handle_standard_args(ClangFormat
                                   FOUND_VAR ClangFormat_FOUND
                                   REQUIRED_VARS ClangFormat_EXECUTABLE
                                   VERSION_VAR ClangFormat_VERSION
-                                  FAIL_MESSAGE "clang-format is not available! Please install clang-format to format the source code!")
-
+                                  FAIL_MESSAGE "clang-format is not available! Please install clang-format to lint and format the source code!")

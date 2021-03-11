@@ -27,7 +27,7 @@ jobs:
         run: git fetch --prune --unshallow
       - name: Configure dnbd3 build
         run: |
-          cmake -DDNBD3_LINT=ON -B ${{ github.workspace }}/build \
+          cmake -B ${{ github.workspace }}/build \
                 -S ${{ github.workspace }}
       - name: Lint dnbd3 artifacts
         working-directory: ${{ github.workspace }}/build
