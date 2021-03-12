@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * This file is part of the Distributed Network Block Device 3
  *
@@ -27,19 +28,16 @@ void dnbd3_sysfs_init(dnbd3_device_t *dev);
 
 void dnbd3_sysfs_exit(dnbd3_device_t *dev);
 
-typedef struct
-{
+typedef struct {
 	struct attribute attr;
-	ssize_t (*show)(char *, dnbd3_device_t *);
-	ssize_t (*store)(const char *, size_t, dnbd3_device_t *);
+	ssize_t (*show)(char *buf, dnbd3_device_t *dev);
+	ssize_t (*store)(const char *buf, size_t len, dnbd3_device_t *dev);
 } device_attr_t;
 
-typedef struct
-{
+typedef struct {
 	struct attribute attr;
-	ssize_t (*show)(char *, dnbd3_server_t *);
-	ssize_t (*store)(const char *, size_t, dnbd3_server_t *);
+	ssize_t (*show)(char *buf, dnbd3_server_t *dev);
+	ssize_t (*store)(const char *buf, size_t len, dnbd3_server_t *dev);
 } server_attr_t;
-
 
 #endif /* SYSFS_H_ */

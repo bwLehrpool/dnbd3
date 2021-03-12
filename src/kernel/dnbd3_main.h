@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * This file is part of the Distributed Network Block Device 3
  *
@@ -34,16 +35,14 @@
 
 extern int major;
 
-typedef struct
-{
+typedef struct {
 	dnbd3_host_t host;
-	unsigned long rtts[4];		// Last four round trip time measurements in µs
-	uint16_t protocol_version;	// dnbd3 protocol version of this server
-	uint8_t failures;			// How many times the server was unreachable
+	unsigned long rtts[4]; // Last four round trip time measurements in µs
+	uint16_t protocol_version; // dnbd3 protocol version of this server
+	uint8_t failures; // How many times the server was unreachable
 } dnbd3_server_t;
 
-typedef struct
-{
+typedef struct {
 	// block
 	struct gendisk *disk;
 	struct blk_mq_tag_set tag_set;
@@ -60,7 +59,7 @@ typedef struct
 	unsigned long cur_rtt;
 	serialized_buffer_t payload_buffer;
 	dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
-	int new_servers_num;	// number of new alt servers that are waiting to be copied to above array
+	int new_servers_num; // number of new alt servers that are waiting to be copied to above array
 	dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers
 	uint8_t discover, panic, update_available, panic_count;
 	atomic_t connection_lock;
@@ -72,8 +71,8 @@ typedef struct
 	struct socket *better_sock;
 
 	// process
-	struct task_struct * thread_send;
-	struct task_struct * thread_receive;
+	struct task_struct *thread_send;
+	struct task_struct *thread_receive;
 	struct task_struct *thread_discover;
 	struct timer_list hb_timer;
 	wait_queue_head_t process_queue_send;
@@ -85,7 +84,8 @@ typedef struct
 
 extern inline struct device *dnbd3_device_to_dev(dnbd3_device_t *dev);
 
-extern inline int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b);
-extern inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t * const newserver, dnbd3_device_t * const dev);
+extern inline int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b);
+extern inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t *const newserver,
+						  dnbd3_device_t *const dev);
 
 #endif /* DNBD_H_ */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * This file is part of the Distributed Network Block Device 3
  *
@@ -26,28 +27,25 @@
 
 #include <linux/pagemap.h>
 
-#define dnbd3_req_read(req) \
-	req_op(req) == REQ_OP_READ
-#define dnbd3_req_fs(req) \
-	dnbd3_req_read(req) || req_op(req) == REQ_OP_WRITE
-#define dnbd3_req_special(req) \
-	blk_rq_is_private(req)
+#define dnbd3_req_read(req) (req_op(req) == REQ_OP_READ)
+#define dnbd3_req_fs(req) (dnbd3_req_read(req) || req_op(req) == REQ_OP_WRITE)
+#define dnbd3_req_special(req) blk_rq_is_private(req)
 
 static int dnbd3_close_device(dnbd3_device_t *dev)
 {
 	int result;
-	if (dev->imgname) {
+
+	if (dev->imgname)
 		dev_info(dnbd3_device_to_dev(dev), "closing down device.\n");
-	}
+
 	/* quickly fail all requests */
 	dnbd3_blk_fail_all_requests(dev);
 	dev->panic = 0;
 	dev->discover = 0;
 	result = dnbd3_net_disconnect(dev);
-	if (dev->imgname) {
-		kfree(dev->imgname);
-		dev->imgname = NULL;
-	}
+	kfree(dev->imgname);
+	dev->imgname = NULL;
+
 	/* new requests might have been queued up, */
 	/* but now that imgname is NULL no new ones can show up */
 	dnbd3_blk_fail_all_requests(dev);
@@ -72,30 +70,25 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	int i = 0;
 	u8 locked = 0;
 
-	if (arg != 0)
-	{
+	if (arg != 0) {
 		msg = kmalloc(sizeof(*msg), GFP_KERNEL);
-		if (msg == NULL) return -ENOMEM;
-		if (copy_from_user((char *)msg, (char *)arg, 2) != 0 || msg->len != sizeof(*msg))
-		{
+		if (msg == NULL)
+			return -ENOMEM;
+		if (copy_from_user((char *)msg, (char *)arg, 2) != 0 || msg->len != sizeof(*msg)) {
 			result = -ENOEXEC;
 			goto cleanup_return;
 		}
-		if (copy_from_user((char *)msg, (char *)arg, sizeof(*msg)) != 0)
-		{
+		if (copy_from_user((char *)msg, (char *)arg, sizeof(*msg)) != 0) {
 			result = -ENOENT;
 			goto cleanup_return;
 		}
-		if (msg->imgname != NULL && msg->imgnamelen > 0)
-		{
+		if (msg->imgname != NULL && msg->imgnamelen > 0) {
 			imgname = kmalloc(msg->imgnamelen + 1, GFP_KERNEL);
-			if (imgname == NULL)
-			{
+			if (imgname == NULL) {
 				result = -ENOMEM;
 				goto cleanup_return;
 			}
-			if (copy_from_user(imgname, msg->imgname, msg->imgnamelen) != 0)
-			{
+			if (copy_from_user(imgname, msg->imgname, msg->imgnamelen) != 0) {
 				result = -ENOENT;
 				goto cleanup_return;
 			}
@@ -103,30 +96,20 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		}
 	}
 
-
-	switch (cmd)
-	{
+	switch (cmd) {
 	case IOCTL_OPEN:
-		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
-		{
+		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0) {
 			result = -EBUSY;
 			break;
 		}
 		locked = 1;
-		if (dev->imgname != NULL)
-		{
+		if (dev->imgname != NULL) {
 			result = -EBUSY;
-		}
-		else if (imgname == NULL)
-		{
+		} else if (imgname == NULL) {
 			result = -EINVAL;
-		}
-		else if (msg == NULL)
-		{
+		} else if (msg == NULL) {
 			result = -EINVAL;
-		}
-		else
-		{
+		} else {
 			if (sizeof(msg->hosts[0]) != sizeof(dev->cur_server.host))
 				dev_warn(dnbd3_device_to_dev(dev), "odd size bug triggered in IOCTL\n");
 
@@ -141,9 +124,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			dev->use_server_provided_alts = msg->use_server_provided_alts;
 
 			dev_info(dnbd3_device_to_dev(dev), "opening device.\n");
-			if (blk_queue->backing_dev_info != NULL) {
+			if (blk_queue->backing_dev_info != NULL)
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
-			}
 
 			/* add specified servers to alt server list */
 			for (i = 0; i < msg->hosts_num; i++) {
@@ -153,18 +135,26 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				dev->alt_servers[i].failures = 0;
 
 				if (dev->alt_servers[i].host.type == HOST_IP4)
-					dev_dbg(dnbd3_device_to_dev(dev), "adding server %pI4\n",   dev->alt_servers[i].host.addr);
+					dev_dbg(dnbd3_device_to_dev(dev), "adding server %pI4\n",
+						dev->alt_servers[i].host.addr);
 				else
-					dev_dbg(dnbd3_device_to_dev(dev), "adding server [%pI6]\n", dev->alt_servers[i].host.addr);
+					dev_dbg(dnbd3_device_to_dev(dev), "adding server [%pI6]\n",
+						dev->alt_servers[i].host.addr);
 			}
 
-			/* probe added alt servers in specified order and choose first working server as initial server */
+			/*
+			 * probe added alt servers in specified order and
+			 * choose first working server as initial server
+			 */
 			for (i = 0; i < msg->hosts_num; i++) {
 				/* probe added alt server */
 				memcpy(&dev->cur_server, &dev->alt_servers[i], sizeof(dev->cur_server));
 
 				if (dnbd3_net_connect(dev) != 0) {
-					/* probing server failed, cleanup connection and proceed with next specified server */
+					/*
+					 * probing server failed, cleanup connection and
+					 * proceed with next specified server
+					 */
 					dnbd3_net_disconnect(dev);
 					result = -ENOENT;
 				} else {
@@ -174,18 +164,17 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				}
 			}
 
-			if (result >= 0)
-			{
+			if (result >= 0) {
 				/* probing was successful */
 				if (dev->cur_server.host.type == HOST_IP4)
-					dev_dbg(dnbd3_device_to_dev(dev), "server %pI4 is initial server\n",   dev->cur_server.host.addr);
+					dev_dbg(dnbd3_device_to_dev(dev), "server %pI4 is initial server\n",
+						dev->cur_server.host.addr);
 				else
-					dev_dbg(dnbd3_device_to_dev(dev), "server [%pI6] is initial server\n", dev->cur_server.host.addr);
+					dev_dbg(dnbd3_device_to_dev(dev), "server [%pI6] is initial server\n",
+						dev->cur_server.host.addr);
 
 				imgname = NULL; // Prevent kfree at the end
-			}
-			else
-			{
+			} else {
 				/* probing failed */
 				dev->imgname = NULL;
 			}
@@ -193,8 +182,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 
 	case IOCTL_CLOSE:
-		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
-		{
+		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0) {
 			result = -EBUSY;
 			break;
 		}
@@ -203,41 +191,33 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 
 	case IOCTL_SWITCH:
-		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
-		{
+		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0) {
 			result = -EBUSY;
 			break;
 		}
 		locked = 1;
-		if (dev->imgname == NULL)
-		{
+		if (dev->imgname == NULL) {
 			result = -ENOENT;
-		}
-		else if (msg == NULL)
-		{
+		} else if (msg == NULL) {
 			result = -EINVAL;
-		}
-		else
-		{
+		} else {
 			/* convert host to dnbd3-server for switching */
 			memcpy(&server.host, &msg->hosts[0], sizeof(server.host));
 			server.failures = 0;
 
 			alt_server = get_existing_server(&server, dev);
-			if (alt_server == NULL)
-			{
+			if (alt_server == NULL) {
 				/* specified server is not known, so do not switch */
 				result = -EINVAL;
-			}
-			else
-			{
+			} else {
 				/* specified server is known, so try to switch to it */
-				if (!is_same_server(&dev->cur_server, alt_server))
-				{
+				if (!is_same_server(&dev->cur_server, alt_server)) {
 					if (alt_server->host.type == HOST_IP4)
-						dev_info(dnbd3_device_to_dev(dev), "manual server switch to %pI4\n",   alt_server->host.addr);
+						dev_info(dnbd3_device_to_dev(dev), "manual server switch to %pI4\n",
+							 alt_server->host.addr);
 					else
-						dev_info(dnbd3_device_to_dev(dev), "manual server switch to [%pI6]\n", alt_server->host.addr);
+						dev_info(dnbd3_device_to_dev(dev), "manual server switch to [%pI6]\n",
+							 alt_server->host.addr);
 					/* save current working server */
 					/* lock device to get consistent copy of current working server */
 					spin_lock_irqsave(&dev->blk_lock, irqflags);
@@ -250,23 +230,22 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 					/* connect to new specified server (switching) */
 					memcpy(&dev->cur_server, alt_server, sizeof(dev->cur_server));
 					result = dnbd3_net_connect(dev);
-					if (result != 0)
-					{
+					if (result != 0) {
 						/* reconnect with old server if switching has failed */
 						memcpy(&dev->cur_server, &old_server, sizeof(dev->cur_server));
 						if (dnbd3_net_connect(dev) != 0) {
 							/* we couldn't reconnect to the old server */
 							/* device is dangling now and needs another SWITCH call */
-							dev_warn(dnbd3_device_to_dev(dev), "switching failed and could not switch back to old server - dangling device\n");
+							dev_warn(
+								dnbd3_device_to_dev(dev),
+								"switching failed and could not switch back to old server - dangling device\n");
 							result = -ECONNABORTED;
 						} else {
 							/* switching didn't work but we are back to the old server */
 							result = -EAGAIN;
 						}
 					}
-				}
-				else
-				{
+				} else {
 					/* specified server is already working, so do not switch */
 					result = 0;
 				}
@@ -277,25 +256,19 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	case IOCTL_ADD_SRV:
 	case IOCTL_REM_SRV:
 		if (dev->imgname == NULL)
-		{
 			result = -ENOENT;
-		}
 		else if (msg == NULL)
-		{
 			result = -EINVAL;
-		}
 
 		/* protect access to 'new_servers_num' and 'new_servers' */
 		spin_lock_irqsave(&dev->blk_lock, irqflags);
-		if (dev->new_servers_num >= NUMBER_SERVERS)
-		{
+		if (dev->new_servers_num >= NUMBER_SERVERS) {
 			result = -EAGAIN;
-		}
-		else
-		{
+		} else {
 			/* add or remove specified server */
 			memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->hosts[0], sizeof(msg->hosts[0]));
-			dev->new_servers[dev->new_servers_num].failures = (cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
+			dev->new_servers[dev->new_servers_num].failures =
+				(cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
 			++dev->new_servers_num;
 			result = 0;
 		}
@@ -315,8 +288,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		atomic_set(&dev->connection_lock, 0);
 
 cleanup_return:
-	if (msg) kfree(msg);
-	if (imgname) kfree(imgname);
+	kfree(msg);
+	kfree(imgname);
 	return result;
 }
 
@@ -370,7 +343,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->imgname = NULL;
 	dev->rid = 0;
 	dev->update_available = 0;
-	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0])*NUMBER_SERVERS);
+	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0]) * NUMBER_SERVERS);
 	dev->thread_send = NULL;
 	dev->thread_receive = NULL;
 	dev->thread_discover = NULL;
@@ -393,8 +366,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->tag_set.driver_data = dev;
 
 	ret = blk_mq_alloc_tag_set(&dev->tag_set);
-	if (ret)
-	{
+	if (ret) {
 		dev_err(dnbd3_device_to_dev(dev), "blk_mq_alloc_tag_set failed\n");
 		goto out;
 	}
@@ -420,8 +392,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 #undef ONE_MEG
 
 	// set up disk
-	if (!(dev->disk = alloc_disk(1)))
-	{
+	dev->disk = alloc_disk(1);
+	if (!dev->disk) {
 		dev_err(dnbd3_device_to_dev(dev), "alloc_disk failed\n");
 		ret = -ENOMEM;
 		goto out_cleanup_queue;
@@ -453,7 +425,7 @@ out:
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
-	dev_dbg(dnbd3_device_to_dev(dev), "dnbd3_blk_del_device called\n");
+	dev_dbg(dnbd3_device_to_dev(dev), "%s called\n", __func__);
 	while (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
 		schedule();
 	dnbd3_close_device(dev);
@@ -472,57 +444,48 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 	unsigned long flags;
 	struct list_head local_copy;
 	int dup;
+
 	INIT_LIST_HEAD(&local_copy);
 	spin_lock_irqsave(&dev->blk_lock, flags);
-	while (!list_empty(&dev->request_queue_receive))
-	{
-		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist)
-		{
+	while (!list_empty(&dev->request_queue_receive)) {
+		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist) {
 			list_del_init(&blk_request->queuelist);
 			dup = 0;
-			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist)
-			{
-				if (blk_request == blk_request2)
-				{
-					dev_warn(dnbd3_device_to_dev(dev), "same request is in request_queue_receive multiple times\n");
+			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist) {
+				if (blk_request == blk_request2) {
+					dev_warn(dnbd3_device_to_dev(dev),
+						 "same request is in request_queue_receive multiple times\n");
 					BUG();
 					dup = 1;
 					break;
 				}
 			}
-			if (!dup) list_add(&blk_request->queuelist, &local_copy);
+			if (!dup)
+				list_add(&blk_request->queuelist, &local_copy);
 		}
 	}
-	while (!list_empty(&dev->request_queue_send))
-	{
-		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_send, queuelist)
-		{
+	while (!list_empty(&dev->request_queue_send)) {
+		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_send, queuelist) {
 			list_del_init(&blk_request->queuelist);
 			dup = 0;
-			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist)
-			{
-				if (blk_request == blk_request2)
-				{
+			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist) {
+				if (blk_request == blk_request2) {
 					dev_warn(dnbd3_device_to_dev(dev), "request is in both lists\n");
 					BUG();
 					dup = 1;
 					break;
 				}
 			}
-			if (!dup) list_add(&blk_request->queuelist, &local_copy);
+			if (!dup)
+				list_add(&blk_request->queuelist, &local_copy);
 		}
 	}
 	spin_unlock_irqrestore(&dev->blk_lock, flags);
-	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist)
-	{
+	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist) {
 		list_del_init(&blk_request->queuelist);
 		if (dnbd3_req_fs(blk_request))
-		{
 			blk_mq_end_request(blk_request, BLK_STS_IOERR);
-		}
 		else if (dnbd3_req_special(blk_request))
-		{
 			kfree(blk_request);
-		}
 	}
 }

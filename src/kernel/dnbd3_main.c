@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * This file is part of the Distributed Network Block Device 3
  *
@@ -34,27 +35,25 @@ struct device *dnbd3_device_to_dev(dnbd3_device_t *dev)
 	return disk_to_dev(dev->disk);
 }
 
-int is_same_server(const dnbd3_server_t * const a, const dnbd3_server_t * const b)
+int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b)
 {
-	return (a->host.type == b->host.type) && (a->host.port == b->host.port)
-	   && (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == HOST_IP4 ? 4 : 16)));
+	return (a->host.type == b->host.type) && (a->host.port == b->host.port) &&
+	       (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == HOST_IP4 ? 4 : 16)));
 }
 
-dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t * const newserver, dnbd3_device_t * const dev)
+dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t *const newserver, dnbd3_device_t *const dev)
 {
 	int i;
-	for (i = 0; i < NUMBER_SERVERS; ++i)
-	{
-		if ((newserver->host.type == dev->alt_servers[i].host.type)
-		   && (newserver->host.port == dev->alt_servers[i].host.port)
-		   && (0
-		      == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr, (newserver->host.type == HOST_IP4 ? 4 : 16))))
-		{
+
+	for (i = 0; i < NUMBER_SERVERS; ++i) {
+		if ((newserver->host.type == dev->alt_servers[i].host.type) &&
+		    (newserver->host.port == dev->alt_servers[i].host.port) &&
+		    (0 == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr,
+				 (newserver->host.type == HOST_IP4 ? 4 : 16)))) {
 			return &dev->alt_servers[i];
-			break;
 		}
 	}
-	return NULL ;
+	return NULL;
 }
 
 static int __init dnbd3_init(void)
@@ -66,8 +65,8 @@ static int __init dnbd3_init(void)
 		return -ENOMEM;
 
 	// initialize block device
-	if ((major = register_blkdev(0, "dnbd3")) == 0)
-	{
+	major = register_blkdev(0, "dnbd3");
+	if (major == 0) {
 		pr_err("register_blkdev failed\n");
 		return -EIO;
 	}
@@ -76,12 +75,13 @@ static int __init dnbd3_init(void)
 	pr_debug("machine type %s\n", DNBD3_ENDIAN_MODE);
 
 	// add MAX_NUMBER_DEVICES devices
-	for (i = 0; i < max_devs; i++)
-	{
-		if (dnbd3_blk_add_device(&dnbd3_devices[i], i) != 0)
-		{
+	for (i = 0; i < max_devs; i++) {
+		if (dnbd3_blk_add_device(&dnbd3_devices[i], i) != 0) {
 			pr_err("dnbd3_blk_add_device failed\n");
-			return -EIO; // TODO: delete all devices added so far. it could happen that it's not the first one that fails. also call unregister_blkdev and free memory
+			// TODO: delete all devices added so far.
+			// It could happen that it's not the first one that fails.
+			// Also call unregister_blkdev and free memory.
+			return -EIO;
 		}
 	}
 
@@ -96,9 +96,7 @@ static void __exit dnbd3_exit(void)
 
 	pr_debug("exiting kernel module...\n");
 	for (i = 0; i < max_devs; i++)
-	{
 		dnbd3_blk_del_device(&dnbd3_devices[i]);
-	}
 
 	unregister_blkdev(major, "dnbd3");
 	kfree(dnbd3_devices);
