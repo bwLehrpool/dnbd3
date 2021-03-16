@@ -37,6 +37,7 @@
 #define ktime_to_s(kt) ktime_divns(kt, NSEC_PER_SEC)
 #endif
 
+#ifdef CONFIG_DEBUG_DRIVER
 #define ASSERT(x)                                                                                                      \
 	do {                                                                                                           \
 		if (!(x)) {                                                                                            \
@@ -44,6 +45,11 @@
 			BUG();                                                                                         \
 		}                                                                                                      \
 	} while (0)
+#else
+#define ASSERT(x)                                                                                                      \
+	do {                                                                                                           \
+	} while (0)
+#endif
 
 #define dnbd3_sock_create(af, type, proto, sock)                                                                       \
 	sock_create_kern(&init_net, (af) == HOST_IP4 ? AF_INET : AF_INET6, type, proto, sock)
