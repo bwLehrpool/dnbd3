@@ -122,7 +122,7 @@ endif(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
 # define packaging if Release build is enabled
 if(CMAKE_BUILD_TYPE MATCHES Release)
     # get version source package or Git repository
-    get_repository_version(REPOSITORY_VERSION ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE} ${GIT_EXECUTABLE} ${CMAKE_SOURCE_DIR})
+    get_repository_version(REPOSITORY_VERSION REPOSITORY_BRANCH ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE} ${GIT_EXECUTABLE} ${CMAKE_SOURCE_DIR})
 
     # define project version
     if(KernelHeaders_VERSION)

@@ -11,7 +11,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
 include(Version)
 
 # get Git version of Git repository
-get_repository_version(DNBD3_VERSION ${VERSION_INPUT_FILE} ${VERSION_BUILD_TYPE} ${GIT_EXECUTABLE} ${REPOSITORY_DIR})
+get_repository_version(DNBD3_VERSION DNBD3_BRANCH ${VERSION_INPUT_FILE} ${VERSION_BUILD_TYPE} ${GIT_EXECUTABLE} ${REPOSITORY_DIR})
 
 # generate version header if header does not exists
 if(NOT EXISTS ${VERSION_INPUT_FILE})
