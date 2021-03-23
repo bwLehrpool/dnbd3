@@ -66,6 +66,7 @@ static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t *const dev)
 /**
  * Returns pointer to existing entry in alt_servers that matches the given
  * alt server, or NULL if not found.
+ * The caller has to hold dev->alt_servers_lock.
  */
 dnbd3_server_t *get_existing_server(const dnbd3_host_t *const newserver, dnbd3_device_t *const dev)
 {

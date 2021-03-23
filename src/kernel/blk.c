@@ -247,6 +247,13 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 							/* switching didn't work but we are back to the old server */
 							result = -EAGAIN;
 						}
+					} else {
+						/* switch succeeded, fake very low RTT so we don't switch away again soon */
+						mutex_lock(&dev->alt_servers_lock);
+						if (is_same_server(alt_server, &new_server)) {
+							alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2] = alt_server->rtts[3] = 4;
+						}
+						mutex_unlock(&dev->alt_servers_lock);
 					}
 				} else {
 					/* specified server is already working, so do not switch */
