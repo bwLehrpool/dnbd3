@@ -27,6 +27,7 @@
 #include <linux/module.h>
 #include <linux/blkdev.h>
 #include <linux/blk-mq.h>
+#include <linux/mutex.h>
 #include <net/sock.h>
 
 #include <dnbd3/config.h>
@@ -53,14 +54,13 @@ typedef struct {
 	struct kobject kobj;
 
 	// network
+	struct mutex alt_servers_lock;
 	char *imgname;
 	struct socket *sock;
 	dnbd3_server_t cur_server;
 	unsigned long cur_rtt;
 	serialized_buffer_t payload_buffer;
-	dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers
-	int new_servers_num; // number of new alt servers that are waiting to be copied to above array
-	dnbd3_server_entry_t new_servers[NUMBER_SERVERS]; // pending new alt servers
+	dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers, protected by altservers_lock
 	uint8_t discover, panic, update_available, panic_count;
 	atomic_t connection_lock;
 	uint8_t use_server_provided_alts;
@@ -85,7 +85,11 @@ typedef struct {
 extern inline struct device *dnbd3_device_to_dev(dnbd3_device_t *dev);
 
 extern inline int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b);
-extern inline dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t *const newserver,
-						  dnbd3_device_t *const dev);
+
+extern dnbd3_server_t *get_existing_server(const dnbd3_host_t *const newserver, dnbd3_device_t *const dev);
+
+extern int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host);
+
+extern int dnbd3_rem_server(dnbd3_device_t *dev, dnbd3_host_t *host);
 
 #endif /* DNBD_H_ */

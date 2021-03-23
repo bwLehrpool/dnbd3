@@ -63,9 +63,6 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 	struct request_queue *blk_queue = dev->disk->queue;
 	char *imgname = NULL;
 	dnbd3_ioctl_t *msg = NULL;
-	dnbd3_server_entry_t server;
-	dnbd3_server_t old_server;
-	dnbd3_server_t *alt_server;
 	unsigned long irqflags;
 	int i = 0;
 	u8 locked = 0;
@@ -197,27 +194,33 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		}
 		locked = 1;
 		if (dev->imgname == NULL) {
-			result = -ENOENT;
+			result = -ENOTCONN;
 		} else if (msg == NULL) {
 			result = -EINVAL;
 		} else {
-			/* convert host to dnbd3-server for switching */
-			memcpy(&server.host, &msg->hosts[0], sizeof(server.host));
-			server.failures = 0;
+			dnbd3_server_t *alt_server;
 
-			alt_server = get_existing_server(&server, dev);
+			mutex_lock(&dev->alt_servers_lock);
+			alt_server = get_existing_server(&msg->hosts[0], dev);
 			if (alt_server == NULL) {
+				mutex_unlock(&dev->alt_servers_lock);
 				/* specified server is not known, so do not switch */
-				result = -EINVAL;
+				result = -ENOENT;
 			} else {
 				/* specified server is known, so try to switch to it */
-				if (!is_same_server(&dev->cur_server, alt_server)) {
-					if (alt_server->host.type == HOST_IP4)
+				dnbd3_server_t new_server = *alt_server;
+
+				new_server = *alt_server;
+				mutex_unlock(&dev->alt_servers_lock);
+				if (!is_same_server(&dev->cur_server, &new_server)) {
+					dnbd3_server_t old_server;
+
+					if (new_server.host.type == HOST_IP4)
 						dev_info(dnbd3_device_to_dev(dev), "manual server switch to %pI4\n",
-							 alt_server->host.addr);
+							 new_server.host.addr);
 					else
 						dev_info(dnbd3_device_to_dev(dev), "manual server switch to [%pI6]\n",
-							 alt_server->host.addr);
+							 new_server.host.addr);
 					/* save current working server */
 					/* lock device to get consistent copy of current working server */
 					spin_lock_irqsave(&dev->blk_lock, irqflags);
@@ -228,7 +231,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 					dnbd3_net_disconnect(dev);
 
 					/* connect to new specified server (switching) */
-					memcpy(&dev->cur_server, alt_server, sizeof(dev->cur_server));
+					memcpy(&dev->cur_server, &new_server, sizeof(dev->cur_server));
 					result = dnbd3_net_connect(dev);
 					if (result != 0) {
 						/* reconnect with old server if switching has failed */
@@ -255,24 +258,50 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 
 	case IOCTL_ADD_SRV:
 	case IOCTL_REM_SRV:
-		if (dev->imgname == NULL)
-			result = -ENOENT;
-		else if (msg == NULL)
-			result = -EINVAL;
-
-		/* protect access to 'new_servers_num' and 'new_servers' */
-		spin_lock_irqsave(&dev->blk_lock, irqflags);
-		if (dev->new_servers_num >= NUMBER_SERVERS) {
-			result = -EAGAIN;
-		} else {
-			/* add or remove specified server */
-			memcpy(&dev->new_servers[dev->new_servers_num].host, &msg->hosts[0], sizeof(msg->hosts[0]));
-			dev->new_servers[dev->new_servers_num].failures =
-				(cmd == IOCTL_ADD_SRV ? 0 : 1); // 0 = ADD, 1 = REM
-			++dev->new_servers_num;
-			result = 0;
+		if (dev->imgname == NULL) {
+			result = -ENOTCONN;
+			break;
 		}
-		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+		if (msg == NULL) {
+			result = -EINVAL;
+			break;
+		}
+		if (cmd == IOCTL_ADD_SRV) {
+			dnbd3_host_t *host = &msg->hosts[0];
+
+			result = dnbd3_add_server(dev, host);
+			if (result == -EEXIST) {
+				// Exists
+				if (host->type == HOST_IP4) {
+					dev_info(dnbd3_device_to_dev(dev), "alt server %pI4 already exists\n",
+						 host->addr);
+				} else {
+					dev_info(dnbd3_device_to_dev(dev), "alt server [%pI6] already exists\n",
+						 host->addr);
+				}
+			} else if (result == -ENOSPC) {
+				if (host->type == HOST_IP4) {
+					dev_info(dnbd3_device_to_dev(dev), "cannot add %pI4; no free slot\n",
+						 host->addr);
+				} else {
+					dev_info(dnbd3_device_to_dev(dev), "cannot add [%pI6]; no free slot\n",
+						 host->addr);
+				}
+			}
+		} else { // IOCTL_REM_SRV
+			dnbd3_host_t *host = &msg->hosts[0];
+
+			result = dnbd3_rem_server(dev, &msg->hosts[0]);
+			if (result == -ENOENT) {
+				if (host->type == HOST_IP4) {
+					dev_info(dnbd3_device_to_dev(dev), "alt server %pI4 not found\n",
+						 host->addr);
+				} else {
+					dev_info(dnbd3_device_to_dev(dev), "alt server [%pI6] not found\n",
+						 host->addr);
+				}
+			}
+		}
 		break;
 
 	case BLKFLSBUF:
@@ -343,6 +372,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->imgname = NULL;
 	dev->rid = 0;
 	dev->update_available = 0;
+	mutex_init(&dev->alt_servers_lock);
 	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0]) * NUMBER_SERVERS);
 	dev->thread_send = NULL;
 	dev->thread_receive = NULL;
@@ -433,6 +463,7 @@ int dnbd3_blk_del_device(dnbd3_device_t *dev)
 	del_gendisk(dev->disk);
 	blk_cleanup_queue(dev->queue);
 	blk_mq_free_tag_set(&dev->tag_set);
+	mutex_destroy(&dev->alt_servers_lock);
 	put_disk(dev->disk);
 	return 0;
 }

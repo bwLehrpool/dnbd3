@@ -41,19 +41,91 @@ int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b)
 	       (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == HOST_IP4 ? 4 : 16)));
 }
 
-dnbd3_server_t *get_existing_server(const dnbd3_server_entry_t *const newserver, dnbd3_device_t *const dev)
+/**
+ * Get a free slot pointer from the alt_servers list. Tries to find an
+ * entirely empty slot first, then looks for a slot with a server that
+ * wasn't reachable recently, finally returns NULL if none of the
+ * conditions match.
+ * The caller has to hold dev->alt_servers_lock.
+ */
+static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t *const dev)
 {
 	int i;
 
 	for (i = 0; i < NUMBER_SERVERS; ++i) {
-		if ((newserver->host.type == dev->alt_servers[i].host.type) &&
-		    (newserver->host.port == dev->alt_servers[i].host.port) &&
-		    (0 == memcmp(newserver->host.addr, dev->alt_servers[i].host.addr,
-				 (newserver->host.type == HOST_IP4 ? 4 : 16)))) {
+		if (dev->alt_servers[i].host.type == 0)
+			return &dev->alt_servers[i];
+	}
+	for (i = 0; i < NUMBER_SERVERS; ++i) {
+		if (dev->alt_servers[i].failures > 10)
+			return &dev->alt_servers[i];
+	}
+	return NULL;
+}
+
+/**
+ * Returns pointer to existing entry in alt_servers that matches the given
+ * alt server, or NULL if not found.
+ */
+dnbd3_server_t *get_existing_server(const dnbd3_host_t *const newserver, dnbd3_device_t *const dev)
+{
+	int i;
+
+	for (i = 0; i < NUMBER_SERVERS; ++i) {
+		if ((newserver->type == dev->alt_servers[i].host.type) &&
+		    (newserver->port == dev->alt_servers[i].host.port) &&
+		    (0 == memcmp(newserver->addr, dev->alt_servers[i].host.addr,
+				 (newserver->type == HOST_IP4 ? 4 : 16)))) {
 			return &dev->alt_servers[i];
 		}
 	}
 	return NULL;
+}
+
+int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host)
+{
+	int result;
+	dnbd3_server_t *alt_server;
+	/* protect access to 'alt_servers' */
+	mutex_lock(&dev->alt_servers_lock);
+	alt_server = get_existing_server(host, dev);
+	// ADD
+	if (alt_server != NULL) {
+		// Exists
+		result = -EEXIST;
+	} else {
+		// OK add
+		alt_server = get_free_alt_server(dev);
+		if (alt_server == NULL) {
+			result = -ENOSPC;
+		} else {
+			alt_server->host = *host;
+			alt_server->failures = 0;
+			result = 0;
+		}
+	}
+	mutex_unlock(&dev->alt_servers_lock);
+	return result;
+}
+
+int dnbd3_rem_server(dnbd3_device_t *dev, dnbd3_host_t *host)
+{
+	dnbd3_server_t *alt_server;
+	int result;
+	/* protect access to 'alt_servers' */
+	mutex_lock(&dev->alt_servers_lock);
+	alt_server = get_existing_server(host, dev);
+	// REMOVE
+	if (alt_server == NULL) {
+		// Not found
+		result = -ENOENT;
+	} else {
+		// Remove
+		alt_server->host.type = 0;
+		result = 0;
+	}
+	mutex_unlock(&dev->alt_servers_lock);
+	return result;
 }
 
 static int __init dnbd3_init(void)
