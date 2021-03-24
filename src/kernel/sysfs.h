@@ -36,8 +36,8 @@ typedef struct {
 
 typedef struct {
 	struct attribute attr;
-	ssize_t (*show)(char *buf, dnbd3_server_t *dev);
-	ssize_t (*store)(const char *buf, size_t len, dnbd3_server_t *dev);
+	ssize_t (*show)(char *buf, dnbd3_alt_server_t *dev);
+	ssize_t (*store)(const char *buf, size_t len, dnbd3_alt_server_t *dev);
 } server_attr_t;
 
 #endif /* SYSFS_H_ */

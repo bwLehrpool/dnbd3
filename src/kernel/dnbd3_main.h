@@ -37,11 +37,11 @@
 extern int major;
 
 typedef struct {
-	dnbd3_host_t host;
-	unsigned long rtts[4]; // Last four round trip time measurements in µs
+	unsigned long rtts[4];     // Last four round trip time measurements in µs
 	uint16_t protocol_version; // dnbd3 protocol version of this server
-	uint8_t failures; // How many times the server was unreachable
-} dnbd3_server_t;
+	uint8_t failures;          // How many times the server was unreachable
+	struct sockaddr_storage host; // Address of server
+} dnbd3_alt_server_t;
 
 typedef struct {
 	// block
@@ -57,10 +57,13 @@ typedef struct {
 	struct mutex alt_servers_lock;
 	char *imgname;
 	struct socket *sock;
-	dnbd3_server_t cur_server;
-	unsigned long cur_rtt;
+	struct {
+		unsigned long rtt;
+		struct sockaddr_storage host;
+		uint16_t protocol_version;
+	} cur_server;
 	serialized_buffer_t payload_buffer;
-	dnbd3_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers, protected by altservers_lock
+	dnbd3_alt_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers, protected by alt_servers_lock
 	uint8_t discover, panic, update_available, panic_count;
 	atomic_t connection_lock;
 	uint8_t use_server_provided_alts;
@@ -84,9 +87,13 @@ typedef struct {
 
 extern inline struct device *dnbd3_device_to_dev(dnbd3_device_t *dev);
 
-extern inline int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b);
+extern inline int is_same_server(const struct sockaddr_storage *const x, const struct sockaddr_storage *const y);
 
-extern dnbd3_server_t *get_existing_server(const dnbd3_host_t *const newserver, dnbd3_device_t *const dev);
+extern int dnbd3_host_to_sockaddr(const dnbd3_host_t *host, struct sockaddr_storage *dest);
+
+extern dnbd3_alt_server_t *get_existing_alt_from_host(const dnbd3_host_t *const host, dnbd3_device_t *const dev);
+
+extern dnbd3_alt_server_t *get_existing_alt_from_addr(const struct sockaddr_storage *const addr, dnbd3_device_t *const dev);
 
 extern int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host);
 

@@ -23,6 +23,7 @@
 
 #include <dnbd3/config/client.h>
 #include <dnbd3/version.h>
+#include <net/ipv6.h>
 #include "dnbd3_main.h"
 #include "blk.h"
 
@@ -35,10 +36,54 @@ struct device *dnbd3_device_to_dev(dnbd3_device_t *dev)
 	return disk_to_dev(dev->disk);
 }
 
-int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b)
+int dnbd3_host_to_sockaddr(const dnbd3_host_t *host, struct sockaddr_storage *dest)
 {
-	return (a->host.type == b->host.type) && (a->host.port == b->host.port) &&
-	       (0 == memcmp(a->host.addr, b->host.addr, (a->host.type == HOST_IP4 ? 4 : 16)));
+	struct sockaddr_in *sin4;
+	struct sockaddr_in6 *sin6;
+
+	memset(dest, 0, sizeof(*dest));
+	if (host->type == HOST_IP4) {
+		sin4 = (struct sockaddr_in*)dest;
+		sin4->sin_family = AF_INET;
+		memcpy(&(sin4->sin_addr), host->addr, 4);
+		sin4->sin_port = host->port;
+	} else if (host->type == HOST_IP6) {
+		sin6 = (struct sockaddr_in6*)dest;
+		sin6->sin6_family = AF_INET6;
+		memcpy(&(sin6->sin6_addr), host->addr, 16);
+		sin6->sin6_port = host->port;
+	} else
+		return 0;
+	return 1;
+}
+
+int is_same_server(const struct sockaddr_storage *const x, const struct sockaddr_storage *const y)
+{
+	if (x->ss_family != y->ss_family)
+		return 0;
+	switch (x->ss_family) {
+	case AF_INET: {
+		const struct sockaddr_in *sinx = (const struct sockaddr_in *)x;
+		const struct sockaddr_in *siny = (const struct sockaddr_in *)y;
+		if (sinx->sin_port != siny->sin_port)
+			return 0;
+		if (sinx->sin_addr.s_addr != siny->sin_addr.s_addr)
+			return 0;
+		break;
+	}
+	case AF_INET6: {
+		const struct sockaddr_in6 *sinx = (const struct sockaddr_in6 *)x;
+		const struct sockaddr_in6 *siny = (const struct sockaddr_in6 *)y;
+		if (sinx->sin6_port != siny->sin6_port)
+			return 0;
+		if (!ipv6_addr_equal(&sinx->sin6_addr, &siny->sin6_addr))
+			return 0;
+		break;
+	}
+	default:
+		return 0;
+	}
+	return 1;
 }
 
 /**
@@ -48,16 +93,28 @@ int is_same_server(const dnbd3_server_t *const a, const dnbd3_server_t *const b)
  * conditions match.
  * The caller has to hold dev->alt_servers_lock.
  */
-static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t *const dev)
+static dnbd3_alt_server_t *get_free_alt_server(dnbd3_device_t *const dev)
 {
 	int i;
 
 	for (i = 0; i < NUMBER_SERVERS; ++i) {
-		if (dev->alt_servers[i].host.type == 0)
+		if (dev->alt_servers[i].host.ss_family == 0)
 			return &dev->alt_servers[i];
 	}
 	for (i = 0; i < NUMBER_SERVERS; ++i) {
 		if (dev->alt_servers[i].failures > 10)
+			return &dev->alt_servers[i];
+	}
+	return NULL;
+}
+
+dnbd3_alt_server_t *get_existing_alt_from_addr(const struct sockaddr_storage *const addr,
+		dnbd3_device_t *const dev)
+{
+	int i;
+
+	for (i = 0; i < NUMBER_SERVERS; ++i) {
+		if (is_same_server(addr, &dev->alt_servers[i].host))
 			return &dev->alt_servers[i];
 	}
 	return NULL;
@@ -68,28 +125,26 @@ static inline dnbd3_server_t *get_free_alt_server(dnbd3_device_t *const dev)
  * alt server, or NULL if not found.
  * The caller has to hold dev->alt_servers_lock.
  */
-dnbd3_server_t *get_existing_server(const dnbd3_host_t *const newserver, dnbd3_device_t *const dev)
+dnbd3_alt_server_t *get_existing_alt_from_host(const dnbd3_host_t *const host, dnbd3_device_t *const dev)
 {
-	int i;
+	struct sockaddr_storage addr;
 
-	for (i = 0; i < NUMBER_SERVERS; ++i) {
-		if ((newserver->type == dev->alt_servers[i].host.type) &&
-		    (newserver->port == dev->alt_servers[i].host.port) &&
-		    (0 == memcmp(newserver->addr, dev->alt_servers[i].host.addr,
-				 (newserver->type == HOST_IP4 ? 4 : 16)))) {
-			return &dev->alt_servers[i];
-		}
-	}
-	return NULL;
+	if (!dnbd3_host_to_sockaddr(host, &addr))
+		return NULL;
+	return get_existing_alt_from_addr(&addr, dev);
 }
 
 int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host)
 {
 	int result;
-	dnbd3_server_t *alt_server;
+	dnbd3_alt_server_t *alt_server;
+
+	if (host->type != HOST_IP4 && host->type != HOST_IP6)
+		return -EINVAL;
+
 	/* protect access to 'alt_servers' */
 	mutex_lock(&dev->alt_servers_lock);
-	alt_server = get_existing_server(host, dev);
+	alt_server = get_existing_alt_from_host(host, dev);
 	// ADD
 	if (alt_server != NULL) {
 		// Exists
@@ -100,7 +155,10 @@ int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host)
 		if (alt_server == NULL) {
 			result = -ENOSPC;
 		} else {
-			alt_server->host = *host;
+			dnbd3_host_to_sockaddr(host, &alt_server->host);
+			alt_server->protocol_version = 0;
+			alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2]
+				= alt_server->rtts[3] = RTT_UNREACHABLE;
 			alt_server->failures = 0;
 			result = 0;
 		}
@@ -111,18 +169,19 @@ int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host)
 
 int dnbd3_rem_server(dnbd3_device_t *dev, dnbd3_host_t *host)
 {
-	dnbd3_server_t *alt_server;
+	dnbd3_alt_server_t *alt_server;
 	int result;
+
 	/* protect access to 'alt_servers' */
 	mutex_lock(&dev->alt_servers_lock);
-	alt_server = get_existing_server(host, dev);
+	alt_server = get_existing_alt_from_host(host, dev);
 	// REMOVE
 	if (alt_server == NULL) {
 		// Not found
 		result = -ENOENT;
 	} else {
 		// Remove
-		alt_server->host.type = 0;
+		alt_server->host.ss_family = 0;
 		result = 0;
 	}
 	mutex_unlock(&dev->alt_servers_lock);
