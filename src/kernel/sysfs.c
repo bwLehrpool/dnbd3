@@ -28,27 +28,18 @@
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
 
+/**
+ * Print currently connected server IP:PORT
+ */
 ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
 {
 	return MIN(snprintf(buf, PAGE_SIZE, "%pISpc\n", &dev->cur_server.host), PAGE_SIZE);
 }
 
-ssize_t show_cur_server_rtt(char *buf, dnbd3_device_t *dev)
-{
-	return MIN(snprintf(buf, PAGE_SIZE, "%lu\n", dev->cur_server.rtt), PAGE_SIZE);
-}
-
-ssize_t show_alt_server_num(char *buf, dnbd3_device_t *dev)
-{
-	int i, num = 0;
-
-	for (i = 0; i < NUMBER_SERVERS; ++i) {
-		if (dev->alt_servers[i].host.ss_family != 0)
-			++num;
-	}
-	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", num), PAGE_SIZE);
-}
-
+/**
+ * List alt servers. One line per server, format is:
+ * IP:PORT RTT consecutive_failures best_count
+ */
 ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 {
 	int i, size = PAGE_SIZE, ret;
@@ -57,12 +48,13 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 		if (dev->alt_servers[i].host.ss_family == 0)
 			continue;
 
-		ret = MIN(snprintf(buf, size, "%pISpc,%llu,%d\n", &dev->alt_servers[i].host,
+		ret = MIN(snprintf(buf, size, "%pISpc %llu %d %d\n", &dev->alt_servers[i].host,
 					(unsigned long long)((dev->alt_servers[i].rtts[0] +
 							 dev->alt_servers[i].rtts[1] +
 							 dev->alt_servers[i].rtts[2] +
 							 dev->alt_servers[i].rtts[3]) / 4),
-					(int)dev->alt_servers[i].failures),
+					(int)dev->alt_servers[i].failures,
+					(int)dev->alt_servers[i].best_count),
 			size);
 		size -= ret;
 		buf += ret;
@@ -74,13 +66,17 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 	return PAGE_SIZE - size;
 }
 
+/**
+ * Show name of image in use
+ */
 ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
 {
-	if (dev->imgname == NULL)
-		return sprintf(buf, "(null)");
 	return MIN(snprintf(buf, PAGE_SIZE, "%s\n", dev->imgname), PAGE_SIZE);
 }
 
+/**
+ * Show rid of image in use
+ */
 ssize_t show_rid(char *buf, dnbd3_device_t *dev)
 {
 	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->rid), PAGE_SIZE);
@@ -94,18 +90,6 @@ ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
 device_attr_t cur_server_addr = {
 	.attr = { .name = "cur_server_addr", .mode = 0444 },
 	.show = show_cur_server_addr,
-	.store = NULL,
-};
-
-device_attr_t cur_server_rtt = {
-	.attr = { .name = "cur_server_rtt", .mode = 0444 },
-	.show = show_cur_server_rtt,
-	.store = NULL,
-};
-
-device_attr_t alt_server_num = {
-	.attr = { .name = "alt_server_num", .mode = 0444 },
-	.show = show_alt_server_num,
 	.store = NULL,
 };
 
@@ -142,8 +126,8 @@ ssize_t device_show(struct kobject *kobj, struct attribute *attr, char *buf)
 }
 
 struct attribute *device_attrs[] = {
-	&cur_server_addr.attr,	&cur_server_rtt.attr,
-	&alt_server_num.attr,	&alt_servers.attr,
+	&cur_server_addr.attr,
+	&alt_servers.attr,
 	&image_name.attr,	&rid.attr,
 	&update_available.attr, NULL,
 };
