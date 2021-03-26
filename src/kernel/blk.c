@@ -201,7 +201,10 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				/* specified server is known, so try to switch to it */
 				new_addr = alt_server->host;
 				mutex_unlock(&dev->alt_servers_lock);
-				if (!is_same_server(&dev->cur_server.host, &new_addr)) {
+				if (is_same_server(&dev->cur_server.host, &new_addr)) {
+					/* specified server is current server, so do not switch */
+					result = 0;
+				} else {
 					struct sockaddr_storage old_server;
 
 					dev_info(dnbd3_device_to_dev(dev), "manual server switch to %pISpc\n",
@@ -240,13 +243,12 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 						/* switch succeeded, fake very low RTT so we don't switch away again soon */
 						mutex_lock(&dev->alt_servers_lock);
 						if (is_same_server(&alt_server->host, &new_addr)) {
-							alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2] = alt_server->rtts[3] = 4;
+							alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2]
+								= alt_server->rtts[3] = 4;
+							alt_server->best_count = 100;
 						}
 						mutex_unlock(&dev->alt_servers_lock);
 					}
-				} else {
-					/* specified server is already working, so do not switch */
-					result = 0;
 				}
 			}
 		}
@@ -273,20 +275,18 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 
 		if (cmd == IOCTL_ADD_SRV) {
 			result = dnbd3_add_server(dev, host);
-			if (result == -EEXIST) {
+			if (result == -EEXIST)
 				dev_info(dnbd3_device_to_dev(dev), "alt server %pISpc already exists\n", &addr);
-			} else if (result == -ENOSPC) {
+			else if (result == -ENOSPC)
 				dev_info(dnbd3_device_to_dev(dev), "cannot add %pISpc; no free slot\n", &addr);
-			} else {
+			else
 				dev_info(dnbd3_device_to_dev(dev), "added alt server %pISpc\n", &addr);
-			}
 		} else { // IOCTL_REM_SRV
 			result = dnbd3_rem_server(dev, host);
-			if (result == -ENOENT) {
+			if (result == -ENOENT)
 				dev_info(dnbd3_device_to_dev(dev), "alt server %pISpc not found\n", &addr);
-			} else {
+			else
 				dev_info(dnbd3_device_to_dev(dev), "removed alt server %pISpc\n", &addr);
-			}
 		}
 		break;
 	}

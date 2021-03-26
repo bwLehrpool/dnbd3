@@ -40,6 +40,7 @@ typedef struct {
 	unsigned long rtts[4];     // Last four round trip time measurements in µs
 	uint16_t protocol_version; // dnbd3 protocol version of this server
 	uint8_t failures;          // How many times the server was unreachable
+	uint8_t best_count;        // Number of times server measured best
 	struct sockaddr_storage host; // Address of server
 } dnbd3_alt_server_t;
 
@@ -93,7 +94,8 @@ extern int dnbd3_host_to_sockaddr(const dnbd3_host_t *host, struct sockaddr_stor
 
 extern dnbd3_alt_server_t *get_existing_alt_from_host(const dnbd3_host_t *const host, dnbd3_device_t *const dev);
 
-extern dnbd3_alt_server_t *get_existing_alt_from_addr(const struct sockaddr_storage *const addr, dnbd3_device_t *const dev);
+extern dnbd3_alt_server_t *get_existing_alt_from_addr(const struct sockaddr_storage *const addr,
+		dnbd3_device_t *const dev);
 
 extern int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host);
 

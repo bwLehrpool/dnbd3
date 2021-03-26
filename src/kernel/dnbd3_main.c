@@ -43,12 +43,12 @@ int dnbd3_host_to_sockaddr(const dnbd3_host_t *host, struct sockaddr_storage *de
 
 	memset(dest, 0, sizeof(*dest));
 	if (host->type == HOST_IP4) {
-		sin4 = (struct sockaddr_in*)dest;
+		sin4 = (struct sockaddr_in *)dest;
 		sin4->sin_family = AF_INET;
 		memcpy(&(sin4->sin_addr), host->addr, 4);
 		sin4->sin_port = host->port;
 	} else if (host->type == HOST_IP6) {
-		sin6 = (struct sockaddr_in6*)dest;
+		sin6 = (struct sockaddr_in6 *)dest;
 		sin6->sin6_family = AF_INET6;
 		memcpy(&(sin6->sin6_addr), host->addr, 16);
 		sin6->sin6_port = host->port;
@@ -65,6 +65,7 @@ int is_same_server(const struct sockaddr_storage *const x, const struct sockaddr
 	case AF_INET: {
 		const struct sockaddr_in *sinx = (const struct sockaddr_in *)x;
 		const struct sockaddr_in *siny = (const struct sockaddr_in *)y;
+
 		if (sinx->sin_port != siny->sin_port)
 			return 0;
 		if (sinx->sin_addr.s_addr != siny->sin_addr.s_addr)
@@ -74,6 +75,7 @@ int is_same_server(const struct sockaddr_storage *const x, const struct sockaddr
 	case AF_INET6: {
 		const struct sockaddr_in6 *sinx = (const struct sockaddr_in6 *)x;
 		const struct sockaddr_in6 *siny = (const struct sockaddr_in6 *)y;
+
 		if (sinx->sin6_port != siny->sin6_port)
 			return 0;
 		if (!ipv6_addr_equal(&sinx->sin6_addr, &siny->sin6_addr))
@@ -160,6 +162,7 @@ int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host)
 			alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2]
 				= alt_server->rtts[3] = RTT_UNREACHABLE;
 			alt_server->failures = 0;
+			alt_server->best_count = 0;
 			result = 0;
 		}
 	}

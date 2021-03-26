@@ -127,6 +127,7 @@ static int dnbd3_net_discover(void *data)
 
 	dnbd3_request_t dnbd3_request;
 	dnbd3_reply_t dnbd3_reply;
+	dnbd3_alt_server_t *alt;
 	struct sockaddr_storage host_compare, best_server;
 	struct msghdr msg;
 	struct kvec iov[2];
@@ -140,7 +141,7 @@ static int dnbd3_net_discover(void *data)
 	ktime_t start = 0, end = 0;
 	unsigned long rtt, best_rtt = 0;
 	unsigned long irqflags;
-	int i, j, isize, fails;
+	int i, j, isize, fails, rtt_threshold;
 	int turn = 0;
 	int ready = 0, do_change = 0;
 	char check_order[NUMBER_SERVERS];
@@ -153,7 +154,9 @@ static int dnbd3_net_discover(void *data)
 
 	init_msghdr(msg);
 
-	buf = kmalloc(4096, GFP_KERNEL);
+	BUILD_BUG_ON(sizeof(serialized_buffer_t) > DNBD3_BLOCK_SIZE);
+
+	buf = kmalloc(DNBD3_BLOCK_SIZE, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
 
@@ -380,8 +383,10 @@ static int dnbd3_net_discover(void *data)
 				rtt = (dev->alt_servers[i].rtts[0] + dev->alt_servers[i].rtts[1]
 						+ dev->alt_servers[i].rtts[2] + dev->alt_servers[i].rtts[3])
 						/ 4;
+				dev->alt_servers[i].failures = 0;
+				if (dev->alt_servers[i].best_count > 1)
+					dev->alt_servers[i].best_count -= 2;
 			}
-			dev->alt_servers[i].failures = 0;
 			mutex_unlock(&dev->alt_servers_lock);
 
 			if (best_rtt > rtt) {
@@ -413,6 +418,8 @@ error:
 			if (is_same_server(&dev->alt_servers[i].host, &host_compare)) {
 				++dev->alt_servers[i].failures;
 				dev->alt_servers[i].rtts[turn] = RTT_UNREACHABLE;
+				if (dev->alt_servers[i].best_count > 2)
+					dev->alt_servers[i].best_count -= 3;
 			}
 			mutex_unlock(&dev->alt_servers_lock);
 			if (is_same_server(&dev->cur_server.host, &host_compare))
@@ -436,8 +443,21 @@ error:
 			continue;
 		}
 
+		// If best server was repeatedly measured best, lower the switching threshold more
+		mutex_lock(&dev->alt_servers_lock);
+		alt = get_existing_alt_from_addr(&best_server, dev);
+		if (alt != NULL) {
+			if (alt->best_count < 148)
+				alt->best_count += 3;
+			rtt_threshold = 1500 - (alt->best_count * 10);
+		} else {
+			rtt_threshold = 1500;
+		}
+		mutex_unlock(&dev->alt_servers_lock);
+
 		do_change = ready && !is_same_server(&best_server, &dev->cur_server.host)
-			&& (ktime_to_us(start) & 3) != 0 && RTT_THRESHOLD_FACTOR(dev->cur_server.rtt) > best_rtt + 1500;
+			&& (ktime_to_us(start) & 3) != 0
+			&& RTT_THRESHOLD_FACTOR(dev->cur_server.rtt) > best_rtt + rtt_threshold;
 
 		if (ready && !do_change && best_sock != NULL) {
 			spin_lock_irqsave(&dev->blk_lock, irqflags);
@@ -456,8 +476,9 @@ error:
 		// take server with lowest rtt
 		// if a (dis)connect is already in progress, we do nothing, this is not panic mode
 		if (do_change && atomic_cmpxchg(&dev->connection_lock, 0, 1) == 0) {
-			dev_info(dnbd3_device_to_dev(dev), "server %pISpc is faster (%lluµs vs. %lluµs)\n", &best_server,
-				 (unsigned long long)best_rtt, (unsigned long long)dev->cur_server.rtt);
+			dev_info(dnbd3_device_to_dev(dev), "server %pISpc is faster (%lluµs vs. %lluµs)\n",
+					&best_server,
+					(unsigned long long)best_rtt, (unsigned long long)dev->cur_server.rtt);
 			kfree(buf);
 			dev->better_sock = best_sock; // Take shortcut by continuing to use open connection
 			put_task_struct(dev->thread_discover);
@@ -880,7 +901,7 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 		}
 		if (ret < 0) {
 			dev_dbg(dnbd3_device_to_dev(dev), "%pISpc: connect timed out (%d, %dms)\n",
-					ret, (int)ktime_ms_delta(ktime_get_real(), start));
+					addr, ret, (int)ktime_ms_delta(ktime_get_real(), start));
 			goto error;
 		}
 	}
