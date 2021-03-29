@@ -1005,7 +1005,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		fixup_request(dnbd3_request);
 		mlen = sizeof(dnbd3_request) + iov[1].iov_len;
 		if (kernel_sendmsg(dev->sock, &msg, iov, 2, mlen) != mlen) {
-			dnbd3_dev_err_host_cur(dev, "couldn't send CMD_SIZE_REQUEST\n");
+			dnbd3_dev_err_host_cur(dev, "couldn't send CMD_SELECT_IMAGE\n");
 			goto error;
 		}
 		// receive reply header
@@ -1013,7 +1013,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		iov[0].iov_len = sizeof(dnbd3_reply);
 		if (kernel_recvmsg(dev->sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) !=
 		    sizeof(dnbd3_reply)) {
-			dnbd3_dev_err_host_cur(dev, "received corrupted reply header after CMD_SIZE_REQUEST\n");
+			dnbd3_dev_err_host_cur(dev, "received corrupted reply header after CMD_SELECT_IMAGE\n");
 			goto error;
 		}
 		// check reply header
@@ -1021,7 +1021,7 @@ int dnbd3_net_connect(dnbd3_device_t *dev)
 		if (dnbd3_reply.cmd != CMD_SELECT_IMAGE || dnbd3_reply.size < 3 || dnbd3_reply.size > MAX_PAYLOAD ||
 		    dnbd3_reply.magic != dnbd3_packet_magic) {
 			dnbd3_dev_err_host_cur(
-				dev, "received invalid reply to CMD_SIZE_REQUEST, image doesn't exist on server\n");
+				dev, "received invalid reply to CMD_SELECT_IMAGE, image doesn't exist on server\n");
 			goto error;
 		}
 		// receive reply payload
