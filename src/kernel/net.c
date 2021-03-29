@@ -28,6 +28,7 @@
 
 #include <linux/time.h>
 #include <linux/ktime.h>
+#include <linux/tcp.h>
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -427,9 +428,10 @@ error:
 		} // for loop over alt_servers
 
 		if (dev->panic) {
+			if (dev->panic_count < 255)
+				dev->panic_count++;
 			// If probe timeout is set, report error to block layer
-			if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count < 255 &&
-			    ++dev->panic_count == PROBE_COUNT_TIMEOUT + 1)
+			if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count == PROBE_COUNT_TIMEOUT + 1)
 				dnbd3_blk_fail_all_requests(dev);
 		}
 
@@ -844,11 +846,8 @@ cleanup:
 	return 0;
 }
 
-static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage *addr)
+static void set_socket_timeouts(struct socket *sock, int timeout_ms)
 {
-	ktime_t start;
-	int ret;
-	struct socket *sock;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
 	struct __kernel_sock_timeval timeout;
 #else
@@ -864,13 +863,8 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 	timeout_ptr = (char *)&timeout;
 #endif
 
-	timeout.tv_sec = SOCKET_TIMEOUT_CLIENT_DATA;
-	timeout.tv_usec = 0;
-
-	if (sock_create_kern(&init_net, addr->ss_family, SOCK_STREAM, IPPROTO_TCP, &sock) < 0) {
-		dev_err(dnbd3_device_to_dev(dev), "couldn't create socket\n");
-		return NULL;
-	}
+	timeout.tv_sec = timeout_ms / 1000;
+	timeout.tv_usec = (timeout_ms % 1000) * 1000;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
 	sock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO_NEW, timeout_ptr, sizeof(timeout));
@@ -879,31 +873,62 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 	sock_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, timeout_ptr, sizeof(timeout));
 	sock_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, timeout_ptr, sizeof(timeout));
 #endif
+}
+
+static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage *addr)
+{
+	ktime_t start;
+	int ret, connect_time_ms;
+	struct socket *sock;
+
+	if (sock_create_kern(&init_net, addr->ss_family, SOCK_STREAM, IPPROTO_TCP, &sock) < 0) {
+		dev_err(dnbd3_device_to_dev(dev), "couldn't create socket\n");
+		return NULL;
+	}
+
+	/* Only one retry, TCP no delay */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+	tcp_sock_set_syncnt(sock->sk, 1);
+	tcp_sock_set_nodelay(sock->sk);
+	/* because of our aggressive timeouts, this is pointless */
+	sock_no_linger(sock->sk);
+#else
+	/* add legacy version of this, but ignore others as they're not that important */
+	ret = 1;
+	kernel_setsockopt(sock, IPPROTO_TCP, TCP_SYNCNT,
+			(char *)&ret, sizeof(ret));
+#endif
+	/* allow this socket to use reserved mem (vm.mem_free_kbytes) */
+	sk_set_memalloc(sock->sk);
 	sock->sk->sk_allocation = GFP_NOIO;
+
+	if (dev->panic && dev->panic_count > 1) {
+		/* in panic mode for some time, start increasing timeouts */
+		connect_time_ms = dev->panic_count * 1000;
+	} else {
+		/* otherwise, use 2*RTT of current server */
+		connect_time_ms = dev->cur_server.rtt * 2 / 1000;
+	}
+	/* but obey a minimal configurable value */
+	if (connect_time_ms < SOCKET_TIMEOUT_CLIENT_DATA * 1000)
+		connect_time_ms = SOCKET_TIMEOUT_CLIENT_DATA * 1000;
+	set_socket_timeouts(sock, connect_time_ms);
 	start = ktime_get_real();
-	ret = kernel_connect(sock, (struct sockaddr *)addr, sizeof(*addr), O_NONBLOCK);
-	if (ret != 0 && ret != -EINPROGRESS) {
-		dev_dbg(dnbd3_device_to_dev(dev), "%pISpc connect failed (%d, blocked %dms)\n",
-				addr, ret, (int)ktime_ms_delta(ktime_get_real(), start));
-		goto error;
+	ret = kernel_connect(sock, (struct sockaddr *)addr, sizeof(*addr), 0);
+	connect_time_ms = (int)ktime_ms_delta(ktime_get_real(), start);
+	if (connect_time_ms > 2 * SOCKET_TIMEOUT_CLIENT_DATA * 1000) {
+		/* Either I'm losing my mind or there was a specific build of kernel
+		 * 5.x where SO_RCVTIMEO didn't affect the connect call above, so
+		 * this function would hang for over a minute for unreachable hosts.
+		 * Leave in this debug check for twice the configured timeout
+		 */
+		dev_dbg(dnbd3_device_to_dev(dev), "%pISpc connect call took %dms\n",
+				addr, connect_time_ms);
 	}
 	if (ret != 0) {
-		/* XXX How can we do a connect with short timeout? This is dumb */
-		start = ktime_get_real();
-
-		while (ktime_ms_delta(ktime_get_real(), start) < SOCKET_TIMEOUT_CLIENT_DATA * 1000) {
-			struct sockaddr_storage addr;
-
-			ret = kernel_getpeername(sock, (struct sockaddr *)&addr);
-			if (ret >= 0)
-				break;
-			msleep(1);
-		}
-		if (ret < 0) {
-			dev_dbg(dnbd3_device_to_dev(dev), "%pISpc: connect timed out (%d, %dms)\n",
-					addr, ret, (int)ktime_ms_delta(ktime_get_real(), start));
-			goto error;
-		}
+		dev_dbg(dnbd3_device_to_dev(dev), "%pISpc connect failed (%d, blocked %dms)\n",
+				addr, ret, connect_time_ms);
+		goto error;
 	}
 	return sock;
 error:
