@@ -38,7 +38,7 @@
 #include <sys/un.h>
 #include <errno.h>
 
-#define SOCK_PATH "/var/run/dnbd3.socket"
+#define SOCK_PATH "/run/dnbd3.socket"
 #define SOCK_BUFFER 1000
 #define DEV_LEN 15
 #define MAX_DEVS 50
@@ -68,7 +68,7 @@ static const struct option longOpts[] = {
 
 static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const msg);
 static void dnbd3_client_daemon();
-static void dnbd3_daemon_action(int client, int argc, char **argv);
+static void dnbd3_daemon_action(int client, int uid, int argc, char **argv);
 static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *actionName, char *host);
 static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int readAhead, const bool doLearnNewServers);
 static int dnbd3_daemon_send(int argc, char **argv);
@@ -86,11 +86,11 @@ static char host_to_string(const dnbd3_host_t *host, char *target, size_t target
 	if ( targetlen < 10 ) return false;
 	if ( host->type == HOST_IP6 ) {
 		*target++ = '[';
-		inet_ntop( AF_INET6, host->addr, target, targetlen - 10 );
+		inet_ntop( AF_INET6, host->addr, target, (socklen_t)targetlen - 10 );
 		target += strlen( target );
 		*target++ = ']';
 	} else if ( host->type == HOST_IP4 ) {
-		inet_ntop( AF_INET, host->addr, target, targetlen - 8 );
+		inet_ntop( AF_INET, host->addr, target, (socklen_t)targetlen - 8 );
 		target += strlen( target );
 	} else {
 		snprintf( target, targetlen, "<?addrtype=%d>", (int)host->type );
@@ -137,8 +137,9 @@ static char parse_address(char *string, dnbd3_host_t *host)
 	// Scan for port
 	char *portpos = NULL, *ptr = string;
 	while ( *ptr ) {
-		if ( *ptr == ':' )
-		portpos = ptr;
+		if ( *ptr == ':' ) {
+			portpos = ptr;
+		}
 		++ptr;
 	}
 	if ( portpos == NULL ) return 0; // No port in string
@@ -205,19 +206,20 @@ static int dnbd3_get_resolved_hosts(char *hosts_str, dnbd3_host_t *hosts, const 
 
 	do {
 		/* get next host from string */
-		while (*hosts_current_token == ' ') {
+		while ( *hosts_current_token == ' ' ) {
 			hosts_current_token++;
 		}
 
 		/* buffer substring of host to get ip from it */
-		hosts_last_host = strchr(hosts_current_token, ' ');
+		hosts_last_host = strchr( hosts_current_token, ' ' );
 		host_str_len = (hosts_last_host == NULL ? TMP_STR_LEN : (size_t)(hosts_last_host - hosts_current_token) + 1);
-		if ( host_str_len > TMP_STR_LEN )
+		if ( host_str_len > TMP_STR_LEN ) {
 			host_str_len = TMP_STR_LEN;
+		}
 
-		snprintf(host_str, host_str_len, "%s", hosts_current_token);
+		snprintf( host_str, host_str_len, "%s", hosts_current_token );
 
-		if (!dnbd3_get_ip(host_str, &hosts[hosts_index]))
+		if ( !dnbd3_get_ip( host_str, &hosts[hosts_index] ) )
 			return false;
 
 		hosts_index++;
@@ -239,9 +241,7 @@ int main(int argc, char *argv[])
 	bool learnNewServers = true;
 	int active_device_num = 0;
 
-	dnbd3_ioctl_t msg;
-	memset( &msg, 0, sizeof(dnbd3_ioctl_t) );
-	msg.len = (uint16_t)sizeof(dnbd3_ioctl_t);
+	dnbd3_ioctl_t msg = { .len = (uint16_t)sizeof(msg) };
 	msg.hosts_num = 0;
 	msg.read_ahead_kb = DEFAULT_READ_AHEAD_KB;
 	msg.imgname = NULL;
@@ -249,13 +249,22 @@ int main(int argc, char *argv[])
 	int opt = 0;
 	int longIndex = 0;
 
+	// In case the client was invoked as a suid binary, change uid back to original user
+	// and warn the user as this was legacy mode
+	if ( geteuid() == 0 && getuid() != 0 ) {
+		fprintf( stderr, "Warning! %s is a setuid binary. This is deprecated and not needed anymore.\n", argv[0] );
+		fprintf( stderr, "Switching back o user %d\n", (int)getuid() );
+		setgid( getgid() );
+		setuid( getuid() );
+	}
+
 	opt = getopt_long( argc, argv, optString, longOpts, &longIndex );
 
 	while ( opt != -1 ) {
 		switch ( opt ) {
 		case 'h':
-			msg.hosts_num = dnbd3_get_resolved_hosts(optarg, msg.hosts, MAX_HOSTS_PER_IOCTL);
-			if (!msg.hosts_num)
+			msg.hosts_num = (uint8_t)dnbd3_get_resolved_hosts( optarg, msg.hosts, MAX_HOSTS_PER_IOCTL );
+			if ( !msg.hosts_num )
 				exit( EXIT_FAILURE );
 			break;
 		case 'i':
@@ -330,13 +339,6 @@ int main(int argc, char *argv[])
 
 	// Direct requests
 
-	// In case the client was invoked as a suid binary, change uid back to original user
-	// when being used for direct ioctl, so that the device's permissions are taken into account
-	if ( geteuid() == 0 ) {
-		setgid( getgid() );
-		setuid( getuid() );
-	}
-
 	// close device
 	if ( action == IOCTL_CLOSE && msg.hosts_num == 0 && dev && (msg.imgname == NULL )) {
 		printf( "INFO: Closing device %s\n", dev );
@@ -377,14 +379,16 @@ int main(int argc, char *argv[])
 static int dnbd3_ioctl(const char *dev, const int command, dnbd3_ioctl_t * const msg)
 {
 	const int fd = open( dev, O_WRONLY );
-	if ( fd < 0 ) {
-		printf( "open() for %s failed.\n", dev );
+	if ( fd == -1 ) {
+		perror( "open() failed" );
 		return -ENODEV;
 	}
-	if ( msg != NULL && msg->imgname != NULL ) msg->imgnamelen = (uint16_t)strlen( msg->imgname );
+	if ( msg != NULL && msg->imgname != NULL ) {
+		msg->imgnamelen = (uint16_t)strlen( msg->imgname );
+	}
 	const int ret = ioctl( fd, command, msg );
 	if ( ret < 0 ) {
-		printf( "ioctl() failed.\n" );
+		perror( "ioctl() failed" );
 	}
 	close( fd );
 	return ret;
@@ -398,11 +402,8 @@ static void dnbd3_client_daemon()
 	struct timeval tv;
 	int done, ret, len;
 	socklen_t socklen;
-
-	if ( geteuid() != 0 ) {
-		printf( "Only root can run the dnbd3-client in daemon mode!\n" );
-		exit( 1 );
-	}
+	struct ucred ucred;
+	int fdTest;
 
 	if ( (listener = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1 ) {
 		perror( "socket" );
@@ -416,10 +417,19 @@ static void dnbd3_client_daemon()
 		perror( "bind" );
 		exit( 1 );
 	}
-	chmod( addrLocal.sun_path, 0600 );
+	fchmod( listener, 0666 );
+	chmod( SOCK_PATH, 0666 );
 	if ( listen( listener, 5 ) == -1 ) {
 		perror( "listen" );
+		unlink( addrLocal.sun_path );
 		exit( 1 );
+	}
+
+	fdTest = open( "/dev/dnbd0", O_RDWR );
+	if ( fdTest == -1 ) {
+		perror( "Opening /dev/dnbd0 failed. Daemon will probably not work" );
+	} else {
+		close( fdTest );
 	}
 
 	memset( openDevices, -1, sizeof(openDevices) );
@@ -431,6 +441,14 @@ static void dnbd3_client_daemon()
 			sleep( 1 );
 			continue;
 		}
+
+		socklen = sizeof(ucred);
+		if ( getsockopt( client, SOL_SOCKET, SO_PEERCRED, &ucred, &socklen ) == -1 ) {
+			perror( "Could not get credentials of connection" );
+			close( client );
+			continue;
+		}
+		printf("Call from user %d\n", (int)ucred.uid );
 
 		tv.tv_sec = 1;
 		tv.tv_usec = 0;
@@ -458,24 +476,24 @@ static void dnbd3_client_daemon()
 				}
 				if ( pos >= end ) break;
 				argv[argc++] = pos;
-				printf("Arg %d: '%s'\n", argc, pos);
+				//printf("Arg %d: '%s'\n", argc, pos);
 				while ( *pos != '\0' ) { // This will always be in bounds because of -4 above
 					if ( ++pos >= end ) break;
 				}
 			}
-			dnbd3_daemon_action( client, argc, argv );
+			dnbd3_daemon_action( client, (int)ucred.uid, argc, argv );
 		}
 
 		close( client );
 	}
 }
 
-static void dnbd3_daemon_action(int client, int argc, char **argv)
+static void dnbd3_daemon_action(int client, int uid, int argc, char **argv)
 {
 	int opt = 0;
 	int longIndex = 0;
 	char *host = NULL, *image = NULL, *device = NULL;
-	int rid = 0, uid = 0, killMe = false, ahead = 512;
+	int rid = 0, killMe = false, ahead = 512;
 	int len;
 	int action = -1;
 	const char *actionName = NULL;
@@ -499,9 +517,6 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 			break;
 		case 'r':
 			rid = atoi( optarg );
-			break;
-		case 'U':
-			uid = atoi( optarg );
 			break;
 		case 'c':
 			action = IOCTL_CLOSE;
@@ -529,14 +544,14 @@ static void dnbd3_daemon_action(int client, int argc, char **argv)
 	}
 
 	if ( killMe ) {
-		if ( uid != 0 ) {
+		if ( uid != geteuid() ) {
 			printf( "Ignoring kill request by user %d\n", uid );
 			close( client );
 			return;
 		}
 		printf( "Received kill request; exiting.\n" );
-		close( client );
 		unlink( SOCK_PATH );
+		close( client );
 		exit( 0 );
 	}
 
@@ -573,9 +588,7 @@ static int dnbd3_daemon_ioctl(int uid, char *device, int action, const char *act
 	} else {
 		index = atoi( device );
 	}
-	dnbd3_ioctl_t msg;
-	memset( &msg, 0, sizeof(msg) );
-	msg.len = (uint16_t)sizeof(msg);
+	dnbd3_ioctl_t msg = { .len = (uint16_t)sizeof(msg) };
 	if ( host != NULL ) {
 		dnbd3_get_ip( host, &msg.hosts[0] );
 	}
@@ -608,16 +621,19 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int re
 	static char dev[DEV_LEN];
 	printf( "Opening a device for %s on %s\n", image, host );
 	// Check number of open devices
-	for (i = 0; i < MAX_DEVS; ++i) {
-		if ( openDevices[i] == uid ) sameUser++;
-	}
-	if ( sameUser > 1 ) {
-		printf( "Ignoring request by %d as there are already %d open devices for that user.\n", uid, sameUser );
-		return NULL ;
+	if ( uid != 0 ) {
+		for ( i = 0; i < MAX_DEVS; ++i ) {
+			if ( openDevices[i] == uid ) sameUser++;
+		}
+		if ( sameUser > 1 ) {
+			printf( "Ignoring request by %d as there are already %d open devices for that user.\n", uid, sameUser );
+			return NULL;
+		}
 	}
 	// Find free device
-	for (i = 0; i < MAX_DEVS; ++i) {
-		if ( openDevices[i] != -1 ) continue;
+	for ( i = 0; i < MAX_DEVS; ++i ) {
+		if ( openDevices[i] != -1 )
+			continue;
 		snprintf( dev, DEV_LEN, "/dev/dnbd%d", i );
 		if ( stat( dev, &st ) == -1 ) {
 			break;
@@ -648,7 +664,6 @@ static char* dnbd3_daemon_open(int uid, char *host, char *image, int rid, int re
 
 static int dnbd3_daemon_send(int argc, char **argv)
 {
-	const int uid = getuid();
 	int s, i, len;
 	struct sockaddr_un remote;
 	char buffer[SOCK_BUFFER];
@@ -668,7 +683,6 @@ static int dnbd3_daemon_send(int argc, char **argv)
 	// (Re)build argument string into a single one, arguments separated by null chars
 	char *pos = buffer;
 	char *end = buffer + SOCK_BUFFER;
-	pos += snprintf( pos, end - pos, "--user%c%d", (int)'\0', uid ) + 1;
 	for (i = 1; i < argc && pos < end; ++i) {
 		pos += snprintf( pos, end - pos, "%s", argv[i] ) + 1;
 	}
@@ -725,7 +739,6 @@ static void dnbd3_print_help(char *argv_0)
 	printf( "      --daemon \t\t Run as helper daemon\n" );
 	printf( "      --kill \t\t Kill running helper daemon\n\n" );
 	printf( "The helper daemon makes it possible for normal users to connect dnbd3 devices.\n" );
-	printf( "The client binary needs to be a setuid program for this to work!\n" );
 }
 
 void dnbd3_print_version()
