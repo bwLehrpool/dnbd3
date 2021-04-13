@@ -24,19 +24,20 @@ atomic_bool _lookupMissingForProxy = true;
 atomic_bool _sparseFiles = false;
 atomic_bool _ignoreAllocErrors = false;
 atomic_bool _removeMissingImages = true;
-atomic_int _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
-atomic_int _clientTimeout = SOCKET_TIMEOUT_CLIENT;
+atomic_uint _uplinkTimeout = SOCKET_TIMEOUT_UPLINK;
+atomic_uint _clientTimeout = SOCKET_TIMEOUT_CLIENT;
 atomic_bool _closeUnusedFd = false;
 atomic_bool _vmdkLegacyMode = false;
 // Not really needed anymore since we have '+' and '-' in alt-servers
 atomic_bool _proxyPrivateOnly = false;
+atomic_bool _pretendClient = false;
 atomic_int _autoFreeDiskSpaceDelay = 3600 * 10;
 // [limits]
 atomic_int _maxClients = SERVER_MAX_CLIENTS;
 atomic_int _maxImages = SERVER_MAX_IMAGES;
-atomic_int _maxPayload = 9000000; // 9MB
+atomic_uint _maxPayload = 9000000; // 9MB
 atomic_uint_fast64_t _maxReplicationSize = (uint64_t)100000000000LL;
-atomic_bool _pretendClient = false;
+atomic_uint _maxPrefetch = 262144; // 256KB
 
 /**
  * True when loading config the first time. Consecutive loads will
@@ -60,17 +61,17 @@ static const char* units = "KMGTPEZY";
 
 static bool parse64(const char *in, atomic_int_fast64_t *out, const char *optname);
 static bool parse64u(const char *in, atomic_uint_fast64_t *out, const char *optname);
-static bool parse32(const char *in, atomic_int *out, const char *optname) UNUSED;
-static bool parse32u(const char *in, atomic_int *out, const char *optname);
+static bool parse32(const char *in, atomic_int *out, const char *optname);
+static bool parse32u(const char *in, atomic_uint *out, const char *optname);
 
 static int ini_handler(void *custom UNUSED, const char* section, const char* key, const char* value)
 {
 	if ( initialLoad ) {
 		if ( _basePath == NULL ) SAVE_TO_VAR_STR( dnbd3, basePath );
 		SAVE_TO_VAR_BOOL( dnbd3, vmdkLegacyMode );
-		SAVE_TO_VAR_UINT( dnbd3, listenPort );
-		SAVE_TO_VAR_UINT( limits, maxClients );
-		SAVE_TO_VAR_UINT( limits, maxImages );
+		SAVE_TO_VAR_INT( dnbd3, listenPort );
+		SAVE_TO_VAR_INT( limits, maxClients );
+		SAVE_TO_VAR_INT( limits, maxImages );
 	}
 	SAVE_TO_VAR_BOOL( dnbd3, isProxy );
 	SAVE_TO_VAR_BOOL( dnbd3, proxyPrivateOnly );
@@ -81,12 +82,13 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_BOOL( dnbd3, ignoreAllocErrors );
 	SAVE_TO_VAR_BOOL( dnbd3, removeMissingImages );
 	SAVE_TO_VAR_BOOL( dnbd3, closeUnusedFd );
-	SAVE_TO_VAR_UINT( dnbd3, serverPenalty );
-	SAVE_TO_VAR_UINT( dnbd3, clientPenalty );
+	SAVE_TO_VAR_INT( dnbd3, serverPenalty );
+	SAVE_TO_VAR_INT( dnbd3, clientPenalty );
 	SAVE_TO_VAR_UINT( dnbd3, uplinkTimeout );
 	SAVE_TO_VAR_UINT( dnbd3, clientTimeout );
 	SAVE_TO_VAR_UINT( limits, maxPayload );
 	SAVE_TO_VAR_UINT64( limits, maxReplicationSize );
+	SAVE_TO_VAR_UINT( limits, maxPrefetch );
 	SAVE_TO_VAR_BOOL( dnbd3, pretendClient );
 	SAVE_TO_VAR_INT( dnbd3, autoFreeDiskSpaceDelay );
 	if ( strcmp( section, "dnbd3" ) == 0 && strcmp( key, "backgroundReplication" ) == 0 ) {
@@ -295,7 +297,7 @@ static bool parse32(const char *in, atomic_int *out, const char *optname)
 	return true;
 }
 
-static bool parse32u(const char *in, atomic_int *out, const char *optname)
+static bool parse32u(const char *in, atomic_uint *out, const char *optname)
 {
 	atomic_int_fast64_t v;
 	if ( !parse64( in, &v, optname ) ) return false;
@@ -303,7 +305,7 @@ static bool parse32u(const char *in, atomic_int *out, const char *optname)
 		logadd( LOG_WARNING, "'%s' must be between %d and %d, but is '%s'", optname, (int)0, (int)INT_MAX, in );
 		return false;
 	}
-	*out = (int)v;
+	*out = (unsigned int)v;
 	return true;
 }
 
@@ -351,6 +353,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PINT(maxImages);
 	PINT(maxPayload);
 	PUINT64(maxReplicationSize);
+	PINT(maxPrefetch);
 	return size - rem;
 }
 

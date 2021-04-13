@@ -229,12 +229,12 @@ extern atomic_bool _removeMissingImages;
 /**
  * Read timeout when waiting for or sending data on an uplink
  */
-extern atomic_int _uplinkTimeout;
+extern atomic_uint _uplinkTimeout;
 
 /**
  * Read timeout when waiting for or sending data from/to client
  */
-extern atomic_int _clientTimeout;
+extern atomic_uint _clientTimeout;
 
 /**
  * If true, images with no active client will have their fd closed after some
@@ -309,7 +309,7 @@ extern atomic_int _maxImages;
  * Usually this isn't even a megabyte for "real" clients (blockdev
  * or fuse).
  */
-extern atomic_int _maxPayload;
+extern atomic_uint _maxPayload;
 
 /**
  * If in proxy mode, don't replicate images that are
@@ -330,6 +330,15 @@ extern atomic_bool _pretendClient;
  * Only relevant in proxy mode.
  */
 extern atomic_int _autoFreeDiskSpaceDelay;
+
+/**
+ * When handling a client request, this sets the maximum amount
+ * of bytes we prefetch offset right at the end of the client request.
+ * The prefetch size will be MIN( length * 3, _maxPrefetch ), if
+ * length <= _maxPrefetch, so effectively, setting this to 0 disables
+ * any prefetching.
+ */
+extern atomic_uint _maxPrefetch;
 
 /**
  * Load the server configuration.
