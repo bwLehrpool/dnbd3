@@ -2,6 +2,7 @@
 #include <dnbd3/shared/log.h>
 #include <dnbd3/types.h>
 #include <arpa/inet.h> // inet_ntop
+#include <netinet/tcp.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -53,7 +54,9 @@ int sock_connect(const dnbd3_host_t * const addr, const int connect_ms, const in
 	} else {
 		sock_setTimeout( client_sock, connect_ms );
 	}
-	int e2;
+	// NODELAY makes sense for the client side, which should be all users in this code base
+	int e2 = 1;
+	setsockopt( client_sock, IPPROTO_TCP, TCP_NODELAY, (void *)&e2, sizeof(e2) );
 	for ( int i = 0; i < 5; ++i ) {
 		int ret = connect( client_sock, (struct sockaddr *)&ss, addrlen );
 		e2 = errno;
