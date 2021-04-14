@@ -18,6 +18,8 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
+static const uint8_t HOP_FLAG_BGR = 0x80;
+static const uint8_t HOP_FLAG_PREFETCH = 0x40;
 #define FILE_BYTES_PER_MAP_BYTE ( DNBD3_BLOCK_SIZE * 8 )
 #define MAP_BYTES_PER_HASH_BLOCK (int)( HASH_BLOCK_SIZE / FILE_BYTES_PER_MAP_BYTE )
 #define MAP_INDEX_HASH_START_MASK ( ~(int)( MAP_BYTES_PER_HASH_BLOCK - 1 ) )
@@ -251,8 +253,8 @@ void uplink_removeEntry(dnbd3_uplink_t *uplink, void *data, uplink_callback call
 bool uplink_requestClient(dnbd3_client_t *client, uplink_callback callback, uint64_t handle, uint64_t start, uint32_t length, uint8_t hops)
 {
 	assert( client != NULL && callback != NULL );
-	if ( hops > 200 ) { // This is just silly
-		logadd( LOG_WARNING, "Refusing to relay a request that has > 200 hops" );
+	if ( ( hops & 0x3f ) > 60 ) { // This is just silly
+		logadd( LOG_WARNING, "Refusing to relay a request that has > 60 hops" );
 		return false;
 	}
 	dnbd3_uplink_t *uplink = ref_get_uplink( &client->image->uplinkref );
@@ -338,6 +340,12 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 {
 	assert( uplink != NULL );
 	assert( data == NULL || callback != NULL );
+	if ( ( hops & HOP_FLAG_BGR ) // This is a background replication request
+			&& _backgroundReplication != BGR_FULL ) { // Deny if we're not doing BGR
+		// TODO: Allow BGR_HASHBLOCK too, but only if hash block isn't completely empty
+		logadd( LOG_DEBUG2, "Dopping client because of BGR policy" );
+		return false;
+	}
 	if ( uplink->shutdown ) {
 		logadd( LOG_DEBUG1, "Uplink request for image with uplink shutting down" );
 		return false;
@@ -348,8 +356,14 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 		return false;
 	}
 
-	req_t req, preReq;
 	hops++;
+	if ( callback == NULL ) {
+		// Set upper-most bit for replication requests that we fire
+		// In client mode, at least set prefetch flag to prevent prefetch cascading
+		hops |= _pretendClient ? HOP_FLAG_PREFETCH : HOP_FLAG_BGR;
+	}
+
+	req_t req, preReq;
 	dnbd3_queue_entry_t *request = NULL, *last = NULL, *pre = NULL;
 	bool isNew;
 	const uint64_t end = start + length;
@@ -447,6 +461,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 	// async prefetching in another thread was sometimes so slow that we'd process
 	// another request from the same client before the prefetch job would execute.
 	if ( callback != NULL && ( isNew || request->clients == NULL || request->clients->data == data )
+			&& !( hops & (HOP_FLAG_BGR | HOP_FLAG_PREFETCH) ) // No cascading of prefetches
 			&& end == request->to && length <= _maxPrefetch ) {
 		// Only if this is a client request, and the !! end boundary matches exactly !!
 		// (See above for reason why)
@@ -464,7 +479,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 			pre->handle = preReq.handle = ++uplink->queueId;
 			pre->from = preReq.start;
 			pre->to = preReq.end;
-			pre->hopCount = hops;
+			pre->hopCount = hops | HOP_FLAG_PREFETCH;
 			pre->sent = true; // Optimistic; would be set to false on failure
 			pre->clients = NULL;
 #ifdef DEBUG
@@ -498,7 +513,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 		ret1 = requestBlock( uplink, &req, hops );
 	}
 	if ( pre != NULL ) {
-		ret2 = requestBlock( uplink, &preReq, hops );
+		ret2 = requestBlock( uplink, &preReq, hops | HOP_FLAG_PREFETCH );
 	}
 	if ( !ret1 || !ret2 ) { // Set with send locked
 		uplink->image->problem.uplink = true;
