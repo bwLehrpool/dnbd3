@@ -122,13 +122,15 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
 
 			/* add specified servers to alt server list */
+			for (i = 0; i < NUMBER_SERVERS; i++)
+				dev->alt_servers[i].host.ss_family = 0;
 			for (i = 0; i < msg->hosts_num; i++) {
 				/* copy provided host into corresponding alt server slot */
 				if (dnbd3_add_server(dev, &msg->hosts[i]) == 0)
 					dev_dbg(dnbd3_device_to_dev(dev), "adding server %pISpc\n",
 						&dev->alt_servers[i].host);
 				else
-					dev_warn(dnbd3_device_to_dev(dev), "could not add alt server %pISpc\n",
+					dev_warn(dnbd3_device_to_dev(dev), "could not add server %pISpc\n",
 						&dev->alt_servers[i].host);
 			}
 
@@ -136,21 +138,16 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			 * probe added alt servers in specified order and
 			 * choose first working server as initial server
 			 */
-			for (i = 0; i < msg->hosts_num; i++) {
+			result = -EPROTONOSUPPORT;
+			for (i = 0; i < NUMBER_SERVERS; i++) {
 				/* probe added alt server */
 				if (dev->alt_servers[i].host.ss_family == 0)
 					continue; // Empty slot
 
 				dev->cur_server.host = dev->alt_servers[i].host;
-				if (dnbd3_net_connect(dev) != 0) {
-					/*
-					 * probing server failed, cleanup connection and
-					 * proceed with next specified server
-					 */
-					dnbd3_net_disconnect(dev);
-					result = -ENOENT;
-				} else {
-					/* probing server succeeds, abort probing of other servers */
+				result = dnbd3_net_connect(dev);
+				if (result == 0) {
+					/* connection established, store index of server and exit loop */
 					result = i;
 					break;
 				}
