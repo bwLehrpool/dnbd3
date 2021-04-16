@@ -3,7 +3,7 @@
  *
  * Copyright(c) 2011-2012 Johann Latocha <johann@latocha.de>
  *
- * This file may be licensed under the terms of of the
+ * This file may be licensed under the terms of the
  * GNU General Public License Version 2 (the ``GPL'').
  *
  * Software distributed under the License is distributed
