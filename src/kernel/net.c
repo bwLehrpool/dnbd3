@@ -87,7 +87,7 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 static int dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 		struct sockaddr_storage *addr, uint16_t *remote_version);
 
-int dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage *addr, struct socket *sock);
+static int dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage *addr, struct socket *sock);
 
 static void dnbd3_net_heartbeat(struct timer_list *arg)
 {
@@ -180,6 +180,7 @@ static int dnbd3_net_discover(void *data)
 				j = ((ktime_to_s(start) >> i) ^ (ktime_to_us(start) >> j)) % NUMBER_SERVERS;
 				if (j != i) {
 					int tmp = check_order[i];
+
 					check_order[i] = check_order[j];
 					check_order[j] = tmp;
 				}
@@ -946,7 +947,7 @@ error:
 	return 0;
 }
 
-int dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage *addr, struct socket *sock)
+static int dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage *addr, struct socket *sock)
 {
 	dnbd3_request_t dnbd3_request = { .magic = dnbd3_packet_magic };
 	dnbd3_reply_t dnbd3_reply;

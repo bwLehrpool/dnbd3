@@ -240,7 +240,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 							result = -EAGAIN;
 						}
 					} else {
-						/* switch succeeded, fake very low RTT so we don't switch away again soon */
+						/* switch succeeded */
+						/* fake very low RTT so we don't switch away again soon */
 						mutex_lock(&dev->alt_servers_lock);
 						if (is_same_server(&alt_server->host, &new_addr)) {
 							alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2]
