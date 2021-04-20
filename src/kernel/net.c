@@ -471,7 +471,8 @@ static int dnbd3_net_send(void *data)
 	return 0;
 
 cleanup:
-	if (!atomic_read(&dev->connection_lock)) {
+	if (!atomic_read(&dev->connection_lock) && !kthread_should_stop()) {
+		dev_dbg(dnbd3_device_to_dev(dev), "send thread: Triggering panic mode...\n");
 		if (dev->sock)
 			kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 		dev->panic = 1;
@@ -540,7 +541,6 @@ static int dnbd3_net_receive(void *data)
 				/* for all errors other than -EAGAIN, print message and abort thread */
 				if (!atomic_read(&dev->connection_lock))
 					dnbd3_dev_err_host_cur(dev, "connection to server lost (receive)\n");
-				ret = -ESHUTDOWN;
 				goto cleanup;
 			}
 		}
@@ -548,7 +548,7 @@ static int dnbd3_net_receive(void *data)
 		/* check if arrived data is valid */
 		if (ret != sizeof(dnbd3_reply)) {
 			if (!atomic_read(&dev->connection_lock))
-				dnbd3_dev_err_host_cur(dev, "recv msg header\n");
+				dnbd3_dev_err_host_cur(dev, "recv partial msg header (%d bytes)\n", ret);
 			ret = -EINVAL;
 			goto cleanup;
 		}
@@ -605,10 +605,14 @@ static int dnbd3_net_receive(void *data)
 						dnbd3_dev_dbg_host_cur(
 							dev, "remote peer has performed an orderly shutdown\n");
 						ret = 0;
+					} else if (ret < 0) {
+						if (!atomic_read(&dev->connection_lock))
+							dnbd3_dev_err_host_cur(dev,
+								"disconnect: receiving from net to block layer\n");
 					} else {
 						if (!atomic_read(&dev->connection_lock))
 							dnbd3_dev_err_host_cur(dev,
-									       "receiving from net to block layer\n");
+								"receiving from net to block layer (%d bytes)\n", ret);
 						ret = -EINVAL;
 					}
 					// Requeue request
@@ -696,7 +700,8 @@ static int dnbd3_net_receive(void *data)
 	return 0;
 
 cleanup:
-	if (!atomic_read(&dev->connection_lock)) {
+	if (!atomic_read(&dev->connection_lock) && !kthread_should_stop()) {
+		dev_dbg(dnbd3_device_to_dev(dev), "recv thread: Triggering panic mode...\n");
 		if (dev->sock)
 			kernel_sock_shutdown(dev->sock, SHUT_RDWR);
 		dev->panic = 1;

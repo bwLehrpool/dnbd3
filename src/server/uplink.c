@@ -973,6 +973,7 @@ static void handleReceive(dnbd3_uplink_t *uplink)
 	dnbd3_reply_t inReply;
 	int ret;
 	assert_uplink_thread();
+	assert( uplink->queueLen >= 0 );
 	for (;;) {
 		ret = dnbd3_read_reply( uplink->current.fd, &inReply, false );
 		if ( unlikely( ret == REPLY_INTR ) && likely( !_shutdown && !uplink->shutdown ) ) continue;

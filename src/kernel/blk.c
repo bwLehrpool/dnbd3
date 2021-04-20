@@ -243,8 +243,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 						for (i = 0; i < NUMBER_SERVERS; ++i) {
 							alt_server = &dev->alt_servers[i];
 							if (is_same_server(&alt_server->host, &new_addr)) {
-								alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2]
-									= alt_server->rtts[3] = 4;
+								alt_server->rtts[0] = alt_server->rtts[1]
+									= alt_server->rtts[2] = alt_server->rtts[3] = 4;
 								alt_server->best_count = 100;
 							} else {
 								alt_server->rtts[0] <<= 2;
