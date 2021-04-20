@@ -238,12 +238,19 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 						}
 					} else {
 						/* switch succeeded */
-						/* fake very low RTT so we don't switch away again soon */
+						/* fake RTT so we don't switch away again soon */
 						mutex_lock(&dev->alt_servers_lock);
-						if (is_same_server(&alt_server->host, &new_addr)) {
-							alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2]
-								= alt_server->rtts[3] = 4;
-							alt_server->best_count = 100;
+						for (i = 0; i < NUMBER_SERVERS; ++i) {
+							alt_server = &dev->alt_servers[i];
+							if (is_same_server(&alt_server->host, &new_addr)) {
+								alt_server->rtts[0] = alt_server->rtts[1] = alt_server->rtts[2]
+									= alt_server->rtts[3] = 4;
+								alt_server->best_count = 100;
+							} else {
+								alt_server->rtts[0] <<= 2;
+								alt_server->rtts[2] <<= 2;
+								alt_server->best_count = 0;
+							}
 						}
 						mutex_unlock(&dev->alt_servers_lock);
 					}
