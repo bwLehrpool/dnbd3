@@ -551,7 +551,7 @@ static void altservers_findUplinkInternal(dnbd3_uplink_t *uplink)
 		int server = servers[itAlt];
 		// Connect
 		clock_gettime( BEST_CLOCK_SOURCE, &start );
-		int sock = sock_connect( &altServers[server].host, 750, 1000 );
+		int sock = sock_connect( &altServers[server].host, 750, _uplinkTimeout );
 		if ( sock == -1 ) { // Connection failed means global error
 			altservers_serverFailed( server );
 			continue;
@@ -654,7 +654,6 @@ failed:
 		} else {
 			LOG( LOG_DEBUG1, "Change - best: %luµs, current: %luµs", bestRtt, currentRtt );
 		}
-		sock_setTimeout( best.fd, _uplinkTimeout );
 		mutex_lock( &uplink->rttLock );
 		uplink->better = best;
 		uplink->rttTestResult = RTT_DOCHANGE;

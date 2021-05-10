@@ -1258,7 +1258,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 		bool ok = false;
 		int sock;
 		if ( i >= count ) {
-			sock = sock_multiConnect( cons, NULL, 100, 1000 );
+			sock = sock_multiConnect( cons, NULL, 100, _uplinkTimeout );
 			if ( sock == -2 ) break;
 		} else {
 			if ( log_hasMask( LOG_DEBUG2 ) ) {
@@ -1267,7 +1267,7 @@ static dnbd3_image_t *loadImageProxy(char * const name, const uint16_t revision,
 				host[len] = '\0';
 				logadd( LOG_DEBUG2, "Trying to replicate from %s", host );
 			}
-			sock = sock_multiConnect( cons, &servers[i], 100, 1000 );
+			sock = sock_multiConnect( cons, &servers[i], 100, _uplinkTimeout );
 		}
 		if ( sock == -1 || sock == -2 ) continue;
 		salen = sizeof(sa);
@@ -1325,7 +1325,6 @@ server_fail: ;
 	image = image_get( name, acceptedRemoteRid, false );
 	if ( image != NULL && uplinkSock != -1 ) {
 		// If so, init the uplink and pass it the socket
-		sock_setTimeout( uplinkSock, _uplinkTimeout );
 		if ( !uplink_init( image, uplinkSock, &uplinkServer, remoteProtocolVersion ) ) {
 			close( uplinkSock );
 		} else {
