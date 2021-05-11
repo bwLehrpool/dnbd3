@@ -38,6 +38,7 @@ atomic_int _maxImages = SERVER_MAX_IMAGES;
 atomic_uint _maxPayload = 9000000; // 9MB
 atomic_uint_fast64_t _maxReplicationSize = (uint64_t)100000000000LL;
 atomic_uint _maxPrefetch = 262144; // 256KB
+atomic_uint _minRequestSize = 0;
 
 /**
  * True when loading config the first time. Consecutive loads will
@@ -89,6 +90,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_UINT( limits, maxPayload );
 	SAVE_TO_VAR_UINT64( limits, maxReplicationSize );
 	SAVE_TO_VAR_UINT( limits, maxPrefetch );
+	SAVE_TO_VAR_UINT( limits, minRequestSize );
 	SAVE_TO_VAR_BOOL( dnbd3, pretendClient );
 	SAVE_TO_VAR_INT( dnbd3, autoFreeDiskSpaceDelay );
 	if ( strcmp( section, "dnbd3" ) == 0 && strcmp( key, "backgroundReplication" ) == 0 ) {
@@ -134,16 +136,30 @@ void globals_loadConfig()
 	if ( initialLoad ) {
 		sanitizeFixedConfig();
 	}
-	if ( _backgroundReplication == BGR_FULL && _sparseFiles && _bgrMinClients < 5 ) {
-		logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true and bgrMinClients is too low" );
-		_sparseFiles = false;
-	}
-	if ( _bgrWindowSize < 1 ) {
-		_bgrWindowSize = 1;
-	} else if ( _bgrWindowSize > UPLINK_MAX_QUEUE - 10 ) {
-		_bgrWindowSize = UPLINK_MAX_QUEUE - 10;
-		logadd( LOG_MINOR, "Limiting bgrWindowSize to %d, because of UPLINK_MAX_QUEUE",
-				_bgrWindowSize );
+	if ( _isProxy ) {
+		if ( _backgroundReplication == BGR_FULL && _sparseFiles && _bgrMinClients < 5 ) {
+			logadd( LOG_WARNING, "Ignoring 'sparseFiles=true' since backgroundReplication is set to true and bgrMinClients is too low" );
+			_sparseFiles = false;
+		}
+		if ( _bgrWindowSize < 1 ) {
+			_bgrWindowSize = 1;
+		} else if ( _bgrWindowSize > UPLINK_MAX_QUEUE - 10 ) {
+			_bgrWindowSize = UPLINK_MAX_QUEUE - 10;
+			logadd( LOG_MINOR, "Limiting bgrWindowSize to %d, because of UPLINK_MAX_QUEUE",
+					_bgrWindowSize );
+		}
+		if ( _maxPayload < 256 * 1024 ) {
+			logadd( LOG_WARNING, "maxPayload was increased to 256k" );
+			_maxPayload = 256 * 1024;
+		}
+		if ( _maxPrefetch > _maxPayload ) {
+			logadd( LOG_WARNING, "Reducing maxPrefetch to maxPayload" );
+			_maxPrefetch = _maxPayload;
+		}
+		if ( _minRequestSize > _maxPayload ) {
+			logadd( LOG_WARNING, "Reducing minRequestSize to maxPayload" );
+			_minRequestSize = _maxPayload;
+		}
 	}
 	// Dump config as interpreted
 	char buffer[2000];
@@ -354,6 +370,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PINT(maxPayload);
 	PUINT64(maxReplicationSize);
 	PINT(maxPrefetch);
+	PINT(minRequestSize);
 	return size - rem;
 }
 

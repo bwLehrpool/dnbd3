@@ -360,7 +360,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 	if ( callback == NULL ) {
 		// Set upper-most bit for replication requests that we fire
 		// In client mode, at least set prefetch flag to prevent prefetch cascading
-		hops |= _pretendClient ? HOP_FLAG_PREFETCH : HOP_FLAG_BGR;
+		hops |= (uint8_t)( _pretendClient ? HOP_FLAG_PREFETCH : HOP_FLAG_BGR );
 	}
 
 	req_t req, preReq;
@@ -369,7 +369,7 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 	const uint64_t end = start + length;
 	req.start = start & ~(DNBD3_BLOCK_SIZE - 1);
 	req.end = end;
-	/* Don't do this for now -- this breaks matching of prefetch jobs, since they'd
+	/* Don't do this  -- this breaks matching of prefetch jobs, since they'd
 	 * be misaligned, and the next client request wouldn't match anything.
 	 * To improve this, we need to be able to attach a queue_client to multiple queue_entries
 	 * and then serve it once all the queue_entries are done (atomic_int in queue_client).
@@ -379,11 +379,11 @@ static bool uplink_requestInternal(dnbd3_uplink_t *uplink, void *data, uplink_ca
 	 * and we should just drop all affected clients. Then as a next step, don't serve the
 	 * clients form the receive buffer, but just issue a normal sendfile() call after writing
 	 * the received data to the local cache.
-	if ( callback != NULL ) {
+	 */
+	if ( callback != NULL && _minRequestSize != 0 ) {
 		// Not background replication request, extend request size
 		extendRequest( req.start, &req.end, uplink->image, _minRequestSize );
 	}
-	*/
 	req.end = (req.end + DNBD3_BLOCK_SIZE - 1) & ~(DNBD3_BLOCK_SIZE - 1);
 	// Critical section - work with the queue
 	mutex_lock( &uplink->queueLock );
@@ -889,9 +889,18 @@ static bool sendReplicationRequest(dnbd3_uplink_t *uplink)
 			uplink->nextReplicationIndex = -1;
 			break;
 		}
-		const uint64_t offset = (uint64_t)replicationIndex * FILE_BYTES_PER_MAP_BYTE;
-		const uint32_t size = (uint32_t)MIN( image->virtualFilesize - offset, FILE_BYTES_PER_MAP_BYTE );
 		const uint64_t handle = ++uplink->queueId;
+		const uint64_t offset = (uint64_t)replicationIndex * FILE_BYTES_PER_MAP_BYTE;
+		uint32_t size = (uint32_t)MIN( image->virtualFilesize - offset, FILE_BYTES_PER_MAP_BYTE );
+		// Extend the default 32k request size if _minRequestSize is > 32k
+		for ( size_t extra = 1; extra < ( _minRequestSize / FILE_BYTES_PER_MAP_BYTE )
+				&& offset + size < image->virtualFilesize
+				&& _backgroundReplication == BGR_FULL; ++extra ) {
+			if ( atomic_load_explicit( &cache->map[replicationIndex+1], memory_order_relaxed ) == 0xff )
+				break; // Hit complete 32k block, stop here
+			replicationIndex++;
+			size += (uint32_t)MIN( image->virtualFilesize - offset - size, FILE_BYTES_PER_MAP_BYTE );
+		}
 		if ( !uplink_requestInternal( uplink, NULL, NULL, handle, offset, size, 0 ) ) {
 			logadd( LOG_DEBUG1, "Error sending background replication request to uplink server (%s:%d)",
 					PIMG(uplink->image) );

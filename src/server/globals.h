@@ -341,6 +341,12 @@ extern atomic_int _autoFreeDiskSpaceDelay;
 extern atomic_uint _maxPrefetch;
 
 /**
+ * Use with care. Can severely degrade performance.
+ * Set either 0 or very high.
+ */
+extern atomic_uint _minRequestSize;
+
+/**
  * Load the server configuration.
  */
 void globals_loadConfig();
