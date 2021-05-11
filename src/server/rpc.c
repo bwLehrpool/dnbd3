@@ -104,7 +104,7 @@ void rpc_init()
 		if ( fd != -1 ) {
 			uint32_t bla = 1;
 			(void)!read( fd, &bla, 4 );
-			randomRunId = (randomRunId << 32) | bla;
+			randomRunId = ((randomRunId & 0xffffffff) << 32) | bla;
 		}
 		close( fd );
 	}
