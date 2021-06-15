@@ -27,10 +27,6 @@
 
 #include <linux/pagemap.h>
 
-#define dnbd3_req_read(req) (req_op(req) == REQ_OP_READ)
-#define dnbd3_req_fs(req) (dnbd3_req_read(req) || req_op(req) == REQ_OP_WRITE)
-#define dnbd3_req_special(req) blk_rq_is_private(req)
-
 static int dnbd3_close_device(dnbd3_device_t *dev)
 {
 	int result;
@@ -49,9 +45,13 @@ static int dnbd3_close_device(dnbd3_device_t *dev)
 	/* new requests might have been queued up, */
 	/* but now that imgname is NULL no new ones can show up */
 	dnbd3_blk_fail_all_requests(dev);
+#ifdef DNBD3_BLK_MQ
 	blk_mq_freeze_queue(dev->queue);
+#endif
 	set_capacity(dev->disk, 0);
+#ifdef DNBD3_BLK_MQ
 	blk_mq_unfreeze_queue(dev->queue);
+#endif
 	dev->reported_size = 0;
 	return result;
 }
@@ -118,8 +118,12 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			dev->use_server_provided_alts = msg->use_server_provided_alts;
 
 			dev_info(dnbd3_device_to_dev(dev), "opening device.\n");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 			if (blk_queue->backing_dev_info != NULL)
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
+#else
+			blk_queue->backing_dev_info.ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
+#endif
 
 			/* add specified servers to alt server list */
 			for (i = 0; i < NUMBER_SERVERS; i++)
@@ -318,6 +322,10 @@ static const struct block_device_operations dnbd3_blk_ops = {
 	.ioctl = dnbd3_blk_ioctl,
 };
 
+#ifdef DNBD3_BLK_MQ
+/*
+ * Linux kernel blk-mq driver function (entry point) to handle block IO requests
+ */
 static blk_status_t dnbd3_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_mq_queue_data *bd)
 {
 	struct request *rq = bd->rq;
@@ -348,6 +356,46 @@ static const struct blk_mq_ops dnbd3_mq_ops = {
 	.queue_rq = dnbd3_queue_rq,
 };
 
+#else /* DNBD3_BLK_MQ */
+/*
+ * Linux kernel blk driver function (entry point) to handle block IO requests
+ */
+static void dnbd3_blk_request(struct request_queue *q)
+{
+	struct request *rq;
+	dnbd3_device_t *dev;
+
+	while ((rq = blk_fetch_request(q)) != NULL) {
+		dev = rq->rq_disk->private_data;
+
+		if (dev->imgname == NULL) {
+			__blk_end_request_all(rq, -EIO);
+			continue;
+		}
+
+		if (!(dnbd3_req_fs(rq))) {
+			__blk_end_request_all(rq, 0);
+			continue;
+		}
+
+		if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count >= PROBE_COUNT_TIMEOUT) {
+			__blk_end_request_all(rq, -EIO);
+			continue;
+		}
+
+		if (!(dnbd3_req_read(rq))) {
+			__blk_end_request_all(rq, -EACCES);
+			continue;
+		}
+
+		list_add_tail(&rq->queuelist, &dev->request_queue_send);
+		spin_unlock_irq(q->queue_lock);
+		wake_up(&dev->process_queue_send);
+		spin_lock_irq(q->queue_lock);
+	}
+}
+#endif /* DNBD3_BLK_MQ */
+
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
 	int ret;
@@ -377,6 +425,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	// set up spin lock for request queues for send and receive
 	spin_lock_init(&dev->blk_lock);
 
+#ifdef DNBD3_BLK_MQ
 	// set up tag_set for blk-mq
 	dev->tag_set.ops = &dnbd3_mq_ops;
 	dev->tag_set.nr_hw_queues = 1;
@@ -399,12 +448,25 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 		dev_err(dnbd3_device_to_dev(dev), "blk_mq_init_queue failed\n");
 		goto out_cleanup_tags;
 	}
+#else
+	// set up blk
+	dev->queue = blk_init_queue(&dnbd3_blk_request, &dev->blk_lock);
+	if (!dev->queue) {
+		ret = -ENOMEM;
+		dev_err(dnbd3_device_to_dev(dev), "blk_init_queue failed\n");
+		goto out;
+	}
+#endif /* DNBD3_BLK_MQ */
 	dev->queue->queuedata = dev;
 
 	blk_queue_logical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
 	blk_queue_physical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, dev->queue);
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, dev->queue);
+#else
+	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, dev->queue);
+#endif
 #define ONE_MEG (1048576)
 	blk_queue_max_segment_size(dev->queue, ONE_MEG);
 	blk_queue_max_segments(dev->queue, 0xffff);
@@ -438,8 +500,10 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
 out_cleanup_queue:
 	blk_cleanup_queue(dev->queue);
+#ifdef DNBD3_BLK_MQ
 out_cleanup_tags:
 	blk_mq_free_tag_set(&dev->tag_set);
+#endif
 out:
 	return ret;
 }
@@ -453,7 +517,9 @@ int dnbd3_blk_del_device(dnbd3_device_t *dev)
 	dnbd3_sysfs_exit(dev);
 	del_gendisk(dev->disk);
 	blk_cleanup_queue(dev->queue);
+#ifdef DNBD3_BLK_MQ
 	blk_mq_free_tag_set(&dev->tag_set);
+#endif
 	mutex_destroy(&dev->alt_servers_lock);
 	put_disk(dev->disk);
 	return 0;
@@ -506,7 +572,11 @@ void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist) {
 		list_del_init(&blk_request->queuelist);
 		if (dnbd3_req_fs(blk_request))
+#ifdef DNBD3_BLK_MQ
 			blk_mq_end_request(blk_request, BLK_STS_IOERR);
+#else
+			blk_end_request_all(blk_request, -EIO);
+#endif
 		else if (dnbd3_req_special(blk_request))
 			kfree(blk_request);
 	}

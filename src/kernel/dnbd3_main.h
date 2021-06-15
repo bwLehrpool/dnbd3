@@ -26,13 +26,32 @@
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/blkdev.h>
-#include <linux/blk-mq.h>
 #include <linux/mutex.h>
 #include <net/sock.h>
 
 #include <dnbd3/config.h>
 #include <dnbd3/types.h>
 #include <dnbd3/shared/serialize.h>
+
+/* define RHEL_CHECK_VERSION macro to check CentOS version */
+#if defined(RHEL_RELEASE_CODE) && defined(RHEL_RELEASE_VERSION)
+#define RHEL_CHECK_VERSION(CONDITION) (CONDITION)
+#else
+#define RHEL_CHECK_VERSION(CONDITION) (0)
+#endif
+
+/* version check to enable/disable blk-mq support */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
+/* enable blk-mq support for Linux kernel 4.18 and later */
+#define DNBD3_BLK_MQ
+#else
+/* disable blk-mq support for Linux kernel prior to 4.18 */
+#undef DNBD3_BLK_MQ
+#endif
+
+#ifdef DNBD3_BLK_MQ
+#include <linux/blk-mq.h>
+#endif
 
 extern int major;
 
@@ -47,7 +66,9 @@ typedef struct {
 typedef struct {
 	// block
 	struct gendisk *disk;
+#ifdef DNBD3_BLK_MQ
 	struct blk_mq_tag_set tag_set;
+#endif
 	struct request_queue *queue;
 	spinlock_t blk_lock;
 

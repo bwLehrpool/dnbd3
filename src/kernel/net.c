@@ -23,6 +23,7 @@
 #include "net.h"
 #include "blk.h"
 #include "utils.h"
+#include "dnbd3_main.h"
 
 #include <dnbd3/shared/serialize.h>
 
@@ -60,17 +61,6 @@
 		h.msg_controllen = 0; \
 		h.msg_flags = MSG_WAITALL | MSG_NOSIGNAL; \
 	} while (0)
-
-// cmd_flags and cmd_type are merged into cmd_flags now
-#if REQ_FLAG_BITS > 24
-#error "Fix CMD bitshift"
-#endif
-// Pack into cmd_flags field by shifting CMD_* into unused bits of cmd_flags
-#define dnbd3_cmd_to_priv(req, cmd) ((req)->cmd_flags = REQ_OP_DRV_IN | ((cmd) << REQ_FLAG_BITS))
-#define dnbd3_priv_to_cmd(req) ((req)->cmd_flags >> REQ_FLAG_BITS)
-#define dnbd3_req_op(req) req_op(req)
-#define DNBD3_DEV_READ REQ_OP_READ
-#define DNBD3_REQ_OP_SPECIAL REQ_OP_DRV_IN
 
 #define dnbd3_dev_dbg_host(dev, host, fmt, ...) \
 	dev_dbg(dnbd3_device_to_dev(dev), "(%pISpc): " fmt, (host), ##__VA_ARGS__)
@@ -140,8 +130,8 @@ static int dnbd3_net_discover(void *data)
 	dnbd3_alt_server_t *alt;
 	struct sockaddr_storage host_compare, best_server;
 	uint16_t remote_version;
-	ktime_t start = 0, end = 0;
-	unsigned long rtt, best_rtt = 0;
+	ktime_t start = ktime_set(0, 0), end = ktime_set(0, 0);
+	unsigned long rtt = 0, best_rtt = 0;
 	unsigned long irqflags;
 	int i, j, isize, fails, rtt_threshold;
 	int turn = 0;
@@ -593,7 +583,11 @@ static int dnbd3_net_receive(void *data)
 				goto cleanup;
 			}
 			// receive data and answer to block layer
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
 			rq_for_each_segment(bvec_inst, blk_request, iter) {
+#else
+			rq_for_each_segment(bvec, blk_request, iter) {
+#endif
 				kaddr = kmap(bvec->bv_page) + bvec->bv_offset;
 				iov.iov_base = kaddr;
 				iov.iov_len = bvec->bv_len;
@@ -622,7 +616,11 @@ static int dnbd3_net_receive(void *data)
 					goto cleanup;
 				}
 			}
+#ifdef DNBD3_BLK_MQ
 			blk_mq_end_request(blk_request, BLK_STS_OK);
+#else
+			blk_end_request_all(blk_request, 0);
+#endif
 			continue;
 
 		case CMD_GET_SERVERS:
@@ -753,7 +751,14 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 	struct socket *sock;
 	int retries = 4;
 
-	if (sock_create_kern(&init_net, addr->ss_family, SOCK_STREAM, IPPROTO_TCP, &sock) < 0) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+	ret = sock_create_kern(&init_net, addr->ss_family, SOCK_STREAM,
+			IPPROTO_TCP, &sock);
+#else
+	ret = sock_create_kern(addr->ss_family, SOCK_STREAM,
+			IPPROTO_TCP, &sock);
+#endif
+	if (ret < 0) {
 		dev_err(dnbd3_device_to_dev(dev), "couldn't create socket\n");
 		return NULL;
 	}

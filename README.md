@@ -16,6 +16,7 @@ The dnbd3 components can be built for the following Linux kernel versions and Un
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
   - Ubuntu 18.04 with **Linux kernel 4.19.x**
   - CentOS 8 with **Linux kernel 4.18.x**
+  - CentOS 7 with **Linux kernel 3.10.x**
   - AlmaLinux 8 with **Linux kernel 4.18.x**
   - FreeBSD 12.x and 13.x (only user space programs, eg. dnbd3-server)
 
@@ -98,6 +99,59 @@ yum install git \
 ```
 
 Note that `afl` is not available on CentOS 8 and should be built from the [original sources](https://github.com/google/AFL).
+
+#### CentOS 7 with Linux kernel 3.10.x
+Before any required preliminaries can be installed, enable the `epel` package repository with the following command line calls:
+
+```shell
+yum install epel-release
+yum repolist # refresh epel package repository
+```
+
+The `epel` package repository enables the installation of `cmake3` on CentOS 7 which is later required to build dnbd3 components.
+Then, install the required preliminaries with the following command line call as usual:
+
+```shell
+yum install git \
+            make \
+            cmake3 \
+            gcc \
+            kernel-devel \
+            elfutils-libelf-devel \
+            rpm-build
+```
+
+Note that `afl` is not available on CentOS 7 and should be built from the [original sources](https://github.com/google/AFL).
+
+> **Warning: All dnbd3 components can only be built if a GCC compiler with stdatomic support is used.
+> This feature is available with GCC 4.9 or later as part of the C11 language support.
+> Since CentOS 7 is shipped with GCC 4.8 you have to install a new GCC version greater or equal than GCC 4.9.**
+
+The installation of GCC 7.3 on CentOS requires some additional instructions as follows.
+First, install Software Collections on your system that allows you to build, install, and use multiple versions of GCC on the same system withoutaffecting system-wide installed packages. Software collections is part of the CentOS `extras` repository and can be installed by running the following command:
+
+```shell
+yum install centos-release-scl
+```
+
+After installation of Software Collections, install the Developer Toolset in version 7 and additional packages with the following command line call:
+
+```shell
+yum install devtoolset-7 \
+            devtoolset-7-libatomic-devel \
+            llvm-toolset-7-git-clang-format \
+            fuse-devel \
+            jansson-devel
+```
+
+To access GCC 7.3, you need to launch a new shell instance using the Software Collections `scl` tool:
+
+```shell
+scl enable devtoolset-7 llvm-toolset-7 bash
+```
+
+Now, GCC 7.3 is the default version in your current shell.
+This allows you to build all dnbd3 components on CentOS 7.
 
 #### AlmaLinux 8 with Linux kernel 4.18.x
 ```shell
