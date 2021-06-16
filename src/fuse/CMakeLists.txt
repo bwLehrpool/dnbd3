@@ -6,6 +6,10 @@ project(dnbd3-fuse
 
 find_package(Fuse REQUIRED)
 
+# find atomic library required by dnbd3-fuse
+find_package(Stdatomic REQUIRED)
+find_package(Libatomic REQUIRED)
+
 # add compile option to enable enhanced POSIX pthread features
 add_definitions(-D_GNU_SOURCE)
 

@@ -4,6 +4,10 @@ cmake_minimum_required(VERSION 3.10)
 project(dnbd3-shared
         LANGUAGES C)
 
+# find atomic library required by dnbd3-shared
+find_package(Stdatomic REQUIRED)
+find_package(Libatomic REQUIRED)
+
 # add compile option to get POLLRDHUP support for signals
 add_definitions(-D_GNU_SOURCE)
 

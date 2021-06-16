@@ -11,6 +11,7 @@ if(NOT JANSSON_FOUND)
 endif(NOT JANSSON_FOUND)
 
 # find atomic library required by the dnbd3-server
+find_package(Stdatomic REQUIRED)
 find_package(Libatomic REQUIRED)
 
 # add compile option to enable enhanced POSIX features
