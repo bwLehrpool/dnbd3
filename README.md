@@ -18,6 +18,7 @@ The dnbd3 components can be built for the following Linux kernel versions and Un
   - CentOS 8 with **Linux kernel 4.18.x**
   - CentOS 7 with **Linux kernel 3.10.x**
   - AlmaLinux 8 with **Linux kernel 4.18.x**
+  - Rocky Linux 8 with **Linux kernel 4.18.x**
   - FreeBSD 12.x and 13.x (only user space programs, eg. dnbd3-server)
 
 
@@ -95,6 +96,7 @@ yum install git \
             elfutils-libelf-devel \
             fuse-devel \
             jansson-devel \
+            libatomic \
             rpm-build
 ```
 
@@ -153,6 +155,7 @@ scl enable devtoolset-7 llvm-toolset-7 bash
 Now, GCC 7.3 is the default version in your current shell.
 This allows you to build all dnbd3 components on CentOS 7.
 
+
 #### AlmaLinux 8 with Linux kernel 4.18.x
 ```shell
 yum install git \
@@ -169,6 +172,24 @@ yum install git \
 ```
 
 Note that `afl` is not available on AlmaLinux 8 and should be built from the [original sources](https://github.com/google/AFL).
+
+
+#### Rocky Linux 8 with Linux kernel 4.18.x
+```shell
+yum install git \
+            make \
+            cmake \
+            gcc \
+            clang-tools-extra \
+            kernel-devel \
+            elfutils-libelf-devel \
+            fuse-devel \
+            jansson-devel \
+            libatomic \
+            rpm-build
+```
+
+Note that `afl` is not available on Rocky Linux 8 and should be built from the [original sources](https://github.com/google/AFL).
 
 
 #### FreeBSD 12.x and 13.x
