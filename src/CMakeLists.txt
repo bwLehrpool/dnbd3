@@ -4,7 +4,9 @@ cmake_minimum_required(VERSION 3.10)
 project(dnbd3-src
         LANGUAGES C)
 
-add_subdirectory(bench)
+if(DNBD3_BENCHMARK)
+    add_subdirectory(bench)
+endif(DNBD3_BENCHMARK)
 
 if(DNBD3_KERNEL_MODULE)
     add_subdirectory(client)

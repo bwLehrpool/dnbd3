@@ -59,6 +59,7 @@ jobs:
           cmake -B ${{ github.workspace }}/build \
                 -S ${{ github.workspace }} \
                 -D CMAKE_BUILD_TYPE=${{ matrix.config.build-type }} \
+                -D DNBD3_BENCHMARK=ON \
                 -D DNBD3_SERVER_FUSE=${{ matrix.config.build-cfg-server-fuse }} \
                 -D DNBD3_RELEASE_HARDEN=${{ matrix.config.build-cfg-harden }}
       - name: Build dnbd3 artifacts

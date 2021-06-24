@@ -225,6 +225,7 @@ A build of the dnbd3 components can be configured and customized by the followin
 | `KERNEL_INSTALL_DIR`         | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/extra         | Path to install Linux kernel modules.                                |
 | `KERNEL_SCRIPTS_DIR`         | PATH   | {`a` .. `z`, `A` .. `Z`, `/`, `_`, `-`} | /lib/modules/`uname -r`/build/scripts | Path to Linux kernel scripts directory.                              |
 | `DNBD3_KERNEL_MODULE`        | OPTION | {`ON`, `OFF`}                           | `ON`                                  | Build the dnbd3 Linux kernel module.                                 |
+| `DNBD3_BENCHMARK`            | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Enable build of dnbd3-bench.                                         |
 | `DNBD3_CLIENT_FUSE`          | OPTION | {`ON`, `OFF`}                           | `ON`                                  | Enable build of dnbd3-fuse.                                          |
 | `DNBD3_SERVER`               | OPTION | {`ON`, `OFF`}                           | `ON`                                  | Enable build of dnbd3-server.                                        |
 | `DNBD3_SERVER_FUSE`          | OPTION | {`ON`, `OFF`}                           | `OFF`                                 | Enable FUSE-Integration for dnbd3-server.                            |
