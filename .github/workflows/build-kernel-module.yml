@@ -1,0 +1,81 @@
+name: Build dnbd3 kernel module
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  release:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: kernel module [CentOS kernel 4.18.0-x]
+            build-os: ubuntu-20.04
+            kernel-type: centos
+            kernel-version: 4.18.0-305.10.2
+            kernel-source: https://vault.centos.org/8.4.2105/BaseOS/Source/SPackages/kernel-4.18.0-305.10.2.el8_4.src.rpm
+          - name: kernel module [Linux kernel 4.19.x]
+            build-os: ubuntu-18.04
+            kernel-type: vanilla
+            kernel-version: 4.19.y
+          - name: kernel module [Linux kernel 5.4.x]
+            build-os: ubuntu-20.04
+            kernel-type: vanilla
+            kernel-version: 5.4.y
+          - name: kernel module [Linux kernel 5.10.x]
+            build-os: ubuntu-20.04
+            kernel-type: vanilla
+            kernel-version: 5.10.y
+    name: Build dnbd3 ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.build-os }}
+    steps:
+      - name: Install dnbd3 dependencies
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq make \
+                                      clang-format \
+                                      libelf-dev \
+                                      rpm2cpio \
+                                      rpm
+      - name: Checkout dnbd3 repository
+        uses: actions/checkout@v2
+      - name: Fetch dnbd3 repository tags
+        run: git fetch --prune --unshallow
+      - name: Checkout Vanilla kernel version
+        if: matrix.config.kernel-type == 'vanilla'
+        run: git clone --depth 1  --branch "linux-${{ matrix.config.kernel-version }}" "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" "../kernel"
+      - name: Checkout CentOS kernel version
+        if: matrix.config.kernel-type == 'centos'
+        run: |
+          mkdir "${{ github.workspace }}/../kernel"
+          mkdir "${{ github.workspace }}/../kernel-download"
+          wget -q -O "${{ github.workspace }}/../kernel-download/kernel.rpm" "${{ matrix.config.kernel-source }}"
+          cd "${{ github.workspace }}/../kernel-download"
+          rpm2cpio "${{ github.workspace }}/../kernel-download/kernel.rpm" | cpio --extract --make-directories
+          tar --strip 1 -a -x -f linux-${{ matrix.config.kernel-version }}*.tar.xz -C "${{ github.workspace }}/../kernel"
+      - name: Configure kernel version
+        working-directory: ${{ github.workspace }}/../kernel
+        run: |
+          make defconfig
+          make modules_prepare
+      - name: Configure dnbd3 build
+        run: |
+          cmake -B ${{ github.workspace }}/build \
+                -S ${{ github.workspace }} \
+                -D CMAKE_BUILD_TYPE=Release \
+                -D DNBD3_KERNEL_MODULE=ON \
+                -D KERNEL_BUILD_DIR=${{ github.workspace }}/../kernel \
+                -D KERNEL_INSTALL_DIR=${{ github.workspace }}/../kernel/extra \
+                -D KERNEL_SCRIPTS_DIR=${{ github.workspace }}/../kernel/scripts \
+                -D DNBD3_BENCHMARK=OFF \
+                -D DNBD3_CLIENT_FUSE=OFF \
+                -D DNBD3_SERVER=OFF \
+                -D DNBD3_SERVER_FUSE=OFF \
+                -D DNBD3_RELEASE_HARDEN=OFF
+      - name: Build dnbd3 kernel module
+        working-directory: ${{ github.workspace }}/build
+        run: make
