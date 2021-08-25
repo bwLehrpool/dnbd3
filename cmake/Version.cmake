@@ -50,7 +50,7 @@ macro(get_repository_version REPOSITORY_VERSION REPOSITORY_BRANCH VERSION_HEADER
         set(GIT_BRANCH "${CMAKE_MATCH_1}")
     else(EXISTS ${VERSION_HEADER_FILE})
         # get detailed Git version information from Git repository
-        execute_process(COMMAND ${GIT_EXECUTABLE} describe HEAD
+        execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags HEAD
                         WORKING_DIRECTORY ${REPOSITORY_DIR}
                         OUTPUT_VARIABLE GIT_VERSION_VERBOSE
                         RESULT_VARIABLE GIT_RETURN_CODE
