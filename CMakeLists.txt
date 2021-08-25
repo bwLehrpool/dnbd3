@@ -41,18 +41,21 @@ include(Build)
 include(Lint)
 
 # check for system and enable or disable built of Linux kernel module
-if(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+if(NOT CMAKE_SYSTEM_NAME MATCHES "Linux")
+    # disable build of the dnbd3 Linux kernel module on a system other than Linux, eg. FreeBSD
+    message(STATUS "Detected non-Linux system: Disable build of the dnbd3 Linux kernel module")
+    set(DNBD3_KERNEL_MODULE OFF)
+endif(NOT CMAKE_SYSTEM_NAME MATCHES "Linux")
+
+# enable or disable requirements for a built of the Linux kernel module
+if(DNBD3_KERNEL_MODULE)
     # require Linux kernel headers
     find_package(KernelHeaders REQUIRED)
 
     # print configured settings
     message(STATUS "Path to Linux kernel modules to compile against is " ${KERNEL_BUILD_DIR})
     message(STATUS "Path to install Linux kernel modules is " ${KERNEL_INSTALL_DIR})
-else(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
-    # disable build of the dnbd3 Linux kernel module on a system other than Linux, eg. FreeBSD
-    message(STATUS "Detected non-Linux system: Disable build of the dnbd3 Linux kernel module")
-    set(DNBD3_KERNEL_MODULE OFF)
-endif(DNBD3_KERNEL_MODULE AND UNIX AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+endif(DNBD3_KERNEL_MODULE)
 
 # set include directories
 set(PROJECT_GEN_DIR ${CMAKE_BINARY_DIR}/generated)
