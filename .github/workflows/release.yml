@@ -1,0 +1,63 @@
+name: Release dnbd3
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    name: Release dnbd3
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Install dnbd3 dependencies
+        run: |
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq make \
+                                      clang-format \
+                                      linux-headers-generic \
+                                      libfuse-dev \
+                                      libjansson-dev \
+                                      rpm
+      - name: Checkout dnbd3 repository
+        uses: actions/checkout@v2
+      - name: Fetch dnbd3 repository tags
+        run: git fetch --prune --unshallow
+      - name: Configure dnbd3 release
+        run: |
+          cmake -B ${{ github.workspace }}/build \
+                -S ${{ github.workspace }} \
+                -D CMAKE_BUILD_TYPE=Release \
+                -D DNBD3_KERNEL_MODULE=OFF \
+                -D DNBD3_BENCHMARK=OFF \
+                -D DNBD3_SERVER_FUSE=OFF \
+                -D DNBD3_RELEASE_HARDEN=OFF
+      - name: Build dnbd3 artifacts
+        working-directory: ${{ github.workspace }}/build
+        run: make package
+      - name: Create links to artifacts
+        working-directory: ${{ github.workspace }}/build
+        run: |
+          ln -s dnbd3_*.deb    dnbd3_linux_x86_64.deb
+          ln -s dnbd3_*.rpm    dnbd3_linux_x86_64.rpm
+          ln -s dnbd3_*.tar.gz dnbd3_linux_x86_64.tar.gz
+      - name: Attach Debian artifacts to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ github.workspace }}/build/dnbd3_linux_x86_64.deb
+          asset_name: dnbd3_linux_x86_64.deb
+          tag: ${{ github.ref }}
+      - name: Attach RedHat artifacts to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ github.workspace }}/build/dnbd3_linux_x86_64.rpm
+          asset_name: dnbd3_linux_x86_64.rpm
+          tag: ${{ github.ref }}
+      - name: Attach generic artifacts to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ github.workspace }}/build/dnbd3_linux_x86_64.tar.gz
+          asset_name: dnbd3_linux_x86_64.tar.gz
+          tag: ${{ github.ref }}
