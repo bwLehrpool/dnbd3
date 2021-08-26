@@ -17,7 +17,8 @@ endif(NOT KERNEL_INSTALL_DIR)
 
 # find the Linux kernel headers from given KERNEL_BUILD_DIR
 find_path(KernelHeaders_INCLUDE_DIR
-          NAMES linux/user.h
+          NAMES config/clang/version.h 
+                config/gcc/version.h
           PATHS ${KERNEL_BUILD_DIR}/include)
 
 # get Linux kernel headers version
