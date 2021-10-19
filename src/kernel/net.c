@@ -817,6 +817,13 @@ error:
 	return NULL;
 }
 
+#define dnbd3_err_dbg_host(...) do { \
+		if (dev->panic || dev->sock == NULL) \
+			dnbd3_dev_err_host(__VA_ARGS__); \
+		else \
+			dnbd3_dev_dbg_host(__VA_ARGS__); \
+} while (0)
+
 /**
  * Execute protocol handshake on a newly connected socket.
  * If this is the initial connection to any server, ie. we're being called
@@ -858,7 +865,7 @@ static int dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	fixup_request(dnbd3_request);
 	mlen = iov[0].iov_len + iov[1].iov_len;
 	if (kernel_sendmsg(sock, &msg, iov, 2, mlen) != mlen) {
-		dnbd3_dev_err_host(dev, addr, "requesting image size failed\n");
+		dnbd3_err_dbg_host(dev, addr, "requesting image size failed\n");
 		goto error;
 	}
 
@@ -866,12 +873,12 @@ static int dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	iov[0].iov_base = &dnbd3_reply;
 	iov[0].iov_len = sizeof(dnbd3_reply);
 	if (kernel_recvmsg(sock, &msg, iov, 1, sizeof(dnbd3_reply), msg.msg_flags) != sizeof(dnbd3_reply)) {
-		dnbd3_dev_err_host(dev, addr, "receiving image size packet (header) failed\n");
+		dnbd3_err_dbg_host(dev, addr, "receiving image size packet (header) failed\n");
 		goto error;
 	}
 	fixup_reply(dnbd3_reply);
 	if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_SELECT_IMAGE || dnbd3_reply.size < 4) {
-		dnbd3_dev_err_host(dev, addr,
+		dnbd3_err_dbg_host(dev, addr,
 				"corrupted CMD_SELECT_IMAGE reply\n");
 		goto error;
 	}
@@ -880,7 +887,7 @@ static int dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	iov[0].iov_base = payload;
 	iov[0].iov_len = dnbd3_reply.size;
 	if (kernel_recvmsg(sock, &msg, iov, 1, dnbd3_reply.size, msg.msg_flags) != dnbd3_reply.size) {
-		dnbd3_dev_err_host(dev, addr,
+		dnbd3_err_dbg_host(dev, addr,
 				"receiving payload of CMD_SELECT_IMAGE reply failed\n");
 		goto error;
 	}
@@ -892,7 +899,7 @@ static int dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	filesize = serializer_get_uint64(payload);
 
 	if (*remote_version < MIN_SUPPORTED_SERVER) {
-		dnbd3_dev_err_host(dev, addr,
+		dnbd3_err_dbg_host(dev, addr,
 				"server version too old (client: %d, server: %d, min supported: %d)\n",
 				(int)PROTOCOL_VERSION, (int)*remote_version,
 				(int)MIN_SUPPORTED_SERVER);
@@ -900,29 +907,29 @@ static int dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	}
 
 	if (name == NULL) {
-		dnbd3_dev_err_host(dev, addr, "server did not supply an image name\n");
+		dnbd3_err_dbg_host(dev, addr, "server did not supply an image name\n");
 		goto error;
 	}
 	if (rid == 0) {
-		dnbd3_dev_err_host(dev, addr, "server did not supply a revision id\n");
+		dnbd3_err_dbg_host(dev, addr, "server did not supply a revision id\n");
 		goto error;
 	}
 
 	/* only check image name if this isn't the initial connect */
 	if (initial_connect && dev->rid != 0 && strcmp(name, dev->imgname) != 0) {
-		dnbd3_dev_err_host(dev, addr, "server offers image '%s', requested '%s'\n", name, dev->imgname);
+		dnbd3_err_dbg_host(dev, addr, "server offers image '%s', requested '%s'\n", name, dev->imgname);
 		goto error;
 	}
 
 	if (initial_connect) {
 		if (filesize < DNBD3_BLOCK_SIZE) {
-			dnbd3_dev_err_host(dev, addr, "reported size by server is < 4096\n");
+			dnbd3_err_dbg_host(dev, addr, "reported size by server is < 4096\n");
 			goto error;
 		}
 		if (strlen(dev->imgname) < strlen(name)) {
 			dev->imgname = krealloc(dev->imgname, strlen(name) + 1, GFP_KERNEL);
 			if (dev->imgname == NULL) {
-				dnbd3_dev_err_host(dev, addr, "reallocating buffer for new image name failed\n");
+				dnbd3_err_dbg_host(dev, addr, "reallocating buffer for new image name failed\n");
 				goto error;
 			}
 		}
@@ -936,14 +943,14 @@ static int dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	} else {
 		/* switching connection, sanity checks */
 		if (rid != dev->rid) {
-			dnbd3_dev_err_host(dev, addr,
+			dnbd3_err_dbg_host(dev, addr,
 					"server supplied wrong rid (client: '%d', server: '%d')\n",
 					(int)dev->rid, (int)rid);
 			goto error;
 		}
 
 		if (filesize != dev->reported_size) {
-			dnbd3_dev_err_host(dev, addr,
+			dnbd3_err_dbg_host(dev, addr,
 					"reported image size of %llu does not match expected value %llu\n",
 					(unsigned long long)filesize, (unsigned long long)dev->reported_size);
 			goto error;
@@ -981,7 +988,7 @@ static int dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage
 	iov.iov_len = sizeof(dnbd3_request);
 
 	if (kernel_sendmsg(sock, &msg, &iov, 1, sizeof(dnbd3_request)) <= 0) {
-		dnbd3_dev_err_host(dev, addr, "requesting test block failed\n");
+		dnbd3_err_dbg_host(dev, addr, "requesting test block failed\n");
 		goto error;
 	}
 
@@ -990,13 +997,13 @@ static int dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage
 	iov.iov_len = sizeof(dnbd3_reply);
 	if (kernel_recvmsg(sock, &msg, &iov, 1, sizeof(dnbd3_reply), msg.msg_flags)
 			!= sizeof(dnbd3_reply)) {
-		dnbd3_dev_err_host(dev, addr, "receiving test block header packet failed\n");
+		dnbd3_err_dbg_host(dev, addr, "receiving test block header packet failed\n");
 		goto error;
 	}
 	fixup_reply(dnbd3_reply);
 	if (dnbd3_reply.magic != dnbd3_packet_magic || dnbd3_reply.cmd != CMD_GET_BLOCK
 			|| dnbd3_reply.size != RTT_BLOCK_SIZE) {
-		dnbd3_dev_err_host(dev, addr,
+		dnbd3_err_dbg_host(dev, addr,
 				"unexpected reply to block request: cmd=%d, size=%d (discover)\n",
 				(int)dnbd3_reply.cmd, (int)dnbd3_reply.size);
 		goto error;
@@ -1018,7 +1025,7 @@ static int dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage
 		iov.iov_len = buffer_size;
 		ret = kernel_recvmsg(sock, &msg, &iov, 1, MIN(remaining, buffer_size), msg.msg_flags);
 		if (ret <= 0) {
-			dnbd3_dev_err_host(dev, addr, "receiving test block payload failed (ret=%d)\n", ret);
+			dnbd3_err_dbg_host(dev, addr, "receiving test block payload failed (ret=%d)\n", ret);
 			goto error;
 		}
 		remaining -= ret;
@@ -1030,6 +1037,7 @@ error:
 		kfree(buf);
 	return func_return;
 }
+#undef dnbd3_err_dbg_host
 
 static int spawn_worker_thread(dnbd3_device_t *dev, struct task_struct **task, const char *name,
 		int (*threadfn)(void *data))
