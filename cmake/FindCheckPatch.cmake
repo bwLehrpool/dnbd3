@@ -20,7 +20,7 @@ if(CheckPatch_EXECUTABLE)
     execute_process(COMMAND ${CheckPatch_EXECUTABLE} --version
                     OUTPUT_VARIABLE CheckPatch_VERBOSE_VERSION
                     OUTPUT_STRIP_TRAILING_WHITESPACE)
-    string(REGEX REPLACE ".*Version:.([0-9]+\\.[0-9]+).*" "\\1" CheckPatch_VERSION ${CheckPatch_VERBOSE_VERSION})
+    string(REGEX REPLACE ".*Version:.([0-9]+\\.[0-9]+).*" "\\1" CheckPatch_VERSION "${CheckPatch_VERBOSE_VERSION}")
 endif(CheckPatch_EXECUTABLE)
 
 include(FindPackageHandleStandardArgs)
