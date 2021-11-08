@@ -750,6 +750,8 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 	int ret, connect_time_ms;
 	struct socket *sock;
 	int retries = 4;
+	const int addrlen = addr->ss_family == AF_INET ? sizeof(struct sockaddr_in)
+		: sizeof(struct sockaddr_in6);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
 	ret = sock_create_kern(&init_net, addr->ss_family, SOCK_STREAM,
@@ -759,7 +761,7 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 			IPPROTO_TCP, &sock);
 #endif
 	if (ret < 0) {
-		dev_err(dnbd3_device_to_dev(dev), "couldn't create socket\n");
+		dev_err(dnbd3_device_to_dev(dev), "couldn't create socket: %d\n", ret);
 		return NULL;
 	}
 
@@ -786,13 +788,15 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 		/* otherwise, use 2*RTT of current server */
 		connect_time_ms = dev->cur_server.rtt * 2 / 1000;
 	}
-	/* but obey a minimal configurable value */
+	/* but obey a minimal configurable value, and maximum sanity check */
 	if (connect_time_ms < SOCKET_TIMEOUT_CLIENT_DATA * 1000)
 		connect_time_ms = SOCKET_TIMEOUT_CLIENT_DATA * 1000;
+	else if (connect_time_ms > 60000)
+		connect_time_ms = 60000
 	set_socket_timeouts(sock, connect_time_ms);
 	start = ktime_get_real();
 	while (--retries > 0) {
-		ret = kernel_connect(sock, (struct sockaddr *)addr, sizeof(*addr), 0);
+		ret = kernel_connect(sock, (struct sockaddr *)addr, addrlen, 0);
 		connect_time_ms = (int)ktime_ms_delta(ktime_get_real(), start);
 		if (connect_time_ms > 2 * SOCKET_TIMEOUT_CLIENT_DATA * 1000) {
 			/* Either I'm losing my mind or there was a specific build of kernel
