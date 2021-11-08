@@ -792,7 +792,7 @@ static struct socket *dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage
 	if (connect_time_ms < SOCKET_TIMEOUT_CLIENT_DATA * 1000)
 		connect_time_ms = SOCKET_TIMEOUT_CLIENT_DATA * 1000;
 	else if (connect_time_ms > 60000)
-		connect_time_ms = 60000
+		connect_time_ms = 60000;
 	set_socket_timeouts(sock, connect_time_ms);
 	start = ktime_get_real();
 	while (--retries > 0) {
