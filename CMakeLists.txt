@@ -126,7 +126,7 @@ endif(DNBD3_RELEASE_HARDEN AND CMAKE_BUILD_TYPE MATCHES "Release")
 # define packaging if Release build is enabled
 if(CMAKE_BUILD_TYPE MATCHES Release)
     # get version source package or Git repository
-    get_repository_version(REPOSITORY_VERSION REPOSITORY_BRANCH ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE} ${GIT_EXECUTABLE} ${CMAKE_SOURCE_DIR})
+    get_repository_version(REPOSITORY_VERSION REPOSITORY_VERSION_SHORT REPOSITORY_BRANCH ${INCLUDE_VERSION_HEADER} ${CMAKE_BUILD_TYPE} ${GIT_EXECUTABLE} ${CMAKE_SOURCE_DIR})
 
     # define project version
     if(KernelHeaders_VERSION)
@@ -223,7 +223,7 @@ if(CMAKE_BUILD_TYPE MATCHES Release)
         find_package(Docker REQUIRED)
         include(DockerImage)
 
-        set(DOCKER_TAG ${CPACK_PACKAGE_NAME}:${REPOSITORY_VERSION_FULL})
+        set(DOCKER_TAG ${CPACK_PACKAGE_NAME}:${REPOSITORY_VERSION_SHORT})
 
         # define Ubuntu docker image
         set(DOCKER_FILE_UBUNTU ${CMAKE_SOURCE_DIR}/pkg/docker/ubuntu-20-04_dockerfile)

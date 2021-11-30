@@ -31,7 +31,7 @@ macro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION
 endmacro(gen_project_version VERSION_INPUT_FILE VERSION_INPUT_FILE_TEMPLATE VERSION_OUTPUT_FILE)
 
 # macro to get Git version information
-macro(get_repository_version REPOSITORY_VERSION REPOSITORY_BRANCH VERSION_HEADER_FILE VERSION_BUILD_TYPE GIT_EXECUTABLE REPOSITORY_DIR)
+macro(get_repository_version REPOSITORY_VERSION REPOSITORY_VERSION_SHORT REPOSITORY_BRANCH VERSION_HEADER_FILE VERSION_BUILD_TYPE GIT_EXECUTABLE REPOSITORY_DIR)
     # set empty Git version information
     set(GIT_VERSION "")
     # set empty Git branch information
@@ -73,6 +73,8 @@ macro(get_repository_version REPOSITORY_VERSION REPOSITORY_BRANCH VERSION_HEADER
                 message(WARNING "The version information from Git tags in this dnbd3 Git repository is missing! Please fetch all Git tags of this repository for a ${VERSION_BUILD_TYPE} build!")
             endif(${VERSION_BUILD_TYPE} MATCHES "Release")
         endif(GIT_VERSION STREQUAL "")
+
+        set(${REPOSITORY_VERSION_SHORT} ${GIT_VERSION})
 
         # get current branch of Git repository
         execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
