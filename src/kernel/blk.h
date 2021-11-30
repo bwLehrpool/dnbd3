@@ -107,7 +107,10 @@
 #endif
 
 /* define dnbd3_req_special(req) boolean expression */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+#define dnbd3_req_special(req) \
+	(dnbd3_req_op(req) == DNBD3_REQ_OP_SPECIAL)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 #define dnbd3_req_special(req) \
 	blk_rq_is_private(req)
 #else

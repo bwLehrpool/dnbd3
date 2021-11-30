@@ -29,6 +29,10 @@ jobs:
             build-os: ubuntu-20.04
             kernel-type: vanilla
             kernel-version: 5.10.y
+          - name: kernel module [Linux kernel 5.15.x]
+            build-os: ubuntu-20.04
+            kernel-type: vanilla
+            kernel-version: 5.15.y
     name: Build dnbd3 ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.build-os }}
     steps:

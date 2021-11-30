@@ -11,7 +11,7 @@ This repository contains the source code for the following dnbd3 components:
 
 The dnbd3 components can be built for the following Linux kernel versions and Unix distributions:
 
-  - Archlinux with **Linux kernel 5.10.x** or **5.4.x**
+  - Archlinux with **Linux kernel 5.15.x** or **5.10.x**
   - Raspberry Pi OS with **Linux kernel 5.4.x**
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
   - Ubuntu 18.04 with **Linux kernel 4.19.x**
@@ -27,7 +27,7 @@ The dnbd3 components can be built for the following Linux kernel versions and Un
 ### Preliminaries
 A build of the dnbd3 components requires the installation of the following build tools and libraries under your supported Unix distribution.
 
-#### Archlinux with Linux kernel 5.10.x or 5.4.x
+#### Archlinux with Linux kernel 5.15.x or 5.10.x
 ```shell
 pacman -S git \
           make \

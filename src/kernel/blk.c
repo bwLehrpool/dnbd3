@@ -60,7 +60,9 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 {
 	int result = -100;
 	dnbd3_device_t *dev = bdev->bd_disk->private_data;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	struct request_queue *blk_queue = dev->disk->queue;
+#endif
 	char *imgname = NULL;
 	dnbd3_ioctl_t *msg = NULL;
 	unsigned long irqflags;
@@ -118,7 +120,15 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			dev->use_server_provided_alts = msg->use_server_provided_alts;
 
 			dev_info(dnbd3_device_to_dev(dev), "opening device.\n");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+			// set optimal request size for the queue
+			blk_queue_io_opt(dev->queue, (msg->read_ahead_kb * 512));
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+			// set readahead from optimal request size of the queue
+			// ra_pages are calculated by following formula: queue_io_opt() * 2 / PAGE_SIZE
+			blk_queue_update_readahead(dev->queue);
+#endif
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 			if (blk_queue->backing_dev_info != NULL)
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
 #else
@@ -441,6 +451,16 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 		goto out;
 	}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+	// set up blk-mq and disk
+	dev->disk = blk_mq_alloc_disk(&dev->tag_set, dev);
+	if (IS_ERR(dev->disk)) {
+		dev_err(dnbd3_device_to_dev(dev), "blk_mq_alloc_disk failed\n");
+		ret = PTR_ERR(dev->disk);
+		goto out_cleanup_tags;
+	}
+	dev->queue = dev->disk->queue;
+#else
 	// set up blk-mq
 	dev->queue = blk_mq_init_queue(&dev->tag_set);
 	if (IS_ERR(dev->queue)) {
@@ -448,6 +468,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 		dev_err(dnbd3_device_to_dev(dev), "blk_mq_init_queue failed\n");
 		goto out_cleanup_tags;
 	}
+	dev->queue->queuedata = dev;
+#endif
 #else
 	// set up blk
 	dev->queue = blk_init_queue(&dnbd3_blk_request, &dev->blk_lock);
@@ -456,8 +478,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 		dev_err(dnbd3_device_to_dev(dev), "blk_init_queue failed\n");
 		goto out;
 	}
-#endif /* DNBD3_BLK_MQ */
 	dev->queue->queuedata = dev;
+#endif /* DNBD3_BLK_MQ */
 
 	blk_queue_logical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
 	blk_queue_physical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
@@ -474,6 +496,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->queue->limits.max_sectors = 256;
 #undef ONE_MEG
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	// set up disk
 	dev->disk = alloc_disk(1);
 	if (!dev->disk) {
@@ -481,10 +504,12 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 		ret = -ENOMEM;
 		goto out_cleanup_queue;
 	}
+#endif
 
 	dev->disk->flags |= GENHD_FL_NO_PART_SCAN;
 	dev->disk->major = major;
 	dev->disk->first_minor = minor;
+	dev->disk->minors = 1;
 	dev->disk->fops = &dnbd3_blk_ops;
 	dev->disk->private_data = dev;
 	dev->disk->queue = dev->queue;
@@ -498,8 +523,10 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
 	return 0;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 out_cleanup_queue:
 	blk_cleanup_queue(dev->queue);
+#endif
 #ifdef DNBD3_BLK_MQ
 out_cleanup_tags:
 	blk_mq_free_tag_set(&dev->tag_set);
@@ -510,18 +537,24 @@ out:
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
-	dev_dbg(dnbd3_device_to_dev(dev), "%s called\n", __func__);
 	while (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
 		schedule();
 	dnbd3_close_device(dev);
 	dnbd3_sysfs_exit(dev);
 	del_gendisk(dev->disk);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	blk_cleanup_queue(dev->queue);
+#endif
 #ifdef DNBD3_BLK_MQ
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+	blk_cleanup_disk(dev->disk);
+#endif
 	blk_mq_free_tag_set(&dev->tag_set);
 #endif
 	mutex_destroy(&dev->alt_servers_lock);
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	put_disk(dev->disk);
+#endif
 	return 0;
 }
 
