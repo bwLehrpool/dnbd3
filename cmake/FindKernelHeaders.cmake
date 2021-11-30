@@ -17,9 +17,10 @@ endif(NOT KERNEL_INSTALL_DIR)
 
 # find the Linux kernel headers from given KERNEL_BUILD_DIR
 find_path(KernelHeaders_INCLUDE_DIR
-          NAMES config/clang/version.h 
-                config/gcc/version.h
-          PATHS ${KERNEL_BUILD_DIR}/include)
+          NAMES linux/kernel.h
+                linux/module.h
+          PATHS ${KERNEL_BUILD_DIR}/include
+          NO_DEFAULT_PATH)
 
 # get Linux kernel headers version
 string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${KernelHeaders_INCLUDE_DIR})
