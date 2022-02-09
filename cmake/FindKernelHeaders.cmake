@@ -19,6 +19,7 @@ endif(NOT KERNEL_INSTALL_DIR)
 find_path(KernelHeaders_INCLUDE_DIR
           NAMES linux/kernel.h
                 linux/module.h
+                generated/utsrelease.h
           PATHS ${KERNEL_BUILD_DIR}/include
           NO_DEFAULT_PATH)
 
