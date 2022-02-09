@@ -1,6 +1,6 @@
 # dnbd3 - distributed network block device (version 3)
 
-The distributed network block device in version 3 (dnbd3) is a network protocol similar to [nbd](https://github.com/NetworkBlockDevice/nbd) to implement a distributed block-based storage system. Such a distributed block-based storage system consists of dnbd3 components, namly one or more servers and several clients. Servers are meant to expose virtual disk images as block devices to clients using dnbd3. Clients request data blocks from servers and can implement a load balancing mechanism to connect to the fastest available server for data exchange.
+The distributed network block device in version 3 (dnbd3) is a network protocol similar to [nbd](https://github.com/NetworkBlockDevice/nbd) to implement a distributed block-based read-only storage system. Such a distributed block-based storage system consists of dnbd3 components, namly one or more servers and several clients. Servers are meant to expose virtual disk images as block devices to clients using dnbd3. Clients request data blocks from servers and can implement a load balancing mechanism to connect to the fastest available server for data exchange.
 
 This repository contains the source code for the following dnbd3 components:
 
