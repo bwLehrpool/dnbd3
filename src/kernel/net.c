@@ -30,6 +30,7 @@
 #include <linux/time.h>
 #include <linux/ktime.h>
 #include <linux/tcp.h>
+#include <linux/sched/task.h>
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
