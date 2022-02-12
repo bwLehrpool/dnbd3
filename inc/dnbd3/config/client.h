@@ -4,9 +4,21 @@
 // Which is the minimum protocol version the client expects from the server
 #define MIN_SUPPORTED_SERVER 2
 
-// in seconds if not stated otherwise (MS = milliseconds)
-#define SOCKET_TIMEOUT_CLIENT_DATA 2
-#define SOCKET_TIMEOUT_CLIENT_DISCOVERY 1
+// Send keepalive every X seconds
+#define KEEPALIVE_INTERVAL 10
+
+// in seconds if not stated otherwise
+#define SOCKET_TIMEOUT_SEND 2
+
+// Socker receive timeout. Must be higher than keepalive interval, otherwise
+// the connection might be aborted when idle
+#define SOCKET_TIMEOUT_RECV 13
+
+// During discovery, we use very short minimum timeouts (unless in panic mode)
+#define SOCKET_TIMEOUT_DISCOVERY 1
+
+// IO timeout for block layer
+#define BLOCK_LAYER_TIMEOUT 10
 
 #define RTT_THRESHOLD_FACTOR(us) (((us) * 3) / 4) // 3/4 = current to best must be 25% worse
 #define RTT_ABSOLUTE_THRESHOLD (80000) // Or 80ms worse
@@ -14,15 +26,19 @@
 // This must be a power of two:
 #define RTT_BLOCK_SIZE 4096
 
-#define STARTUP_MODE_DURATION 30
 // Interval of several repeating tasks (in seconds)
-#define TIMER_INTERVAL_PROBE_STARTUP 4
-#define TIMER_INTERVAL_PROBE_NORMAL 22
+#define TIMER_INTERVAL_PROBE_STARTUP 2
+#define TIMER_INTERVAL_PROBE_SWITCH 10
 #define TIMER_INTERVAL_PROBE_PANIC 2
-#define TIMER_INTERVAL_KEEPALIVE_PACKET 6
-
-// Expect a keepalive response every X seconds
-#define SOCKET_KEEPALIVE_TIMEOUT 8
+#define TIMER_INTERVAL_PROBE_MAX 45
+// How many discover runs after setting up a device should be considered the startup phase
+// during that phase, check all servers, before we start doing it selectively
+// and also don't increase the discover interval during this period
+#define DISCOVER_STARTUP_PHASE_COUNT 6
+// How many servers should be tested at maximum after above
+#define DISCOVER_REDUCED_SERVER_COUNT 3
+// Number of RTT probes to keep in history and average the value over
+#define DISCOVER_HISTORY_SIZE 4
 
 // Number of unsuccessful alt_server probes before read errors are reported to the block layer
 // (ALL servers will be probed this many times)

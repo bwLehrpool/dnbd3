@@ -24,8 +24,10 @@
 
 #include "dnbd3_main.h"
 
-int dnbd3_net_connect(dnbd3_device_t *lo);
+void dnbd3_net_work_init(dnbd3_device_t *dev);
 
-int dnbd3_net_disconnect(dnbd3_device_t *lo);
+int dnbd3_new_connection(dnbd3_device_t *dev, struct sockaddr_storage *addr, bool init);
+
+int dnbd3_net_disconnect(dnbd3_device_t *dev);
 
 #endif /* NET_H_ */

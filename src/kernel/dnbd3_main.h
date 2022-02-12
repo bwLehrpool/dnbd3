@@ -22,6 +22,8 @@
 #ifndef DNBD_H_
 #define DNBD_H_
 
+#include <dnbd3/config/client.h>
+
 #include <linux/version.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
@@ -33,30 +35,12 @@
 #include <dnbd3/types.h>
 #include <dnbd3/shared/serialize.h>
 
-/* define RHEL_CHECK_VERSION macro to check CentOS version */
-#if defined(RHEL_RELEASE_CODE) && defined(RHEL_RELEASE_VERSION)
-#define RHEL_CHECK_VERSION(CONDITION) (CONDITION)
-#else
-#define RHEL_CHECK_VERSION(CONDITION) (0)
-#endif
-
-/* version check to enable/disable blk-mq support */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 18, 0)
-/* enable blk-mq support for Linux kernel 4.18 and later */
-#define DNBD3_BLK_MQ
-#else
-/* disable blk-mq support for Linux kernel prior to 4.18 */
-#undef DNBD3_BLK_MQ
-#endif
-
-#ifdef DNBD3_BLK_MQ
 #include <linux/blk-mq.h>
-#endif
 
 extern int major;
 
 typedef struct {
-	unsigned long rtts[4];     // Last four round trip time measurements in µs
+	unsigned long rtts[DISCOVER_HISTORY_SIZE]; // Last X round trip time measurements in µs
 	uint16_t protocol_version; // dnbd3 protocol version of this server
 	uint8_t failures;          // How many times the server was unreachable
 	uint8_t best_count;        // Number of times server measured best
@@ -65,47 +49,59 @@ typedef struct {
 
 typedef struct {
 	// block
-	struct gendisk *disk;
-#ifdef DNBD3_BLK_MQ
-	struct blk_mq_tag_set tag_set;
-#endif
-	struct request_queue *queue;
-	spinlock_t blk_lock;
+	int                        index;
+	struct gendisk            *disk;
+	struct blk_mq_tag_set      tag_set;
+	struct request_queue      *queue;
+	spinlock_t                 blk_lock;
 
 	// sysfs
-	struct kobject kobj;
+	struct kobject             kobj;
 
-	// network
-	struct mutex alt_servers_lock;
-	char *imgname;
-	struct socket *sock;
-	struct {
-		unsigned long rtt;
+	char                      *imgname;
+	uint16_t                   rid;
+	struct socket             *sock;
+	struct { // use blk_lock
+		unsigned long           rtt;
 		struct sockaddr_storage host;
-		uint16_t protocol_version;
-	} cur_server;
-	serialized_buffer_t payload_buffer;
-	dnbd3_alt_server_t alt_servers[NUMBER_SERVERS]; // array of alt servers, protected by alt_servers_lock
-	uint8_t discover, panic, update_available, panic_count;
-	atomic_t connection_lock;
-	uint8_t use_server_provided_alts;
-	uint16_t rid;
-	uint32_t heartbeat_count;
-	uint64_t reported_size;
-	// server switch
-	struct socket *better_sock;
+		uint16_t                protocol_version;
+	}              cur_server;
+	serialized_buffer_t        payload_buffer;
+	struct mutex               alt_servers_lock;
+	dnbd3_alt_server_t         alt_servers[NUMBER_SERVERS];
+	bool                       use_server_provided_alts;
+	bool                       panic;
+	u8                         panic_count;
+	bool                       update_available;
+	atomic_t                   connection_lock;
+	// Size if image/device - this is 0 if the device is not in use,
+	// otherwise this is also the value we expect from alt servers.
+	uint64_t                   reported_size;
+	struct delayed_work        keepalive_work;
 
-	// process
-	struct task_struct *thread_send;
-	struct task_struct *thread_receive;
-	struct task_struct *thread_discover;
-	struct timer_list hb_timer;
-	wait_queue_head_t process_queue_send;
-	wait_queue_head_t process_queue_discover;
-	struct list_head request_queue_send;
-	struct list_head request_queue_receive;
+	// sending
+	struct workqueue_struct   *send_wq;
+	spinlock_t                 send_queue_lock;
+	struct list_head           send_queue;
+	struct mutex               send_mutex;
+	struct work_struct         send_work;
+	// receiving
+	struct workqueue_struct   *recv_wq;
+	spinlock_t                 recv_queue_lock;
+	struct list_head           recv_queue;
+	struct mutex               recv_mutex;
+	struct work_struct         recv_work;
+	// discover
+	atomic_t                   discover_running;
+	struct delayed_work        discover_work;
+	u32                        discover_interval;
+	u32                        discover_count;
 
 } dnbd3_device_t;
+
+struct dnbd3_cmd {
+	u64        handle;
+};
 
 extern inline struct device *dnbd3_device_to_dev(dnbd3_device_t *dev);
 
@@ -121,5 +117,24 @@ extern dnbd3_alt_server_t *get_existing_alt_from_addr(const struct sockaddr_stor
 extern int dnbd3_add_server(dnbd3_device_t *dev, dnbd3_host_t *host);
 
 extern int dnbd3_rem_server(dnbd3_device_t *dev, dnbd3_host_t *host);
+
+#define dnbd3_flag_get(x) (atomic_cmpxchg(&(x), 0, 1) == 0)
+#define dnbd3_flag_reset(x) atomic_set(&(x), 0)
+#define dnbd3_flag_taken(x) (atomic_read(&(x)) != 0)
+
+/* shims for making older kernels look like the current one, if possible, to avoid too
+ * much inline #ifdef which makes code harder to read. */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
+#define BLK_EH_DONE BLK_EH_NOT_HANDLED
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
+#define blk_status_t int
+#define	BLK_STS_OK 0
+#define	BLK_STS_IOERR (-EIO)
+#define	BLK_STS_TIMEOUT (-ETIME)
+#define	BLK_STS_NOTSUPP (-ENOTSUPP)
+#endif
 
 #endif /* DNBD_H_ */

@@ -22,7 +22,6 @@
 #include <linux/kobject.h>
 
 #include "sysfs.h"
-#include "utils.h"
 
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -33,7 +32,12 @@
  */
 ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
 {
-	return MIN(snprintf(buf, PAGE_SIZE, "%pISpc\n", &dev->cur_server.host), PAGE_SIZE);
+	ssize_t ret;
+
+	spin_lock(&dev->blk_lock);
+	ret =  MIN(snprintf(buf, PAGE_SIZE, "%pISpc\n", &dev->cur_server.host), PAGE_SIZE);
+	spin_unlock(&dev->blk_lock);
+	return ret;
 }
 
 /**
@@ -42,7 +46,11 @@ ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
  */
 ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 {
-	int i, size = PAGE_SIZE, ret;
+	int i, size = PAGE_SIZE;
+	ssize_t ret;
+
+	if (mutex_lock_interruptible(&dev->alt_servers_lock) != 0)
+		return 0;
 
 	for (i = 0; i < NUMBER_SERVERS; ++i) {
 		if (dev->alt_servers[i].host.ss_family == 0)
@@ -63,6 +71,7 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 			break;
 		}
 	}
+	mutex_unlock(&dev->alt_servers_lock);
 	return PAGE_SIZE - size;
 }
 
@@ -71,7 +80,12 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
  */
 ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
 {
-	return MIN(snprintf(buf, PAGE_SIZE, "%s\n", dev->imgname), PAGE_SIZE);
+	ssize_t ret;
+
+	spin_lock(&dev->blk_lock);
+	ret = MIN(snprintf(buf, PAGE_SIZE, "%s\n", dev->imgname), PAGE_SIZE);
+	spin_unlock(&dev->blk_lock);
+	return ret;
 }
 
 /**
@@ -79,11 +93,13 @@ ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
  */
 ssize_t show_rid(char *buf, dnbd3_device_t *dev)
 {
+	// No locking here, primitive type, no pointer to allocated memory
 	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->rid), PAGE_SIZE);
 }
 
 ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
 {
+	// Same story
 	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->update_available), PAGE_SIZE);
 }
 

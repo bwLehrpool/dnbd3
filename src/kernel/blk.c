@@ -34,25 +34,16 @@ static int dnbd3_close_device(dnbd3_device_t *dev)
 	if (dev->imgname)
 		dev_info(dnbd3_device_to_dev(dev), "closing down device.\n");
 
-	/* quickly fail all requests */
-	dnbd3_blk_fail_all_requests(dev);
-	dev->panic = 0;
-	dev->discover = 0;
+	dev->panic = false;
 	result = dnbd3_net_disconnect(dev);
 	kfree(dev->imgname);
 	dev->imgname = NULL;
 
 	/* new requests might have been queued up, */
 	/* but now that imgname is NULL no new ones can show up */
-	dnbd3_blk_fail_all_requests(dev);
-#ifdef DNBD3_BLK_MQ
 	blk_mq_freeze_queue(dev->queue);
-#endif
 	set_capacity(dev->disk, 0);
-#ifdef DNBD3_BLK_MQ
 	blk_mq_unfreeze_queue(dev->queue);
-#endif
-	dev->reported_size = 0;
 	return result;
 }
 
@@ -65,8 +56,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 #endif
 	char *imgname = NULL;
 	dnbd3_ioctl_t *msg = NULL;
-	unsigned long irqflags;
-	int i = 0;
+	int i = 0, j;
 	u8 locked = 0;
 
 	if (arg != 0) {
@@ -97,7 +87,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 
 	switch (cmd) {
 	case IOCTL_OPEN:
-		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0) {
+		if (!dnbd3_flag_get(dev->connection_lock)) {
 			result = -EBUSY;
 			break;
 		}
@@ -121,7 +111,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 
 			dev_info(dnbd3_device_to_dev(dev), "opening device.\n");
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
-			// set optimal request size for the queue
+			// set optimal request size for the queue to half the read-ahead
 			blk_queue_io_opt(dev->queue, (msg->read_ahead_kb * 512));
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
 			// set readahead from optimal request size of the queue
@@ -158,8 +148,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 				if (dev->alt_servers[i].host.ss_family == 0)
 					continue; // Empty slot
 
-				dev->cur_server.host = dev->alt_servers[i].host;
-				result = dnbd3_net_connect(dev);
+				result = dnbd3_new_connection(dev, &dev->alt_servers[i].host, true);
 				if (result == 0) {
 					/* connection established, store index of server and exit loop */
 					result = i;
@@ -168,7 +157,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			}
 
 			if (result >= 0) {
-				/* probing was successful */
+				/* connection was successful */
 				dev_dbg(dnbd3_device_to_dev(dev), "server %pISpc is initial server\n",
 					&dev->cur_server.host);
 				imgname = NULL; // Prevent kfree at the end
@@ -180,7 +169,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 
 	case IOCTL_CLOSE:
-		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0) {
+		if (!dnbd3_flag_get(dev->connection_lock)) {
 			result = -EBUSY;
 			break;
 		}
@@ -189,7 +178,7 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 
 	case IOCTL_SWITCH:
-		if (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0) {
+		if (!dnbd3_flag_get(dev->connection_lock)) {
 			result = -EBUSY;
 			break;
 		}
@@ -216,40 +205,12 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 					/* specified server is current server, so do not switch */
 					result = 0;
 				} else {
-					struct sockaddr_storage old_server;
-
 					dev_info(dnbd3_device_to_dev(dev), "manual server switch to %pISpc\n",
 						 &new_addr);
-					/* save current working server */
-					/* lock device to get consistent copy of current working server */
-					spin_lock_irqsave(&dev->blk_lock, irqflags);
-					old_server = dev->cur_server.host;
-					spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-
-					/* disconnect old server */
-					dnbd3_net_disconnect(dev);
-
-					/* connect to new specified server (switching) */
-					spin_lock_irqsave(&dev->blk_lock, irqflags);
-					dev->cur_server.host = new_addr;
-					spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-					result = dnbd3_net_connect(dev);
+					result = dnbd3_new_connection(dev, &new_addr, false);
 					if (result != 0) {
-						/* reconnect with old server if switching has failed */
-						spin_lock_irqsave(&dev->blk_lock, irqflags);
-						dev->cur_server.host = old_server;
-						spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-						if (dnbd3_net_connect(dev) != 0) {
-							/* we couldn't reconnect to the old server */
-							/* device is dangling now and needs another SWITCH call */
-							dev_warn(
-								dnbd3_device_to_dev(dev),
-								"switching failed and could not switch back to old server - dangling device\n");
-							result = -ECONNABORTED;
-						} else {
-							/* switching didn't work but we are back to the old server */
-							result = -EAGAIN;
-						}
+						/* switching didn't work */
+						result = -EAGAIN;
 					} else {
 						/* switch succeeded */
 						/* fake RTT so we don't switch away again soon */
@@ -257,12 +218,13 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 						for (i = 0; i < NUMBER_SERVERS; ++i) {
 							alt_server = &dev->alt_servers[i];
 							if (is_same_server(&alt_server->host, &new_addr)) {
-								alt_server->rtts[0] = alt_server->rtts[1]
-									= alt_server->rtts[2] = alt_server->rtts[3] = 4;
+								for (j = 0; j < DISCOVER_HISTORY_SIZE; ++j)
+									alt_server->rtts[j] = 1;
 								alt_server->best_count = 100;
 							} else {
-								alt_server->rtts[0] <<= 2;
-								alt_server->rtts[2] <<= 2;
+								for (j = 0; j < DISCOVER_HISTORY_SIZE; ++j)
+									if (alt_server->rtts[j] < 5000)
+										alt_server->rtts[j] = 5000;
 								alt_server->best_count = 0;
 							}
 						}
@@ -318,12 +280,11 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		break;
 	}
 
-	if (locked)
-		atomic_set(&dev->connection_lock, 0);
-
 cleanup_return:
 	kfree(msg);
 	kfree(imgname);
+	if (locked)
+		dnbd3_flag_reset(dev->connection_lock);
 	return result;
 }
 
@@ -332,7 +293,18 @@ static const struct block_device_operations dnbd3_blk_ops = {
 	.ioctl = dnbd3_blk_ioctl,
 };
 
-#ifdef DNBD3_BLK_MQ
+static void dnbd3_add_queue(dnbd3_device_t *dev, struct request *rq)
+{
+	unsigned long irqflags;
+
+	spin_lock_irqsave(&dev->send_queue_lock, irqflags);
+	list_add_tail(&rq->queuelist, &dev->send_queue);
+	spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
+	spin_lock_irqsave(&dev->blk_lock, irqflags);
+	queue_work(dev->send_wq, &dev->send_work);
+	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
+}
+
 /*
  * Linux kernel blk-mq driver function (entry point) to handle block IO requests
  */
@@ -340,110 +312,108 @@ static blk_status_t dnbd3_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_
 {
 	struct request *rq = bd->rq;
 	dnbd3_device_t *dev = rq->q->queuedata;
-	unsigned long irqflags;
+	struct dnbd3_cmd *cmd;
 
-	if (dev->imgname == NULL)
+	if (dev->imgname == NULL || !device_active(dev))
 		return BLK_STS_IOERR;
 
-	if (!(dnbd3_req_fs(rq)))
+	if (req_op(rq) != REQ_OP_READ)
 		return BLK_STS_IOERR;
 
 	if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count >= PROBE_COUNT_TIMEOUT)
 		return BLK_STS_TIMEOUT;
 
-	if (!(dnbd3_req_read(rq)))
+	if (rq_data_dir(rq) != READ)
 		return BLK_STS_NOTSUPP;
 
+	cmd = blk_mq_rq_to_pdu(rq);
+	cmd->handle = (u64)blk_mq_unique_tag(rq) | (((u64)jiffies) << 32);
 	blk_mq_start_request(rq);
-	spin_lock_irqsave(&dev->blk_lock, irqflags);
-	list_add_tail(&rq->queuelist, &dev->request_queue_send);
-	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-	wake_up(&dev->process_queue_send);
+	dnbd3_add_queue(dev, rq);
 	return BLK_STS_OK;
 }
 
-static const struct blk_mq_ops dnbd3_mq_ops = {
-	.queue_rq = dnbd3_queue_rq,
-};
-
-#else /* DNBD3_BLK_MQ */
-/*
- * Linux kernel blk driver function (entry point) to handle block IO requests
- */
-static void dnbd3_blk_request(struct request_queue *q)
+static enum blk_eh_timer_return dnbd3_rq_timeout(struct request *req, bool reserved)
 {
-	struct request *rq;
-	dnbd3_device_t *dev;
+	unsigned long irqflags;
+	struct request *rq_iter;
+	bool found = false;
+	dnbd3_device_t *dev = req->q->queuedata;
 
-	while ((rq = blk_fetch_request(q)) != NULL) {
-		dev = rq->rq_disk->private_data;
-
-		if (dev->imgname == NULL) {
-			__blk_end_request_all(rq, -EIO);
-			continue;
+	spin_lock_irqsave(&dev->send_queue_lock, irqflags);
+	list_for_each_entry(rq_iter, &dev->send_queue, queuelist) {
+		if (rq_iter == req) {
+			found = true;
+			break;
 		}
-
-		if (!(dnbd3_req_fs(rq))) {
-			__blk_end_request_all(rq, 0);
-			continue;
-		}
-
-		if (PROBE_COUNT_TIMEOUT > 0 && dev->panic_count >= PROBE_COUNT_TIMEOUT) {
-			__blk_end_request_all(rq, -EIO);
-			continue;
-		}
-
-		if (!(dnbd3_req_read(rq))) {
-			__blk_end_request_all(rq, -EACCES);
-			continue;
-		}
-
-		list_add_tail(&rq->queuelist, &dev->request_queue_send);
-		spin_unlock_irq(q->queue_lock);
-		wake_up(&dev->process_queue_send);
-		spin_lock_irq(q->queue_lock);
 	}
+	spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
+	// If still in send queue, do nothing
+	if (found)
+		return BLK_EH_RESET_TIMER;
+
+	spin_lock_irqsave(&dev->recv_queue_lock, irqflags);
+	list_for_each_entry(rq_iter, &dev->recv_queue, queuelist) {
+		if (rq_iter == req) {
+			found = true;
+			list_del_init(&req->queuelist);
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&dev->recv_queue_lock, irqflags);
+	if (!found) {
+		dev_err(dnbd3_device_to_dev(dev), "timeout request neither found in send nor recv queue, ignoring\n");
+		// Assume it was fnished concurrently
+		return BLK_EH_DONE;
+	}
+	// Add to send queue again and trigger work, reset timeout
+	dnbd3_add_queue(dev, req);
+	return BLK_EH_RESET_TIMER;
 }
-#endif /* DNBD3_BLK_MQ */
+
+static
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+const
+#endif
+struct blk_mq_ops dnbd3_mq_ops = {
+	.queue_rq = dnbd3_queue_rq,
+	.timeout  = dnbd3_rq_timeout,
+};
 
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
 	int ret;
 
-	init_waitqueue_head(&dev->process_queue_send);
-	init_waitqueue_head(&dev->process_queue_discover);
-	INIT_LIST_HEAD(&dev->request_queue_send);
-	INIT_LIST_HEAD(&dev->request_queue_receive);
+	memset(dev, 0, sizeof(*dev));
+	dev->index = minor;
+	// lock for imgname, cur_server etc.
+	spin_lock_init(&dev->blk_lock);
+	spin_lock_init(&dev->send_queue_lock);
+	spin_lock_init(&dev->recv_queue_lock);
+	INIT_LIST_HEAD(&dev->send_queue);
+	INIT_LIST_HEAD(&dev->recv_queue);
+	dnbd3_flag_reset(dev->connection_lock);
+	dnbd3_flag_reset(dev->discover_running);
+	mutex_init(&dev->alt_servers_lock);
+	dnbd3_net_work_init(dev);
 
-	memset(&dev->cur_server, 0, sizeof(dev->cur_server));
-	dev->better_sock = NULL;
-
+	// memset has done this already but I like initial values to be explicit
 	dev->imgname = NULL;
 	dev->rid = 0;
-	dev->update_available = 0;
-	mutex_init(&dev->alt_servers_lock);
-	memset(dev->alt_servers, 0, sizeof(dev->alt_servers[0]) * NUMBER_SERVERS);
-	dev->thread_send = NULL;
-	dev->thread_receive = NULL;
-	dev->thread_discover = NULL;
-	dev->discover = 0;
-	atomic_set(&dev->connection_lock, 0);
-	dev->panic = 0;
+	dev->update_available = false;
+	dev->panic = false;
 	dev->panic_count = 0;
 	dev->reported_size = 0;
 
-	// set up spin lock for request queues for send and receive
-	spin_lock_init(&dev->blk_lock);
-
-#ifdef DNBD3_BLK_MQ
 	// set up tag_set for blk-mq
 	dev->tag_set.ops = &dnbd3_mq_ops;
 	dev->tag_set.nr_hw_queues = 1;
 	dev->tag_set.queue_depth = 128;
 	dev->tag_set.numa_node = NUMA_NO_NODE;
-	dev->tag_set.cmd_size = 0;
+	dev->tag_set.cmd_size = sizeof(struct dnbd3_cmd);
 	dev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 	dev->tag_set.driver_data = dev;
+	dev->tag_set.timeout = BLOCK_LAYER_TIMEOUT * HZ;
 
 	ret = blk_mq_alloc_tag_set(&dev->tag_set);
 	if (ret) {
@@ -470,16 +440,6 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	}
 	dev->queue->queuedata = dev;
 #endif
-#else
-	// set up blk
-	dev->queue = blk_init_queue(&dnbd3_blk_request, &dev->blk_lock);
-	if (!dev->queue) {
-		ret = -ENOMEM;
-		dev_err(dnbd3_device_to_dev(dev), "blk_init_queue failed\n");
-		goto out;
-	}
-	dev->queue->queuedata = dev;
-#endif /* DNBD3_BLK_MQ */
 
 	blk_queue_logical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
 	blk_queue_physical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
@@ -527,90 +487,88 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 out_cleanup_queue:
 	blk_cleanup_queue(dev->queue);
 #endif
-#ifdef DNBD3_BLK_MQ
 out_cleanup_tags:
 	blk_mq_free_tag_set(&dev->tag_set);
-#endif
 out:
+	mutex_destroy(&dev->alt_servers_lock);
 	return ret;
 }
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
-	while (atomic_cmpxchg(&dev->connection_lock, 0, 1) != 0)
+	while (!dnbd3_flag_get(dev->connection_lock))
 		schedule();
 	dnbd3_close_device(dev);
 	dnbd3_sysfs_exit(dev);
 	del_gendisk(dev->disk);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	blk_cleanup_queue(dev->queue);
-#endif
-#ifdef DNBD3_BLK_MQ
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+#else
 	blk_cleanup_disk(dev->disk);
 #endif
 	blk_mq_free_tag_set(&dev->tag_set);
-#endif
 	mutex_destroy(&dev->alt_servers_lock);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	put_disk(dev->disk);
 #endif
+	mutex_destroy(&dev->alt_servers_lock);
 	return 0;
+}
+
+void dnbd3_blk_requeue_all_requests(dnbd3_device_t *dev)
+{
+	struct request *blk_request;
+	unsigned long flags;
+	struct list_head local_copy;
+	int count = 0;
+
+	INIT_LIST_HEAD(&local_copy);
+	spin_lock_irqsave(&dev->recv_queue_lock, flags);
+	while (!list_empty(&dev->recv_queue)) {
+		blk_request = list_entry(dev->recv_queue.next, struct request, queuelist);
+		list_del_init(&blk_request->queuelist);
+		list_add(&blk_request->queuelist, &local_copy);
+		count++;
+	}
+	spin_unlock_irqrestore(&dev->recv_queue_lock, flags);
+	if (count)
+		dev_info(dnbd3_device_to_dev(dev), "re-queueing %d requests\n", count);
+	while (!list_empty(&local_copy)) {
+		blk_request = list_entry(local_copy.next, struct request, queuelist);
+		list_del_init(&blk_request->queuelist);
+		dnbd3_add_queue(dev, blk_request);
+	}
 }
 
 void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
 {
-	struct request *blk_request, *tmp_request;
-	struct request *blk_request2, *tmp_request2;
+	struct request *blk_request;
 	unsigned long flags;
 	struct list_head local_copy;
-	int dup;
+	int count = 0;
 
 	INIT_LIST_HEAD(&local_copy);
-	spin_lock_irqsave(&dev->blk_lock, flags);
-	while (!list_empty(&dev->request_queue_receive)) {
-		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_receive, queuelist) {
-			list_del_init(&blk_request->queuelist);
-			dup = 0;
-			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist) {
-				if (blk_request == blk_request2) {
-					dev_warn(dnbd3_device_to_dev(dev),
-						 "same request is in request_queue_receive multiple times\n");
-					BUG();
-					dup = 1;
-					break;
-				}
-			}
-			if (!dup)
-				list_add(&blk_request->queuelist, &local_copy);
-		}
-	}
-	while (!list_empty(&dev->request_queue_send)) {
-		list_for_each_entry_safe(blk_request, tmp_request, &dev->request_queue_send, queuelist) {
-			list_del_init(&blk_request->queuelist);
-			dup = 0;
-			list_for_each_entry_safe(blk_request2, tmp_request2, &local_copy, queuelist) {
-				if (blk_request == blk_request2) {
-					dev_warn(dnbd3_device_to_dev(dev), "request is in both lists\n");
-					BUG();
-					dup = 1;
-					break;
-				}
-			}
-			if (!dup)
-				list_add(&blk_request->queuelist, &local_copy);
-		}
-	}
-	spin_unlock_irqrestore(&dev->blk_lock, flags);
-	list_for_each_entry_safe(blk_request, tmp_request, &local_copy, queuelist) {
+	spin_lock_irqsave(&dev->recv_queue_lock, flags);
+	while (!list_empty(&dev->recv_queue)) {
+		blk_request = list_entry(dev->recv_queue.next, struct request, queuelist);
 		list_del_init(&blk_request->queuelist);
-		if (dnbd3_req_fs(blk_request))
-#ifdef DNBD3_BLK_MQ
-			blk_mq_end_request(blk_request, BLK_STS_IOERR);
-#else
-			blk_end_request_all(blk_request, -EIO);
-#endif
-		else if (dnbd3_req_special(blk_request))
-			kfree(blk_request);
+		list_add(&blk_request->queuelist, &local_copy);
+		count++;
+	}
+	spin_unlock_irqrestore(&dev->recv_queue_lock, flags);
+	spin_lock_irqsave(&dev->send_queue_lock, flags);
+	while (!list_empty(&dev->send_queue)) {
+		blk_request = list_entry(dev->send_queue.next, struct request, queuelist);
+		list_del_init(&blk_request->queuelist);
+		list_add(&blk_request->queuelist, &local_copy);
+		count++;
+	}
+	spin_unlock_irqrestore(&dev->send_queue_lock, flags);
+	if (count)
+		dev_info(dnbd3_device_to_dev(dev), "failing %d requests\n", count);
+	while (!list_empty(&local_copy)) {
+		blk_request = list_entry(local_copy.next, struct request, queuelist);
+		list_del_init(&blk_request->queuelist);
+		blk_mq_end_request(blk_request, BLK_STS_IOERR);
 	}
 }

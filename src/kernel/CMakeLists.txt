@@ -30,13 +30,11 @@ set(KERNEL_MODULE_DNBD3_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/blk.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/dnbd3_main.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/net.c
                                      ${CMAKE_CURRENT_SOURCE_DIR}/serialize.c
-                                     ${CMAKE_CURRENT_SOURCE_DIR}/sysfs.c
-                                     ${CMAKE_CURRENT_SOURCE_DIR}/utils.c)
+                                     ${CMAKE_CURRENT_SOURCE_DIR}/sysfs.c)
 set(KERNEL_MODULE_DNBD3_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/blk.h
                                      ${CMAKE_CURRENT_SOURCE_DIR}/dnbd3_main.h
                                      ${CMAKE_CURRENT_SOURCE_DIR}/net.h
-                                     ${CMAKE_CURRENT_SOURCE_DIR}/sysfs.h
-                                     ${CMAKE_CURRENT_SOURCE_DIR}/utils.h)
+                                     ${CMAKE_CURRENT_SOURCE_DIR}/sysfs.h)
 
 add_kernel_module(dnbd3 "${KERNEL_BUILD_DIR}"
                         "${KERNEL_INSTALL_DIR}"
