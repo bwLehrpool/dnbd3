@@ -406,8 +406,16 @@ static void* connection_receiveThreadMain( void *sockPtr )
 					}
 					unlock_rw( &altLock );
 				}
-				fuse_reply_buf( request->fuse_req, request->buffer, request->length );
-				free( request );
+				if( request->cow_write != NULL ) {
+					cowfile_writePaddedBlock(request );
+				} else if( request->cow != NULL ) {
+					cowFile_readRemoteData( request );
+				}
+				else {
+					fuse_reply_buf( request->fuse_req, request->buffer, request->length );
+					free( request->buffer );
+					free( request );
+				}
 			}
 		} else if ( reply.cmd == CMD_GET_SERVERS ) {
 			// List of known alt servers
@@ -706,8 +714,16 @@ static void probeAltServers()
 				goto fail;
 			}
 			// Success, reply to fuse
-			fuse_reply_buf( request->fuse_req, request->buffer, request->length );
-			free( request );
+			if( request->cow_write != NULL ) {
+				cowfile_writePaddedBlock(request );
+			} else if( request->cow != NULL ) {
+				cowFile_readRemoteData( request );
+			}
+			else {
+				fuse_reply_buf( request->fuse_req, request->buffer, request->length );
+				free( request->buffer );
+				free( request );
+			}
 			logadd( LOG_DEBUG1, "%s probe: Successful direct probe", hstr );
 		} else {
 			// Wasn't a request that's in our request queue

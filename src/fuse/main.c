@@ -8,36 +8,9 @@
  * FUSE lowlevel by Alan Reichert
  * */
 
-#include "connection.h"
-#include "helper.h"
-#include <dnbd3/version.h>
-#include <dnbd3/build.h>
-#include <dnbd3/shared/protocol.h>
-#include <dnbd3/shared/log.h>
+#include "main.h"
 
-#define FUSE_USE_VERSION 30
-#include <dnbd3/config.h>
-#include <fuse_lowlevel.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <assert.h>
-/* for printing uint */
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>
-#include <getopt.h>
-#include <time.h>
-#include <signal.h>
-#include <pthread.h>
 
-#define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
-
-#define INO_ROOT (1)
-#define INO_STATS (2)
-#define INO_IMAGE (3)
 
 static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
@@ -45,21 +18,24 @@ static const char *STATS_NAME = "status";
 static struct fuse_session *_fuseSession = NULL;
 
 static uint64_t imageSize;
+static uint64_t *imageSizePtr =&imageSize;
+
 /* Debug/Benchmark variables */
 static bool useDebug = false;
 static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
-
+static bool useCow = false;
 static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize );
 static void fillStatsFile( fuse_req_t req, size_t size, off_t offset );
 static void image_destroy( void *private_data );
-static void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
 static void image_ll_init( void *userdata, struct fuse_conn_info *conn );
 static void image_ll_lookup( fuse_req_t req, fuse_ino_t parent, const char *name );
 static void image_ll_open( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
 static void image_ll_readdir( fuse_req_t req, fuse_ino_t ino, size_t size, off_t off, struct fuse_file_info *fi );
 static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t offset, struct fuse_file_info *fi );
+static void image_ll_write( fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi );
+static void image_ll_setattr( fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi );
 static int image_stat( fuse_ino_t ino, struct stat *stbuf );
 static void printUsage( char *argv0, int exitCode );
 static void printVersion();
@@ -69,13 +45,20 @@ static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 	switch ( ino ) {
 	case INO_ROOT:
 		stbuf->st_mode = S_IFDIR | 0550;
+		if(useCow){
+			stbuf->st_mode = S_IFDIR | 0777;	
+		}
 		stbuf->st_nlink = 2;
 		stbuf->st_mtim = startupTime;
 		break;
 	case INO_IMAGE:
-		stbuf->st_mode = S_IFREG | 0440;
+		if(useCow){
+			stbuf->st_mode = S_IFREG | 0777;
+		}else{
+			stbuf->st_mode = S_IFREG | 0440;
+		}
 		stbuf->st_nlink = 1;
-		stbuf->st_size = imageSize;
+		stbuf->st_size = *imageSizePtr;
 		stbuf->st_mtim = startupTime;
 		break;
 	case INO_STATS:
@@ -93,7 +76,7 @@ static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 	return 0;
 }
 
-static void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi )
+void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi )
 {
 	struct stat stbuf = { 0 };
 	( void ) fi;
@@ -171,7 +154,7 @@ static void image_ll_open( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info
 {
 	if ( ino != INO_IMAGE && ino != INO_STATS ) {
 		fuse_reply_err( req, EISDIR );
-	} else if ( ( fi->flags & 3 ) != O_RDONLY ) {
+	} else if ( ( fi->flags & 3 ) != O_RDONLY && !useCow ) {
 		fuse_reply_err( req, EACCES );
 	} else {
 		// auto caching
@@ -202,15 +185,21 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 		return;
 	}
 
-	if ( (uint64_t)offset >= imageSize ) {
+	if ( size == 0 || size > UINT32_MAX ) {
 		fuse_reply_err( req, 0 );
 		return;
 	}
-	if ( offset + size > imageSize ) {
-		size = imageSize - offset;
-	}
-	if ( size == 0 || size > UINT32_MAX ) {
+
+	if ( (uint64_t)offset >= *imageSizePtr ) {
 		fuse_reply_err( req, 0 );
+		return;
+	}
+	if ( offset + size > *imageSizePtr ) {
+		size = *imageSizePtr - offset;
+	}
+
+	if ( useCow ) {
+		cowfile_read(req, size, offset);
 		return;
 	}
 
@@ -223,10 +212,16 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
-	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) + size );
+	
+
+	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) );
+	request->buffer = malloc(size);
 	request->length = (uint32_t)size;
 	request->offset = offset;
 	request->fuse_req = req;
+
+	request->cow = NULL;
+	request->cow_write = NULL;
 
 	if ( !connection_read( request ) ) {
 		fuse_reply_err( req, EIO );
@@ -260,6 +255,58 @@ static void image_destroy( void *private_data UNUSED )
 	connection_close();
 }
 
+
+static void image_ll_write( fuse_req_t req, fuse_ino_t ino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi )
+{
+	assert( ino == INO_STATS || ino == INO_IMAGE );
+
+	( void )fi;
+
+	if ( ino == INO_STATS ) {
+		fuse_reply_err( req, EACCES );
+		return;
+	}
+
+	cow_request* cowRequest = malloc(sizeof(cow_request));
+	cowRequest->fuseRequestSize = size;
+	cowRequest->workCounter = ATOMIC_VAR_INIT( 1 );
+	cowRequest->writeBuffer = buf;
+	cowRequest->readBuffer = NULL;
+	cowRequest->errorCode = ATOMIC_VAR_INIT( 0 );
+	cowRequest->replyAttr = false;
+	cowRequest->fuseRequestOffset = off;
+	cowRequest->bytesWritten = ATOMIC_VAR_INIT( 0 );
+	cowfile_write(req, cowRequest, off, size);
+}
+
+static void image_ll_setattr( fuse_req_t req, fuse_ino_t ino, struct stat *attr, int to_set, struct fuse_file_info *fi )
+{
+	if ( ino != INO_IMAGE ) {
+		fuse_reply_err( req, EACCES );
+		return;
+	}
+	if (to_set & FUSE_SET_ATTR_SIZE) {
+		if(attr->st_size  > (long)*imageSizePtr) {
+			cow_request* cowRequest = malloc(sizeof(cow_request));
+			cowRequest->fuseRequestSize = attr->st_size - *imageSizePtr;
+			cowRequest->workCounter = ATOMIC_VAR_INIT( 1 );
+			cowRequest->writeBuffer = NULL;
+			cowRequest->readBuffer = NULL;
+			cowRequest->errorCode = ATOMIC_VAR_INIT( 0 );
+			cowRequest->replyAttr = true;
+			cowRequest->fi = fi;
+			cowRequest->ino = ino;
+			cowRequest->fuseRequestOffset = *imageSizePtr;
+			cowRequest->bytesWritten = ATOMIC_VAR_INIT( 0 );
+			cowfile_write( req,  cowRequest, *imageSizePtr, attr->st_size - *imageSizePtr);
+		}
+		else{
+			*imageSizePtr = attr->st_size;
+			image_ll_getattr(req, ino, fi);
+		}
+	}
+}
+
 /* map the implemented fuse operations */
 static struct fuse_lowlevel_ops image_oper = {
 	.lookup = image_ll_lookup,
@@ -270,6 +317,20 @@ static struct fuse_lowlevel_ops image_oper = {
 	.init = image_ll_init,
 	.destroy = image_destroy,
 };
+
+/* map the implemented fuse operations with copy on write */
+static struct fuse_lowlevel_ops image_oper_cow = {
+	.lookup = image_ll_lookup,
+	.getattr = image_ll_getattr,
+	.readdir = image_ll_readdir,
+	.open = image_ll_open,
+	.read = image_ll_read,
+	.init = image_ll_init,
+	.destroy = image_destroy,
+	.write = image_ll_write,
+	.setattr = image_ll_setattr,
+};
+
 
 static void printVersion()
 {
@@ -299,10 +360,11 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -r --rid        Revision to use (omit or pass 0 for latest)\n" );
 	printf( "   -S --sticky     Use only servers from command line (no learning from servers)\n" );
 	printf( "   -s              Single threaded mode\n" );
+	printf( "   -c <path>       Enables cow, creates the cow files at given path\n" );
 	exit( exitCode );
 }
 
-static const char *optString = "dfHh:i:l:o:r:SsVv";
+static const char *optString = "dfHh:i:l:o:r:SsVvc:L:";
 static const struct option longOpts[] = {
 	{ "debug", no_argument, NULL, 'd' },
 	{ "help", no_argument, NULL, 'H' },
@@ -313,6 +375,7 @@ static const struct option longOpts[] = {
 	{ "rid", required_argument, NULL, 'r' },
 	{ "sticky", no_argument, NULL, 'S' },
 	{ "version", no_argument, NULL, 'v' },
+	{ "cow", required_argument, NULL, 'v' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -330,6 +393,8 @@ int main( int argc, char *argv[] )
 	struct fuse_chan *ch;
 	char *mountpoint;
 	int foreground = 0;
+	char *cow_file_path = NULL;
+	bool loadCow = false;
 
 	log_init();
 
@@ -395,6 +460,15 @@ int main( int argc, char *argv[] )
 		case 'f':
 			foreground = 1;
 			break;
+		case 'c':
+			cow_file_path = optarg;
+			useCow = true;
+			break;
+		case 'L':
+			cow_file_path = optarg;
+			useCow = true;
+			loadCow = true;
+			break;
 		default:
 			printUsage( argv[0], EXIT_FAILURE );
 		}
@@ -413,7 +487,11 @@ int main( int argc, char *argv[] )
 			logadd( LOG_WARNING, "Could not open log file at '%s'", log_file );
 		}
 	}
-
+	if ( loadCow ) {
+		if ( !cowfile_load( cow_file_path ) ) {
+			return EXIT_FAILURE;
+		}
+	}
 	// Prepare our handler
 	struct sigaction newHandler;
 	memset( &newHandler, 0, sizeof( newHandler ) );
@@ -433,17 +511,20 @@ int main( int argc, char *argv[] )
 
 	/* initialize benchmark variables */
 	logInfo.receivedBytes = 0;
-	logInfo.imageSize = imageSize;
-	logInfo.imageBlockCount = ( imageSize + 4095 ) / 4096;
+	logInfo.imageSize = *imageSizePtr;
+	logInfo.imageBlockCount = ( *imageSizePtr + 4095 ) / 4096;
 	if ( useDebug ) {
 		logInfo.blockRequestCount = calloc( logInfo.imageBlockCount, sizeof(uint8_t) );
 	} else {
 		logInfo.blockRequestCount = NULL;
 	}
-
-	// Since dnbd3 is always read only and the remote image will not change
+	
 	newArgv[newArgc++] = "-o";
-	newArgv[newArgc++] = "ro,default_permissions";
+	if(useCow){
+		newArgv[newArgc++] = "default_permissions";
+	}else{
+		newArgv[newArgc++] = "ro,default_permissions";
+	}
 	// Mount point goes last
 	newArgv[newArgc++] = argv[optind];
 
@@ -455,6 +536,12 @@ int main( int argc, char *argv[] )
 	clock_gettime( CLOCK_REALTIME, &startupTime );
 	owner = getuid();
 
+	if ( useCow & !loadCow) {
+		if( !cowfile_init( cow_file_path, IMAGE_NAME,  &imageSizePtr) ) {
+			return EXIT_FAILURE;
+		}
+	}
+
 	// Fuse lowlevel loop
 	struct fuse_args args = FUSE_ARGS_INIT( newArgc, newArgv );
 	int fuse_err = 1;
@@ -463,7 +550,11 @@ int main( int argc, char *argv[] )
 	} else if ( ( ch = fuse_mount( mountpoint, &args ) ) == NULL ) {
 		logadd( LOG_ERROR, "Mounting file system failed" );
 	} else {
-		_fuseSession = fuse_lowlevel_new( &args, &image_oper, sizeof( image_oper ), NULL );
+		if(useCow){
+			_fuseSession = fuse_lowlevel_new( &args, &image_oper_cow, sizeof( image_oper_cow ), NULL );
+		} else{
+			_fuseSession = fuse_lowlevel_new( &args, &image_oper, sizeof( image_oper ), NULL );
+		}
 		if ( _fuseSession == NULL ) {
 			logadd( LOG_ERROR, "Could not initialize fuse session" );
 		} else {

@@ -15,13 +15,18 @@
 extern atomic_bool keepRunning;
 struct _dnbd3_async;
 
+typedef  struct cow_request cow_request;
+typedef  struct cow_write_request cow_write_request;
+
 typedef struct _dnbd3_async {
 	struct _dnbd3_async *next; // Next in this linked list (provate field, not set by caller)
 	ticks time;        // When request was put on wire, 0 if not measuring
 	uint64_t offset;
 	uint32_t length;
 	fuse_req_t fuse_req;
-	char buffer[]; // Must be last member!
+	cow_request *cow;
+	cow_write_request *cow_write;
+	char* buffer; 
 } dnbd3_async_t;
 
 bool connection_init( const char *hosts, const char *image, const uint16_t rid, const bool learnNewServers );

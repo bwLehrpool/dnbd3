@@ -14,6 +14,7 @@ project(dnbd3
 OPTION(DNBD3_KERNEL_MODULE "Build the dnbd3 Linux kernel module" ON)
 OPTION(DNBD3_BENCHMARK "Enable build of dnbd3-bench" OFF)
 OPTION(DNBD3_CLIENT_FUSE "Enable build of dnbd3-fuse" ON)
+OPTION(DNBD3_CLIENT_FUSE_COW_TEST "Enable build of dnbd3-fuse-cow-test" OFF)
 OPTION(DNBD3_SERVER "Enable build of dnbd3-server" ON)
 OPTION(DNBD3_SERVER_FUSE "Enable FUSE-Integration for dnbd3-server" OFF)
 OPTION(DNBD3_SERVER_AFL "Build dnbd3-server for usage with afl-fuzz" OFF)
