@@ -4,3 +4,4 @@ build/
 *.swp
 .autotools
 .idea
+.vscode/

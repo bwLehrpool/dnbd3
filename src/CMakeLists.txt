@@ -17,6 +17,10 @@ if(DNBD3_CLIENT_FUSE)
     add_subdirectory(fuse)
 endif(DNBD3_CLIENT_FUSE)
 
+if(DNBD3_CLIENT_FUSE_COW_TEST)
+    add_subdirectory(cowtest)
+endif(DNBD3_CLIENT_FUSE_COW_TEST)
+
 if(DNBD3_SERVER)
     add_subdirectory(server)
 endif(DNBD3_SERVER)

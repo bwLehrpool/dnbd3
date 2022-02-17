@@ -6,6 +6,8 @@
 #include <dnbd3/shared/sockhelper.h>
 #include <dnbd3/shared/log.h>
 
+#include "main.h"
+#include "cowfile.h"
 #include <stdlib.h>
 #include <pthread.h>
 #include <string.h>
@@ -108,6 +110,7 @@ static bool hasAltServer( dnbd3_host_t *host );
 static void addAltServers( void );
 static void sortAltServers();
 static void probeAltServers();
+static size_t receiveRequest(const int sock, dnbd3_async_t* request );
 static void switchConnection( int sockFd, alt_server_t *srv );
 static void requestAltServers( void );
 static bool sendAltServerRequest( int sock );
@@ -349,6 +352,17 @@ bool connection_initThreads()
 	return success;
 }
 
+char * connection_getImageName()
+{
+	return image.name;
+}
+
+uint16_t connection_getImageRID()
+{
+	return image.rid;
+}
+
+
 uint64_t connection_getImageSize()
 {
 	return image.size;
@@ -492,7 +506,7 @@ static void* connection_receiveThreadMain( void *sockPtr )
 				}
 			} else {
 				// Found a match
-				const ssize_t ret = sock_recv( sockFd, request->buffer, request->length );
+				const ssize_t ret = receiveRequest( sockFd, request);
 				if ( ret != (ssize_t)request->length ) {
 					logadd( LOG_DEBUG1, "receiving payload for a block reply failed" );
 					connection_read( request );
@@ -513,8 +527,13 @@ static void* connection_receiveThreadMain( void *sockPtr )
 					}
 					unlock_rw( &altLock );
 				}
-				fuse_reply_buf( request->fuse_req, request->buffer, request->length );
-				free( request );
+				if( useCow ) {
+					cowfile_handleCallback( request );
+				}
+				else {
+					fuse_reply_buf( request->fuse_req, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
+					free( request );
+				}
 			}
 		} else if ( reply.cmd == CMD_GET_SERVERS ) {
 			// List of known alt servers
@@ -812,7 +831,7 @@ static void probeAltServers()
 		}
 		if ( request != NULL && removeRequest( request ) != NULL ) {
 			// Request successfully removed from queue
-			const ssize_t ret = sock_recv( sock, request->buffer, request->length );
+			ssize_t const ret = receiveRequest( sock, request);
 			if ( ret != (ssize_t)request->length ) {
 				logadd( LOG_DEBUG1, "%s probe: receiving payload for a block reply failed", hstr );
 				// Failure, add to queue again
@@ -820,8 +839,13 @@ static void probeAltServers()
 				goto fail;
 			}
 			// Success, reply to fuse
-			fuse_reply_buf( request->fuse_req, request->buffer, request->length );
-			free( request );
+			if( useCow ) {
+				cowfile_handleCallback( request );
+			}
+			else {
+				fuse_reply_buf( request->fuse_req, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
+				free( request );
+			}
 			logadd( LOG_DEBUG1, "%s probe: Successful direct probe", hstr );
 		} else {
 			// Wasn't a request that's in our request queue
@@ -928,6 +952,19 @@ fail:
 	unlock_rw( &altLock );
 	if ( best != NULL ) {
 		close( bestSock );
+	}
+}
+
+static size_t receiveRequest(const int sock, dnbd3_async_t* request ) {
+	if(useCow){
+		cow_sub_request_t * cow_request = container_of( request, cow_sub_request_t, dRequest );
+		if( cow_request->callback == readRemoteData){
+			return sock_recv( sock, cow_request->buffer, request->length );
+		} else{
+			return sock_recv( sock, &cow_request->writeBuffer, request->length );
+		}
+	} else {	
+		return sock_recv( sock, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
 	}
 }
 
