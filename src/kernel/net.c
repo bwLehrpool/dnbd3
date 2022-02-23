@@ -356,9 +356,9 @@ error:
 		dev_info(dnbd3_device_to_dev(dev), "server %pISpc is faster (%lluµs vs. %lluµs)\n",
 				&best_server,
 				(unsigned long long)best_rtt, (unsigned long long)dev->cur_server.rtt);
-		set_socket_timeout(sock, false, // recv
+		set_socket_timeout(best_sock, false, // recv
 				MAX(best_rtt / 1000, SOCKET_TIMEOUT_RECV * 1000) + 500);
-		set_socket_timeout(sock, true, // send
+		set_socket_timeout(best_sock, true, // send
 				MAX(best_rtt / 1000, SOCKET_TIMEOUT_SEND * 1000) + 500);
 		if (dnbd3_set_primary_connection(dev, best_sock, &best_server, remote_version) != 0)
 			sock_release(best_sock);
