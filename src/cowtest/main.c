@@ -11,14 +11,14 @@
 #include <stdint.h>
 
 
-static bool run = true;
+
 
 const size_t l2Size = 1024;
 const size_t bitfieldByteSize = 40;
 const size_t blocksize = 4096;
 const size_t l2Capacity = l2Size * blocksize * bitfieldByteSize;
 
-const size_t testFileSize = l2Size * bitfieldByteSize * blocksize * 5;
+const size_t testFileSize = l2Size * bitfieldByteSize * blocksize * 8L * 2.9L;
 
 const char standartValue = 'a';
 static char filePath[400];
@@ -78,9 +78,9 @@ bool compare( char buff[], char expected[], size_t size, char errorMessage[] )
 		perror( errorMessage );
 		if ( printOnError ) {
 			printf( "Expected: \n" );
-			printCharInHexadecimal( expected, size );
+			printCharInHexadecimal( expected, (int)size );
 			printf( "Got: \n " );
-			printCharInHexadecimal( buff, size );
+			printCharInHexadecimal( buff, (int)size );
 		}
 		return false;
 	}
@@ -270,6 +270,47 @@ bool fileSizeChanges()
 	return true;
 }
 
+bool interleavedTest()
+{
+	printf( "starting interleavedTest \n" );
+	char buff[blocksize * 10];
+	char expected[blocksize * 10];
+	off_t offset = 35 * blocksize;
+	memset( expected, 0, blocksize * 10 );
+	if ( !readSizeTested( fh, buff, blocksize * 10, offset, "interleavedTest test Failed: read to small" ) )
+		return false;
+	if ( !compare( buff, expected, blocksize * 10, "interleavedTest test Failed: read data not 0" ) )
+		return false;
+
+	memset( expected, 10, blocksize );
+	if ( !writeSizeTested( fh, expected, blocksize, offset, "interleavedTest test Failed: write 1 failed" ) )
+		return false;
+
+	memset( ( expected + ( blocksize * 2 ) ), 12, blocksize );
+	if ( !writeSizeTested( fh, ( expected + ( blocksize * 2 ) ), blocksize, offset + blocksize * 2,
+				  "interleavedTest test Failed: write 2 failed" ) )
+		return false;
+
+	memset( ( expected + ( blocksize * 4 ) ), 14, blocksize );
+	memset( ( expected + ( blocksize * 5 ) ), 15, blocksize );
+
+	if ( !writeSizeTested( fh, ( expected + ( blocksize * 4 ) ), blocksize * 2, offset + blocksize * 4,
+				  "interleavedTest test Failed: write 3 failed" ) )
+		return false;
+
+	memset( ( expected + ( blocksize * 8 ) ), 18, blocksize );
+	if ( !writeSizeTested( fh, ( expected + ( blocksize * 8 ) ), blocksize, offset + blocksize * 8,
+				  "interleavedTest test Failed: write 4 failed" ) )
+		return false;
+
+	if ( !readSizeTested( fh, buff, blocksize * 10, offset, "interleavedTest test Failed: read 2 to small" ) )
+		return false;
+	if ( !compare( buff, expected, blocksize * 10, "interleavedTest test Failed: read not as expected" ) )
+		return false;
+	printf( "interleavedTest successful!\n" );
+	return true;
+}
+
 void runTest( char *path )
 {
 	if ( ( fh = open( path, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
@@ -286,6 +327,8 @@ void runTest( char *path )
 	if ( !writeOverL2() )
 		return;
 	if ( !fileSizeChanges() )
+		return;
+	if ( !interleavedTest() )
 		return;
 	printf( "All test's successful.\n" );
 }
@@ -308,7 +351,7 @@ void execCommand( char command, char *parameters )
 			printUsage();
 			break;
 		}
-		generateTestFile( parameters, 3 * l2Capacity );
+		generateTestFile( parameters, testFileSize );
 		break;
 	case 't':
 		if ( parameters[0] == '\0' ) {
@@ -325,6 +368,7 @@ void execCommand( char command, char *parameters )
 		}
 		printf( "verifing file \n" );
 		runTest( parameters );
+		break;
 	default:
 		printf( "Command not Found \n" );
 		printUsage();

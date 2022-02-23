@@ -4,3 +4,6 @@ build/
 *.swp
 .autotools
 .idea
+.vscode/launch.json
+.vscode/settings.json
+.vscode/tasks.json

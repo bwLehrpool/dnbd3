@@ -41,7 +41,7 @@ typedef struct cow_request
 	off_t fuseRequestOffset;
 	char* readBuffer;
 	const char* writeBuffer;
-	atomic_size_t bytesWritten;
+	atomic_size_t bytesWorkedOn;
 	atomic_int workCounter;
 	atomic_int errorCode;
 	bool replyAttr;

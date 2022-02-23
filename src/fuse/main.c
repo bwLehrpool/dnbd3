@@ -275,7 +275,7 @@ static void image_ll_write( fuse_req_t req, fuse_ino_t ino, const char *buf, siz
 	cowRequest->errorCode = ATOMIC_VAR_INIT( 0 );
 	cowRequest->replyAttr = false;
 	cowRequest->fuseRequestOffset = off;
-	cowRequest->bytesWritten = ATOMIC_VAR_INIT( 0 );
+	cowRequest->bytesWorkedOn = ATOMIC_VAR_INIT( 0 );
 	cowfile_write(req, cowRequest, off, size);
 }
 
@@ -297,7 +297,7 @@ static void image_ll_setattr( fuse_req_t req, fuse_ino_t ino, struct stat *attr,
 			cowRequest->fi = fi;
 			cowRequest->ino = ino;
 			cowRequest->fuseRequestOffset = *imageSizePtr;
-			cowRequest->bytesWritten = ATOMIC_VAR_INIT( 0 );
+			cowRequest->bytesWorkedOn = ATOMIC_VAR_INIT( 0 );
 			cowfile_write( req,  cowRequest, *imageSizePtr, attr->st_size - *imageSizePtr);
 		}
 		else{
