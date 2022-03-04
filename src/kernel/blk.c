@@ -536,8 +536,16 @@ void dnbd3_blk_requeue_all_requests(dnbd3_device_t *dev)
 	while (!list_empty(&local_copy)) {
 		blk_request = list_entry(local_copy.next, struct request, queuelist);
 		list_del_init(&blk_request->queuelist);
-		dnbd3_add_queue(dev, blk_request);
+		spin_lock_irqsave(&dev->send_queue_lock, flags);
+		list_add_tail(&blk_request->queuelist, &dev->send_queue);
+		spin_unlock_irqrestore(&dev->send_queue_lock, flags);
 	}
+	// Do this even if we didn't move anything from the recv list to the send
+	// list. It might have already contained something, which needs to be
+	// re-requested anyways if this was called because of a server switch.
+	spin_lock_irqsave(&dev->blk_lock, flags);
+	queue_work(dev->send_wq, &dev->send_work);
+	spin_unlock_irqrestore(&dev->blk_lock, flags);
 }
 
 void dnbd3_blk_fail_all_requests(dnbd3_device_t *dev)
