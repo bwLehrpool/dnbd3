@@ -15,8 +15,8 @@
 extern atomic_bool keepRunning;
 struct _dnbd3_async;
 
-typedef  struct cow_request cow_request;
-typedef  struct cow_write_request cow_write_request;
+typedef struct cow_request cow_request_t;
+typedef struct cow_write_request cow_write_request_t;
 
 typedef struct _dnbd3_async {
 	struct _dnbd3_async *next; // Next in this linked list (provate field, not set by caller)
@@ -24,8 +24,8 @@ typedef struct _dnbd3_async {
 	uint64_t offset;
 	uint32_t length;
 	fuse_req_t fuse_req;
-	cow_request *cow;
-	cow_write_request *cow_write;
+	cow_request_t *cow;
+	cow_write_request_t *cow_write;
 	char* buffer; 
 } dnbd3_async_t;
 

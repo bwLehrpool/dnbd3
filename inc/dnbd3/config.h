@@ -40,4 +40,7 @@
 // +++++ Block Device +++++
 #define DNBD3_BLOCK_SIZE ((uint64_t)4096) // NEVER CHANGE THIS OR THE WORLD WILL END!
 
+// +++++ COW +++++
+#define COW_BITFIELD_SIZE 40 // NEVER CHANGE THIS OR THE WORLD WILL ALSO END!
+
 #endif /* CONFIG_H_ */

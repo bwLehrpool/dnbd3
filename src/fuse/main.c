@@ -267,7 +267,7 @@ static void image_ll_write( fuse_req_t req, fuse_ino_t ino, const char *buf, siz
 		return;
 	}
 
-	cow_request* cowRequest = malloc(sizeof(cow_request));
+	cow_request_t* cowRequest = malloc(sizeof(cow_request_t));
 	cowRequest->fuseRequestSize = size;
 	cowRequest->workCounter = ATOMIC_VAR_INIT( 1 );
 	cowRequest->writeBuffer = buf;
@@ -287,7 +287,7 @@ static void image_ll_setattr( fuse_req_t req, fuse_ino_t ino, struct stat *attr,
 	}
 	if (to_set & FUSE_SET_ATTR_SIZE) {
 		if(attr->st_size  > (long)*imageSizePtr) {
-			cow_request* cowRequest = malloc(sizeof(cow_request));
+			cow_request_t* cowRequest = malloc(sizeof(cow_request_t));
 			cowRequest->fuseRequestSize = attr->st_size - *imageSizePtr;
 			cowRequest->workCounter = ATOMIC_VAR_INIT( 1 );
 			cowRequest->writeBuffer = NULL;
