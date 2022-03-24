@@ -211,25 +211,25 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 					if (result != 0) {
 						/* switching didn't work */
 						result = -EAGAIN;
-					} else {
-						/* switch succeeded */
-						/* fake RTT so we don't switch away again soon */
-						mutex_lock(&dev->alt_servers_lock);
-						for (i = 0; i < NUMBER_SERVERS; ++i) {
-							alt_server = &dev->alt_servers[i];
-							if (is_same_server(&alt_server->host, &new_addr)) {
-								for (j = 0; j < DISCOVER_HISTORY_SIZE; ++j)
-									alt_server->rtts[j] = 1;
-								alt_server->best_count = 100;
-							} else {
-								for (j = 0; j < DISCOVER_HISTORY_SIZE; ++j)
-									if (alt_server->rtts[j] < 5000)
-										alt_server->rtts[j] = 5000;
-								alt_server->best_count = 0;
-							}
-						}
-						mutex_unlock(&dev->alt_servers_lock);
 					}
+				}
+				if (result == 0) {
+					/* fake RTT so we don't switch away again soon */
+					mutex_lock(&dev->alt_servers_lock);
+					for (i = 0; i < NUMBER_SERVERS; ++i) {
+						alt_server = &dev->alt_servers[i];
+						if (is_same_server(&alt_server->host, &new_addr)) {
+							for (j = 0; j < DISCOVER_HISTORY_SIZE; ++j)
+								alt_server->rtts[j] = 1;
+							alt_server->best_count = 100;
+						} else {
+							for (j = 0; j < DISCOVER_HISTORY_SIZE; ++j)
+								if (alt_server->rtts[j] < 5000)
+									alt_server->rtts[j] = 5000;
+							alt_server->best_count = 0;
+						}
+					}
+					mutex_unlock(&dev->alt_servers_lock);
 				}
 			}
 		}
