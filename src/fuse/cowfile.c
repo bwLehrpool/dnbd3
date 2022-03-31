@@ -11,28 +11,41 @@ static struct cow
 	int fhm;
 	int fhd;
 	char *metadata_mmap;
-	cow_block_metadata_t **l1;
-	l2 nextL2;
-	atomic_size_t metadataFileSize;
-	atomic_size_t dataFileSize;
+	l1 *l1;
+	l2 *firstL2;
 	size_t maxImageSize;
-
 	size_t l1Size; //size of l1 array
-	int l2Size;    //size of an l2 array
 
-	size_t metadataStorageCapacity;
-	size_t l2StorageCapacity; // memory a l2 array can address
 } cow;
 
+/**
+ * @brief computes the l1 offset from the absolute file offset
+ * 
+ * @param offset absolute file offset
+ * @return int l2 offset
+ */
 static int getL1Offset( size_t offset )
 {
-	return (int)( offset / cow.l2StorageCapacity );
+	return (int)( offset / COW_L2_STORAGE_CAPACITY );
 }
 
+/**
+ * @brief computes the l2 offset from the absolute file offset
+ * 
+ * @param offset absolute file offset
+ * @return int l2 offset
+ */
 static int getL2Offset( size_t offset )
 {
-	return (int)( ( offset % cow.l2StorageCapacity ) / cow.metadataStorageCapacity );
+	return (int)( ( offset % COW_L2_STORAGE_CAPACITY ) / COW_METADAT_STORAGE_CAPACITY );
 }
+
+/**
+ * @brief computes the bit in the bitfield from the absolute file offset
+ * 
+ * @param offset absolute file offset
+ * @return int bit(0-39) in the bitfield
+ */
 static int getBitfieldOffset( size_t offset )
 {
 	return (int)( offset / DNBD3_BLOCK_SIZE ) % COW_BITFIELD_SIZE;
@@ -47,8 +60,8 @@ static int getBitfieldOffset( size_t offset )
  */
 static void setBits( atomic_char *byte, int from, int to )
 {
-	char mask =(char) (((255-from) >> (7-(to-from))));
-	atomic_fetch_or(byte, (mask));
+	char mask = (char)( 255 >> ( 7 - ( to - from ) ) ) << from;
+	atomic_fetch_or( byte, ( *byte | mask ) );
 }
 
 /**
@@ -60,6 +73,7 @@ static void setBits( atomic_char *byte, int from, int to )
  */
 static void setBitsInBitfield( atomic_char *bitfield, int from, int to )
 {
+	assert( from >= 0 || to < COW_BITFIELD_SIZE );
 	int start = from / 8;
 	int end = to / 8;
 
@@ -80,6 +94,13 @@ static bool checkBit( atomic_char *bitfield, int n )
 	return ( atomic_load( ( bitfield + ( n / 8 ) ) ) >> ( n % 8 ) ) & 1;
 }
 
+/**
+ * @brief initializes the cow functionality, creates the .data & .meta file.
+ * 
+ * @param path where the files should be stored
+ * @param image_Name name of the original file/image
+ * @param imageSizePtr 
+ */
 bool cowfile_init( char *path, const char *image_Name, size_t **imageSizePtr )
 {
 	char pathMeta[strlen( path ) + 6];
@@ -97,146 +118,274 @@ bool cowfile_init( char *path, const char *image_Name, size_t **imageSizePtr )
 		logadd( LOG_ERROR, "Could not create cow data file. Bye.\n" );
 		return false;
 	}
-	cow.dataFileSize = 0;
-	// create Meta Data Mapping
-	int pageSize = getpagesize();
+
 	int maxPageSize = 8192;
 
 	// TODO IMAGE NAME IS FIXED
 	size_t metaDataSizeHeader = sizeof( cowfile_metadata_header_t ) + strlen( image_Name );
 
 
-	cow.maxImageSize = 1000LL * 1000LL * 1000LL * 1000LL; // tb*gb*mb*kb
-	cow.l2Size = 1024;
+	cow.maxImageSize = 1000LL * 1000LL * 1000LL * 1000LL; // tb*gb*mb*kb todo make this changeable
+	cow.l1Size = ( ( cow.maxImageSize + COW_L2_STORAGE_CAPACITY - 1LL ) / COW_L2_STORAGE_CAPACITY );
 
-	cow.metadataStorageCapacity = COW_BITFIELD_SIZE* DNBD3_BLOCK_SIZE;
-	cow.l2StorageCapacity = ( cow.l2Size * cow.metadataStorageCapacity );
+	// size of l1 array + number of l2's * size of l2
+	size_t metadata_size = cow.l1Size * sizeof( l1 ) + cow.l1Size * sizeof( l2 );
 
-	cow.l1Size = ( ( cow.maxImageSize + cow.l2StorageCapacity - 1LL ) / cow.l2StorageCapacity );
-
-	size_t metadata_size = cow.l1Size * sizeof( l1 ) + cow.l1Size * cow.l2Size * sizeof( l2 )
-			+ cow.l1Size * cow.l2Size * ( sizeof( cow_block_metadata_t ) );
-
-
-	//compute next fitting multiple of getpagesize()
+	// compute next fitting multiple of getpagesize()
 	size_t meta_data_start = ( ( metaDataSizeHeader + maxPageSize - 1 ) / maxPageSize ) * maxPageSize;
 
-	cow.metadataFileSize = meta_data_start + metadata_size;
-	if ( pwrite( cow.fhm, "", 1, cow.metadataFileSize ) != 1 ) {
+	size_t metadataFileSize = meta_data_start + metadata_size;
+	if ( pwrite( cow.fhm, "", 1, metadataFileSize ) != 1 ) {
 		logadd( LOG_ERROR, "Could not write cow meta_data_table to file. Bye.\n" );
 		return false;
 	}
 
-	cow.metadata_mmap = mmap( NULL, cow.metadataFileSize, PROT_READ | PROT_WRITE, MAP_SHARED, cow.fhm, 0 );
+	cow.metadata_mmap = mmap( NULL, metadataFileSize, PROT_READ | PROT_WRITE, MAP_SHARED, cow.fhm, 0 );
 
 
 	if ( cow.metadata_mmap == MAP_FAILED ) {
-		logadd( LOG_ERROR, "Error while mapping mmap. Bye.\n" );
+		logadd( LOG_ERROR, "Error while mapping mmap:\n%s \n Bye.\n", strerror( errno ) );
 		return false;
 	}
 
-
-	size_t *metaDataHeaderSizePtr = (size_t *)cow.metadata_mmap;
-	*metaDataHeaderSizePtr = metaDataSizeHeader;
-	metadata = (cowfile_metadata_header_t *)( cow.metadata_mmap + sizeof( size_t ) );
+	metadata = (cowfile_metadata_header_t *)( cow.metadata_mmap );
+	metadata->magicValue = COW_FILE_META_MAGIC_VALUE;
 	metadata->version = cowFileVersion;
-	metadata->blocksize = pageSize;
+	metadata->dataFileSize = ATOMIC_VAR_INIT( 0 );
+	metadata->metadataFileSize = ATOMIC_VAR_INIT( 0 );
+	metadata->metadataFileSize = metadataFileSize;
+	metadata->blocksize = DNBD3_BLOCK_SIZE;
 	metadata->originalImageSize = **imageSizePtr;
 	metadata->imageSize = metadata->originalImageSize;
+	metadata->creationTime = time( NULL );
 	*imageSizePtr = &metadata->imageSize;
-
 	metadata->metaDataStart = meta_data_start;
-
-
 	metadata->bitfieldSize = COW_BITFIELD_SIZE;
 	metadata->maxImageSize = cow.maxImageSize;
 	strcpy( metadata->imageName, image_Name );
-	cow.l1 = (cow_block_metadata_t **)( cow.metadata_mmap + meta_data_start );
-
+	cow.l1 = (l1 *)( cow.metadata_mmap + meta_data_start );
+	metadata->nextL2 = 0;
 
 	for ( size_t i = 0; i < cow.l1Size; i++ ) {
-		cow.l1[i] = NULL;
+		cow.l1[i] = -1;
 	}
-	cow.nextL2 = (l2)( cow.l1 + cow.l1Size );
+	cow.firstL2 = (l2 *)( ( (char *)cow.l1 ) + cow.l1Size );
+
+	// write header to data file
+	uint64_t header = COW_FILE_DATA_MAGIC_VALUE;
+	if ( pwrite( cow.fhd, &header, sizeof( uint64_t ), 0 ) != sizeof( uint64_t ) ) {
+		logadd( LOG_ERROR, "Could not write header to cow data file. Bye.\n" );
+		return false;
+	}
+	// move the dataFileSize to make room for the header
+	atomic_store( &metadata->dataFileSize, COW_METADAT_STORAGE_CAPACITY );
+
 	pthread_mutex_init( &cow.l2CreateLock, NULL );
 	return 1;
 }
+/**
+ * @brief loads an existing cow state from the .meta & .data files
+ * 
+ * @param path where the .meta & .data file is located 
+ * @param imageSizePtr 
+ */
 
-bool cowfile_load( char *path )
+bool cowfile_load( char *path, size_t **imageSizePtr )
 {
-	if ( ( cow.fhm = open( strcat( path, ".meta" ), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR ) ) == -1 ) {
+	char pathMeta[strlen( path ) + 6];
+	char pathData[strlen( path ) + 6];
+	strcpy( pathMeta, path );
+	strcpy( pathData, path );
+	strcat( pathMeta, ".meta" );
+	strcat( pathData, ".data" );
+	if ( ( cow.fhm = open( pathMeta, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not open cow meta file. Bye.\n" );
 		return false;
 	}
-	if ( ( cow.fhd = open( strcat( path, ".data" ), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR ) ) == -1 ) {
+	if ( ( cow.fhd = open( pathData, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not open cow data file. Bye.\n" );
 		return false;
 	}
-	size_t metaDataSizeHeader;
-	ssize_t bytesRead = read( cow.fhm, &metaDataSizeHeader, sizeof( size_t ) );
-	if ( bytesRead < (ssize_t)sizeof( size_t ) ) {
-		if ( bytesRead < 0 ) {
-			logadd( LOG_ERROR, "Error while reading metaDataSizeHeader: " );
-		} else {
-			logadd( LOG_ERROR, "metaDataSizeHeader smaller than expected. Bye.\n" );
+
+	cowfile_metadata_header_t header;
+	{
+		size_t sizeToRead = sizeof( cowfile_metadata_header_t );
+		size_t readBytes = 0;
+		while ( readBytes < sizeToRead ) {
+			ssize_t bytes = pread( cow.fhm, ( ( &header ) + readBytes ), sizeToRead, 0 );
+			if ( bytes <= 0 ) {
+				logadd( LOG_ERROR, "Error while reading meta file header. Bye.\n" );
+				return false;
+			}
+			readBytes += bytes;
 		}
+
+
+		if ( header.magicValue != COW_FILE_META_MAGIC_VALUE ) {
+			if ( __builtin_bswap64( header.magicValue ) == COW_FILE_META_MAGIC_VALUE ) {
+				logadd( LOG_ERROR, "cow meta file of wrong endianess. Bye.\n" );
+				return false;
+			}
+			logadd( LOG_ERROR, "cow meta file of unkown format. Bye.\n" );
+			return false;
+		}
+		struct stat st;
+		stat( pathMeta, &st );
+		if ( (long)st.st_size < (long)header.metaDataStart + (long)header.nextL2 * (long)sizeof( l2 ) ) {
+			logadd( LOG_ERROR, "cow meta file to small. Bye.\n" );
+			return false;
+		}
+	}
+	{
+		uint64_t magicValueDataFile;
+		pread( cow.fhd, &magicValueDataFile, sizeof( uint64_t ), 0 );
+
+		if ( magicValueDataFile != COW_FILE_DATA_MAGIC_VALUE ) {
+			if ( __builtin_bswap64( magicValueDataFile ) == COW_FILE_DATA_MAGIC_VALUE ) {
+				logadd( LOG_ERROR, "cow data file of wrong endianess. Bye.\n" );
+				return false;
+			}
+			logadd( LOG_ERROR, "cow data file of unkown format. Bye.\n" );
+			return false;
+		}
+		struct stat st;
+		stat( pathData, &st );
+		if ( (long)header.dataFileSize < st.st_size ) {
+			logadd( LOG_ERROR, "cow data file to small. Bye.\n" );
+			return false;
+		}
+	}
+
+	cow.metadata_mmap = mmap( NULL, header.metadataFileSize, PROT_READ | PROT_WRITE, MAP_SHARED, cow.fhm, 0 );
+
+	if ( cow.metadata_mmap == MAP_FAILED ) {
+		logadd( LOG_ERROR, "Error while mapping mmap:\n%s \n Bye.\n", strerror( errno ) );
 		return false;
 	}
-	cowfile_metadata_header_t *metadata = malloc( metaDataSizeHeader );
-	bytesRead = read( cow.fhm, metadata, metaDataSizeHeader );
-	if ( bytesRead < (ssize_t)sizeof( size_t ) ) {
-		if ( bytesRead < 0 ) {
-			logadd( LOG_ERROR, "Error while reading metadata. Bye.\n" );
-		} else {
-			logadd( LOG_ERROR, "metadata smaller than expected. Bye.\n" );
-		}
+	if ( header.version != cowFileVersion ) {
+		logadd( LOG_ERROR, "Error wrong file version got: %i expected: 1. Bye.\n", metadata->version );
 		return false;
 	}
-	logadd( LOG_DEBUG1, "===Image Name===: %s\n", metadata->imageName );
+
+
+	metadata = (cowfile_metadata_header_t *)( cow.metadata_mmap );
+
+	*imageSizePtr = &metadata->imageSize;
+	cow.l1 = (l1 *)( cow.metadata_mmap + metadata->metaDataStart );
+	cow.maxImageSize = metadata->maxImageSize;
+	cow.l1Size = ( ( cow.maxImageSize + COW_L2_STORAGE_CAPACITY - 1LL ) / COW_L2_STORAGE_CAPACITY );
+
+	cow.firstL2 = (l2 *)( ( (char *)cow.l1 ) + cow.l1Size );
+	pthread_mutex_init( &cow.l2CreateLock, NULL );
 
 	return true;
 }
 
-static void writeData( const char *buffer, size_t size, size_t netSize, cow_request_t *cowRequest, cow_block_metadata_t *block,
-		off_t inBlockOffset )
+/**
+ * @brief writes the given data in the .data file 
+ * 
+ * @param buffer containing the data
+ * @param size of the buffer
+ * @param netSize which actually contributes to the fuse write request (can be different from size if partial full blocks are written)
+ * @param cowRequest 
+ * @param block 
+ * @param inBlockOffset 
+ */
+static void writeData( const char *buffer, ssize_t size, size_t netSize, cow_request_t *cowRequest,
+		cow_block_metadata_t *block, off_t inBlockOffset )
 {
-	ssize_t bytesWritten = pwrite( cow.fhd, buffer, size, block->offset + inBlockOffset );
-
-	if ( bytesWritten == -1 ) {
-		cowRequest->errorCode = errno;
-	} else if ( (size_t)bytesWritten < size ) {
-		cowRequest->errorCode = EIO;
+	ssize_t totalBytesWritten = 0;
+	while ( totalBytesWritten < size ) {
+		ssize_t bytesWritten = pwrite( cow.fhd, ( buffer + totalBytesWritten ), size - totalBytesWritten,
+				block->offset + inBlockOffset + totalBytesWritten );
+		if ( bytesWritten == -1 ) {
+			cowRequest->errorCode = errno;
+			break;
+		} else if ( bytesWritten == 0 ) {
+			cowRequest->errorCode = EIO;
+			break;
+		}
+		totalBytesWritten += bytesWritten;
 	}
 	atomic_fetch_add( &cowRequest->bytesWorkedOn, netSize );
-	setBitsInBitfield(
-			block->bitfield, (int)( inBlockOffset / DNBD3_BLOCK_SIZE ), (int)( ( inBlockOffset + size ) / DNBD3_BLOCK_SIZE ) );
-	block->timeChanged = (atomic_uint_fast32_t)time( NULL );
+	setBitsInBitfield( block->bitfield, (int)( inBlockOffset / DNBD3_BLOCK_SIZE ),
+			(int)( ( inBlockOffset + totalBytesWritten - 1 ) / DNBD3_BLOCK_SIZE ) );
+
+	block->timeChanged = (atomic_uint_fast32_t)( time( NULL ) - metadata->creationTime );
 }
 
+/**
+ * @brief 
+ * 
+ * @param block 
+ * @return true 
+ * @return false 
+ */
+static bool allocateMetaBlockData( cow_block_metadata_t *block )
+{
+	block->offset = (atomic_long)atomic_fetch_add( &metadata->dataFileSize, COW_METADAT_STORAGE_CAPACITY );
+	return true;
+}
 
+/**
+ * @brief Get the cow_block_metadata_t from l1Offset and l2Offset
+ * 
+ * @param l1Offset 
+ * @param l2Offset 
+ * @return cow_block_metadata_t* 
+ */
+static cow_block_metadata_t *getBlock( int l1Offset, int l2Offset )
+{
+	cow_block_metadata_t *block = ( cow.firstL2[cow.l1[l1Offset]] + l2Offset );
+	if ( block->offset == -1 ) {
+		allocateMetaBlockData( block );
+	}
+	return block;
+}
+
+/**
+ * @brief creates an new L2 Block and initializes the containing cow_block_metadata_t blocks
+ * 
+ * @param l1Offset 
+ */
 static bool createL2Block( int l1Offset )
 {
 	pthread_mutex_lock( &cow.l2CreateLock );
-	if ( cow.l1[l1Offset] == NULL ) {
-		for ( int i = 0; i < cow.l2Size; i++ ) {
-			cow.nextL2[i].offset = -1;
-			cow.nextL2[i].timeChanged = 0;
-			cow.nextL2[i].timeUploaded = 0;
-			for (int j = 0; j < COW_BITFIELD_SIZE; j++){
-				cow.nextL2[i].bitfield[j] = ATOMIC_VAR_INIT( 0 );
+	if ( cow.l1[l1Offset] == -1 ) {
+		for ( int i = 0; i < COW_L2_SIZE; i++ ) {
+			cow.firstL2[metadata->nextL2][i].offset = -1;
+			cow.firstL2[metadata->nextL2][i].timeChanged = 0;
+			cow.firstL2[metadata->nextL2][i].timeUploaded = 0;
+			for ( int j = 0; j < COW_BITFIELD_SIZE; j++ ) {
+				cow.firstL2[metadata->nextL2][i].bitfield[j] = ATOMIC_VAR_INIT( 0 );
 			}
 		}
-		cow.l1[l1Offset] = cow.nextL2;
-		cow.nextL2 += cow.l2Size;
+		cow.l1[l1Offset] = metadata->nextL2;
+		metadata->nextL2 += 1;
 	}
 	pthread_mutex_unlock( &cow.l2CreateLock );
 	return true;
 }
 
-static bool allocateMetaBlockData( cow_block_metadata_t *block )
+static void finishWriteRequest( fuse_req_t req, cow_request_t *cowRequest )
 {
-	block->offset = (atomic_long)atomic_fetch_add( &cow.dataFileSize, cow.metadataStorageCapacity );
-	return true;
+	if ( cowRequest->errorCode != 0 ) {
+		fuse_reply_err( req, cowRequest->errorCode );
+
+	} else {
+		metadata->imageSize = MAX( metadata->imageSize, cowRequest->bytesWorkedOn + cowRequest->fuseRequestOffset );
+		if ( cowRequest->replyAttr ) {
+			//TODO HANDLE ERROR
+			image_ll_getattr( req, cowRequest->ino, cowRequest->fi );
+
+		} else {
+			fuse_reply_write( req, cowRequest->bytesWorkedOn );
+		}
+	}
+	if ( cowRequest->replyAttr ) {
+		free( (char *)cowRequest->writeBuffer );
+	}
+	free( cowRequest );
 }
 
 
@@ -245,15 +394,16 @@ static bool allocateMetaBlockData( cow_block_metadata_t *block )
  * @brief 
  * 
  */
-static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cowRequest, cow_write_request_t *cowWriteRequest )
+static void padBlockFromRemote(
+		fuse_req_t req, off_t offset, cow_request_t *cowRequest, cow_write_request_t *cowWriteRequest )
 {
 	if ( offset > (off_t)metadata->originalImageSize ) {
 		//pad 0 and done
 		char buffer[DNBD3_BLOCK_SIZE] = { 0 };
 		memcpy( buffer, cowWriteRequest->buffer, cowWriteRequest->size );
 
-		writeData(
-				buffer, DNBD3_BLOCK_SIZE, cowWriteRequest->size, cowRequest, cowWriteRequest->block, cowWriteRequest->inBlockOffset );
+		writeData( buffer, DNBD3_BLOCK_SIZE, (ssize_t)cowWriteRequest->size, cowRequest, cowWriteRequest->block,
+				cowWriteRequest->inBlockOffset );
 		free( cowWriteRequest );
 		return;
 	}
@@ -281,6 +431,23 @@ static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cow
 	}
 }
 
+void cowfile_writePaddedBlock( dnbd3_async_t *request )
+{
+	//copy write Data
+	memcpy( ( request->buffer + ( request->cow_write->inBlockOffset % DNBD3_BLOCK_SIZE ) ), request->cow_write->buffer,
+			request->cow_write->size );
+	writeData( request->buffer, DNBD3_BLOCK_SIZE, (ssize_t)request->cow_write->size, request->cow,
+			request->cow_write->block,
+			( request->cow_write->inBlockOffset - ( request->cow_write->inBlockOffset % DNBD3_BLOCK_SIZE ) ) );
+
+	free( request->cow_write );
+	if ( atomic_fetch_sub( &request->cow->workCounter, 1 ) == 1 ) {
+		finishWriteRequest( request->fuse_req, request->cow );
+	}
+	free( request->buffer );
+	free( request );
+}
+
 void cowFile_readRemoteData( dnbd3_async_t *request )
 {
 	atomic_fetch_add( &request->cow->bytesWorkedOn, request->length );
@@ -292,49 +459,12 @@ void cowFile_readRemoteData( dnbd3_async_t *request )
 	free( request );
 }
 
-static void finishWriteRequest( fuse_req_t req, cow_request_t *cowRequest )
-{
-	if ( cowRequest->errorCode != 0 ) {
-		fuse_reply_err( req, cowRequest->errorCode );
-
-	} else {
-		metadata->imageSize = MAX( metadata->imageSize, cowRequest->bytesWorkedOn + cowRequest->fuseRequestOffset );
-		if ( cowRequest->replyAttr ) {
-			//TODO HANDLE ERROR
-			image_ll_getattr( req, cowRequest->ino, cowRequest->fi );
-
-		} else {
-			fuse_reply_write( req, cowRequest->bytesWorkedOn );
-		}
-	}
-	if ( cowRequest->replyAttr ) {
-		free( (char *)cowRequest->writeBuffer );
-	}
-	free( cowRequest );
-}
-
-
-void cowfile_writePaddedBlock( dnbd3_async_t *request )
-{
-	//copy write Data
-	memcpy( request->buffer + ( request->cow_write->inBlockOffset % DNBD3_BLOCK_SIZE ), request->cow_write->buffer,
-			request->cow_write->size );
-	writeData( request->buffer, DNBD3_BLOCK_SIZE, request->cow_write->size, request->cow, request->cow_write->block,
-			request->cow_write->inBlockOffset );
-
-	free( request->cow_write );
-	if ( atomic_fetch_sub( &request->cow->workCounter, 1 ) == 1 ) {
-		finishWriteRequest( request->fuse_req, request->cow );
-	}
-	free( request->buffer );
-	free( request );
-}
 
 /// TODO move block padding in write
 void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, size_t size )
 {
 	if ( cowRequest->replyAttr ) {
-		cowRequest->writeBuffer = calloc( sizeof( char ), MIN( size, cow.metadataStorageCapacity ) );
+		cowRequest->writeBuffer = calloc( sizeof( char ), MIN( size, COW_METADAT_STORAGE_CAPACITY ) );
 	}
 	// if beyond end of file, pad with 0
 	if ( offset > (off_t)metadata->imageSize ) {
@@ -346,88 +476,75 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 		cowfile_write( req, cowRequest, metadata->imageSize, pSize );
 	}
 
-	// TODO PREVENT RACE CONDITION on not full block writes
 
 	off_t currentOffset = offset;
 	off_t endOffset = offset + size;
-	// get start & end block if needed( not on border and not already there)
-	if ( offset % DNBD3_BLOCK_SIZE != 0 ) {
-		int l1Offset = getL1Offset( offset );
-		int l2Offset = getL2Offset( offset );
-		if ( cow.l1[l1Offset] == NULL ) {
-			createL2Block( l1Offset );
-		}
-		cow_block_metadata_t *metaBlock = &( cow.l1[l1Offset] )[l2Offset];
-		size_t metaBlockStartOffset = l1Offset * cow.l2StorageCapacity + l2Offset * cow.metadataStorageCapacity;
-		size_t inBlockOffset = offset - metaBlockStartOffset;
-
-
-		if ( !checkBit( metaBlock->bitfield, (int)( inBlockOffset / DNBD3_BLOCK_SIZE ) ) ) {
-			size_t padSize = MIN( size, DNBD3_BLOCK_SIZE - ( (size_t)offset % DNBD3_BLOCK_SIZE ) );
-			cow_write_request_t *cowWriteRequest = malloc( sizeof( cow_write_request_t ) );
-			cowWriteRequest->inBlockOffset = (off_t)inBlockOffset;
-			cowWriteRequest->block = metaBlock;
-			cowWriteRequest->size = padSize;
-			cowWriteRequest->buffer = cowRequest->writeBuffer;
-			padBlockFromRemote( req, offset, cowRequest, cowWriteRequest );
-			currentOffset += padSize;
-		}
-	}
-	// also make sure endblock != start block
-	if ( offset + size % DNBD3_BLOCK_SIZE != 0 && ( ( offset + (off_t)size ) / DNBD3_BLOCK_SIZE ) != ( offset / DNBD3_BLOCK_SIZE ) ) {
-		int l1Offset = getL1Offset( offset + size );
-		int l2Offset = getL2Offset( offset + size );
-		if ( cow.l1[l1Offset] == NULL ) {
-			createL2Block( l1Offset );
-		}
-		cow_block_metadata_t *metaBlock = &( cow.l1[l1Offset] )[l2Offset];
-		if ( metaBlock->offset == -1 ) {
-			allocateMetaBlockData( metaBlock );
-		}
-		size_t metaBlockStartOffset = l1Offset * cow.l2StorageCapacity + l2Offset * cow.metadataStorageCapacity;
-		size_t padOffset = endOffset - ( endOffset % DNBD3_BLOCK_SIZE );
-		size_t inBlockOffset = padOffset - metaBlockStartOffset;
-
-
-		if ( !checkBit( metaBlock->bitfield, (int)( inBlockOffset / DNBD3_BLOCK_SIZE ) ) ) {
-			cow_write_request_t *cowWriteRequest = malloc( sizeof( cow_write_request_t ) );
-			cowWriteRequest->inBlockOffset = (off_t)inBlockOffset;
-			cowWriteRequest->block = metaBlock;
-			cowWriteRequest->size = endOffset - padOffset;
-			cowWriteRequest->buffer = cowRequest->writeBuffer + ( padOffset - offset );
-			padBlockFromRemote( req, padOffset, cowRequest, cowWriteRequest );
-
-			endOffset = padOffset; //TODO written size
-		}
-	}
-
-	// lock for have block probably needed
 
 	// write data
 
 	int l1Offset = getL1Offset( currentOffset );
 	int l2Offset = getL2Offset( currentOffset );
 	while ( currentOffset < endOffset ) {
-		if ( cow.l1[l1Offset] == NULL ) {
+		if ( cow.l1[l1Offset] == -1 ) {
 			createL2Block( l1Offset );
 		}
 		//loop over L2 array (metadata)
-		while ( currentOffset < (off_t)endOffset && l2Offset < cow.l2Size ) {
-			cow_block_metadata_t *metaBlock = &( cow.l1[l1Offset] )[l2Offset];
-			if ( metaBlock->offset == -1 ) {
-				allocateMetaBlockData( metaBlock );
-			}
-			size_t metaBlockStartOffset = l1Offset * cow.l2StorageCapacity + l2Offset * cow.metadataStorageCapacity;
+		while ( currentOffset < (off_t)endOffset && l2Offset < COW_L2_SIZE ) {
+			cow_block_metadata_t *metaBlock = getBlock( l1Offset, l2Offset );
+
+
+			size_t metaBlockStartOffset = l1Offset * COW_L2_STORAGE_CAPACITY + l2Offset * COW_METADAT_STORAGE_CAPACITY;
 
 			size_t inBlockOffset = currentOffset - metaBlockStartOffset;
 			size_t sizeToWriteToBlock =
-					MIN( (size_t)( endOffset - currentOffset ), cow.metadataStorageCapacity - inBlockOffset );
+					MIN( (size_t)( endOffset - currentOffset ), COW_METADAT_STORAGE_CAPACITY - inBlockOffset );
+
+
+			/////////////////////////
+			// lock for the half block probably needed
+			if ( currentOffset % DNBD3_BLOCK_SIZE != 0
+					&& !checkBit( metaBlock->bitfield, (int)( inBlockOffset / DNBD3_BLOCK_SIZE ) ) ) {
+				// write remote
+				size_t padSize = MIN( sizeToWriteToBlock, DNBD3_BLOCK_SIZE - ( (size_t)currentOffset % DNBD3_BLOCK_SIZE ) );
+				cow_write_request_t *cowWriteRequest = malloc( sizeof( cow_write_request_t ) );
+				cowWriteRequest->inBlockOffset = (off_t)inBlockOffset;
+				cowWriteRequest->block = metaBlock;
+				cowWriteRequest->size = padSize;
+				cowWriteRequest->buffer = cowRequest->writeBuffer + ( ( currentOffset - offset ) * !cowRequest->replyAttr );
+				padBlockFromRemote( req, offset, cowRequest, cowWriteRequest );
+				currentOffset += padSize;
+				continue;
+			}
+
+			size_t endPaddedSize = 0;
+			if ( ( currentOffset + sizeToWriteToBlock ) % DNBD3_BLOCK_SIZE != 0 ) {
+				off_t currentEndOffset = currentOffset + sizeToWriteToBlock;
+				off_t padStartOffset = currentEndOffset - ( currentEndOffset % 4096 );
+				off_t inBlockPadStartOffset = padStartOffset - metaBlockStartOffset;
+				if ( !checkBit( metaBlock->bitfield, (int)( inBlockPadStartOffset / DNBD3_BLOCK_SIZE ) ) ) {
+					cow_write_request_t *cowWriteRequest = malloc( sizeof( cow_write_request_t ) );
+					cowWriteRequest->inBlockOffset = inBlockPadStartOffset;
+					cowWriteRequest->block = metaBlock;
+					cowWriteRequest->size = (currentEndOffset)-padStartOffset;
+					cowWriteRequest->buffer =
+							cowRequest->writeBuffer + ( ( padStartOffset - offset ) * !cowRequest->replyAttr );
+					padBlockFromRemote( req, padStartOffset, cowRequest, cowWriteRequest );
+
+
+					sizeToWriteToBlock -= (currentEndOffset)-padStartOffset;
+					endPaddedSize = (currentEndOffset)-padStartOffset;
+				}
+			}
+
 
 			writeData( cowRequest->writeBuffer + ( ( currentOffset - offset ) * !cowRequest->replyAttr ),
-					sizeToWriteToBlock, sizeToWriteToBlock, cowRequest, metaBlock, inBlockOffset );
+					(ssize_t)sizeToWriteToBlock, sizeToWriteToBlock, cowRequest, metaBlock, inBlockOffset );
 
-
+			cow_block_metadata_t *b = getBlock( l1Offset, l2Offset );
 			currentOffset += sizeToWriteToBlock;
+			currentOffset += endPaddedSize;
+
+
 			l2Offset++;
 		}
 		l1Offset++;
@@ -440,6 +557,7 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 	}
 }
 
+
 /**
  * @brief Request data, that is not available locally, via the network.
  * 
@@ -449,7 +567,7 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
  * @param buffer into which the data is to be written
  * @param workCounter workCounter is increased by one and later reduced by one again when the request is completed.
  */
-static void readRemote( fuse_req_t req, off_t offset, size_t size, char *buffer, cow_request_t *cowRequest )
+static void readRemote( fuse_req_t req, off_t offset, ssize_t size, char *buffer, cow_request_t *cowRequest )
 {
 	dnbd3_async_t *request = malloc( sizeof( dnbd3_async_t ) );
 	request->buffer = buffer;
@@ -466,6 +584,15 @@ static void readRemote( fuse_req_t req, off_t offset, size_t size, char *buffer,
 		free( request );
 		return;
 	}
+}
+
+void byte_to_binary( atomic_char *a )
+{
+	for ( int i = 0; i < 8; i++ ) {
+		char tmp = *a;
+		printf( "%d", !!( ( tmp << i ) & 0x80 ) );
+	}
+	printf( "\n" );
 }
 
 /*
@@ -491,14 +618,15 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 	off_t lastReadOffset = offset;
 	off_t endOffset = offset + size;
 	off_t searchOffset = offset;
+	off_t inBlockOffset;
 	int l1Offset = getL1Offset( offset );
 	int l2Offset = getL2Offset( offset );
 	int bitfieldOffset = getBitfieldOffset( offset );
 	bool isLocal;
 	cow_block_metadata_t *block = NULL;
-	;
-	if ( cow.l1[l1Offset] != NULL ) {
-		block = &( cow.l1[l1Offset] )[l2Offset];
+
+	if ( cow.l1[l1Offset] != -1 ) {
+		block = getBlock( l1Offset, l2Offset );
 	}
 
 	bool doRead = false;
@@ -509,39 +637,51 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 			firstLoop = false;
 			lastReadOffset = searchOffset;
 			isLocal = block != NULL && checkBit( block->bitfield, bitfieldOffset );
-		} else if ( ( block != NULL && checkBit( block->bitfield, bitfieldOffset ) ) != isLocal ) {
+		} else if ( ( block != NULL && checkBit( block->bitfield, bitfieldOffset ) != isLocal ) ) {
 			doRead = true;
+		} else {
+			bitfieldOffset++;
 		}
 
-		bitfieldOffset++;
 		if ( bitfieldOffset >= COW_BITFIELD_SIZE ) {
 			bitfieldOffset = 0;
 			l2Offset++;
-			if ( l2Offset >= cow.l2Size ) {
+			if ( l2Offset >= COW_L2_SIZE ) {
 				l2Offset = 0;
 				l1Offset++;
 			}
 			updateBlock = true;
-			doRead = true;
+			if ( isLocal ) {
+				doRead = true;
+			}
 		}
-
-		searchOffset =
-				DNBD3_BLOCK_SIZE * ( bitfieldOffset ) + l2Offset * cow.metadataStorageCapacity + l1Offset * cow.l2StorageCapacity;
+		// compute the original file offset from bitfieldOffset, l2Offset and l1Offset
+		searchOffset = DNBD3_BLOCK_SIZE * ( bitfieldOffset ) + l2Offset * COW_METADAT_STORAGE_CAPACITY
+				+ l1Offset * COW_L2_STORAGE_CAPACITY;
 		if ( doRead || searchOffset >= endOffset ) {
-			size_t sizeToRead = MIN( searchOffset, endOffset ) - lastReadOffset;
+			ssize_t sizeToRead = MIN( searchOffset, endOffset ) - lastReadOffset;
 			if ( !isLocal ) {
 				readRemote(
 						req, lastReadOffset, sizeToRead, cowRequest->readBuffer + ( lastReadOffset - offset ), cowRequest );
 			} else {
-				off_t localRead = block->offset + DNBD3_BLOCK_SIZE * bitfieldOffset + lastReadOffset % DNBD3_BLOCK_SIZE;
-				ssize_t bytesRead =
-						pread( cow.fhd, cowRequest->readBuffer + ( lastReadOffset - offset ), sizeToRead, localRead );
-				if ( bytesRead == -1 ) {
-					cowRequest->errorCode = errno;
-				} else if ( bytesRead < (ssize_t)sizeToRead ) {
-					cowRequest->errorCode = EIO;
+				// Compute the offset in the .data file where the read starts
+				off_t localRead =
+						block->offset + ( ( lastReadOffset % COW_L2_STORAGE_CAPACITY ) % COW_METADAT_STORAGE_CAPACITY );
+				ssize_t totalBytesRead = 0;
+				while ( totalBytesRead < sizeToRead ) {
+					ssize_t bytesRead =
+							pread( cow.fhd, cowRequest->readBuffer + ( lastReadOffset - offset ), sizeToRead, localRead );
+					if ( bytesRead == -1 ) {
+						cowRequest->errorCode = errno;
+						goto fail;
+					} else if ( bytesRead <= 0 ) {
+						cowRequest->errorCode = EIO;
+						goto fail;
+					}
+					totalBytesRead += bytesRead;
 				}
-				atomic_fetch_add( &cowRequest->bytesWorkedOn, bytesRead );
+
+				atomic_fetch_add( &cowRequest->bytesWorkedOn, totalBytesRead );
 			}
 			lastReadOffset = searchOffset;
 			doRead = false;
@@ -549,15 +689,15 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 		}
 
 		if ( updateBlock ) {
-			if ( cow.l1[l1Offset] != NULL ) {
-				block = &( cow.l1[l1Offset] )[l2Offset];
+			if ( cow.l1[l1Offset] != -1 ) {
+				block = getBlock( l1Offset, l2Offset );
 			} else {
 				block = NULL;
 			}
 			updateBlock = false;
 		}
 	}
-
+fail:;
 	if ( atomic_fetch_sub( &cowRequest->workCounter, 1 ) == 1 ) {
 		if ( cowRequest->errorCode != 0 ) {
 			fuse_reply_err( req, cowRequest->errorCode );

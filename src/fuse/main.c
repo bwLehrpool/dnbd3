@@ -488,10 +488,10 @@ int main( int argc, char *argv[] )
 		}
 	}
 	if ( loadCow ) {
-		if ( !cowfile_load( cow_file_path ) ) {
+		if ( !cowfile_load( cow_file_path, &imageSizePtr ) ) {
 			return EXIT_FAILURE;
 		}
-	}
+	} 
 	// Prepare our handler
 	struct sigaction newHandler;
 	memset( &newHandler, 0, sizeof( newHandler ) );

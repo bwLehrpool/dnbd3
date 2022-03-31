@@ -9,18 +9,25 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <stdint.h>
+#include <dnbd3/types.h>
 
 
+typedef bool ( *func_ptr )();
+typedef struct verify_test
+{
+	off_t offset;
+	size_t size;
+	func_ptr test;
+} verify_test_t;
 
 
 const size_t l2Size = 1024;
 const size_t bitfieldByteSize = 40;
-const size_t blocksize = 4096;
-const size_t l2Capacity = l2Size * blocksize * bitfieldByteSize;
+const size_t l2Capacity = l2Size * DNBD3_BLOCK_SIZE * bitfieldByteSize;
 
-const size_t testFileSize = l2Size * bitfieldByteSize * blocksize * 8L * 2.9L;
+const size_t testFileSize = l2Size * bitfieldByteSize * DNBD3_BLOCK_SIZE * 8L * 2.9L;
 
-const char standartValue = 'a';
+
 static char filePath[400];
 static int fh = 0;
 
@@ -107,90 +114,135 @@ bool writeSizeTested( int fh, char *buf, ssize_t size, off_t off, char *error )
 	return true;
 }
 
-bool testFirstBit()
+bool verifyTestFirstBit()
 {
-	char buff[blocksize];
-	char expected[blocksize];
-	memset( expected, 0, blocksize );
-	if ( !readSizeTested( fh, buff, 4096, 0, "FirstBit test Failed: read to small" ) )
-		return false;
-
-	if ( !compare( buff, expected, 4096, "FirstBit test Failed: initial read" ) )
-		return false;
+	char buff[DNBD3_BLOCK_SIZE];
+	char expected[DNBD3_BLOCK_SIZE];
+	memset( expected, 0, DNBD3_BLOCK_SIZE );
 	expected[0] = 1;
-	if ( !writeSizeTested( fh, expected, 4096, 0, "FirstBit test Failed: write failed" ) )
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, 0, "FirstBit test Failed: read to small" ) )
 		return false;
-	if ( !readSizeTested( fh, buff, 4096, 0, "FirstBit test Failed: read to small" ) )
-		return false;
-	if ( !compare( buff, expected, 4096, "FirstBit test Failed: write not as expected" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "FirstBit test Failed: write not as expected" ) )
 		return false;
 	printf( "testFirstBit successful!\n" );
 	return true;
 }
 
-bool writeOverTwoBlocks()
+bool testFirstBit()
 {
-	char buff[blocksize * 2];
-	char expected[blocksize * 2];
-	memset( expected, 0, blocksize * 2 );
-	if ( !readSizeTested( fh, buff, blocksize * 2, blocksize * 3, "writeOverTwoBlocks test Failed: read to small" ) )
+	char buff[DNBD3_BLOCK_SIZE];
+	char expected[DNBD3_BLOCK_SIZE];
+	memset( expected, 0, DNBD3_BLOCK_SIZE );
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, 0, "FirstBit test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 2, "OverTwoBlocks test Failed: initial read" ) )
+
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "FirstBit test Failed: initial read" ) )
 		return false;
-	memset( expected, 1, blocksize * 2 );
-	if ( !writeSizeTested( fh, expected, blocksize * 2, blocksize * 3, "writeOverTwoBlocks test Failed: write failed" ) )
+	expected[0] = 1;
+	if ( !writeSizeTested( fh, expected, DNBD3_BLOCK_SIZE, 0, "FirstBit test Failed: write failed" ) )
 		return false;
-	if ( !readSizeTested( fh, buff, blocksize * 2, blocksize * 3, "writeOverTwoBlocks test Failed: read to small" ) )
+	return verifyTestFirstBit();
+}
+
+bool verifyWriteOverTwoBlocks()
+{
+	char buff[DNBD3_BLOCK_SIZE * 2];
+	char expected[DNBD3_BLOCK_SIZE * 2];
+	memset( expected, 1, DNBD3_BLOCK_SIZE * 2 );
+	if ( !readSizeTested(
+				  fh, buff, DNBD3_BLOCK_SIZE * 2, DNBD3_BLOCK_SIZE * 3, "writeOverTwoBlocks test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 2, "OverTwoBlocks test Failed: write not as expected" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 2, "OverTwoBlocks test Failed: write not as expected" ) )
 		return false;
 	printf( "writeOverTwoBlocks successful!\n" );
 	return true;
 }
 
-bool writeOverL2()
+bool writeOverTwoBlocks()
 {
-	char buff[blocksize * 2];
-	char expected[blocksize * 2];
-	memset( expected, 0, blocksize * 2 );
-	size_t offset = l2Capacity * 2 - blocksize;
-	if ( !readSizeTested( fh, buff, blocksize * 2, offset, "writeOverL2 test Failed: read to small" ) )
+	char buff[DNBD3_BLOCK_SIZE * 2];
+	char expected[DNBD3_BLOCK_SIZE * 2];
+	memset( expected, 0, DNBD3_BLOCK_SIZE * 2 );
+	if ( !readSizeTested(
+				  fh, buff, DNBD3_BLOCK_SIZE * 2, DNBD3_BLOCK_SIZE * 3, "writeOverTwoBlocks test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 2, "writeOverL2 test Failed: initial read" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 2, "OverTwoBlocks test Failed: initial read" ) )
 		return false;
-	memset( expected, 1, blocksize * 2 );
-	if ( !writeSizeTested( fh, expected, blocksize * 2, offset, "writeOverL2 test Failed: write failed" ) )
+	memset( expected, 1, DNBD3_BLOCK_SIZE * 2 );
+	if ( !writeSizeTested( fh, expected, DNBD3_BLOCK_SIZE * 2, DNBD3_BLOCK_SIZE * 3,
+				  "writeOverTwoBlocks test Failed: write failed" ) )
 		return false;
-	if ( !readSizeTested( fh, buff, blocksize * 2, offset, "writeOverL2 test Failed: read to small" ) )
+	return verifyWriteOverTwoBlocks();
+}
+
+
+bool verifyWriteOverL2()
+{
+	char buff[DNBD3_BLOCK_SIZE * 2];
+	char expected[DNBD3_BLOCK_SIZE * 2];
+
+	memset( expected, 1, DNBD3_BLOCK_SIZE * 2 );
+	size_t offset = l2Capacity * 2 - DNBD3_BLOCK_SIZE;
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 2, offset, "writeOverL2 test Failed: read to small" ) ) {
 		return false;
-	if ( !compare( buff, expected, blocksize * 2, "writeOverL2 test Failed: write not as expected" ) )
+	}
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 2, "writeOverL2 test Failed: write not as expected" ) ) {
 		return false;
+	}
 	printf( "writeOverL2 successful!\n" );
 	return true;
 }
 
-
-// perhaps do some initial markers on the file
-bool writeNotOnBlockBorder()
+bool writeOverL2()
 {
-	char buff[blocksize * 2];
-	char expected[blocksize * 2];
-	memset( expected, 0, blocksize * 2 );
-	size_t offset = blocksize * 11 - blocksize / 2;
-	if ( !readSizeTested( fh, buff, blocksize * 2, offset, "writeNotOnBlockBorder test Failed: read to small" ) )
+	char buff[DNBD3_BLOCK_SIZE * 2];
+	char expected[DNBD3_BLOCK_SIZE * 2];
+	memset( expected, 0, DNBD3_BLOCK_SIZE * 2 );
+	size_t offset = l2Capacity * 2 - DNBD3_BLOCK_SIZE;
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 2, offset, "writeOverL2 test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 2, "writeNotOnBlockBorder test Failed: initial read" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 2, "writeOverL2 test Failed: initial read" ) )
 		return false;
-	memset( expected, 1, blocksize * 2 );
-	if ( !writeSizeTested( fh, expected, blocksize * 2, offset, "writeNotOnBlockBorder test Failed: write failed" ) )
+	memset( expected, 1, DNBD3_BLOCK_SIZE * 2 );
+	if ( !writeSizeTested( fh, expected, DNBD3_BLOCK_SIZE * 2, offset, "writeOverL2 test Failed: write failed" ) )
 		return false;
-	if ( !readSizeTested( fh, buff, blocksize * 2, offset, "writeNotOnBlockBorder test Failed: read to small" ) )
+
+	return verifyWriteOverL2();
+}
+
+
+bool verifyWriteNotOnBlockBorder()
+{
+	char buff[DNBD3_BLOCK_SIZE * 2];
+	char expected[DNBD3_BLOCK_SIZE * 2];
+	memset( expected, 1, DNBD3_BLOCK_SIZE * 2 );
+	size_t offset = DNBD3_BLOCK_SIZE * 11 - DNBD3_BLOCK_SIZE / 2;
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 2, offset, "writeNotOnBlockBorder test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 2, "writeNotOnBlockBorder test Failed: write not as expected" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 2, "writeNotOnBlockBorder test Failed: write not as expected" ) )
 		return false;
 	printf( "writeNotOnBlockBorder successful!\n" );
 	return true;
 }
+
+// perhaps do some initial markers on the file
+bool writeNotOnBlockBorder()
+{
+	char buff[DNBD3_BLOCK_SIZE * 2];
+	char expected[DNBD3_BLOCK_SIZE * 2];
+	memset( expected, 0, DNBD3_BLOCK_SIZE * 2 );
+	size_t offset = DNBD3_BLOCK_SIZE * 11 - DNBD3_BLOCK_SIZE / 2;
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 2, offset, "writeNotOnBlockBorder test Failed: read to small" ) )
+		return false;
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 2, "writeNotOnBlockBorder test Failed: initial read" ) )
+		return false;
+	memset( expected, 1, DNBD3_BLOCK_SIZE * 2 );
+	if ( !writeSizeTested(
+				  fh, expected, DNBD3_BLOCK_SIZE * 2, offset, "writeNotOnBlockBorder test Failed: write failed" ) )
+		return false;
+	return verifyWriteNotOnBlockBorder();
+}
+
 
 bool fileSizeChanges()
 {
@@ -211,22 +263,24 @@ bool fileSizeChanges()
 		return false;
 	}
 	// check if increased is 0
-	char buff[blocksize * 10];
-	char expected[blocksize * 10];
-	memset( expected, 0, blocksize * 10 );
-	if ( !readSizeTested(
-				  fh, buff, blocksize * 10, testFileSize + l2Capacity, "fileSizeChanges test Failed: read to small" ) )
+	char buff[DNBD3_BLOCK_SIZE * 10];
+	char expected[DNBD3_BLOCK_SIZE * 10];
+	memset( expected, 0, DNBD3_BLOCK_SIZE * 10 );
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 10, testFileSize + l2Capacity,
+				  "fileSizeChanges test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 10, "fileSizeChanges test Failed: increased data not 0" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 10, "fileSizeChanges test Failed: increased data not 0" ) )
 		return false;
 	printf( "increased data is 0 as expected\n" );
 	// write on increased blocks
-	memset( expected, 1, blocksize * 10 );
-	if ( !writeSizeTested( fh, expected, blocksize * 10, testFileSize, "fileSizeChanges test Failed: write failed" ) )
+	memset( expected, 1, DNBD3_BLOCK_SIZE * 10 );
+	if ( !writeSizeTested(
+				  fh, expected, DNBD3_BLOCK_SIZE * 10, testFileSize, "fileSizeChanges test Failed: write failed" ) )
 		return false;
-	if ( !readSizeTested( fh, buff, blocksize * 10, testFileSize, "fileSizeChanges test Failed: read to small" ) )
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 10, testFileSize, "fileSizeChanges test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 10, "fileSizeChanges test Failed: write on increased size failed" ) )
+	if ( !compare(
+				  buff, expected, DNBD3_BLOCK_SIZE * 10, "fileSizeChanges test Failed: write on increased size failed" ) )
 		return false;
 	printf( "writes to new Block Ok\n" );
 	// decrease filesize
@@ -259,56 +313,71 @@ bool fileSizeChanges()
 		return false;
 	}
 	printf( "size verified\n" );
-	memset( expected, 0, blocksize * 10 );
+	memset( expected, 0, DNBD3_BLOCK_SIZE * 10 );
 
 
-	if ( !readSizeTested( fh, buff, blocksize * 10, testFileSize, "fileSizeChanges test Failed: read to small" ) )
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 10, testFileSize, "fileSizeChanges test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 2, "fileSizeChanges test Failed: increased data (second time) not 0" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 2,
+				  "fileSizeChanges test Failed: increased data (second time) not 0" ) )
 		return false;
 	printf( "fileSizeChanges successful!\n" );
+	return true;
+}
+
+
+bool verifyInterleavedTest()
+{
+	char buff[DNBD3_BLOCK_SIZE * 10];
+	char expected[DNBD3_BLOCK_SIZE * 10];
+	off_t offset = 35 * DNBD3_BLOCK_SIZE;
+	memset( expected, 0, DNBD3_BLOCK_SIZE * 10 );
+	memset( expected, 10, DNBD3_BLOCK_SIZE );
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 2 ) ), 12, DNBD3_BLOCK_SIZE );
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 4 ) ), 14, DNBD3_BLOCK_SIZE );
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 5 ) ), 15, DNBD3_BLOCK_SIZE );
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 8 ) ), 18, DNBD3_BLOCK_SIZE );
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 10, offset, "interleavedTest test Failed: read 2 to small" ) )
+		return false;
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 10, "interleavedTest test Failed: read not as expected" ) )
+		return false;
+	printf( "interleavedTest successful!\n" );
 	return true;
 }
 
 bool interleavedTest()
 {
 	printf( "starting interleavedTest \n" );
-	char buff[blocksize * 10];
-	char expected[blocksize * 10];
-	off_t offset = 35 * blocksize;
-	memset( expected, 0, blocksize * 10 );
-	if ( !readSizeTested( fh, buff, blocksize * 10, offset, "interleavedTest test Failed: read to small" ) )
+	char buff[DNBD3_BLOCK_SIZE * 10];
+	char expected[DNBD3_BLOCK_SIZE * 10];
+	off_t offset = 35 * DNBD3_BLOCK_SIZE;
+	memset( expected, 0, DNBD3_BLOCK_SIZE * 10 );
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE * 10, offset, "interleavedTest test Failed: read to small" ) )
 		return false;
-	if ( !compare( buff, expected, blocksize * 10, "interleavedTest test Failed: read data not 0" ) )
-		return false;
-
-	memset( expected, 10, blocksize );
-	if ( !writeSizeTested( fh, expected, blocksize, offset, "interleavedTest test Failed: write 1 failed" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE * 10, "interleavedTest test Failed: read data not 0" ) )
 		return false;
 
-	memset( ( expected + ( blocksize * 2 ) ), 12, blocksize );
-	if ( !writeSizeTested( fh, ( expected + ( blocksize * 2 ) ), blocksize, offset + blocksize * 2,
+	memset( expected, 10, DNBD3_BLOCK_SIZE );
+	if ( !writeSizeTested( fh, expected, DNBD3_BLOCK_SIZE, offset, "interleavedTest test Failed: write 1 failed" ) )
+		return false;
+
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 2 ) ), 12, DNBD3_BLOCK_SIZE );
+	if ( !writeSizeTested( fh, ( expected + ( DNBD3_BLOCK_SIZE * 2 ) ), DNBD3_BLOCK_SIZE, offset + DNBD3_BLOCK_SIZE * 2,
 				  "interleavedTest test Failed: write 2 failed" ) )
 		return false;
 
-	memset( ( expected + ( blocksize * 4 ) ), 14, blocksize );
-	memset( ( expected + ( blocksize * 5 ) ), 15, blocksize );
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 4 ) ), 14, DNBD3_BLOCK_SIZE );
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 5 ) ), 15, DNBD3_BLOCK_SIZE );
 
-	if ( !writeSizeTested( fh, ( expected + ( blocksize * 4 ) ), blocksize * 2, offset + blocksize * 4,
-				  "interleavedTest test Failed: write 3 failed" ) )
+	if ( !writeSizeTested( fh, ( expected + ( DNBD3_BLOCK_SIZE * 4 ) ), DNBD3_BLOCK_SIZE * 2,
+				  offset + DNBD3_BLOCK_SIZE * 4, "interleavedTest test Failed: write 3 failed" ) )
 		return false;
 
-	memset( ( expected + ( blocksize * 8 ) ), 18, blocksize );
-	if ( !writeSizeTested( fh, ( expected + ( blocksize * 8 ) ), blocksize, offset + blocksize * 8,
+	memset( ( expected + ( DNBD3_BLOCK_SIZE * 8 ) ), 18, DNBD3_BLOCK_SIZE );
+	if ( !writeSizeTested( fh, ( expected + ( DNBD3_BLOCK_SIZE * 8 ) ), DNBD3_BLOCK_SIZE, offset + DNBD3_BLOCK_SIZE * 8,
 				  "interleavedTest test Failed: write 4 failed" ) )
 		return false;
-
-	if ( !readSizeTested( fh, buff, blocksize * 10, offset, "interleavedTest test Failed: read 2 to small" ) )
-		return false;
-	if ( !compare( buff, expected, blocksize * 10, "interleavedTest test Failed: read not as expected" ) )
-		return false;
-	printf( "interleavedTest successful!\n" );
-	return true;
+	return verifyInterleavedTest();
 }
 
 void runTest( char *path )
@@ -320,19 +389,37 @@ void runTest( char *path )
 	}
 	strcpy( filePath, path );
 	printf( "file opened: %s\n", path );
+
 	if ( !testFirstBit() )
 		return;
 	if ( !writeOverTwoBlocks() )
 		return;
+
+	if ( !writeNotOnBlockBorder() )
+		return;
+
 	if ( !writeOverL2() )
 		return;
 	if ( !fileSizeChanges() )
 		return;
 	if ( !interleavedTest() )
 		return;
+
 	printf( "All test's successful.\n" );
 }
 
+
+void verifyTests( verify_test_t *tests )
+{
+	// offset, size, function
+
+	tests[0] = ( verify_test_t ){ 0, DNBD3_BLOCK_SIZE, verifyTestFirstBit };
+	tests[1] = ( verify_test_t ){ DNBD3_BLOCK_SIZE * 3, DNBD3_BLOCK_SIZE * 3, verifyWriteOverTwoBlocks };
+	tests[2] = ( verify_test_t ){ DNBD3_BLOCK_SIZE * 11 - DNBD3_BLOCK_SIZE / 2, DNBD3_BLOCK_SIZE * 2,
+		verifyWriteNotOnBlockBorder };
+	tests[3] = ( verify_test_t ){ 35 * DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 10, verifyInterleavedTest };
+	tests[4] = ( verify_test_t ){ l2Capacity * 2 - DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 2, verifyWriteOverL2 };
+}
 
 void verifyFinalFile( char *path )
 {
@@ -341,6 +428,64 @@ void verifyFinalFile( char *path )
 		printf( "Given path: %s \n", path );
 		return;
 	}
+	// verify file size
+
+	size_t fileSize = testFileSize + 2 * l2Capacity;
+	struct stat st;
+	stat( path, &st );
+	size_t size = st.st_size;
+	if ( size != fileSize ) {
+		printf( "verify Failed, wrong file size\n expectedSize: %zu\n got: %zu\n", fileSize, size );
+		return;
+	}
+
+	// read to whole file
+
+	int maxReadSize = DNBD3_BLOCK_SIZE * COW_BITFIELD_SIZE;
+	char buffer[maxReadSize];
+	char emptyData[maxReadSize];
+	memset( emptyData, 0, maxReadSize );
+	size_t offset = 0;
+
+
+	int numberOfTests = 5;
+	verify_test_t tests[numberOfTests];
+	verifyTests( tests );
+
+	int currentTest = 0;
+	//verifyWriteOverTwoBlocks();
+	//verifyWriteNotOnBlockBorder();
+	//verifyInterleavedTest();
+	//verifyWriteOverL2();
+
+
+	while ( offset < fileSize ) {
+		size_t sizeToRead = MIN( maxReadSize, fileSize - offset );
+		if ( currentTest < numberOfTests ) {
+			sizeToRead = MIN( sizeToRead, tests[currentTest].offset - offset );
+		}
+		if ( currentTest < numberOfTests && tests[currentTest].offset == (off_t)offset ) {
+			if ( !tests[currentTest].test() ) {
+				return;
+			}
+			offset += tests[currentTest].size;
+			currentTest++;
+		} else {
+			ssize_t sizeRead = pread( fh, buffer, sizeToRead, offset );
+			if ( sizeRead <= 0 ) {
+				perror( "Error while reading data: " );
+				printf( "verify failed. \n" );
+				return;
+			}
+			if ( !compare( buffer, emptyData, sizeRead, "verify failed. Expected 0 data" ) ) {
+				printf( "Offset: %zu \n", offset );
+				return;
+			}
+			offset += (size_t)sizeRead;
+		}
+	}
+
+	printf( "file verified successful.\n" );
 }
 
 void execCommand( char command, char *parameters )
@@ -367,7 +512,7 @@ void execCommand( char command, char *parameters )
 			break;
 		}
 		printf( "verifing file \n" );
-		runTest( parameters );
+		verifyFinalFile( parameters );
 		break;
 	default:
 		printf( "Command not Found \n" );
