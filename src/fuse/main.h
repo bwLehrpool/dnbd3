@@ -1,12 +1,14 @@
 #ifndef _MAIN_H_
 #define _MAIN_H_
+
+#include "cowfile.h"
 #include "connection.h"
 #include "helper.h"
 #include <dnbd3/version.h>
 #include <dnbd3/build.h>
 #include <dnbd3/shared/protocol.h>
 #include <dnbd3/shared/log.h>
-#include "cowfile.h"
+
 
 #define FUSE_USE_VERSION 30
 #include <dnbd3/config.h>
@@ -31,6 +33,7 @@
 #define INO_STATS (2)
 #define INO_IMAGE (3)
 
+extern bool useCow;
 void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
 
 #endif /* main_H_ */

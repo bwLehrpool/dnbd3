@@ -16,7 +16,7 @@ static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
 
 static struct fuse_session *_fuseSession = NULL;
-
+bool useCow = false;
 static uint64_t imageSize;
 static uint64_t *imageSizePtr =&imageSize;
 
@@ -25,7 +25,6 @@ static bool useDebug = false;
 static log_info logInfo;
 static struct timespec startupTime;
 static uid_t owner;
-static bool useCow = false;
 static int reply_buf_limited( fuse_req_t req, const char *buf, size_t bufsize, off_t off, size_t maxsize );
 static void fillStatsFile( fuse_req_t req, size_t size, off_t offset );
 static void image_destroy( void *private_data );
@@ -214,14 +213,10 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 	}
 	
 
-	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) );
-	request->buffer = malloc(size);
+	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) + size );
 	request->length = (uint32_t)size;
 	request->offset = offset;
 	request->fuse_req = req;
-
-	request->cow = NULL;
-	request->cow_write = NULL;
 
 	if ( !connection_read( request ) ) {
 		fuse_reply_err( req, EIO );
@@ -361,6 +356,7 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -S --sticky     Use only servers from command line (no learning from servers)\n" );
 	printf( "   -s              Single threaded mode\n" );
 	printf( "   -c <path>       Enables cow, creates the cow files at given path\n" );
+	printf( "   -L <path>       Loads the cow files from a given path\n" );
 	exit( exitCode );
 }
 
@@ -375,7 +371,8 @@ static const struct option longOpts[] = {
 	{ "rid", required_argument, NULL, 'r' },
 	{ "sticky", no_argument, NULL, 'S' },
 	{ "version", no_argument, NULL, 'v' },
-	{ "cow", required_argument, NULL, 'v' },
+	{ "cow", required_argument, NULL, 'c' },
+	{ "loadcow", required_argument, NULL, 'L' },
 	{ 0, 0, 0, 0 }
 };
 

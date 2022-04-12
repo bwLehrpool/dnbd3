@@ -6,6 +6,8 @@
 #include <dnbd3/shared/sockhelper.h>
 #include <dnbd3/shared/log.h>
 
+#include "main.h"
+#include "cowfile.h"
 #include <stdlib.h>
 #include <pthread.h>
 #include <string.h>
@@ -406,10 +408,8 @@ static void* connection_receiveThreadMain( void *sockPtr )
 					}
 					unlock_rw( &altLock );
 				}
-				if( request->cow_write != NULL ) {
-					cowfile_writePaddedBlock(request );
-				} else if( request->cow != NULL ) {
-					cowFile_readRemoteData( request );
+				if(useCow){
+					cowFile_handleCallback( request );
 				}
 				else {
 					fuse_reply_buf( request->fuse_req, request->buffer, request->length );
@@ -714,10 +714,8 @@ static void probeAltServers()
 				goto fail;
 			}
 			// Success, reply to fuse
-			if( request->cow_write != NULL ) {
-				cowfile_writePaddedBlock(request );
-			} else if( request->cow != NULL ) {
-				cowFile_readRemoteData( request );
+			if(useCow){
+				cowFile_handleCallback(request);
 			}
 			else {
 				fuse_reply_buf( request->fuse_req, request->buffer, request->length );

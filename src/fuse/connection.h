@@ -12,11 +12,9 @@
 #include <fuse_lowlevel.h>
 
 
+
 extern atomic_bool keepRunning;
 struct _dnbd3_async;
-
-typedef struct cow_request cow_request_t;
-typedef struct cow_write_request cow_write_request_t;
 
 typedef struct _dnbd3_async {
 	struct _dnbd3_async *next; // Next in this linked list (provate field, not set by caller)
@@ -24,10 +22,9 @@ typedef struct _dnbd3_async {
 	uint64_t offset;
 	uint32_t length;
 	fuse_req_t fuse_req;
-	cow_request_t *cow;
-	cow_write_request_t *cow_write;
-	char* buffer; 
+	char buffer[]; // Must be last member!
 } dnbd3_async_t;
+
 
 bool connection_init( const char *hosts, const char *image, const uint16_t rid, const bool learnNewServers );
 

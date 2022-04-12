@@ -1,6 +1,9 @@
 #ifndef _COWFILE_H_
 #define _COWFILE_H_
 
+
+#include "connection.h"
+#include "main.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdatomic.h>
@@ -9,12 +12,12 @@
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
-#include "main.h"
+
 
 #define COW_METADAT_STORAGE_CAPACITY ( COW_BITFIELD_SIZE * DNBD3_BLOCK_SIZE )
 #define COW_L2_SIZE 1024
 #define COW_L2_STORAGE_CAPACITY ( COW_L2_SIZE * COW_METADAT_STORAGE_CAPACITY )
-
+#define container_of( ptr, type, member ) ( (type *)( (char *)( ptr ) - (char *)&( ( (type *)NULL )->member ) ) )
 
 #define COW_METADATA_HEADER_SIZE 280
 typedef struct __attribute__( ( packed ) ) cowfile_metadata_header
@@ -59,14 +62,21 @@ typedef struct cow_request
 	struct fuse_file_info *fi;
 } cow_request_t;
 
-typedef struct cow_write_request
+typedef struct cow_sub_request cow_sub_request_t;
+typedef void ( *cow_callback )( cow_sub_request_t *sRequest );
+
+
+typedef struct cow_sub_request
 {
-	const char *buffer;
 	size_t size;
 	off_t inBlockOffset;
+	const char *buffer;
 	cow_block_metadata_t *block;
+	cow_callback callback;
+	cow_request_t *cowRequest;
+	dnbd3_async_t dRequest;
 
-} cow_write_request_t;
+} cow_sub_request_t;
 
 
 typedef int32_t l1;
@@ -77,6 +87,7 @@ bool cowfile_load( char *path, size_t **imageSizePtr );
 void cowfile_read( fuse_req_t req, size_t size, off_t offset );
 void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, size_t size );
 
-size_t cowfile_append( char *buffer, uint64_t offset, uint64_t size );
+void cowFile_handleCallback( dnbd3_async_t *request );
+
 
 #endif /* COWFILE_H_ */

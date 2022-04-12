@@ -388,75 +388,87 @@ static void finishWriteRequest( fuse_req_t req, cow_request_t *cowRequest )
 	free( cowRequest );
 }
 
+static void writePaddedBlock( cow_sub_request_t *sRequest )
+{
+	//copy write Data
+	memcpy( ( sRequest->dRequest.buffer + ( sRequest->inBlockOffset % DNBD3_BLOCK_SIZE ) ), sRequest->buffer,
+			sRequest->size );
+	writeData( sRequest->dRequest.buffer, DNBD3_BLOCK_SIZE, (ssize_t)sRequest->size, sRequest->cowRequest,
+			sRequest->block, ( sRequest->inBlockOffset - ( sRequest->inBlockOffset % DNBD3_BLOCK_SIZE ) ) );
+
+
+	if ( atomic_fetch_sub( &sRequest->cowRequest->workCounter, 1 ) == 1 ) {
+		finishWriteRequest( sRequest->dRequest.fuse_req, sRequest->cowRequest );
+	}
+	free( sRequest );
+}
 
 // TODO if > remote pad 0
 /**
  * @brief 
  * 
  */
-static void padBlockFromRemote(
-		fuse_req_t req, off_t offset, cow_request_t *cowRequest, cow_write_request_t *cowWriteRequest )
+static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cowRequest, char *buffer, size_t size,
+		cow_block_metadata_t *block, off_t inBlockOffset )
 {
 	if ( offset > (off_t)metadata->originalImageSize ) {
 		//pad 0 and done
 		char buffer[DNBD3_BLOCK_SIZE] = { 0 };
-		memcpy( buffer, cowWriteRequest->buffer, cowWriteRequest->size );
+		memcpy( buffer, buffer, size );
 
-		writeData( buffer, DNBD3_BLOCK_SIZE, (ssize_t)cowWriteRequest->size, cowRequest, cowWriteRequest->block,
-				cowWriteRequest->inBlockOffset );
-		free( cowWriteRequest );
+		writeData( buffer, DNBD3_BLOCK_SIZE, (ssize_t)size, cowRequest, block, inBlockOffset );
 		return;
 	}
-
+	cow_sub_request_t *sRequest = malloc( sizeof( cow_sub_request_t ) + DNBD3_BLOCK_SIZE );
+	sRequest->callback = writePaddedBlock;
+	sRequest->inBlockOffset = inBlockOffset;
+	sRequest->block = block;
+	sRequest->size = size;
+	sRequest->buffer = buffer;
+	sRequest->cowRequest = cowRequest;
 	off_t start = offset - ( offset % DNBD3_BLOCK_SIZE );
 
-	dnbd3_async_t *request = malloc( sizeof( dnbd3_async_t ) );
-	request->buffer = calloc( DNBD3_BLOCK_SIZE, sizeof( char ) );
-	request->length = DNBD3_BLOCK_SIZE;
-	request->offset = start;
-	request->fuse_req = req;
-	request->cow = cowRequest;
-	request->cow_write = cowWriteRequest;
+	sRequest->dRequest.length = DNBD3_BLOCK_SIZE;
+	sRequest->dRequest.offset = start;
+	sRequest->dRequest.fuse_req = req;
+	sRequest->cowRequest = cowRequest;
+
 	if ( ( (size_t)( offset + DNBD3_BLOCK_SIZE ) ) > metadata->originalImageSize ) {
-		request->length = (uint32_t)MIN( DNBD3_BLOCK_SIZE, offset + DNBD3_BLOCK_SIZE - metadata->originalImageSize );
+		sRequest->dRequest.length =
+				(uint32_t)MIN( DNBD3_BLOCK_SIZE, offset + DNBD3_BLOCK_SIZE - metadata->originalImageSize );
 	}
 
 	atomic_fetch_add( &cowRequest->workCounter, 1 );
-	if ( !connection_read( request ) ) {
+	if ( !connection_read( &sRequest->dRequest ) ) {
 		atomic_fetch_sub( &cowRequest->workCounter, 1 );
 		// todo check if not  now
 		cowRequest->errorCode = EIO;
-		free( request );
+		free( sRequest );
 		return;
 	}
 }
 
-void cowfile_writePaddedBlock( dnbd3_async_t *request )
-{
-	//copy write Data
-	memcpy( ( request->buffer + ( request->cow_write->inBlockOffset % DNBD3_BLOCK_SIZE ) ), request->cow_write->buffer,
-			request->cow_write->size );
-	writeData( request->buffer, DNBD3_BLOCK_SIZE, (ssize_t)request->cow_write->size, request->cow,
-			request->cow_write->block,
-			( request->cow_write->inBlockOffset - ( request->cow_write->inBlockOffset % DNBD3_BLOCK_SIZE ) ) );
 
-	free( request->cow_write );
-	if ( atomic_fetch_sub( &request->cow->workCounter, 1 ) == 1 ) {
-		finishWriteRequest( request->fuse_req, request->cow );
-	}
-	free( request->buffer );
-	free( request );
+void cowFile_handleCallback( dnbd3_async_t *request )
+{
+	cow_sub_request_t *sRequest = container_of( request, cow_sub_request_t, dRequest );
+	sRequest->callback( sRequest );
 }
-
-void cowFile_readRemoteData( dnbd3_async_t *request )
+static void readRemoteData( cow_sub_request_t *sRequest )
 {
-	atomic_fetch_add( &request->cow->bytesWorkedOn, request->length );
-	if ( atomic_fetch_sub( &request->cow->workCounter, 1 ) == 1 ) {
-		fuse_reply_buf( request->fuse_req, request->cow->readBuffer, request->cow->bytesWorkedOn );
-		free( request->cow->readBuffer );
-		free( request->cow );
+	memcpy( sRequest->cowRequest->readBuffer + ( sRequest->dRequest.offset - sRequest->cowRequest->fuseRequestOffset ),
+			sRequest->dRequest.buffer, sRequest->dRequest.length );
+
+
+	atomic_fetch_add( &sRequest->cowRequest->bytesWorkedOn, sRequest->dRequest.length );
+
+	if ( atomic_fetch_sub( &sRequest->cowRequest->workCounter, 1 ) == 1 ) {
+		fuse_reply_buf(
+				sRequest->dRequest.fuse_req, sRequest->cowRequest->readBuffer, sRequest->cowRequest->bytesWorkedOn );
+		free( sRequest->cowRequest->readBuffer );
+		free( sRequest->cowRequest );
 	}
-	free( request );
+	free( sRequest );
 }
 
 
@@ -506,12 +518,8 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 					&& !checkBit( metaBlock->bitfield, (int)( inBlockOffset / DNBD3_BLOCK_SIZE ) ) ) {
 				// write remote
 				size_t padSize = MIN( sizeToWriteToBlock, DNBD3_BLOCK_SIZE - ( (size_t)currentOffset % DNBD3_BLOCK_SIZE ) );
-				cow_write_request_t *cowWriteRequest = malloc( sizeof( cow_write_request_t ) );
-				cowWriteRequest->inBlockOffset = (off_t)inBlockOffset;
-				cowWriteRequest->block = metaBlock;
-				cowWriteRequest->size = padSize;
-				cowWriteRequest->buffer = cowRequest->writeBuffer + ( ( currentOffset - offset ) * !cowRequest->replyAttr );
-				padBlockFromRemote( req, offset, cowRequest, cowWriteRequest );
+				char *sbuf = cowRequest->writeBuffer + ( ( currentOffset - offset ) * !cowRequest->replyAttr );
+				padBlockFromRemote( req, offset, cowRequest, sbuf, padSize, metaBlock, (off_t)inBlockOffset );
 				currentOffset += padSize;
 				continue;
 			}
@@ -522,13 +530,9 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 				off_t padStartOffset = currentEndOffset - ( currentEndOffset % 4096 );
 				off_t inBlockPadStartOffset = padStartOffset - metaBlockStartOffset;
 				if ( !checkBit( metaBlock->bitfield, (int)( inBlockPadStartOffset / DNBD3_BLOCK_SIZE ) ) ) {
-					cow_write_request_t *cowWriteRequest = malloc( sizeof( cow_write_request_t ) );
-					cowWriteRequest->inBlockOffset = inBlockPadStartOffset;
-					cowWriteRequest->block = metaBlock;
-					cowWriteRequest->size = (currentEndOffset)-padStartOffset;
-					cowWriteRequest->buffer =
-							cowRequest->writeBuffer + ( ( padStartOffset - offset ) * !cowRequest->replyAttr );
-					padBlockFromRemote( req, padStartOffset, cowRequest, cowWriteRequest );
+					char *sbuf = cowRequest->writeBuffer + ( ( padStartOffset - offset ) * !cowRequest->replyAttr );
+					padBlockFromRemote( req, padStartOffset, cowRequest, sbuf, (currentEndOffset)-padStartOffset, metaBlock,
+							inBlockPadStartOffset );
 
 
 					sizeToWriteToBlock -= (currentEndOffset)-padStartOffset;
@@ -567,21 +571,22 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
  * @param buffer into which the data is to be written
  * @param workCounter workCounter is increased by one and later reduced by one again when the request is completed.
  */
-static void readRemote( fuse_req_t req, off_t offset, ssize_t size, char *buffer, cow_request_t *cowRequest )
+static void readRemote( fuse_req_t req, off_t offset, ssize_t size, cow_request_t *cowRequest )
 {
-	dnbd3_async_t *request = malloc( sizeof( dnbd3_async_t ) );
-	request->buffer = buffer;
-	request->length = (uint32_t)size;
-	request->offset = offset;
-	request->fuse_req = req;
-	request->cow = cowRequest;
-	request->cow_write = NULL;
+	cow_sub_request_t *sRequest = malloc( sizeof( cow_sub_request_t ) + size );
+	sRequest->callback = readRemoteData;
+	sRequest->dRequest.length = (uint32_t)size;
+	sRequest->dRequest.offset = offset;
+	sRequest->dRequest.fuse_req = req;
+	sRequest->cowRequest = cowRequest;
+
+
 	atomic_fetch_add( &cowRequest->workCounter, 1 );
-	if ( !connection_read( request ) ) {
+	if ( !connection_read( &sRequest->dRequest ) ) {
 		atomic_fetch_sub( &cowRequest->workCounter, 1 );
 		//TODO ChECK IF NOT  0  Now
 		cowRequest->errorCode = EIO;
-		free( request );
+		free( sRequest );
 		return;
 	}
 }
@@ -661,8 +666,7 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 		if ( doRead || searchOffset >= endOffset ) {
 			ssize_t sizeToRead = MIN( searchOffset, endOffset ) - lastReadOffset;
 			if ( !isLocal ) {
-				readRemote(
-						req, lastReadOffset, sizeToRead, cowRequest->readBuffer + ( lastReadOffset - offset ), cowRequest );
+				readRemote( req, lastReadOffset, sizeToRead, cowRequest );
 			} else {
 				// Compute the offset in the .data file where the read starts
 				off_t localRead =
