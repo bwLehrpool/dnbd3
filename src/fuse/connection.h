@@ -32,6 +32,10 @@ bool connection_initThreads();
 
 uint64_t connection_getImageSize();
 
+char * connection_getImageName();
+
+uint16_t connection_getImageRID();
+
 bool connection_read( dnbd3_async_t *request );
 
 void connection_close();

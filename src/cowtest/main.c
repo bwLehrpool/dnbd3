@@ -64,6 +64,7 @@ void printUsage()
 	printf( "Press the follwing for: \n" );
 	printf( "   c <path>      Creates test file at the path. \n" );
 	printf( "   t <path>      Runs the standart test procedure. \n" );
+	printf( "   v <path>      verifies a file. \n" );
 }
 
 void printCharInHexadecimal( const char *str, int len )
@@ -453,10 +454,7 @@ void verifyFinalFile( char *path )
 	verifyTests( tests );
 
 	int currentTest = 0;
-	//verifyWriteOverTwoBlocks();
-	//verifyWriteNotOnBlockBorder();
-	//verifyInterleavedTest();
-	//verifyWriteOverL2();
+
 
 
 	while ( offset < fileSize ) {

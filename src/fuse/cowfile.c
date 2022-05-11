@@ -1,9 +1,13 @@
 #include "cowfile.h"
-
+#include "math.h"
 extern void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
 
-int cowFileVersion = 1;
-cowfile_metadata_header_t *metadata = NULL;
+static int cowFileVersion = 1;
+static pthread_t tidCowUploader;
+static char *cowServerAddress;
+static CURL *curl;
+static cowfile_metadata_header_t *metadata = NULL;
+atomic_bool uploadLoop = true;
 
 static struct cow
 {
@@ -37,7 +41,7 @@ static int getL1Offset( size_t offset )
  */
 static int getL2Offset( size_t offset )
 {
-	return (int)( ( offset % COW_L2_STORAGE_CAPACITY ) / COW_METADAT_STORAGE_CAPACITY );
+	return (int)( ( offset % COW_L2_STORAGE_CAPACITY ) / COW_METADATA_STORAGE_CAPACITY );
 }
 
 /**
@@ -94,6 +98,302 @@ static bool checkBit( atomic_char *bitfield, int n )
 	return ( atomic_load( ( bitfield + ( n / 8 ) ) ) >> ( n % 8 ) ) & 1;
 }
 
+
+size_t curlCallbackCreateSession( char *buffer, size_t itemSize, size_t nitems, void *response )
+{
+	size_t bytes = itemSize * nitems;
+	if ( strlen( response ) + bytes != 36 ) {
+		logadd( LOG_INFO, "strlen(response): %i bytes: %i \n", strlen( response ), bytes );
+		return bytes;
+	}
+
+	strcat( response, buffer );
+	return bytes;
+}
+
+/**
+ * @brief Create a Session with the cow server and gets the session guid
+ * 
+ * @param imageName 
+ * @param version of the original Image
+ */
+bool createSession( char *imageName, uint16_t version )
+{
+	CURLcode res;
+	char url[300];
+	sprintf( url, COW_API_CREATE, cowServerAddress );
+	logadd( LOG_INFO, "COW_API_CREATE URL: %s", url );
+	curl_easy_setopt( curl, CURLOPT_CUSTOMREQUEST, "POST" );
+	curl_easy_setopt( curl, CURLOPT_URL, url );
+
+	curl_mime *mime;
+	curl_mimepart *part;
+	mime = curl_mime_init( curl );
+	part = curl_mime_addpart( mime );
+	curl_mime_name( part, "imageName" );
+	curl_mime_data( part, imageName, CURL_ZERO_TERMINATED );
+	part = curl_mime_addpart( mime );
+	curl_mime_name( part, "version" );
+	char buf[sizeof( int ) * 3 + 2];
+	snprintf( buf, sizeof buf, "%d", version );
+	curl_mime_data( part, buf, CURL_ZERO_TERMINATED );
+
+	part = curl_mime_addpart( mime );
+	curl_mime_name( part, "bitfieldSize" );
+	snprintf( buf, sizeof buf, "%d", metadata->bitfieldSize );
+	curl_mime_data( part, buf, CURL_ZERO_TERMINATED );
+
+	curl_easy_setopt( curl, CURLOPT_MIMEPOST, mime );
+
+	char response[37];
+	response[0] = '\0';
+	curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, curlCallbackCreateSession );
+	curl_easy_setopt( curl, CURLOPT_WRITEDATA, &response );
+
+	res = curl_easy_perform( curl );
+	curl_mime_free( mime );
+
+	/* Check for errors */
+	if ( res != CURLE_OK ) {
+		logadd( LOG_ERROR, "COW_API_CREATE  failed: %s\n", curl_easy_strerror( res ) );
+		return false;
+	}
+
+	long http_code = 0;
+	curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
+	if ( http_code != 200 ) {
+		logadd( LOG_ERROR, "COW_API_CREATE  failed http: %ld\n", http_code );
+		return false;
+	}
+	curl_easy_reset( curl );
+	response[36] = '\0';
+	logadd( LOG_DEBUG1, "Cow session started, guid: %s\n", response );
+	if ( uuid_parse( response, metadata->uuid ) != 0 ) {
+		logadd( LOG_ERROR, "uuid_parse  failed\n" );
+		return false;
+	}
+	return true;
+}
+
+
+void print_bin( char a )
+{
+	for ( int i = 0; i < 8; i++ ) {
+		printf( "%d", !!( ( a << i ) & 0x80 ) );
+	}
+}
+
+void print_bin_arr( char *ptr, int size )
+{
+	for ( int i = 0; i < size; i++ ) {
+		print_bin( ptr[i] );
+		printf( " " );
+	}
+	printf( "\n" );
+}
+
+/**
+ * @brief Implementation of CURLOPT_READFUNCTION, this function will first send the bitfield and
+ * then the block data in one bitstream. this function is usually called multible times per block,
+ * since the buffer is usually not large for one block and its bitfield.
+ * for more details see: https://curl.se/libcurl/c/CURLOPT_READFUNCTION.html
+ * 
+ * @param ptr to the buffer
+ * @param size size of one element in buffer
+ * @param nmemb number of elements in buffer
+ * @param userdata from CURLOPT_READFUNCTION
+ * @return size_t size written in buffer
+ */
+size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb, void *userdata )
+{
+	cow_curl_read_upload_t *uploadBlock = (cow_curl_read_upload_t *)userdata;
+	size_t len = 0;
+	if ( uploadBlock->position < (size_t)metadata->bitfieldSize / 8 ) {
+		size_t lenCpy = MIN( metadata->bitfieldSize / 8 - uploadBlock->position, size * nmemb );
+		memcpy( ptr, uploadBlock->block->bitfield + uploadBlock->position, lenCpy );
+		uploadBlock->position += lenCpy;
+		len += lenCpy;
+	}
+	if ( uploadBlock->position >= (size_t)metadata->bitfieldSize / 8 ) {
+		size_t lenRead = MIN( COW_METADATA_STORAGE_CAPACITY - ( uploadBlock->position - ( metadata->bitfieldSize / 8 ) ),
+				( size * nmemb ) - len );
+		off_t inBlockOffset = uploadBlock->position - metadata->bitfieldSize / 8;
+		size_t lengthRead = pread( cow.fhd, ( ptr + len ), lenRead, uploadBlock->block->offset + inBlockOffset );
+		uploadBlock->position += lengthRead;
+		len += lengthRead;
+	}
+	return len;
+}
+
+/**
+ * @brief uploads the given block to the cow server.
+ * 
+ * @param block pointer to the cow_block_metadata_t
+ * @param blocknumber is the abosulte block number from the beginning.
+ * @param time relative Time since the creation of the cow file. will be used to
+ * set the block->timeUploaded.
+ */
+bool uploadBlock( cow_block_metadata_t *block, uint32_t blocknumber, uint32_t time )
+{
+	CURLcode res;
+	cow_curl_read_upload_t curlUploadBlock;
+
+	char url[400];
+	char uuid[37];
+	uuid_unparse( metadata->uuid, uuid );
+	sprintf( url, COW_API_UPDATE, cowServerAddress, uuid, blocknumber );
+	curlUploadBlock.block = block;
+	curlUploadBlock.position = 0;
+
+	curl_easy_setopt( curl, CURLOPT_URL, url );
+	curl_easy_setopt( curl, CURLOPT_POST, 1L );
+	curl_easy_setopt( curl, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
+	curl_easy_setopt( curl, CURLOPT_READDATA, (void *)&curlUploadBlock );
+
+	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+	curl_easy_setopt(
+			curl, CURLOPT_POSTFIELDSIZE_LARGE, (long)( metadata->bitfieldSize / 8 + COW_METADATA_STORAGE_CAPACITY ) );
+
+	struct curl_slist *headers = NULL;
+	headers = curl_slist_append( headers, "Content-Type: application/octet-stream" );
+	curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
+
+
+	res = curl_easy_perform( curl );
+
+
+	/* Check for errors */
+	if ( res != CURLE_OK ) {
+		logadd( LOG_ERROR, "COW_API_UPDATE  failed: %s\n", curl_easy_strerror( res ) );
+		curl_easy_reset( curl );
+		return false;
+	}
+	long http_code = 0;
+	curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
+	if ( http_code != 200 ) {
+		logadd( LOG_ERROR, "COW_API_UPDATE  failed http: %ld\n", http_code );
+		curl_easy_reset( curl );
+		return false;
+	}
+
+	// everything went ok, update timeUploaded
+	block->timeUploaded = (atomic_uint_fast32_t)time;
+	curl_easy_reset( curl );
+	return true;
+}
+
+
+/**
+ * @brief requests the merging of the image on the cow server
+
+ */
+bool mergeRequest()
+{
+	CURLcode res;
+	curl_easy_setopt( curl, CURLOPT_CUSTOMREQUEST, "GET" );
+
+	char url[400];
+	char uuid[37];
+	uuid_unparse( metadata->uuid, uuid );
+	sprintf( url, COW_API_START_MERGE, cowServerAddress, uuid, metadata->imageSize );
+	curl_easy_setopt( curl, CURLOPT_URL, url );
+
+	res = curl_easy_perform( curl );
+	if ( res != CURLE_OK ) {
+		logadd( LOG_WARNING, "COW_API_START_MERGE  failed: %s\n", curl_easy_strerror( res ) );
+		curl_easy_reset( curl );
+		return false;
+	}
+	long http_code = 0;
+	curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
+	if ( http_code != 200 ) {
+		logadd( LOG_WARNING, "COW_API_START_MERGE  failed http: %ld\n", http_code );
+		curl_easy_reset( curl );
+		return false;
+	}
+	curl_easy_reset( curl );
+	return true;
+}
+
+/**
+ * @brief wrapper for mergeRequest so if its fails it will be tried again.
+ * 
+ */
+void startMerge()
+{
+	int fails = 0;
+	bool success = false;
+	success = mergeRequest();
+	while ( fails <= 5 && !success ) {
+		fails++;
+		logadd( LOG_WARNING, "Trying again. %i/5", fails );
+		mergeRequest();
+	}
+}
+
+/**
+ * @brief loops through all blocks and uploads them.
+ * 
+ * @param lastLoop if set to true, all blocks which are not uploaded will be uploaded, ignoring their timeChanged
+ */
+bool uploaderLoop( bool lastLoop )
+{
+	bool success = true;
+	int l1MaxOffset = ceil( metadata->imageSize / COW_L2_STORAGE_CAPACITY );
+	for ( int l1Offset = 0; l1Offset < l1MaxOffset; l1Offset++ ) {
+		if ( cow.l1[l1Offset] == -1 ) {
+			continue;
+		}
+		for ( int l2Offset = 0; l2Offset < COW_L2_SIZE; l2Offset++ ) {
+			cow_block_metadata_t *block = ( cow.firstL2[cow.l1[l1Offset]] + l2Offset );
+			if ( block->offset == -1 ) {
+				continue;
+			}
+			if ( block->timeUploaded < block->timeChanged ) {
+				uint32_t relativeTime = (uint32_t)( time( NULL ) - metadata->creationTime );
+				if ( ( ( ( relativeTime - block->timeChanged ) > COW_MIN_UPLOAD_DELAY ) || lastLoop )
+						&& block->timeUploaded < block->timeChanged ) {
+					if ( !uploadBlock( block, l1Offset * COW_L2_SIZE + l2Offset, relativeTime ) ) {
+						int fails = 1;
+						while ( fails <= 5 ) {
+							if ( uploadBlock( block, l1Offset * COW_L2_SIZE + l2Offset, relativeTime ) ) {
+								break;
+							}
+							logadd( LOG_WARNING, "Trying again. %i/5", fails );
+							fails++;
+						}
+						if ( fails > 5 ) {
+							logadd( LOG_ERROR, "Block upload failed" );
+							success = false;
+						}
+					}
+				}
+			}
+		}
+	}
+	return success;
+}
+
+/**
+ * @brief main loop for blockupload in the background
+ */
+void cowfile_uploader( void *something )
+{
+	while ( uploadLoop ) {
+		uploaderLoop( false );
+		sleep( 2 );
+	}
+	logadd( LOG_DEBUG1, "start uploading the remaining blocks." );
+
+	// force the upload of all remaining blocks since the user dismounted the image
+	if ( !uploaderLoop( true ) ) {
+		logadd( LOG_ERROR, "Can't merge, since one or more blocks failed to upload" );
+		return;
+	}
+	logadd( LOG_DEBUG1, "Requesting merge." );
+	startMerge();
+}
+
 /**
  * @brief initializes the cow functionality, creates the .data & .meta file.
  * 
@@ -101,7 +401,8 @@ static bool checkBit( atomic_char *bitfield, int n )
  * @param image_Name name of the original file/image
  * @param imageSizePtr 
  */
-bool cowfile_init( char *path, const char *image_Name, size_t **imageSizePtr )
+bool cowfile_init(
+		char *path, const char *image_Name, uint16_t imageVersion, size_t **imageSizePtr, char *serverAddress )
 {
 	char pathMeta[strlen( path ) + 6];
 	char pathData[strlen( path ) + 6];
@@ -178,10 +479,24 @@ bool cowfile_init( char *path, const char *image_Name, size_t **imageSizePtr )
 		return false;
 	}
 	// move the dataFileSize to make room for the header
-	atomic_store( &metadata->dataFileSize, COW_METADAT_STORAGE_CAPACITY );
+	atomic_store( &metadata->dataFileSize, COW_METADATA_STORAGE_CAPACITY );
 
 	pthread_mutex_init( &cow.l2CreateLock, NULL );
-	return 1;
+
+
+	cowServerAddress = serverAddress;
+	curl_global_init( CURL_GLOBAL_ALL );
+	curl = curl_easy_init();
+	if ( !curl ) {
+		logadd( LOG_ERROR, "Error on curl init. Bye.\n" );
+		return false;
+	}
+	if ( !createSession( image_Name, imageVersion ) ) {
+		return false;
+	}
+
+	pthread_create( &tidCowUploader, NULL, &cowfile_uploader, NULL );
+	return true;
 }
 /**
  * @brief loads an existing cow state from the .meta & .data files
@@ -190,8 +505,9 @@ bool cowfile_init( char *path, const char *image_Name, size_t **imageSizePtr )
  * @param imageSizePtr 
  */
 
-bool cowfile_load( char *path, size_t **imageSizePtr )
+bool cowfile_load( char *path, size_t **imageSizePtr, char *serverAddress )
 {
+	cowServerAddress = serverAddress;
 	char pathMeta[strlen( path ) + 6];
 	char pathData[strlen( path ) + 6];
 	strcpy( pathMeta, path );
@@ -323,7 +639,7 @@ static void writeData( const char *buffer, ssize_t size, size_t netSize, cow_req
  */
 static bool allocateMetaBlockData( cow_block_metadata_t *block )
 {
-	block->offset = (atomic_long)atomic_fetch_add( &metadata->dataFileSize, COW_METADAT_STORAGE_CAPACITY );
+	block->offset = (atomic_long)atomic_fetch_add( &metadata->dataFileSize, COW_METADATA_STORAGE_CAPACITY );
 	return true;
 }
 
@@ -448,12 +764,12 @@ static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cow
 	}
 }
 
-
 void cowFile_handleCallback( dnbd3_async_t *request )
 {
 	cow_sub_request_t *sRequest = container_of( request, cow_sub_request_t, dRequest );
 	sRequest->callback( sRequest );
 }
+
 static void readRemoteData( cow_sub_request_t *sRequest )
 {
 	memcpy( sRequest->cowRequest->readBuffer + ( sRequest->dRequest.offset - sRequest->cowRequest->fuseRequestOffset ),
@@ -476,7 +792,7 @@ static void readRemoteData( cow_sub_request_t *sRequest )
 void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, size_t size )
 {
 	if ( cowRequest->replyAttr ) {
-		cowRequest->writeBuffer = calloc( sizeof( char ), MIN( size, COW_METADAT_STORAGE_CAPACITY ) );
+		cowRequest->writeBuffer = calloc( sizeof( char ), MIN( size, COW_METADATA_STORAGE_CAPACITY ) );
 	}
 	// if beyond end of file, pad with 0
 	if ( offset > (off_t)metadata->imageSize ) {
@@ -505,11 +821,11 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 			cow_block_metadata_t *metaBlock = getBlock( l1Offset, l2Offset );
 
 
-			size_t metaBlockStartOffset = l1Offset * COW_L2_STORAGE_CAPACITY + l2Offset * COW_METADAT_STORAGE_CAPACITY;
+			size_t metaBlockStartOffset = l1Offset * COW_L2_STORAGE_CAPACITY + l2Offset * COW_METADATA_STORAGE_CAPACITY;
 
 			size_t inBlockOffset = currentOffset - metaBlockStartOffset;
 			size_t sizeToWriteToBlock =
-					MIN( (size_t)( endOffset - currentOffset ), COW_METADAT_STORAGE_CAPACITY - inBlockOffset );
+					MIN( (size_t)( endOffset - currentOffset ), COW_METADATA_STORAGE_CAPACITY - inBlockOffset );
 
 
 			/////////////////////////
@@ -661,7 +977,7 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 			}
 		}
 		// compute the original file offset from bitfieldOffset, l2Offset and l1Offset
-		searchOffset = DNBD3_BLOCK_SIZE * ( bitfieldOffset ) + l2Offset * COW_METADAT_STORAGE_CAPACITY
+		searchOffset = DNBD3_BLOCK_SIZE * ( bitfieldOffset ) + l2Offset * COW_METADATA_STORAGE_CAPACITY
 				+ l1Offset * COW_L2_STORAGE_CAPACITY;
 		if ( doRead || searchOffset >= endOffset ) {
 			ssize_t sizeToRead = MIN( searchOffset, endOffset ) - lastReadOffset;
@@ -670,7 +986,7 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 			} else {
 				// Compute the offset in the .data file where the read starts
 				off_t localRead =
-						block->offset + ( ( lastReadOffset % COW_L2_STORAGE_CAPACITY ) % COW_METADAT_STORAGE_CAPACITY );
+						block->offset + ( ( lastReadOffset % COW_L2_STORAGE_CAPACITY ) % COW_METADATA_STORAGE_CAPACITY );
 				ssize_t totalBytesRead = 0;
 				while ( totalBytesRead < sizeToRead ) {
 					ssize_t bytesRead =
@@ -711,5 +1027,15 @@ fail:;
 		}
 		free( cowRequest->readBuffer );
 		free( cowRequest );
+	}
+}
+
+void cowfile_close()
+{
+	uploadLoop = false;
+	pthread_join( tidCowUploader, NULL );
+	if ( curl ) {
+		curl_global_cleanup();
+		curl_easy_cleanup( curl );
 	}
 }

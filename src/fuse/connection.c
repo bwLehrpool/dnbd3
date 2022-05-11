@@ -244,6 +244,17 @@ bool connection_initThreads()
 	return success;
 }
 
+char * connection_getImageName()
+{
+	return image.name;
+}
+
+uint16_t connection_getImageRID()
+{
+	return image.rid;
+}
+
+
 uint64_t connection_getImageSize()
 {
 	return image.size;

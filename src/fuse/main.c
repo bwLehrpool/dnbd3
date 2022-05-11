@@ -357,10 +357,11 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -s              Single threaded mode\n" );
 	printf( "   -c <path>       Enables cow, creates the cow files at given path\n" );
 	printf( "   -L <path>       Loads the cow files from a given path\n" );
+	printf( "   -C --host       Host address of the cow server\n" );
 	exit( exitCode );
 }
 
-static const char *optString = "dfHh:i:l:o:r:SsVvc:L:";
+static const char *optString = "dfHh:i:l:o:r:SsVvc:L:C:";
 static const struct option longOpts[] = {
 	{ "debug", no_argument, NULL, 'd' },
 	{ "help", no_argument, NULL, 'H' },
@@ -373,12 +374,14 @@ static const struct option longOpts[] = {
 	{ "version", no_argument, NULL, 'v' },
 	{ "cow", required_argument, NULL, 'c' },
 	{ "loadcow", required_argument, NULL, 'L' },
+	{ "cowServer", required_argument, NULL, 'C' },
 	{ 0, 0, 0, 0 }
 };
 
 int main( int argc, char *argv[] )
 {
 	char *server_address = NULL;
+	char *cow_server_address = NULL;
 	char *image_Name = NULL;
 	char *log_file = NULL;
 	uint16_t rid = 0;
@@ -461,6 +464,9 @@ int main( int argc, char *argv[] )
 			cow_file_path = optarg;
 			useCow = true;
 			break;
+		case 'C':
+			cow_server_address = optarg;
+			break;
 		case 'L':
 			cow_file_path = optarg;
 			useCow = true;
@@ -484,8 +490,11 @@ int main( int argc, char *argv[] )
 			logadd( LOG_WARNING, "Could not open log file at '%s'", log_file );
 		}
 	}
+	if( useCow && cow_server_address == NULL ) {
+		printUsage( argv[0], EXIT_FAILURE );
+	}
 	if ( loadCow ) {
-		if ( !cowfile_load( cow_file_path, &imageSizePtr ) ) {
+		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address ) ) {
 			return EXIT_FAILURE;
 		}
 	} 
@@ -534,7 +543,7 @@ int main( int argc, char *argv[] )
 	owner = getuid();
 
 	if ( useCow & !loadCow) {
-		if( !cowfile_init( cow_file_path, IMAGE_NAME,  &imageSizePtr) ) {
+		if( !cowfile_init( cow_file_path, connection_getImageName(), connection_getImageRID(),  &imageSizePtr, cow_server_address ) ) {
 			return EXIT_FAILURE;
 		}
 	}
@@ -572,6 +581,9 @@ int main( int argc, char *argv[] )
 			_fuseSession = NULL;
 		}
 		fuse_unmount( mountpoint, ch );
+		if( useCow ) {
+			cowfile_close();
+		}
 	}
 	fuse_opt_free_args( &args );
 	free( newArgv );
