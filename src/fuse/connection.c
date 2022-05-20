@@ -180,7 +180,7 @@ bool connection_init( const char *hosts, const char *lowerImage, const uint16_t 
 			} else {
 				logadd( LOG_INFO, "Requested: '%s:%d'", lowerImage, (int)rid );
 				logadd( LOG_INFO, "Returned:  '%s:%d'", remoteName, (int)remoteRid );
-				sock_setTimeout( sock, SOCKET_KEEPALIVE_TIMEOUT * 1000 );
+				sock_setTimeout( sock, SOCKET_TIMEOUT_RECV * 1000 );
 				image.name = strdup( remoteName );
 				image.rid = remoteRid;
 				image.size = remoteSize;
@@ -478,10 +478,10 @@ static void* connection_backgroundThread( void *something UNUSED )
 			}
 			sortAltServers();
 			probeAltServers();
-			if ( panic || timing_diff( &connection.startupTime, &now ) <= STARTUP_MODE_DURATION ) {
+			if ( panic || timing_diff( &connection.startupTime, &now ) <= DISCOVER_STARTUP_PHASE_COUNT * TIMER_INTERVAL_PROBE_STARTUP ) {
 				timing_addSeconds( &nextRttCheck, &now, TIMER_INTERVAL_PROBE_STARTUP );
 			} else {
-				timing_addSeconds( &nextRttCheck, &now, TIMER_INTERVAL_PROBE_NORMAL );
+				timing_addSeconds( &nextRttCheck, &now, TIMER_INTERVAL_PROBE_MAX );
 			}
 		}
 		// Send keepalive packet
@@ -501,7 +501,7 @@ static void* connection_backgroundThread( void *something UNUSED )
 				}
 			}
 			pthread_mutex_unlock( &connection.sendMutex );
-			timing_addSeconds( &nextKeepalive, &now, TIMER_INTERVAL_KEEPALIVE_PACKET );
+			timing_addSeconds( &nextKeepalive, &now, KEEPALIVE_INTERVAL );
 		}
 	}
 	return NULL;
