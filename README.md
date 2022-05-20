@@ -1,6 +1,6 @@
 # dnbd3 - distributed network block device (version 3)
 
-The distributed network block device in version 3 (dnbd3) is a network protocol similar to [nbd](https://github.com/NetworkBlockDevice/nbd) to implement a distributed block-based read-only storage system. Such a distributed block-based storage system consists of dnbd3 components, namly one or more servers and several clients. Servers are meant to expose virtual disk images as block devices to clients using dnbd3. Clients request data blocks from servers and can implement a load balancing mechanism to connect to the fastest available server for data exchange.
+The distributed network block device version 3 (dnbd3) is a network protocol similar to [nbd](https://github.com/NetworkBlockDevice/nbd) to implement a distributed block-based read-only storage system. Such a distributed block-based storage system consists of dnbd3 components, namly one or more servers and several clients. Servers are meant to expose virtual disk images as block devices to clients using dnbd3. Clients read data blocks from servers and implement failover and a load balancing mechanism to connect to the fastest server available for data exchange.
 
 This repository contains the source code for the following dnbd3 components:
 
@@ -11,7 +11,7 @@ This repository contains the source code for the following dnbd3 components:
 
 The dnbd3 components can be built for the following Linux kernel versions and Unix distributions:
 
-  - Generic/Vanilla Kernel **4.14** – **5.15**
+  - Generic/Vanilla Kernel **4.9** to **5.15**
   - Archlinux with **Linux kernel 5.15.x** or **5.10.x**
   - Raspberry Pi OS with **Linux kernel 5.4.x**
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
@@ -86,7 +86,7 @@ apt-get install git \
                 rpm
 ```
 
-#### CentOS 8 with Linux kernel 4.18.x
+#### {CentOS, AlmaLinux, Rocky Linux} 8 with Linux kernel 4.18.x
 ```shell
 yum install git \
             make \
@@ -101,7 +101,7 @@ yum install git \
             rpm-build
 ```
 
-Note that `afl` is not available on CentOS 8 and should be built from the [original sources](https://github.com/google/AFL).
+Note that `afl` is not available on CentOS 8 and the likes and should be built from the [original sources](https://github.com/google/AFL).
 
 #### CentOS 7 with Linux kernel 3.10.x
 Before any required preliminaries can be installed, enable the `epel` package repository with the following command line calls:
@@ -155,42 +155,6 @@ scl enable devtoolset-7 llvm-toolset-7 bash
 
 Now, GCC 7.3 is the default version in your current shell.
 This allows you to build all dnbd3 components on CentOS 7.
-
-
-#### AlmaLinux 8 with Linux kernel 4.18.x
-```shell
-yum install git \
-            make \
-            cmake \
-            gcc \
-            clang-tools-extra \
-            kernel-devel \
-            elfutils-libelf-devel \
-            fuse-devel \
-            jansson-devel \
-            libatomic \
-            rpm-build
-```
-
-Note that `afl` is not available on AlmaLinux 8 and should be built from the [original sources](https://github.com/google/AFL).
-
-
-#### Rocky Linux 8 with Linux kernel 4.18.x
-```shell
-yum install git \
-            make \
-            cmake \
-            gcc \
-            clang-tools-extra \
-            kernel-devel \
-            elfutils-libelf-devel \
-            fuse-devel \
-            jansson-devel \
-            libatomic \
-            rpm-build
-```
-
-Note that `afl` is not available on Rocky Linux 8 and should be built from the [original sources](https://github.com/google/AFL).
 
 
 #### FreeBSD 12.x and 13.x
