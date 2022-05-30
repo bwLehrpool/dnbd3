@@ -17,6 +17,7 @@ static const char *STATS_NAME = "status";
 
 static struct fuse_session *_fuseSession = NULL;
 bool useCow = false;
+bool cow_merge_after_upload = false;
 static uint64_t imageSize;
 static uint64_t *imageSizePtr =&imageSize;
 
@@ -44,16 +45,16 @@ static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 	switch ( ino ) {
 	case INO_ROOT:
 		stbuf->st_mode = S_IFDIR | 0550;
-		if(useCow){
+		if( useCow ) {
 			stbuf->st_mode = S_IFDIR | 0777;	
 		}
 		stbuf->st_nlink = 2;
 		stbuf->st_mtim = startupTime;
 		break;
 	case INO_IMAGE:
-		if(useCow){
+		if ( useCow ) {
 			stbuf->st_mode = S_IFREG | 0777;
-		}else{
+		} else {
 			stbuf->st_mode = S_IFREG | 0440;
 		}
 		stbuf->st_nlink = 1;
@@ -152,7 +153,7 @@ static void image_ll_readdir( fuse_req_t req, fuse_ino_t ino, size_t size, off_t
 static void image_ll_open( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi )
 {
 	if ( ino != INO_IMAGE && ino != INO_STATS ) {
-		fuse_reply_err( req, EISDIR );
+				fuse_reply_err( req, EISDIR );
 	} else if ( ( fi->flags & 3 ) != O_RDONLY && !useCow ) {
 		fuse_reply_err( req, EACCES );
 	} else {
@@ -358,10 +359,11 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -c <path>       Enables cow, creates the cow files at given path\n" );
 	printf( "   -L <path>       Loads the cow files from a given path\n" );
 	printf( "   -C --host       Host address of the cow server\n" );
+	printf( "   -m              merge changes on the server after unmount (only works with -c)\n" );
 	exit( exitCode );
 }
 
-static const char *optString = "dfHh:i:l:o:r:SsVvc:L:C:";
+static const char *optString = "dfHh:i:l:o:r:SsVvc:L:C:m";
 static const struct option longOpts[] = {
 	{ "debug", no_argument, NULL, 'd' },
 	{ "help", no_argument, NULL, 'H' },
@@ -375,6 +377,7 @@ static const struct option longOpts[] = {
 	{ "cow", required_argument, NULL, 'c' },
 	{ "loadcow", required_argument, NULL, 'L' },
 	{ "cowServer", required_argument, NULL, 'C' },
+	{ "merge", no_argument, NULL, 'm' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -384,6 +387,7 @@ int main( int argc, char *argv[] )
 	char *cow_server_address = NULL;
 	char *image_Name = NULL;
 	char *log_file = NULL;
+	cow_merge_after_upload  = false;
 	uint16_t rid = 0;
 	char **newArgv;
 	int newArgc;
@@ -467,6 +471,9 @@ int main( int argc, char *argv[] )
 		case 'C':
 			cow_server_address = optarg;
 			break;
+		case 'm':
+			cow_merge_after_upload = true;
+			break;
 		case 'L':
 			cow_file_path = optarg;
 			useCow = true;
@@ -491,6 +498,10 @@ int main( int argc, char *argv[] )
 		}
 	}
 	if( useCow && cow_server_address == NULL ) {
+		printUsage( argv[0], EXIT_FAILURE );
+	}
+	if( cow_merge_after_upload && !useCow ) {
+		printf( "-m only works if cow is enabled. \n" );
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 	if ( loadCow ) {

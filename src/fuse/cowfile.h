@@ -99,6 +99,8 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 
 void cowfile_handleCallback( dnbd3_async_t *request );
 
+int cow_printStats( char *buffer, const size_t len );
+
 void cowfile_close();
 
 #endif /* COWFILE_H_ */

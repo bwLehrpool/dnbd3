@@ -34,6 +34,7 @@
 #define INO_IMAGE (3)
 
 extern bool useCow;
+extern bool cow_merge_after_upload;
 void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
 
 #endif /* main_H_ */

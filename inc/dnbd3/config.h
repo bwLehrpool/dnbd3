@@ -44,8 +44,8 @@
 #define COW_BITFIELD_SIZE 40 // NEVER CHANGE THIS OR THE WORLD WILL ALSO END!
 #define COW_FILE_META_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825E) // Magic Value to recognize a Cow .meta file
 #define COW_FILE_DATA_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825F) // Magic Value to recognize a Cow .data file
-#define COW_MIN_UPLOAD_DELAY 60 //in Seconds
-
+#define COW_MIN_UPLOAD_DELAY 60 // in seconds
+#define COW_STATS_UPDATE_TIME 5 // time in seconds the cow status files gets updated (while uploading blocks)
 // +++++ COW API Endpoints +++++
 #define COW_API_CREATE "%s/api/File/Create"
 #define COW_API_UPDATE "%s/api/File/Update?guid=%s&BlockNumber=%u"
