@@ -23,7 +23,7 @@ typedef struct verify_test
 
 const size_t l2Size = 1024;
 const size_t bitfieldByteSize = 40;
-const size_t l2Capacity = l2Size * DNBD3_BLOCK_SIZE * bitfieldByteSize;
+const size_t l2Capacity = l2Size * DNBD3_BLOCK_SIZE * bitfieldByteSize * 8;
 
 const size_t testFileSize = l2Size * bitfieldByteSize * DNBD3_BLOCK_SIZE * 8L * 2.9L;
 
@@ -442,7 +442,7 @@ void verifyFinalFile( char *path )
 
 	// read to whole file
 
-	int maxReadSize = DNBD3_BLOCK_SIZE * COW_BITFIELD_SIZE;
+	int maxReadSize = DNBD3_BLOCK_SIZE * COW_BITFIELD_SIZE * 8;
 	char buffer[maxReadSize];
 	char emptyData[maxReadSize];
 	memset( emptyData, 0, maxReadSize );

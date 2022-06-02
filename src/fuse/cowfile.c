@@ -54,11 +54,11 @@ static int getL2Offset( size_t offset )
  * @brief computes the bit in the bitfield from the absolute file offset
  * 
  * @param offset absolute file offset
- * @return int bit(0-39) in the bitfield
+ * @return int bit(0-319) in the bitfield
  */
 static int getBitfieldOffset( size_t offset )
 {
-	return (int)( offset / DNBD3_BLOCK_SIZE ) % COW_BITFIELD_SIZE;
+	return (int)( offset / DNBD3_BLOCK_SIZE ) % (COW_BITFIELD_SIZE * 8);
 }
 
 /**
@@ -83,7 +83,7 @@ static void setBits( atomic_char *byte, int from, int to )
  */
 static void setBitsInBitfield( atomic_char *bitfield, int from, int to )
 {
-	assert( from >= 0 || to < COW_BITFIELD_SIZE );
+	assert( from >= 0 || to < COW_BITFIELD_SIZE * 8 );
 	int start = from / 8;
 	int end = to / 8;
 
@@ -129,7 +129,7 @@ bool createSession( char *imageName, uint16_t version )
 	char url[300];
 	sprintf( url, COW_API_CREATE, cowServerAddress );
 	logadd( LOG_INFO, "COW_API_CREATE URL: %s", url );
-	curl_easy_setopt( curl, CURLOPT_CUSTOMREQUEST, "POST" );
+	curl_easy_setopt( curl, CURLOPT_POST, 1L );
 	curl_easy_setopt( curl, CURLOPT_URL, url );
 
 	curl_mime *mime;
@@ -215,16 +215,16 @@ size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb, void *
 {
 	cow_curl_read_upload_t *uploadBlock = (cow_curl_read_upload_t *)userdata;
 	size_t len = 0;
-	if ( uploadBlock->position < (size_t)metadata->bitfieldSize / 8 ) {
-		size_t lenCpy = MIN( metadata->bitfieldSize / 8 - uploadBlock->position, size * nmemb );
+	if ( uploadBlock->position < (size_t)metadata->bitfieldSize ) {
+		size_t lenCpy = MIN( metadata->bitfieldSize - uploadBlock->position, size * nmemb );
 		memcpy( ptr, uploadBlock->block->bitfield + uploadBlock->position, lenCpy );
 		uploadBlock->position += lenCpy;
 		len += lenCpy;
 	}
-	if ( uploadBlock->position >= (size_t)metadata->bitfieldSize / 8 ) {
-		size_t lenRead = MIN( COW_METADATA_STORAGE_CAPACITY - ( uploadBlock->position - ( metadata->bitfieldSize / 8 ) ),
+	if ( uploadBlock->position >= (size_t)metadata->bitfieldSize ) {
+		size_t lenRead = MIN( COW_METADATA_STORAGE_CAPACITY - ( uploadBlock->position - ( metadata->bitfieldSize  ) ),
 				( size * nmemb ) - len );
-		off_t inBlockOffset = uploadBlock->position - metadata->bitfieldSize / 8;
+		off_t inBlockOffset = uploadBlock->position - metadata->bitfieldSize;
 		size_t lengthRead = pread( cow.fhd, ( ptr + len ), lenRead, uploadBlock->block->offset + inBlockOffset );
 		uploadBlock->position += lengthRead;
 		len += lengthRead;
@@ -255,10 +255,9 @@ bool uploadBlock( cow_block_metadata_t *block, uint32_t blocknumber, uint32_t ti
 	curl_easy_setopt( curl, CURLOPT_POST, 1L );
 	curl_easy_setopt( curl, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
 	curl_easy_setopt( curl, CURLOPT_READDATA, (void *)&curlUploadBlock );
-
 	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 	curl_easy_setopt(
-			curl, CURLOPT_POSTFIELDSIZE_LARGE, (long)( metadata->bitfieldSize / 8 + COW_METADATA_STORAGE_CAPACITY ) );
+			curl, CURLOPT_POSTFIELDSIZE_LARGE, (long)( metadata->bitfieldSize + COW_METADATA_STORAGE_CAPACITY ) );
 
 	struct curl_slist *headers = NULL;
 	headers = curl_slist_append( headers, "Content-Type: application/octet-stream" );
@@ -267,13 +266,26 @@ bool uploadBlock( cow_block_metadata_t *block, uint32_t blocknumber, uint32_t ti
 
 	res = curl_easy_perform( curl );
 
-
 	/* Check for errors */
 	if ( res != CURLE_OK ) {
 		logadd( LOG_ERROR, "COW_API_UPDATE  failed: %s\n", curl_easy_strerror( res ) );
 		curl_easy_reset( curl );
 		return false;
 	}
+	///////////////// TODO DEBUG REMOVE LATER
+	double total;
+	res = curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &total);
+    if(CURLE_OK == res) {
+		curl_off_t ul;
+    	res = curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD_T, &ul);
+		if(CURLE_OK == res) {
+			logadd( LOG_INFO, "Speed: %ld  kb/s", (long) ((ul/total)/1000));
+		}
+    }
+	logadd( LOG_INFO, "CURLINFO_TOTAL_TIME: %f", total);
+	////////////////////
+
+
 	long http_code = 0;
 	curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
 	if ( http_code != 200 ) {
@@ -296,11 +308,28 @@ bool uploadBlock( cow_block_metadata_t *block, uint32_t blocknumber, uint32_t ti
 bool mergeRequest()
 {
 	CURLcode res;
-	curl_easy_setopt( curl, CURLOPT_CUSTOMREQUEST, "GET" );
+	curl_easy_setopt( curl, CURLOPT_POST, 1L );
 
 	char url[400];
-	sprintf( url, COW_API_START_MERGE, cowServerAddress, uuidStr, metadata->imageSize );
+	sprintf( url, COW_API_START_MERGE, cowServerAddress);
 	curl_easy_setopt( curl, CURLOPT_URL, url );
+
+
+	curl_mime *mime;
+	curl_mimepart *part;
+	mime = curl_mime_init( curl );
+	part = curl_mime_addpart( mime );
+	
+	curl_mime_name( part, "guid" );
+	curl_mime_data( part, uuidStr, CURL_ZERO_TERMINATED );
+	part = curl_mime_addpart( mime );
+
+	curl_mime_name( part, "fileSize" );
+	char buf[21];
+	snprintf( buf, sizeof buf, "%" PRIu64, metadata->imageSize  );
+	curl_mime_data( part, buf, CURL_ZERO_TERMINATED );
+	curl_easy_setopt( curl, CURLOPT_MIMEPOST, mime );
+
 
 	res = curl_easy_perform( curl );
 	if ( res != CURLE_OK ) {
@@ -433,7 +462,7 @@ void cowfile_uploader( void *something )
 }
 
 /**
- * @brief initializes the cow functionality, creates the .data & .meta file.
+ * @brief initializes the cow functionality, creates the data & meta file.
  * 
  * @param path where the files should be stored
  * @param image_Name name of the original file/image
@@ -446,13 +475,13 @@ bool cowfile_init(
 	char pathData[strlen( path ) + 6];
 	strcpy( pathMeta, path );
 	strcpy( pathData, path );
-	strcat( pathMeta, ".meta" );
+	strcat( pathMeta, "/meta" );
 	if ( ( cow.fhm = open( pathMeta, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
-		logadd( LOG_ERROR, "Could not create cow meta file. Bye.\n" );
+		logadd( LOG_ERROR, "Could not create cow meta file. Bye.\n %s \n", pathMeta );
 		return false;
 	}
 
-	strcat( pathData, ".data" );
+	strcat( pathData, "/data" );
 	if ( ( cow.fhd = open( pathData, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not create cow data file. Bye.\n" );
 		return false;
@@ -538,9 +567,9 @@ bool cowfile_init(
 	return true;
 }
 /**
- * @brief loads an existing cow state from the .meta & .data files
+ * @brief loads an existing cow state from the meta & data files
  * 
- * @param path where the .meta & .data file is located 
+ * @param path where the meta & data file is located 
  * @param imageSizePtr 
  */
 
@@ -551,8 +580,8 @@ bool cowfile_load( char *path, size_t **imageSizePtr, char *serverAddress )
 	char pathData[strlen( path ) + 6];
 	strcpy( pathMeta, path );
 	strcpy( pathData, path );
-	strcat( pathMeta, ".meta" );
-	strcat( pathData, ".data" );
+	strcat( pathMeta, "/meta" );
+	strcat( pathData, "/data" );
 	if ( ( cow.fhm = open( pathMeta, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not open cow meta file. Bye.\n" );
 		return false;
@@ -643,7 +672,7 @@ bool cowfile_load( char *path, size_t **imageSizePtr, char *serverAddress )
 }
 
 /**
- * @brief writes the given data in the .data file 
+ * @brief writes the given data in the data file 
  * 
  * @param buffer containing the data
  * @param size of the buffer
@@ -905,7 +934,6 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 			writeData( cowRequest->writeBuffer + ( ( currentOffset - offset ) * !cowRequest->replyAttr ),
 					(ssize_t)sizeToWriteToBlock, sizeToWriteToBlock, cowRequest, metaBlock, inBlockOffset );
 
-			cow_block_metadata_t *b = getBlock( l1Offset, l2Offset );
 			currentOffset += sizeToWriteToBlock;
 			currentOffset += endPaddedSize;
 
@@ -1009,7 +1037,7 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 			bitfieldOffset++;
 		}
 
-		if ( bitfieldOffset >= COW_BITFIELD_SIZE ) {
+		if ( bitfieldOffset >= COW_BITFIELD_SIZE * 8 ) {
 			bitfieldOffset = 0;
 			l2Offset++;
 			if ( l2Offset >= COW_L2_SIZE ) {
@@ -1029,7 +1057,7 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 			if ( !isLocal ) {
 				readRemote( req, lastReadOffset, sizeToRead, cowRequest );
 			} else {
-				// Compute the offset in the .data file where the read starts
+				// Compute the offset in the data file where the read starts
 				off_t localRead =
 						block->offset + ( ( lastReadOffset % COW_L2_STORAGE_CAPACITY ) % COW_METADATA_STORAGE_CAPACITY );
 				ssize_t totalBytesRead = 0;
@@ -1079,7 +1107,7 @@ fail:;
 void createCowStatsFile( char* path ) {
 	char pathStatus[strlen( path ) + 11];
 	strcpy( pathStatus, path );
-	strcat( pathStatus, "status.txt" );
+	strcat( pathStatus, "/status.txt" );
 	if ( ( cow.fhs = open( pathStatus, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not create cow status file. Bye.\n" );
 		return false;

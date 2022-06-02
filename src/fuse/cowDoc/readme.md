@@ -10,7 +10,7 @@
 
 # Introduction
 
-This extension to the fuse dnbd3 client allows it to mount images writable. The changes to an writeable mounted image will be stored in a separate files (also called Copy on Write (Cow)) on the client computer. These changes are uploaded in the background to the cow server. Once the user unmounts the images all remaining changes will be uploaded. Then the image will be merged on the server (depending on the startup parameters).
+This extension to the fuse dnbd3 client allows it to mount images writable. The changes to an writeable mounted image will be stored in a separate files (also called Copy on Write (Cow)) on the client computer. These changes are uploaded in the background to the cow server. Once the user unmounts the images all remaining changes will be uploaded. Then the image will be merged on the server (if set so in the startup parameters).
 
 
 # Usage
@@ -31,10 +31,37 @@ Example parameters for creating a new cow session:
 
 
 ## Files
-If a new CoW session is started, a new `.meta` and `.data` file is created.
+If a new CoW session is started, a new `meta`, `data` and `status.txt` file is created.
 
-### .meta
-The `.meta` file contains the following header:
+### status.txt
+While the cow session ist active the file contains:
+
+```
+uuid: <uuid>
+state: active
+```
+- The `uuid` is the session uuid, which the cow server uses to identify the session.
+
+
+Once the user unmounts the image the file contains:
+
+```
+uid: <uuid>
+state: uploading
+uploaded: <number>
+totalBlocks: <number>
+```
+- `uploaded` is the number of Blocks which are already uploaded.
+
+- `totalBlocks` is the total Number of Blocks which need to be uploaded.
+
+
+Once all blocks are uploaded the state will be set to `done`.
+
+
+
+### meta.dat
+The `meta` file contains the following header:
 ```C
 // cowfile.h
 typedef struct __attribute__( ( packed ) ) cowfile_metadata_header
@@ -57,8 +84,8 @@ typedef struct __attribute__( ( packed ) ) cowfile_metadata_header
 
 ```
 
-### .data
-The `.data` files contains
+### data
+The `data` files contains
 
 
 
@@ -66,11 +93,11 @@ The `.data` files contains
 The magic values in both files are used to ensure that a suitable file is read and that the machine has the correct endianness.
 ```C
 //config.h
-#define COW_FILE_META_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825E) // Magic Value to recognize a Cow .meta file
-#define COW_FILE_DATA_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825F) // Magic Value to recognize a Cow .data file
+#define COW_FILE_META_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825E) // Magic Value to recognize a Cow meta file
+#define COW_FILE_DATA_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825F) // Magic Value to recognize a Cow data file
 ```
 ## Data strucure
-![Datastructure](img/Bild1.jpg "")
+![Datastructure](img/Bild1.jpg)
 
 
 # REST Api

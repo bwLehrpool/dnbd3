@@ -15,7 +15,7 @@
 #include <curl/curl.h>
 
 
-#define COW_METADATA_STORAGE_CAPACITY ( COW_BITFIELD_SIZE * DNBD3_BLOCK_SIZE )
+#define COW_METADATA_STORAGE_CAPACITY ( COW_BITFIELD_SIZE * 8 * DNBD3_BLOCK_SIZE )
 #define COW_L2_SIZE 1024
 #define COW_L2_STORAGE_CAPACITY ( COW_L2_SIZE * COW_METADATA_STORAGE_CAPACITY )
 #define container_of( ptr, type, member ) ( (type *)( (char *)( ptr ) - (char *)&( ( (type *)NULL )->member ) ) )
