@@ -13,8 +13,6 @@ find_package(Libatomic REQUIRED)
 # find curl for cow
 find_package(CURL REQUIRED) 
 
-pkg_search_module(UUID REQUIRED uuid)
-
 # add compile option to enable enhanced POSIX pthread features
 add_definitions(-D_GNU_SOURCE)
 
@@ -28,8 +26,8 @@ set(DNBD3_FUSE_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/cowfile.h
                             ${CMAKE_CURRENT_SOURCE_DIR}/main.h)
 
 add_executable(dnbd3-fuse ${DNBD3_FUSE_SOURCE_FILES})
-target_include_directories(dnbd3-fuse PRIVATE ${FUSE_INCLUDE_DIRS} ${CURL_INCLUDE_DIR} ${UUID_INCLUDE_DIRS})
-target_link_libraries(dnbd3-fuse dnbd3-build dnbd3-version dnbd3-shared ${FUSE_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CURL_LIBRARIES} ${UUID_LIBRARIES})
+target_include_directories(dnbd3-fuse PRIVATE ${FUSE_INCLUDE_DIRS} ${CURL_INCLUDE_DIR} )
+target_link_libraries(dnbd3-fuse dnbd3-build dnbd3-version dnbd3-shared ${FUSE_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CURL_LIBRARIES} )
 install(TARGETS dnbd3-fuse RUNTIME DESTINATION bin
         COMPONENT fuse)
 

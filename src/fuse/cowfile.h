@@ -11,7 +11,6 @@
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
-#include <uuid/uuid.h>
 #include <curl/curl.h>
 
 
@@ -21,7 +20,7 @@
 #define container_of( ptr, type, member ) ( (type *)( (char *)( ptr ) - (char *)&( ( (type *)NULL )->member ) ) )
 
 
-#define COW_METADATA_HEADER_SIZE 296
+#define COW_METADATA_HEADER_SIZE 317
 typedef struct __attribute__( ( packed ) ) cowfile_metadata_header
 {
 	uint64_t magicValue;            // 8byte
@@ -36,7 +35,7 @@ typedef struct __attribute__( ( packed ) ) cowfile_metadata_header
 	atomic_size_t dataFileSize;     // 8byte
 	uint64_t maxImageSize;          // 8byte
 	uint64_t creationTime;          // 8byte
-	uuid_t uuid;                    // 16byte
+	char uuid[37];                  // 37byte
 	char imageName[200];            // 200byte
 } cowfile_metadata_header_t;
 _Static_assert(

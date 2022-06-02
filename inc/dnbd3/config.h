@@ -47,6 +47,7 @@
 #define COW_MIN_UPLOAD_DELAY 60 // in seconds
 #define COW_STATS_UPDATE_TIME 5 // time in seconds the cow status files gets updated (while uploading blocks)
 #define COW_MAX_PARALLEL_UPLOADS 10 // maximum number of parallel uploads
+#define COW_URL_STRING_SIZE 500 // Max string size for an url
 // +++++ COW API Endpoints +++++
 #define COW_API_CREATE "%s/api/File/Create"
 #define COW_API_UPDATE "%s/api/File/Update?guid=%s&BlockNumber=%u"

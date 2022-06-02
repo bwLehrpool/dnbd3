@@ -7,12 +7,11 @@ static pthread_t tidCowUploader;
 static char *cowServerAddress;
 static CURL *curl;
 static cowfile_metadata_header_t *metadata = NULL;
-static char uuidStr[37];
 atomic_bool uploadLoop = true;
 
 //both variables are only relevant for the upload after the image is dismounted
-static atomic_uint_fast32_t blocksForCompleteUpload = 0; 
-static atomic_uint_fast32_t blocksUploaded = 0;
+static uint32_t blocksForCompleteUpload = 0; 
+static uint32_t blocksUploaded = 0;
 
 static struct cow
 {
@@ -109,11 +108,11 @@ size_t curlCallbackCreateSession( char *buffer, size_t itemSize, size_t nitems, 
 {
 	size_t bytes = itemSize * nitems;
 	if ( strlen( response ) + bytes != 36 ) {
-		logadd( LOG_INFO, "strlen(response): %i bytes: %i \n", strlen( response ), bytes );
+		logadd( LOG_INFO, "strlen(response): %lu bytes: %lu \n", strlen( response ), bytes );
 		return bytes;
 	}
 
-	strcat( response, buffer );
+	strncat( response, buffer, 36 );
 	return bytes;
 }
 
@@ -123,11 +122,11 @@ size_t curlCallbackCreateSession( char *buffer, size_t itemSize, size_t nitems, 
  * @param imageName 
  * @param version of the original Image
  */
-bool createSession( char *imageName, uint16_t version )
+bool createSession( const char *imageName, uint16_t version )
 {
 	CURLcode res;
-	char url[300];
-	sprintf( url, COW_API_CREATE, cowServerAddress );
+	char url[COW_URL_STRING_SIZE];
+	snprintf ( url, COW_URL_STRING_SIZE, COW_API_CREATE, cowServerAddress );
 	logadd( LOG_INFO, "COW_API_CREATE URL: %s", url );
 	curl_easy_setopt( curl, CURLOPT_POST, 1L );
 	curl_easy_setopt( curl, CURLOPT_URL, url );
@@ -151,10 +150,9 @@ bool createSession( char *imageName, uint16_t version )
 
 	curl_easy_setopt( curl, CURLOPT_MIMEPOST, mime );
 
-	char response[37];
-	response[0] = '\0';
+	metadata->uuid[0] = '\0';
 	curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, curlCallbackCreateSession );
-	curl_easy_setopt( curl, CURLOPT_WRITEDATA, &response );
+	curl_easy_setopt( curl, CURLOPT_WRITEDATA, &metadata->uuid );
 
 	res = curl_easy_perform( curl );
 	curl_mime_free( mime );
@@ -172,13 +170,8 @@ bool createSession( char *imageName, uint16_t version )
 		return false;
 	}
 	curl_easy_reset( curl );
-	response[36] = '\0';
-	logadd( LOG_DEBUG1, "Cow session started, guid: %s\n", response );
-	if ( uuid_parse( response, metadata->uuid ) != 0 ) {
-		logadd( LOG_ERROR, "uuid_parse  failed\n" );
-		return false;
-	}
-	strcpy( uuidStr, response );
+	metadata->uuid[36] = '\0';
+	logadd( LOG_DEBUG1, "Cow session started, guid: %s\n", metadata->uuid );
 	return true;
 }
 
@@ -226,6 +219,11 @@ size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb, void *
 				( size * nmemb ) - len );
 		off_t inBlockOffset = uploadBlock->position - metadata->bitfieldSize;
 		size_t lengthRead = pread( cow.fhd, ( ptr + len ), lenRead, uploadBlock->block->offset + inBlockOffset );
+
+		if(lenRead != lengthRead){
+			// temp fix, fill up non full blocks
+			lengthRead = lenRead;
+		}
 		uploadBlock->position += lengthRead;
 		len += lengthRead;
 	}
@@ -244,10 +242,9 @@ bool uploadBlock( cow_block_metadata_t *block, uint32_t blocknumber, uint32_t ti
 {
 	CURLcode res;
 	cow_curl_read_upload_t curlUploadBlock;
+	char url[COW_URL_STRING_SIZE];
 
-	char url[400];
-
-	sprintf( url, COW_API_UPDATE, cowServerAddress, uuidStr, blocknumber );
+	snprintf( url, COW_URL_STRING_SIZE, COW_API_UPDATE, cowServerAddress, metadata->uuid, blocknumber );
 	curlUploadBlock.block = block;
 	curlUploadBlock.position = 0;
 
@@ -279,7 +276,7 @@ bool uploadBlock( cow_block_metadata_t *block, uint32_t blocknumber, uint32_t ti
 		curl_off_t ul;
     	res = curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD_T, &ul);
 		if(CURLE_OK == res) {
-			logadd( LOG_INFO, "Speed: %ld  kb/s", (long) ((ul/total)/1000));
+			logadd( LOG_INFO, "Speed: %f  kb/s", (double) (((double)ul/total)/1000));
 		}
     }
 	logadd( LOG_INFO, "CURLINFO_TOTAL_TIME: %f", total);
@@ -310,8 +307,8 @@ bool mergeRequest()
 	CURLcode res;
 	curl_easy_setopt( curl, CURLOPT_POST, 1L );
 
-	char url[400];
-	sprintf( url, COW_API_START_MERGE, cowServerAddress);
+	char url[COW_URL_STRING_SIZE];
+	snprintf( url, COW_URL_STRING_SIZE, COW_API_START_MERGE, cowServerAddress);
 	curl_easy_setopt( curl, CURLOPT_URL, url );
 
 
@@ -321,7 +318,7 @@ bool mergeRequest()
 	part = curl_mime_addpart( mime );
 	
 	curl_mime_name( part, "guid" );
-	curl_mime_data( part, uuidStr, CURL_ZERO_TERMINATED );
+	curl_mime_data( part, metadata->uuid, CURL_ZERO_TERMINATED );
 	part = curl_mime_addpart( mime );
 
 	curl_mime_name( part, "fileSize" );
@@ -364,6 +361,14 @@ void startMerge()
 	}
 }
 
+void updateCowStatsFile( uint blocks, uint totalBlocks, bool done ) {
+	char buffer[300];
+
+	int len = snprintf( buffer, 100, "state: %s\nuploaded: %lu\ntotalBlocks: %lu\n", done?"done":"uploading" ,blocks, totalBlocks );
+	pwrite( cow.fhs, buffer, len, 43 );
+	ftruncate( cow.fhs, 43 + len );
+}
+
 /**
  * @brief loops through all blocks and uploads them.
  * 
@@ -373,7 +378,7 @@ bool uploaderLoop( bool lastLoop )
 {
 	bool success = true;
 	uint64_t lastUpdateTime =  time( NULL );
-	int l1MaxOffset = ceil( metadata->imageSize / COW_L2_STORAGE_CAPACITY );
+	int l1MaxOffset =  1 + ((metadata->imageSize  - 1) / COW_L2_STORAGE_CAPACITY); 
 	int fails = 0;
 	for ( int l1Offset = 0; l1Offset < l1MaxOffset; l1Offset++ ) {
 		if ( cow.l1[l1Offset] == -1 ) {
@@ -401,7 +406,7 @@ bool uploaderLoop( bool lastLoop )
 						if( lastLoop ) {
 							blocksUploaded++;
 							if(  time(NULL) - lastUpdateTime  > COW_STATS_UPDATE_TIME ) {
-								updateCowStatsFile( blocksUploaded,blocksForCompleteUpload , false );
+								updateCowStatsFile( blocksUploaded, blocksForCompleteUpload, false );
 								lastUpdateTime =  time( NULL );
 							}
 						}
@@ -417,7 +422,7 @@ Counts blocks that have changes that have not yet been uploaded
 */
 int countBlocksForUpload() {
 	int res = 0;
-		int l1MaxOffset = ceil( metadata->imageSize / COW_L2_STORAGE_CAPACITY );
+	int l1MaxOffset =  1 + ((metadata->imageSize  - 1) / COW_L2_STORAGE_CAPACITY); 
 	for ( int l1Offset = 0; l1Offset < l1MaxOffset; l1Offset++ ) {
 		if ( cow.l1[l1Offset] == -1 ) {
 			continue;
@@ -473,15 +478,15 @@ bool cowfile_init(
 {
 	char pathMeta[strlen( path ) + 6];
 	char pathData[strlen( path ) + 6];
-	strcpy( pathMeta, path );
-	strcpy( pathData, path );
-	strcat( pathMeta, "/meta" );
+
+	snprintf( pathMeta, strlen( path ) + 6, "%s%s", path, "/meta" ) ;
+	snprintf( pathData, strlen( path ) + 6, "%s%s", path, "/data" ) ;
+
 	if ( ( cow.fhm = open( pathMeta, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not create cow meta file. Bye.\n %s \n", pathMeta );
 		return false;
 	}
 
-	strcat( pathData, "/data" );
 	if ( ( cow.fhd = open( pathData, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not create cow data file. Bye.\n" );
 		return false;
@@ -530,7 +535,7 @@ bool cowfile_init(
 	metadata->metaDataStart = meta_data_start;
 	metadata->bitfieldSize = COW_BITFIELD_SIZE;
 	metadata->maxImageSize = cow.maxImageSize;
-	strcpy( metadata->imageName, image_Name );
+	snprintf( metadata->imageName, 200, "%s", image_Name );
 	cow.l1 = (l1 *)( cow.metadata_mmap + meta_data_start );
 	metadata->nextL2 = 0;
 
@@ -578,10 +583,11 @@ bool cowfile_load( char *path, size_t **imageSizePtr, char *serverAddress )
 	cowServerAddress = serverAddress;
 	char pathMeta[strlen( path ) + 6];
 	char pathData[strlen( path ) + 6];
-	strcpy( pathMeta, path );
-	strcpy( pathData, path );
-	strcat( pathMeta, "/meta" );
-	strcat( pathData, "/data" );
+
+	snprintf( pathMeta, strlen( path ) + 6, "%s%s", path, "/meta" ) ;
+	snprintf( pathData, strlen( path ) + 6, "%s%s", path, "/data" ) ;
+
+
 	if ( ( cow.fhm = open( pathMeta, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not open cow meta file. Bye.\n" );
 		return false;
@@ -660,9 +666,6 @@ bool cowfile_load( char *path, size_t **imageSizePtr, char *serverAddress )
 	cow.l1Size = ( ( cow.maxImageSize + COW_L2_STORAGE_CAPACITY - 1LL ) / COW_L2_STORAGE_CAPACITY );
 
 	cow.firstL2 = (l2 *)( ( (char *)cow.l1 ) + cow.l1Size );
-
-
-	uuid_unparse( metadata->uuid,  uuidStr );
 
 	createCowStatsFile( path );
 
@@ -803,10 +806,11 @@ static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cow
 {
 	if ( offset > (off_t)metadata->originalImageSize ) {
 		//pad 0 and done
-		char buffer[DNBD3_BLOCK_SIZE] = { 0 };
-		memcpy( buffer, buffer, size );
+		//TODO 
+		char buf[DNBD3_BLOCK_SIZE] = { 0 };
+		memcpy( buf, buffer, size );
 
-		writeData( buffer, DNBD3_BLOCK_SIZE, (ssize_t)size, cowRequest, block, inBlockOffset );
+		writeData( buf, DNBD3_BLOCK_SIZE, (ssize_t)size, cowRequest, block, inBlockOffset );
 		return;
 	}
 	cow_sub_request_t *sRequest = malloc( sizeof( cow_sub_request_t ) + DNBD3_BLOCK_SIZE );
@@ -1105,25 +1109,20 @@ fail:;
 
 
 void createCowStatsFile( char* path ) {
-	char pathStatus[strlen( path ) + 11];
-	strcpy( pathStatus, path );
-	strcat( pathStatus, "/status.txt" );
+	char pathStatus[strlen( path ) + 12];
+
+	snprintf( pathStatus, strlen( path ) + 12, "%s%s", path, "/status.txt") ;
+
 	if ( ( cow.fhs = open( pathStatus, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not create cow status file. Bye.\n" );
 		return false;
 	}
 	char buffer[100];
-	int len = snprintf( buffer, 100, "uuid: %s\nstate: active\n",uuidStr );
+	int len = snprintf( buffer, 100, "uuid: %s\nstate: active\n",metadata->uuid );
 	pwrite(cow.fhs, buffer, len, 0);
 }
 
-void updateCowStatsFile( uint blocks, uint totalBlocks, bool done ) {
-	char buffer[300];
 
-	int len = snprintf( buffer, 100, "state: %s\nuploaded: %lu\ntotalBlocks: %lu\n", done?"done":"uploading" ,blocks, totalBlocks );
-	pwrite( cow.fhs, buffer, len, 43 );
-	ftruncate( cow.fhs, 43 + len );
-}
 
 
 int cow_printStats( char *buffer, const size_t len ) {
@@ -1131,12 +1130,12 @@ int cow_printStats( char *buffer, const size_t len ) {
 	int ret = 0;
 	if(uploadLoop){
 		ret = snprintf( buffer, len, "uuid: %s\nstate: %s\ntotalBlocks: \n",
-							uuidStr, "active");
+							metadata->uuid, "active");
 	}
 
 	if(!uploadLoop){
 		ret =  snprintf( buffer, len, "uuidS %s\nstate: %s\ntotalBlocks: \nuploading: %lu/%lu\n",
-							uuidStr, "uploading", blocksUploaded, blocksForCompleteUpload );
+							metadata->uuid, "uploading", blocksUploaded, blocksForCompleteUpload );
 	}
 	if ( ret < 0 ) {
 		ret = 0;
