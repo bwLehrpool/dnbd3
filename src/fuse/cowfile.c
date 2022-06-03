@@ -230,72 +230,6 @@ size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb, void *
 	return len;
 }
 
-/**
- * @brief uploads the given block to the cow server.
- * 
- * @param block pointer to the cow_block_metadata_t
- * @param blocknumber is the absolute block number from the beginning.
- * @param time relative Time since the creation of the cow file. will be used to
- * set the block->timeUploaded.
- */
-bool uploadBlock( cow_block_metadata_t *block, uint32_t blocknumber, uint32_t time )
-{
-	CURLcode res;
-	cow_curl_read_upload_t curlUploadBlock;
-	char url[COW_URL_STRING_SIZE];
-
-	snprintf( url, COW_URL_STRING_SIZE, COW_API_UPDATE, cowServerAddress, metadata->uuid, blocknumber );
-	curlUploadBlock.block = block;
-	curlUploadBlock.position = 0;
-
-	curl_easy_setopt( curl, CURLOPT_URL, url );
-	curl_easy_setopt( curl, CURLOPT_POST, 1L );
-	curl_easy_setopt( curl, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
-	curl_easy_setopt( curl, CURLOPT_READDATA, (void *)&curlUploadBlock );
-	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-	curl_easy_setopt(
-			curl, CURLOPT_POSTFIELDSIZE_LARGE, (long)( metadata->bitfieldSize + COW_METADATA_STORAGE_CAPACITY ) );
-
-	struct curl_slist *headers = NULL;
-	headers = curl_slist_append( headers, "Content-Type: application/octet-stream" );
-	curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
-
-
-	res = curl_easy_perform( curl );
-
-	/* Check for errors */
-	if ( res != CURLE_OK ) {
-		logadd( LOG_ERROR, "COW_API_UPDATE  failed: %s\n", curl_easy_strerror( res ) );
-		curl_easy_reset( curl );
-		return false;
-	}
-	///////////////// TODO DEBUG REMOVE LATER
-	double total;
-	res = curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &total);
-    if(CURLE_OK == res) {
-		curl_off_t ul;
-    	res = curl_easy_getinfo(curl, CURLINFO_SIZE_UPLOAD_T, &ul);
-		if(CURLE_OK == res) {
-			logadd( LOG_INFO, "Speed: %f  kb/s", (double) (((double)ul/total)/1000));
-		}
-    }
-	logadd( LOG_INFO, "CURLINFO_TOTAL_TIME: %f", total);
-	////////////////////
-
-
-	long http_code = 0;
-	curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
-	if ( http_code != 200 ) {
-		logadd( LOG_ERROR, "COW_API_UPDATE  failed http: %ld\n", http_code );
-		curl_easy_reset( curl );
-		return false;
-	}
-
-	// everything went ok, update timeUploaded
-	block->timeUploaded = (atomic_uint_fast32_t)time;
-	curl_easy_reset( curl );
-	return true;
-}
 
 
 /**
@@ -369,14 +303,117 @@ void updateCowStatsFile( uint blocks, uint totalBlocks, bool done ) {
 	ftruncate( cow.fhs, 43 + len );
 }
 
+
+void addUpload( CURLM *cm, cow_curl_read_upload_t * curlUploadBlock ){
+
+	CURL *eh = curl_easy_init();
+
+	char url[COW_URL_STRING_SIZE];
+
+	snprintf( url, COW_URL_STRING_SIZE, COW_API_UPDATE, cowServerAddress, metadata->uuid, curlUploadBlock->blocknumber );
+
+	curl_easy_setopt( eh, CURLOPT_URL, url );
+	curl_easy_setopt( eh, CURLOPT_POST, 1L );
+	curl_easy_setopt( eh, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
+	curl_easy_setopt( eh, CURLOPT_READDATA, (void *)curlUploadBlock );
+	curl_easy_setopt( eh, CURLOPT_PRIVATE, (void *)curlUploadBlock );
+	curl_easy_setopt(
+			eh, CURLOPT_POSTFIELDSIZE_LARGE, (long)( metadata->bitfieldSize + COW_METADATA_STORAGE_CAPACITY ) );
+
+	struct curl_slist *headers = NULL;
+	headers = curl_slist_append( headers, "Content-Type: application/octet-stream" );
+	curl_easy_setopt( eh, CURLOPT_HTTPHEADER, headers );
+	curl_multi_add_handle(cm, eh);
+	
+	return true;
+}
+
+bool finishUpload( CURLM *cm, CURLMsg *msg ){
+	/* Check for errors */
+
+	bool status = true;
+	cow_curl_read_upload_t * curlUploadBlock;
+	CURLcode res;
+	res = curl_easy_getinfo(msg->easy_handle, CURLINFO_PRIVATE, &curlUploadBlock );
+	if( res != CURLE_OK ) {
+		logadd( LOG_ERROR, "ERROR" );
+	}
+	if( msg->msg != CURLMSG_DONE ) {
+		curlUploadBlock->fails ++;
+		logadd( LOG_ERROR, "COW_API_UPDATE  failed %i/5: %s\n", curlUploadBlock->fails , curl_easy_strerror( msg->data.result ) );
+		if( curlUploadBlock->fails <= 5 ) {
+			addUpload( cm, curlUploadBlock );
+			goto CLEANUP;
+		}
+		free( curlUploadBlock );
+		status = false;
+		goto CLEANUP;
+	}
+	
+	
+	///////////////// TODO DEBUG REMOVE LATER
+	double total;
+	res = curl_easy_getinfo(msg->easy_handle, CURLINFO_TOTAL_TIME, &total);
+    if(CURLE_OK == res) {
+		curl_off_t ul;
+    	res = curl_easy_getinfo(msg->easy_handle, CURLINFO_SIZE_UPLOAD_T, &ul);
+		if(CURLE_OK == res) {
+			logadd( LOG_INFO, "Speed: %f  kb/s", (double) (((double)ul/total)/1000));
+		}
+    }
+	////////////////////
+
+
+	long http_code = 0;
+	curl_easy_getinfo( msg->easy_handle, CURLINFO_RESPONSE_CODE, &http_code );
+	if ( http_code != 200 ) {
+		logadd( LOG_ERROR, "COW_API_UPDATE  failed http: %ld\n", http_code );
+		curl_easy_reset( curl );
+		return false;
+	}
+
+	// everything went ok, update timeUploaded
+	curlUploadBlock->block->timeUploaded = ( atomic_uint_fast32_t )time;
+	blocksUploaded++;
+	free( curlUploadBlock );
+CLEANUP:
+	curl_multi_remove_handle( cm, msg->easy_handle );
+    curl_easy_cleanup(msg->easy_handle );
+	return status;
+}
+
+bool MessageHandler(CURLM *cm, int * activeUploads, bool breakIfNotMax ) {
+	CURLMsg *msg;
+	int msgsLeft = -1;
+	bool status = true;
+	do {
+    	curl_multi_perform(cm, activeUploads);
+ 
+   		while((msg = curl_multi_info_read(cm, &msgsLeft))) {
+      		if(!finishUpload( cm, msg )){
+				status = false;
+			}
+		}
+		if(  breakIfNotMax && *activeUploads < COW_MAX_PARALLEL_UPLOADS  ){
+			break;
+		}
+    	if( *activeUploads ){
+      		curl_multi_wait(cm, NULL, 0, 1000, NULL);
+		}
+ 
+  	} while( *activeUploads );
+	return status;
+}
+
 /**
  * @brief loops through all blocks and uploads them.
  * 
  * @param lastLoop if set to true, all blocks which are not uploaded will be uploaded, ignoring their timeChanged
  */
-bool uploaderLoop( bool lastLoop )
+bool uploaderLoop( bool lastLoop , CURLM *cm )
 {
 	bool success = true;
+	int activeUploads = 0;
 	uint64_t lastUpdateTime =  time( NULL );
 	int l1MaxOffset =  1 + ((metadata->imageSize  - 1) / COW_L2_STORAGE_CAPACITY); 
 	int fails = 0;
@@ -393,27 +430,30 @@ bool uploaderLoop( bool lastLoop )
 				uint32_t relativeTime = (uint32_t)( time( NULL ) - metadata->creationTime );
 				if ( ( ( relativeTime - block->timeChanged ) > COW_MIN_UPLOAD_DELAY ) || lastLoop ) {
 					
-					fails = 0;
-					while(!uploadBlock( block, l1Offset * COW_L2_SIZE + l2Offset, relativeTime ) && fails > 5 ) {
-						logadd( LOG_WARNING, "Trying again. %i/5", fails );
-						fails++;
-					}
-					if ( fails >= 5 ) {
-						logadd( LOG_ERROR, "Block upload failed" );
-						success = false;
-					}
-					else{
-						if( lastLoop ) {
-							blocksUploaded++;
-							if(  time(NULL) - lastUpdateTime  > COW_STATS_UPDATE_TIME ) {
-								updateCowStatsFile( blocksUploaded, blocksForCompleteUpload, false );
-								lastUpdateTime =  time( NULL );
-							}
+					do {
+						if( !MessageHandler(cm, &activeUploads, true ) ) {
+							success = false;
+						}
+					} while( !( activeUploads < COW_MAX_PARALLEL_UPLOADS ) && activeUploads );
+					cow_curl_read_upload_t *  b = malloc( sizeof(cow_curl_read_upload_t) );
+					b->block = block;
+					b->blocknumber = ( l1Offset * COW_L2_SIZE + l2Offset );
+					b->fails = 0;
+					b->position = 0;
+
+					addUpload( cm, b );
+					if( lastLoop ) {
+						if(  time(NULL) - lastUpdateTime  > COW_STATS_UPDATE_TIME ) {
+							updateCowStatsFile( blocksUploaded, blocksForCompleteUpload, false );
+							lastUpdateTime =  time( NULL );
 						}
 					}
 				}
 			}
 		}
+	}
+	while( activeUploads > 0 ) {
+		MessageHandler( cm, &activeUploads, false );
 	}
 	return success;
 }
@@ -445,8 +485,15 @@ int countBlocksForUpload() {
  */
 void cowfile_uploader( void *something )
 {
+
+	CURLM *cm;
+
+  	cm = curl_multi_init();
+	curl_multi_setopt( cm, CURLMOPT_MAXCONNECTS, (long) COW_MAX_PARALLEL_UPLOADS );
+
+
 	while ( uploadLoop ) {
-		uploaderLoop( false );
+		uploaderLoop( false , cm );
 		sleep( 2 );
 	}
 	logadd( LOG_DEBUG1, "start uploading the remaining blocks." );
@@ -454,10 +501,12 @@ void cowfile_uploader( void *something )
 	blocksForCompleteUpload = countBlocksForUpload();
 	updateCowStatsFile( blocksUploaded,blocksForCompleteUpload , false );
 	// force the upload of all remaining blocks because the user dismounted the image
-	if ( !uploaderLoop( true ) ) {
+	if ( !uploaderLoop( true, cm ) ) {
 		logadd( LOG_ERROR, "one or more blocks failed to upload" );
+		 curl_multi_cleanup( cm );
 		return;
 	}
+	curl_multi_cleanup( cm );
 	updateCowStatsFile( blocksUploaded,blocksForCompleteUpload , true );
 	logadd( LOG_DEBUG1, "all blocks uploaded" );
 	if( cow_merge_after_upload ) {

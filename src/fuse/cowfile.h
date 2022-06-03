@@ -82,6 +82,8 @@ typedef struct cow_curl_read_upload
 {
 	cow_block_metadata_t *block;
 	size_t position;
+	int blocknumber;
+	int fails;
 } cow_curl_read_upload_t;
 
 typedef int32_t l1;
