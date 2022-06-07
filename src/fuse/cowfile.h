@@ -82,17 +82,17 @@ typedef struct cow_curl_read_upload
 {
 	cow_block_metadata_t *block;
 	size_t position;
-	int blocknumber;
+	long unsigned int blocknumber;
 	int fails;
 } cow_curl_read_upload_t;
 
 typedef int32_t l1;
 typedef cow_block_metadata_t l2[COW_L2_SIZE];
 
-bool cowfile_init(
-		char *path, const char *image_Name, uint16_t imageVersion, size_t **imageSizePtr, char *serverAdress );
+bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr, char *serverAdress,
+		int isForeground );
 
-bool cowfile_load( char *path, size_t **imageSizePtr, char *serverAdress );
+bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAdress, int isForeground );
 
 void cowfile_read( fuse_req_t req, size_t size, off_t offset );
 

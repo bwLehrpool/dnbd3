@@ -18,8 +18,8 @@ static const char *STATS_NAME = "status";
 static struct fuse_session *_fuseSession = NULL;
 bool useCow = false;
 bool cow_merge_after_upload = false;
-static uint64_t imageSize;
-static uint64_t *imageSizePtr =&imageSize;
+static atomic_uint_fast64_t imageSize;
+static atomic_uint_fast64_t *imageSizePtr =&imageSize;
 
 /* Debug/Benchmark variables */
 static bool useDebug = false;
@@ -505,7 +505,7 @@ int main( int argc, char *argv[] )
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 	if ( loadCow ) {
-		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address ) ) {
+		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address, foreground ) ) {
 			return EXIT_FAILURE;
 		}
 	} 
@@ -554,7 +554,7 @@ int main( int argc, char *argv[] )
 	owner = getuid();
 
 	if ( useCow & !loadCow) {
-		if( !cowfile_init( cow_file_path, connection_getImageName(), connection_getImageRID(),  &imageSizePtr, cow_server_address ) ) {
+		if( !cowfile_init( cow_file_path, connection_getImageName(), connection_getImageRID(),  &imageSizePtr, cow_server_address, foreground ) ) {
 			return EXIT_FAILURE;
 		}
 	}

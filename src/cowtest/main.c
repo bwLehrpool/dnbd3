@@ -25,7 +25,7 @@ const size_t l2Size = 1024;
 const size_t bitfieldByteSize = 40;
 const size_t l2Capacity = l2Size * DNBD3_BLOCK_SIZE * bitfieldByteSize * 8;
 
-const size_t testFileSize = l2Size * bitfieldByteSize * DNBD3_BLOCK_SIZE * 8L * 2.9L;
+const size_t testFileSize = l2Capacity * 2.9L;
 
 
 static char filePath[400];
@@ -244,6 +244,56 @@ bool writeNotOnBlockBorder()
 	return verifyWriteNotOnBlockBorder();
 }
 
+bool verifyLongNonAlignedPattern()
+{
+	int size = DNBD3_BLOCK_SIZE * 10;
+	char buffer[size];
+	char expected[size];
+	for ( int i = 0; i < size; i++ ) {
+		expected[i] = (char)( i % 255 );
+	}
+
+	off_t offset = l2Capacity * 3 - 1;
+	size_t totalSize = l2Capacity + 2;
+	off_t endOffset = offset + totalSize;
+
+	while ( offset < endOffset ) {
+		size_t sizeToRead = MIN( size, endOffset - offset );
+		if ( !readSizeTested( fh, buffer, sizeToRead, offset, "writeLongNonAlignedPattern test Failed: read failed" ) ) {
+			return false;
+		}
+		if ( !compare( buffer, expected, sizeToRead, "writeLongNonAlignedPattern test Failed:  read failed" ) )
+			return false;
+		offset += sizeToRead;
+	}
+	printf( "LongNonAlignedPattern successful!\n" );
+	return true;
+}
+
+bool writeLongNonAlignedPattern()
+{
+	int size = DNBD3_BLOCK_SIZE * 10;
+	char buffer[size];
+
+	for ( int i = 0; i < size; i++ ) {
+		buffer[i] = (char)( i % 255 );
+	}
+
+	off_t offset = l2Capacity * 3 - 1;
+	size_t totalSize = l2Capacity + 2;
+	off_t endOffset = offset + totalSize;
+
+	while ( offset < endOffset ) {
+		size_t sizeToWrite = MIN( size, endOffset - offset );
+		if ( !writeSizeTested(
+					  fh, buffer, sizeToWrite, offset, "writeLongNonAlignedPattern test Failed: write failed" ) ) {
+			return false;
+		}
+		offset += sizeToWrite;
+	}
+	return verifyLongNonAlignedPattern();
+}
+
 
 bool fileSizeChanges()
 {
@@ -405,6 +455,9 @@ void runTest( char *path )
 		return;
 	if ( !interleavedTest() )
 		return;
+	if ( !writeLongNonAlignedPattern() ) {
+		return;
+	}
 
 	printf( "All test's successful.\n" );
 }
@@ -420,6 +473,7 @@ void verifyTests( verify_test_t *tests )
 		verifyWriteNotOnBlockBorder };
 	tests[3] = ( verify_test_t ){ 35 * DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 10, verifyInterleavedTest };
 	tests[4] = ( verify_test_t ){ l2Capacity * 2 - DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 2, verifyWriteOverL2 };
+	tests[5] = ( verify_test_t ){ l2Capacity * 3 - 1, l2Capacity + 2, verifyLongNonAlignedPattern };
 }
 
 void verifyFinalFile( char *path )
@@ -449,16 +503,15 @@ void verifyFinalFile( char *path )
 	size_t offset = 0;
 
 
-	int numberOfTests = 5;
+	int numberOfTests = 6;
 	verify_test_t tests[numberOfTests];
 	verifyTests( tests );
 
 	int currentTest = 0;
 
 
-
 	while ( offset < fileSize ) {
-		size_t sizeToRead = MIN( maxReadSize, fileSize - offset );
+		size_t sizeToRead = MIN( (size_t)maxReadSize, fileSize - offset );
 		if ( currentTest < numberOfTests ) {
 			sizeToRead = MIN( sizeToRead, tests[currentTest].offset - offset );
 		}

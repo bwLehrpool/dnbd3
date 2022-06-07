@@ -50,7 +50,7 @@
 #define COW_URL_STRING_SIZE 500 // Max string size for an url
 // +++++ COW API Endpoints +++++
 #define COW_API_CREATE "%s/api/File/Create"
-#define COW_API_UPDATE "%s/api/File/Update?guid=%s&BlockNumber=%u"
+#define COW_API_UPDATE "%s/api/File/Update?guid=%s&BlockNumber=%lu"
 #define COW_API_START_MERGE "%s/api/File/StartMerge"
 
 #endif /* CONFIG_H_ */

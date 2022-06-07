@@ -725,8 +725,8 @@ static void probeAltServers()
 				goto fail;
 			}
 			// Success, reply to fuse
-			if(useCow){
-				cowFile_handleCallback(request);
+			if( useCow ) {
+				cowFile_handleCallback( request );
 			}
 			else {
 				fuse_reply_buf( request->fuse_req, request->buffer, request->length );
