@@ -385,7 +385,7 @@ bool finishUpload( CURLM *cm, CURLMsg *msg )
 	}
 
 	// everything went ok, update timeUploaded
-	curlUploadBlock->block->timeUploaded = (atomic_uint_fast32_t)time;
+	curlUploadBlock->block->timeUploaded = curlUploadBlock->time;
 	blocksUploaded++;
 	free( curlUploadBlock );
 CLEANUP:
@@ -439,8 +439,8 @@ bool uploaderLoop( bool lastLoop, CURLM *cm )
 				continue;
 			}
 			if ( block->timeUploaded < block->timeChanged ) {
-				uint32_t relativeTime = (uint32_t)( time( NULL ) - metadata->creationTime );
-				if ( ( ( relativeTime - block->timeChanged ) > COW_MIN_UPLOAD_DELAY ) || lastLoop ) {
+			
+				if ( (  time( NULL ) - block->timeChanged  > COW_MIN_UPLOAD_DELAY ) || lastLoop ) {
 					do {
 						if ( !MessageHandler( cm, &activeUploads, true ) ) {
 							success = false;
@@ -451,6 +451,7 @@ bool uploaderLoop( bool lastLoop, CURLM *cm )
 					b->blocknumber = ( l1Offset * COW_L2_SIZE + l2Offset );
 					b->fails = 0;
 					b->position = 0;
+					b->time = time( NULL );
 
 					addUpload( cm, b );
 					if ( lastLoop ) {
@@ -796,7 +797,7 @@ static void writeData( const char *buffer, ssize_t size, size_t netSize, cow_req
 	setBitsInBitfield( block->bitfield, (int)( inBlockOffset / DNBD3_BLOCK_SIZE ),
 			(int)( ( inBlockOffset + totalBytesWritten - 1 ) / DNBD3_BLOCK_SIZE ) );
 
-	block->timeChanged = (atomic_uint_fast32_t)( time( NULL ) - metadata->creationTime );
+	block->timeChanged =  time( NULL ) ;
 }
 
 /**
@@ -934,7 +935,7 @@ static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cow
 	}
 }
 
-void cowFile_handleCallback( dnbd3_async_t *request )
+void cowfile_handleCallback( dnbd3_async_t *request )
 {
 	cow_sub_request_t *sRequest = container_of( request, cow_sub_request_t, dRequest );
 	sRequest->callback( sRequest );

@@ -1,8 +1,6 @@
 #ifndef _COWFILE_H_
 #define _COWFILE_H_
 
-#include "connection.h"
-#include "main.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdatomic.h>
@@ -12,6 +10,8 @@
 #include <pthread.h>
 #include <errno.h>
 #include <curl/curl.h>
+#include "main.h"
+#include "connection.h"
 
 
 #define COW_METADATA_STORAGE_CAPACITY ( COW_BITFIELD_SIZE * 8 * DNBD3_BLOCK_SIZE )
@@ -19,9 +19,12 @@
 #define COW_L2_STORAGE_CAPACITY ( COW_L2_SIZE * COW_METADATA_STORAGE_CAPACITY )
 #define container_of( ptr, type, member ) ( (type *)( (char *)( ptr ) - (char *)&( ( (type *)NULL )->member ) ) )
 
+_Static_assert( ATOMIC_INT_LOCK_FREE == 2, "ATOMIC INT not lock free");
+_Static_assert( ATOMIC_LONG_LOCK_FREE == 2, "ATOMIC LONG not lock free");
+_Static_assert( ATOMIC_LLONG_LOCK_FREE == 2, "ATOMIC LLONG not lock free");
 
-#define COW_METADATA_HEADER_SIZE 317
-typedef struct __attribute__( ( packed ) ) cowfile_metadata_header
+#define COW_METADATA_HEADER_SIZE 320
+typedef struct cowfile_metadata_header
 {
 	uint64_t magicValue;            // 8byte
 	atomic_uint_fast64_t imageSize; // 8byte
@@ -35,19 +38,23 @@ typedef struct __attribute__( ( packed ) ) cowfile_metadata_header
 	atomic_size_t dataFileSize;     // 8byte
 	uint64_t maxImageSize;          // 8byte
 	uint64_t creationTime;          // 8byte
-	char uuid[37];                  // 37byte
+	char uuid[40];                  // 40byte
 	char imageName[200];            // 200byte
 } cowfile_metadata_header_t;
 _Static_assert(
 		sizeof( cowfile_metadata_header_t ) == COW_METADATA_HEADER_SIZE, "cowfile_metadata_header is messed up" );
 
+#define COW_METADATA_METADATA_SIZE 64
 typedef struct cow_block_metadata
 {
 	atomic_long offset;
-	atomic_uint_fast32_t timeChanged;
-	atomic_uint_fast32_t timeUploaded;
+	atomic_uint_least64_t timeChanged;
+	atomic_uint_least64_t timeUploaded;
 	atomic_char bitfield[40];
 } cow_block_metadata_t;
+_Static_assert(
+		sizeof( cow_block_metadata_t ) == COW_METADATA_METADATA_SIZE, "cow_block_metadata_t is messed up" );
+
 
 typedef struct cow_request
 {
@@ -84,15 +91,16 @@ typedef struct cow_curl_read_upload
 	size_t position;
 	long unsigned int blocknumber;
 	int fails;
+	uint64_t time;
 } cow_curl_read_upload_t;
 
 typedef int32_t l1;
 typedef cow_block_metadata_t l2[COW_L2_SIZE];
 
-bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr, char *serverAdress,
+bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr, char *serverAddress,
 		int isForeground );
 
-bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAdress, int isForeground );
+bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, int isForeground );
 
 void cowfile_read( fuse_req_t req, size_t size, off_t offset );
 

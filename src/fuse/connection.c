@@ -419,8 +419,8 @@ static void* connection_receiveThreadMain( void *sockPtr )
 					}
 					unlock_rw( &altLock );
 				}
-				if(useCow){
-					cowFile_handleCallback( request );
+				if( useCow ) {
+					cowfile_handleCallback( request );
 				}
 				else {
 					fuse_reply_buf( request->fuse_req, request->buffer, request->length );
@@ -726,7 +726,7 @@ static void probeAltServers()
 			}
 			// Success, reply to fuse
 			if( useCow ) {
-				cowFile_handleCallback( request );
+				cowfile_handleCallback( request );
 			}
 			else {
 				fuse_reply_buf( request->fuse_req, request->buffer, request->length );

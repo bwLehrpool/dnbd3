@@ -61,9 +61,9 @@ void generateTestFile( char *path, size_t size )
 
 void printUsage()
 {
-	printf( "Press the follwing for: \n" );
+	printf( "Press the following for: \n" );
 	printf( "   c <path>      Creates test file at the path. \n" );
-	printf( "   t <path>      Runs the standart test procedure. \n" );
+	printf( "   t <path>      Runs the standard test procedure. \n" );
 	printf( "   v <path>      verifies a file. \n" );
 }
 
@@ -341,7 +341,7 @@ bool fileSizeChanges()
 		return false;
 	}
 	// verify
-	printf( "truncate done, verifing...\n" );
+	printf( "truncate done, verifying...\n" );
 	stat( filePath, &st );
 	size = st.st_size;
 	if ( size != testFileSize ) {
@@ -356,11 +356,11 @@ bool fileSizeChanges()
 		perror( "fileSizeChanges test Failed: second increase failed." );
 		return false;
 	}
-	printf( "truncate done, verifing...\n" );
+	printf( "truncate done, verifying...\n" );
 	stat( filePath, &st );
 	size = st.st_size;
 	if ( size != ( testFileSize + 2 * l2Capacity ) ) {
-		printf( "fileSizeChanges test Failed, increse not worked.\n expectedSize: %zu\n got: %zu\n", testFileSize, size );
+		printf( "fileSizeChanges test Failed, increase not worked.\n expectedSize: %zu\n got: %zu\n", testFileSize, size );
 		return false;
 	}
 	printf( "size verified\n" );
@@ -554,7 +554,7 @@ void execCommand( char command, char *parameters )
 			printUsage();
 			break;
 		}
-		printf( "starting standart test\n" );
+		printf( "starting standard test\n" );
 		runTest( parameters );
 		break;
 	case 'v':
@@ -562,7 +562,7 @@ void execCommand( char command, char *parameters )
 			printUsage();
 			break;
 		}
-		printf( "verifing file \n" );
+		printf( "verifying file \n" );
 		verifyFinalFile( parameters );
 		break;
 	default:
@@ -585,12 +585,12 @@ int main( int argc, char *argv[] )
 
 
 /*
-  methode to generate test file.
+  method to generate test file.
 */
-/* Tests to impelment:
+/* Tests to implement:
 
 1. Read & Writes over block borders (l1, l2, metadata).
-2. Parallel writes on different unchanged blocks.(test for race condition on cow file increse).
+2. Parallel writes on different unchanged blocks.(test for race condition on cow file increase).
 3. Test truncate file (smaller and lager).
 4. Random read writes.
 5. Read & Writes over data which is partially in cow file
