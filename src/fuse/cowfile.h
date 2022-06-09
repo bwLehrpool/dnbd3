@@ -19,29 +19,29 @@
 #define COW_L2_STORAGE_CAPACITY ( COW_L2_SIZE * COW_METADATA_STORAGE_CAPACITY )
 #define container_of( ptr, type, member ) ( (type *)( (char *)( ptr ) - (char *)&( ( (type *)NULL )->member ) ) )
 
-_Static_assert( ATOMIC_INT_LOCK_FREE == 2, "ATOMIC INT not lock free");
-_Static_assert( ATOMIC_LONG_LOCK_FREE == 2, "ATOMIC LONG not lock free");
-_Static_assert( ATOMIC_LLONG_LOCK_FREE == 2, "ATOMIC LLONG not lock free");
-_Static_assert( sizeof(atomic_uint_least64_t) == 8, "atomic_uint_least64_t not 8 byte");
-_Static_assert( sizeof(atomic_int_least64_t) == 8, "atomic_int_least64_t not 8 byte");
+_Static_assert( ATOMIC_INT_LOCK_FREE == 2, "ATOMIC INT not lock free" );
+_Static_assert( ATOMIC_LONG_LOCK_FREE == 2, "ATOMIC LONG not lock free" );
+_Static_assert( ATOMIC_LLONG_LOCK_FREE == 2, "ATOMIC LLONG not lock free" );
+_Static_assert( sizeof( atomic_uint_least64_t ) == 8, "atomic_uint_least64_t not 8 byte" );
+_Static_assert( sizeof( atomic_int_least64_t ) == 8, "atomic_int_least64_t not 8 byte" );
 
 #define COW_METADATA_HEADER_SIZE 320
 typedef struct cowfile_metadata_header
 {
-	uint64_t magicValue;            		// 8byte
-	atomic_uint_least64_t imageSize; 		// 8byte
-	int32_t version;                		// 4byte
-	int32_t blocksize;              		// 4byte
-	uint64_t originalImageSize;     		// 8byte
-	uint64_t metaDataStart;         		// 8byte
-	int32_t bitfieldSize;           		// 4byte
-	int32_t nextL2;                 		// 4byte
+	uint64_t magicValue;                    // 8byte
+	atomic_uint_least64_t imageSize;        // 8byte
+	int32_t version;                        // 4byte
+	int32_t blocksize;                      // 4byte
+	uint64_t originalImageSize;             // 8byte
+	uint64_t metaDataStart;                 // 8byte
+	int32_t bitfieldSize;                   // 4byte
+	int32_t nextL2;                         // 4byte
 	atomic_uint_least64_t metadataFileSize; // 8byte
 	atomic_uint_least64_t dataFileSize;     // 8byte
-	uint64_t maxImageSize;          		// 8byte
-	uint64_t creationTime;          		// 8byte
-	char uuid[40];                  		// 40byte
-	char imageName[200];            		// 200byte
+	uint64_t maxImageSize;                  // 8byte
+	uint64_t creationTime;                  // 8byte
+	char uuid[40];                          // 40byte
+	char imageName[200];                    // 200byte
 } cowfile_metadata_header_t;
 _Static_assert(
 		sizeof( cowfile_metadata_header_t ) == COW_METADATA_HEADER_SIZE, "cowfile_metadata_header is messed up" );
@@ -49,13 +49,12 @@ _Static_assert(
 #define COW_METADATA_METADATA_SIZE 64
 typedef struct cow_block_metadata
 {
-	atomic_int_least64_t  offset;
+	atomic_int_least64_t offset;
 	atomic_uint_least64_t timeChanged;
 	atomic_uint_least64_t timeUploaded;
 	atomic_char bitfield[40];
 } cow_block_metadata_t;
-_Static_assert(
-		sizeof( cow_block_metadata_t ) == COW_METADATA_METADATA_SIZE, "cow_block_metadata_t is messed up" );
+_Static_assert( sizeof( cow_block_metadata_t ) == COW_METADATA_METADATA_SIZE, "cow_block_metadata_t is messed up" );
 
 
 typedef struct cow_request
@@ -94,13 +93,16 @@ typedef struct cow_curl_read_upload
 	long unsigned int blocknumber;
 	int fails;
 	uint64_t time;
+	curl_off_t ulLast;
+	struct curl_slist * headers;
 } cow_curl_read_upload_t;
+
 
 typedef int32_t l1;
 typedef cow_block_metadata_t l2[COW_L2_SIZE];
 
-bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr, char *serverAddress,
-		int isForeground );
+bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr,
+		char *serverAddress, int isForeground );
 
 bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, int isForeground );
 
