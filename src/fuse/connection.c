@@ -424,7 +424,6 @@ static void* connection_receiveThreadMain( void *sockPtr )
 				}
 				else {
 					fuse_reply_buf( request->fuse_req, request->buffer, request->length );
-					free( request->buffer );
 					free( request );
 				}
 			}
@@ -730,7 +729,6 @@ static void probeAltServers()
 			}
 			else {
 				fuse_reply_buf( request->fuse_req, request->buffer, request->length );
-				free( request->buffer );
 				free( request );
 			}
 			logadd( LOG_DEBUG1, "%s probe: Successful direct probe", hstr );
