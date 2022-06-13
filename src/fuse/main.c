@@ -214,14 +214,14 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 	}
 	
 
-	dnbd3_async_t *request = malloc( sizeof(dnbd3_async_t) + size );
-	request->length = (uint32_t)size;
-	request->offset = offset;
-	request->fuse_req = req;
+	dnbd3_async_parent_t *parent = malloc( sizeof(dnbd3_async_parent_t) + size );
+	parent->request.length = (uint32_t)size;
+	parent->request.offset = offset;
+	parent->request.fuse_req = req;
 
-	if ( !connection_read( request ) ) {
+	if ( !connection_read( &parent->request ) ) {
 		fuse_reply_err( req, EIO );
-		free( request );
+		free( parent );
 	}
 }
 

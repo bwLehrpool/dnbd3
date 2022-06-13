@@ -115,34 +115,50 @@ bool writeSizeTested( int fh, char *buf, ssize_t size, off_t off, char *error )
 	return true;
 }
 
-bool verifyTestFirstBit()
+bool verifySingleBit()
 {
 	char buff[DNBD3_BLOCK_SIZE];
 	char expected[DNBD3_BLOCK_SIZE];
 	memset( expected, 0, DNBD3_BLOCK_SIZE );
 	expected[0] = 1;
-	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, 0, "FirstBit test Failed: read to small" ) )
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, 0, "SingleBit test Failed: first read to small" ) )
 		return false;
-	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "FirstBit test Failed: write not as expected" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: first write not as expected" ) )
 		return false;
-	printf( "testFirstBit successful!\n" );
+
+	expected[0] = 0;
+	expected[DNBD3_BLOCK_SIZE/2] = 1;
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second read to small" ) )
+		return false;
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second write not as expected" ) )
+		return false;
+	printf( "testSingleBit successful!\n" );
 	return true;
 }
 
-bool testFirstBit()
+bool testSingleBit()
 {
 	char buff[DNBD3_BLOCK_SIZE];
 	char expected[DNBD3_BLOCK_SIZE];
 	memset( expected, 0, DNBD3_BLOCK_SIZE );
-	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, 0, "FirstBit test Failed: read to small" ) )
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, 0, "SingleBit test Failed: first read to small" ) )
 		return false;
 
-	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "FirstBit test Failed: initial read" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: initial read" ) )
 		return false;
 	expected[0] = 1;
-	if ( !writeSizeTested( fh, expected, DNBD3_BLOCK_SIZE, 0, "FirstBit test Failed: write failed" ) )
+	if ( !writeSizeTested( fh, expected, DNBD3_BLOCK_SIZE, 0, "SingleBit test Failed: first write failed" ) )
 		return false;
-	return verifyTestFirstBit();
+
+	expected[0] = 0;
+	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second read to small" ) )
+		return false;
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second read" ) )
+		return false;
+	expected[0] = 1;
+	if ( !writeSizeTested( fh, expected, 1, DNBD3_BLOCK_SIZE + DNBD3_BLOCK_SIZE / 2 , "SingleBit test Failed: second write failed" ) )
+		return false;
+	return verifySingleBit();
 }
 
 bool verifyWriteOverTwoBlocks()
@@ -441,7 +457,7 @@ void runTest( char *path )
 	strcpy( filePath, path );
 	printf( "file opened: %s\n", path );
 
-	if ( !testFirstBit() )
+	if ( !testSingleBit() )
 		return;
 	if ( !writeOverTwoBlocks() )
 		return;
@@ -467,7 +483,7 @@ void verifyTests( verify_test_t *tests )
 {
 	// offset, size, function
 
-	tests[0] = ( verify_test_t ){ 0, DNBD3_BLOCK_SIZE, verifyTestFirstBit };
+	tests[0] = ( verify_test_t ){ 0, 2 * DNBD3_BLOCK_SIZE, verifySingleBit};
 	tests[1] = ( verify_test_t ){ DNBD3_BLOCK_SIZE * 3, DNBD3_BLOCK_SIZE * 3, verifyWriteOverTwoBlocks };
 	tests[2] = ( verify_test_t ){ DNBD3_BLOCK_SIZE * 11 - DNBD3_BLOCK_SIZE / 2, DNBD3_BLOCK_SIZE * 2,
 		verifyWriteNotOnBlockBorder };

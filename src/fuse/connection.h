@@ -22,9 +22,12 @@ typedef struct _dnbd3_async {
 	uint64_t offset;
 	uint32_t length;
 	fuse_req_t fuse_req;
-	char buffer[]; // Must be last member!
 } dnbd3_async_t;
 
+typedef struct _dnbd3_async_parent {
+	dnbd3_async_t request;
+	char buffer[]; // Must be last member!
+} dnbd3_async_parent_t;
 
 bool connection_init( const char *hosts, const char *image, const uint16_t rid, const bool learnNewServers );
 

@@ -78,12 +78,13 @@ typedef struct cow_sub_request
 {
 	size_t size;
 	off_t inBlockOffset;
-	const char *buffer;
+	const char *writeSrc;
+	char * buffer;
 	cow_block_metadata_t *block;
 	cow_callback callback;
 	cow_request_t *cowRequest;
 	dnbd3_async_t dRequest;
-
+	char writeBuffer[];
 } cow_sub_request_t;
 
 typedef struct cow_curl_read_upload
@@ -111,6 +112,8 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset );
 void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, size_t size );
 
 void cowfile_handleCallback( dnbd3_async_t *request );
+
+void readRemoteData( cow_sub_request_t *sRequest );
 
 int cow_printStats( char *buffer, const size_t len );
 

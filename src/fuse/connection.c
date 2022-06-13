@@ -96,6 +96,7 @@ static void* connection_backgroundThread( void *something );
 static void addAltServers();
 static void sortAltServers();
 static void probeAltServers();
+static size_t receiveRequest(const int sock, dnbd3_async_t* request );
 static void switchConnection( int sockFd, alt_server_t *srv );
 static void requestAltServers();
 static bool throwDataAway( int sockFd, uint32_t amount );
@@ -398,7 +399,7 @@ static void* connection_receiveThreadMain( void *sockPtr )
 				}
 			} else {
 				// Found a match
-				const ssize_t ret = sock_recv( sockFd, request->buffer, request->length );
+				const ssize_t ret = receiveRequest( sockFd, request);
 				if ( ret != (ssize_t)request->length ) {
 					logadd( LOG_DEBUG1, "receiving payload for a block reply failed" );
 					connection_read( request );
@@ -423,7 +424,7 @@ static void* connection_receiveThreadMain( void *sockPtr )
 					cowfile_handleCallback( request );
 				}
 				else {
-					fuse_reply_buf( request->fuse_req, request->buffer, request->length );
+					fuse_reply_buf( request->fuse_req, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
 					free( request );
 				}
 			}
@@ -716,7 +717,7 @@ static void probeAltServers()
 		}
 		if ( request != NULL && removeRequest( request ) != NULL ) {
 			// Request successfully removed from queue
-			const ssize_t ret = sock_recv( sock, request->buffer, request->length );
+			ssize_t const ret = receiveRequest( sock, request);
 			if ( ret != (ssize_t)request->length ) {
 				logadd( LOG_DEBUG1, "%s probe: receiving payload for a block reply failed", hstr );
 				// Failure, add to queue again
@@ -728,7 +729,7 @@ static void probeAltServers()
 				cowfile_handleCallback( request );
 			}
 			else {
-				fuse_reply_buf( request->fuse_req, request->buffer, request->length );
+				fuse_reply_buf( request->fuse_req, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
 				free( request );
 			}
 			logadd( LOG_DEBUG1, "%s probe: Successful direct probe", hstr );
@@ -837,6 +838,19 @@ fail:
 	unlock_rw( &altLock );
 	if ( best != NULL ) {
 		close( bestSock );
+	}
+}
+
+static size_t receiveRequest(const int sock, dnbd3_async_t* request ) {
+	if(useCow){
+		cow_sub_request_t * cow_request = container_of( request, cow_sub_request_t, dRequest );
+		if( cow_request->callback == readRemoteData){
+			return sock_recv( sock, cow_request->buffer, request->length );
+		} else{
+			return sock_recv( sock, &cow_request->writeBuffer, request->length );
+		}
+	} else {	
+		return sock_recv( sock, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
 	}
 }
 
