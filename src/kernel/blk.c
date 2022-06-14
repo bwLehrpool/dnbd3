@@ -466,7 +466,11 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	}
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
 	dev->disk->flags |= GENHD_FL_NO_PART_SCAN;
+#else
+	dev->disk->flags |= GENHD_FL_NO_PART;
+#endif
 	dev->disk->major = major;
 	dev->disk->first_minor = minor;
 	dev->disk->minors = 1;

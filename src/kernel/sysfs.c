@@ -145,8 +145,13 @@ struct attribute *device_attrs[] = {
 	&cur_server_addr.attr,
 	&alt_servers.attr,
 	&image_name.attr,	&rid.attr,
-	&update_available.attr, NULL,
+	&update_available.attr,
+	NULL,
 };
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+ATTRIBUTE_GROUPS(device);
+#endif
 
 const struct sysfs_ops device_ops = {
 	.show = device_show,
@@ -158,7 +163,11 @@ void release(struct kobject *kobj)
 }
 
 struct kobj_type device_ktype = {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
 	.default_attrs = device_attrs,
+#else
+	.default_groups = device_groups,
+#endif
 	.sysfs_ops = &device_ops,
 	.release = release,
 };
