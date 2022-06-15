@@ -33,13 +33,14 @@ This test suit is for verifying that the fuse cow implementation works correctly
 
 # Tests
 
-### TestFirstBit
+### TestSingleBit
 Reads the first block and verifies that all bits are 0. Then it sets the first bit to 1 and writes it.
 This test, tests basic functionality and verifies that the image is still 'clean'.
+Then it sets a single Bit in the second block to 1, to verify padding works correctly.
 
 | offset | size | 
 | -------| -----| 
-| 0 | DNBD3_BLOCK_SIZE|
+| 0 | 2 * DNBD3_BLOCK_SIZE|
 
 
 ### WriteOverTwoBlocks
