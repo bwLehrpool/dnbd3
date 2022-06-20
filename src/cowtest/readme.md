@@ -72,6 +72,15 @@ Tests that continuous writes over L2 borders are possible.
 | -------| -----| 
 |l2Capacity * 2 - DNBD3_BLOCK_SIZE | DNBD3_BLOCK_SIZE * 2 |
 
+
+### MultipleWrites
+Writes multiple times on the same Blocks different data. The separate writes can be delayed with the `-d` parameter. This is useful to test if uploading the same blocks multiple times works as intended.
+
+| offset | size | 
+| -------| -----| 
+| 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize | DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize |
+
+
 ### fileSizeChanges
 Tests file size changes. First in increases the file size with a truncate by 2 * l2Capacity. It then checks that all the bits in the new allocated space are set to 0. Then it writes data to it to verify writes are possible. After that it truncates it back to the original size. Then it truncates it back to
 the original size + 2 * l2Capacity and verifies that the again all bits in the new allocated space are 0 (so that the before written data is set to 0 again).

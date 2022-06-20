@@ -27,7 +27,7 @@ const size_t l2Capacity = l2Size * DNBD3_BLOCK_SIZE * bitfieldByteSize * 8;
 
 const size_t testFileSize = l2Capacity * 2.9L;
 
-
+int delay = 0;
 static char filePath[400];
 static int fh = 0;
 
@@ -62,6 +62,7 @@ void generateTestFile( char *path, size_t size )
 void printUsage()
 {
 	printf( "Press the following for: \n" );
+	printf( "   d <delay>     Delay in Seconds for multiple block write (must be first).\n" );
 	printf( "   c <path>      Creates test file at the path. \n" );
 	printf( "   t <path>      Runs the standard test procedure. \n" );
 	printf( "   v <path>      verifies a file. \n" );
@@ -447,6 +448,47 @@ bool interleavedTest()
 	return verifyInterleavedTest();
 }
 
+bool verifyMultipleWrites(){
+	size_t size = DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize;
+	char buff[size];
+	char expected[size];
+	off_t offset = 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize;
+	memset( expected, 3, size );
+	if ( !readSizeTested( fh, buff, size , offset, "multipleWrites test Failed: read to small" ) )
+		return false;
+	if ( !compare( buff, expected, size, "multipleWrites: read incorrect data" ) )
+		return false;
+	printf( "MultipleWrites successful!\n" );
+	return true;
+}
+
+bool multipleWrites(){
+	printf( "starting multipleWrites\n" );
+	size_t size = DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize;
+	char buff[size];
+	char expected[size];
+	off_t offset = 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize;
+	
+	for (int i = 1; i <= 3; i++ ){
+		printf( "multipleWrites: %i/3 \n", i );
+
+		memset( expected, i, size );
+		if ( !writeSizeTested( fh, expected, size, offset, "multipleWrites: write Failed" ) )
+			return false;
+		if ( !readSizeTested( fh, buff, size, offset, "multipleWrites test Failed: read to small" ) )
+			return false;
+		if ( !compare( buff, expected, size, "multipleWrites: read incorrect data" ) )
+			return false;
+		if( delay > 0 && i < 3 ){
+			printf( "waiting %is\n", delay );
+			sleep(delay);
+		}
+	}
+	return verifyMultipleWrites();
+}
+
+
+
 void runTest( char *path )
 {
 	if ( ( fh = open( path, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
@@ -471,9 +513,13 @@ void runTest( char *path )
 		return;
 	if ( !interleavedTest() )
 		return;
+	if ( !multipleWrites() ){
+		return;
+	}
 	if ( !writeLongNonAlignedPattern() ) {
 		return;
 	}
+
 
 	printf( "All test's successful.\n" );
 }
@@ -488,8 +534,9 @@ void verifyTests( verify_test_t *tests )
 	tests[2] = ( verify_test_t ){ DNBD3_BLOCK_SIZE * 11 - DNBD3_BLOCK_SIZE / 2, DNBD3_BLOCK_SIZE * 2,
 		verifyWriteNotOnBlockBorder };
 	tests[3] = ( verify_test_t ){ 35 * DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 10, verifyInterleavedTest };
-	tests[4] = ( verify_test_t ){ l2Capacity * 2 - DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 2, verifyWriteOverL2 };
-	tests[5] = ( verify_test_t ){ l2Capacity * 3 - 1, l2Capacity + 2, verifyLongNonAlignedPattern };
+	tests[4] = ( verify_test_t ){ 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize, DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize, verifyMultipleWrites };
+	tests[5] = ( verify_test_t ){ l2Capacity * 2 - DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 2, verifyWriteOverL2 };
+	tests[6] = ( verify_test_t ){ l2Capacity * 3 - 1, l2Capacity + 2, verifyLongNonAlignedPattern };
 }
 
 void verifyFinalFile( char *path )
@@ -519,7 +566,7 @@ void verifyFinalFile( char *path )
 	size_t offset = 0;
 
 
-	int numberOfTests = 6;
+	int numberOfTests = 7;
 	verify_test_t tests[numberOfTests];
 	verifyTests( tests );
 
@@ -555,60 +602,44 @@ void verifyFinalFile( char *path )
 	printf( "file verified successful.\n" );
 }
 
-void execCommand( char command, char *parameters )
-{
-	switch ( command ) {
-	case 'c':
-		if ( parameters[0] == '\0' ) {
-			printUsage();
-			break;
-		}
-		generateTestFile( parameters, testFileSize );
-		break;
-	case 't':
-		if ( parameters[0] == '\0' ) {
-			printUsage();
-			break;
-		}
-		printf( "starting standard test\n" );
-		runTest( parameters );
-		break;
-	case 'v':
-		if ( parameters[0] == '\0' ) {
-			printUsage();
-			break;
-		}
-		printf( "verifying file \n" );
-		verifyFinalFile( parameters );
-		break;
-	default:
-		printf( "Command not Found \n" );
-		printUsage();
-		break;
-	}
-}
 
 
 int main( int argc, char *argv[] )
 {
-	if ( argc == 3 ) {
-		execCommand( argv[1][0], argv[2] );
-	} else {
+	if ( argc < 1 ){
 		printUsage();
+		return 0;
 	}
+	while ( 1 )
+    {
+        int result = getopt( argc, argv, "d:c:t:v:" );
+        if ( result == -1 ) break; /* end of list */
+		char * pEnd;
+        switch (result)
+        {
+            case 'd':
+				
+				delay =(int) strtol (optarg, &pEnd, 10);
+				printf("Delay set to %i\n", delay);
+                break;
+            case 'c':
+				generateTestFile( optarg, testFileSize );
+				break;
+			case 't':
+				printf( "starting standard test\n" );
+				runTest( optarg );
+				break;
+			case 'v':
+				printf( "verifying file \n" );
+				verifyFinalFile( optarg );
+		break;
+            default: 
+				printUsage();
+				return 0;
+                break;
+        }
+    }
 	return 0;
 }
 
 
-/*
-  method to generate test file.
-*/
-/* Tests to implement:
-
-1. Read & Writes over block borders (l1, l2, metadata).
-2. Parallel writes on different unchanged blocks.(test for race condition on cow file increase).
-3. Test truncate file (smaller and lager).
-4. Random read writes.
-5. Read & Writes over data which is partially in cow file
-6. Read & Write single byte
-*/

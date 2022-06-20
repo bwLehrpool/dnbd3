@@ -5,6 +5,7 @@ extern void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_i
 static int cowFileVersion = 1;
 static int foreground;
 static pthread_t tidCowUploader;
+static pthread_t tidStatUpdater;
 static char *cowServerAddress;
 static CURL *curl;
 static cowfile_metadata_header_t *metadata = NULL;
@@ -711,7 +712,7 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
 
 	createCowStatsFile( path );
 	pthread_create( &tidCowUploader, NULL, &cowfile_uploader, NULL );
-	pthread_create( &tidCowUploader, NULL, &cowfile_statUpdater, NULL );
+	pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
 	return true;
 }
 /**
@@ -818,7 +819,7 @@ bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *server
 	pthread_mutex_init( &cow.l2CreateLock, NULL );
 	createCowStatsFile( path );
 	pthread_create( &tidCowUploader, NULL, &cowfile_uploader, NULL );
-	pthread_create( &tidCowUploader, NULL, &cowfile_statUpdater, NULL );
+	pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
 
 
 	return true;
@@ -1255,7 +1256,9 @@ fail:;
 void cowfile_close()
 {
 	uploadLoop = false;
+	pthread_join( tidStatUpdater, NULL );
 	pthread_join( tidCowUploader, NULL );
+	
 	if ( curl ) {
 		curl_global_cleanup();
 		curl_easy_cleanup( curl );
