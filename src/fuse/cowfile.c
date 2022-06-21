@@ -10,14 +10,10 @@ static char *cowServerAddress;
 static CURL *curl;
 static cowfile_metadata_header_t *metadata = NULL;
 static atomic_uint_fast64_t bytesUploaded;
-
-
+static uint64_t totalBlocksUploaded = 0;
 
 atomic_bool uploadLoop = true;
 atomic_bool uploadLoopDone = false;
-
-
-static uint64_t totalBlocksUploaded = 0;
 
 static struct cow
 {
@@ -109,7 +105,18 @@ static bool checkBit( atomic_char *bitfield, int n )
 	return ( atomic_load( ( bitfield + ( n / 8 ) ) ) >> ( n % 8 ) ) & 1;
 }
 
-
+/**
+/**
+ * @brief Implementation of CURLOPT_WRITEFUNCTION , this function will be called when
+ * the server sends back data.
+ * for more details see: https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION .html
+ *  
+ * @param buffer contains the response data from the server
+ * @param itemSize size of one item
+ * @param nitems number of items
+ * @param response our userdata which will later contain the uuid
+ * @return size_t size we have read
+ */
 size_t curlCallbackCreateSession( char *buffer, size_t itemSize, size_t nitems, void *response )
 {
 	size_t bytes = itemSize * nitems;
@@ -200,7 +207,7 @@ void print_bin_arr( char *ptr, int size )
 
 /**
  * @brief Implementation of CURLOPT_READFUNCTION, this function will first send the bitfield and
- * then the block data in one bitstream. this function is usually called multible times per block,
+ * then the block data in one bitstream. this function is usually called multiple times per block,
  * because the buffer is usually not large for one block and its bitfield.
  * for more details see: https://curl.se/libcurl/c/CURLOPT_READFUNCTION.html
  * 
@@ -227,7 +234,7 @@ size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb, void *
 		size_t lengthRead = pread( cow.fhd, ( ptr + len ), lenRead, uploadBlock->block->offset + inBlockOffset );
 
 		if ( lenRead != lengthRead ) {
-			// temp fix, fill up non full blocks
+			// fill up since last block may not be a full block
 			lengthRead = lenRead;
 		}
 		uploadBlock->position += lengthRead;
@@ -301,7 +308,18 @@ void startMerge()
 	}
 }
 
-
+/**
+ * @brief Implementation of the CURLOPT_XFERINFOFUNCTION.
+ * For more infos see: https://curl.se/libcurl/c/CURLOPT_XFERINFOFUNCTION.html
+ * 
+ * Each active transfer callbacks this function.
+ * This function computes the uploaded bytes between each call and adds it to
+ * bytesUploaded, which is used to compute the kb/s uploaded over all transfers.
+ * 
+ * @param clientp 
+ * @param ulNow number of bytes uploaded by this transfer so far.
+ * @return int always returns 0 to continue the callbacks.
+ */
 int progress_callback( void *clientp, __attribute__( ( unused ) ) curl_off_t dlTotal,
 		__attribute__( ( unused ) ) curl_off_t dlNow, __attribute__( ( unused ) ) curl_off_t ulTotal, curl_off_t ulNow )
 {
@@ -318,8 +336,16 @@ int progress_callback( void *clientp, __attribute__( ( unused ) ) curl_off_t dlT
 	return 0;
 }
 
+/**
+ * @brief 
+ * 
+ * @param inQueue Blocks that have changes old enough to be uploaded.
+ * @param modified Blocks that have been changed but whose changes are not old enough to be uploaded.
+ * @param idle Blocks that do not contain changes that have not yet been uploaded.
+ * @param speedBuffer ptr to char array that contains the current upload speed.
+ */
 
-void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, char * speedBuffer, bool done  )
+void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, char * speedBuffer )
 {
 	char buffer[300];
 	char state[30];
@@ -331,12 +357,12 @@ void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, cha
 		snprintf( state, 30, "%s", "done" );
 	}
 
-	int len = snprintf( buffer, 300, "state: %s\n"
-									 "inQueue: %u\n"
-									 "modifiedBlocks: %u\n"
-									 "idleBlocks: %u\n"
-									 "totalBlocksUploaded: %u\n"
-									 "%s: %s",
+	int len = snprintf( buffer, 300, "state=%s\n"
+									 "inQueue=%u\n"
+									 "modifiedBlocks=%u\n"
+									 "idleBlocks=%u\n"
+									 "totalBlocksUploaded=%u\n"
+									 "%s=%s",
 			state,  inQueue, modified, idle, totalBlocksUploaded, COW_SHOW_UL_SPEED ? "ulspeed" : "", speedBuffer );
 
 	if ( foreground ) {
@@ -537,14 +563,14 @@ void * cowfile_statUpdater(__attribute__( ( unused ) ) void *something ) {
 		if ( COW_SHOW_UL_SPEED ) {
 			now = time(NULL);
 			uint64_t bytes = atomic_exchange( &bytesUploaded, 0 );
-			snprintf( speedBuffer, 20, "%.2f kb/s",
+			snprintf( speedBuffer, 20, "%.2f",
 				(double)( ( bytes  ) / ( 1 + now -  lastUpdateTime  ) / 1000 ) );
 			
 			lastUpdateTime = now;
 		}
 
 		
-		updateCowStatsFile( inQueue, modified, idle,  speedBuffer, false);
+		updateCowStatsFile( inQueue, modified, idle,  speedBuffer);
 		 
 	}
 }
