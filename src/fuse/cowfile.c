@@ -188,23 +188,6 @@ bool createSession( const char *imageName, uint16_t version )
 	return true;
 }
 
-
-void print_bin( char a )
-{
-	for ( int i = 0; i < 8; i++ ) {
-		printf( "%d", !!( ( a << i ) & 0x80 ) );
-	}
-}
-
-void print_bin_arr( char *ptr, int size )
-{
-	for ( int i = 0; i < size; i++ ) {
-		print_bin( ptr[i] );
-		printf( " " );
-	}
-	printf( "\n" );
-}
-
 /**
  * @brief Implementation of CURLOPT_READFUNCTION, this function will first send the bitfield and
  * then the block data in one bitstream. this function is usually called multiple times per block,
@@ -337,7 +320,7 @@ int progress_callback( void *clientp, __attribute__( ( unused ) ) curl_off_t dlT
 }
 
 /**
- * @brief 
+ * @brief Updates the status to the stdout/statfile depending on the startup parameters.
  * 
  * @param inQueue Blocks that have changes old enough to be uploaded.
  * @param modified Blocks that have been changed but whose changes are not old enough to be uploaded.
@@ -378,7 +361,12 @@ void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, cha
 	}
 }
 
-
+/**
+ * @brief Starts the upload of a given block
+ * 
+ * @param cm Curl_multi
+ * @param curlUploadBlock cow_curl_read_upload_t containing the data for the block to upload
+ */
 bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock)
 {
 	CURL *eh = curl_easy_init();
@@ -408,16 +396,28 @@ bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock)
 	return true;
 }
 
+/**
+ * @brief After an upload completes, either successful or unsuccessful this
+ * function cleans everything up. If unsuccessful and there are some tries left
+ * retries to upload the block.
+ * 
+ * @param cm Curl_multi
+ * @param msg CURLMsg
+ * @return true returned if upload was successful or retries still possible
+ * @return false returned if upload was unsuccessful
+ */
 bool finishUpload( CURLM *cm, CURLMsg *msg )
 {
 	bool status = true;
 	cow_curl_read_upload_t *curlUploadBlock;
 	CURLcode res;
+	CURLcode res2;
 	res = curl_easy_getinfo( msg->easy_handle, CURLINFO_PRIVATE, &curlUploadBlock );
-	if ( res != CURLE_OK ) {
-		logadd( LOG_ERROR, "ERROR" );
-	}
-	if ( msg->msg != CURLMSG_DONE ) {
+	
+	long http_code = 0;
+	res2 = curl_easy_getinfo( msg->easy_handle, CURLINFO_RESPONSE_CODE, &http_code );
+
+	if ( res != CURLE_OK || res2 != CURLE_OK || http_code != 200 ||msg->msg != CURLMSG_DONE ) {
 		curlUploadBlock->fails++;
 		logadd( LOG_ERROR, "COW_API_UPDATE  failed %i/5: %s\n", curlUploadBlock->fails,
 				curl_easy_strerror( msg->data.result ) );
@@ -431,15 +431,6 @@ bool finishUpload( CURLM *cm, CURLMsg *msg )
 		goto CLEANUP;
 	}
 
-
-	long http_code = 0;
-	curl_easy_getinfo( msg->easy_handle, CURLINFO_RESPONSE_CODE, &http_code );
-	if ( http_code != 200 ) {
-		logadd( LOG_ERROR, "COW_API_UPDATE  failed http: %ld\n", http_code );
-		curl_easy_reset( curl );
-		return false;
-	}
-
 	// everything went ok, update timeUploaded
 	curlUploadBlock->block->timeUploaded = curlUploadBlock->time;
 	totalBlocksUploaded++;
@@ -451,7 +442,18 @@ CLEANUP:
 	return status;
 }
 
-bool MessageHandler( CURLM *cm, int *activeUploads, bool breakIfNotMax, bool ignoreMinUploadDelay )
+/**
+ * @brief 
+ * 
+ * @param cm Curl_multi
+ * @param activeUploads ptr to integer which holds the number of current uploads
+ * @param breakIfNotMax will return as soon as there are not all upload slots used, so they can be filled up.
+ * @param foregroundUpload used to determine the number of max uploads. If true COW_MAX_PARALLEL_UPLOADS will be the limit,
+ * else COW_MAX_PARALLEL_BACKGROUND_UPLOADS.
+ * @return true returned if all upload's were successful 
+ * @return false returned if  one ore more upload's failed.
+ */
+bool MessageHandler( CURLM *cm, int *activeUploads, bool breakIfNotMax, bool foregroundUpload )
 {
 	CURLMsg *msg;
 	int msgsLeft = -1;
@@ -464,10 +466,11 @@ bool MessageHandler( CURLM *cm, int *activeUploads, bool breakIfNotMax, bool ign
 				status = false;
 			}
 		}
-		if ( breakIfNotMax && *activeUploads <= ( ignoreMinUploadDelay ? COW_MAX_PARALLEL_UPLOADS
+		if ( breakIfNotMax && *activeUploads <= ( foregroundUpload ? COW_MAX_PARALLEL_UPLOADS
 																		: COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) ) {
 			break;
 		}
+		// ony wait if there are active uploads
 		if ( *activeUploads ) {
 			curl_multi_wait( cm, NULL, 0, 1000, NULL );
 		}
@@ -479,7 +482,11 @@ bool MessageHandler( CURLM *cm, int *activeUploads, bool breakIfNotMax, bool ign
 /**
  * @brief loops through all blocks and uploads them.
  * 
- * @param lastLoop if set to true, all blocks which are not uploaded will be uploaded, ignoring their timeChanged
+ * @param ignoreMinUploadDelay If true uploads all blocks that have changes while
+ * ignoring COW_MIN_UPLOAD_DELAY
+ * @param cm Curl_multi
+ * @return true if all blocks uploaded successful
+ * @return false if one ore more blocks failed to upload
  */
 bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 {
@@ -526,7 +533,10 @@ DONE:
 
 
 
-
+/**
+ * @brief Computes the data for the status to the stdout/statfile every COW_STATS_UPDATE_TIME seconds.
+ * 
+ */
 
 void * cowfile_statUpdater(__attribute__( ( unused ) ) void *something ) {
 	uint64_t lastUpdateTime = time(NULL);
@@ -610,6 +620,13 @@ void *cowfile_uploader( __attribute__( ( unused ) ) void *something )
 	return NULL;
 }
 
+/**
+ * @brief Create a Cow Stats File  an inserts the session guid
+ * 
+ * @param path where the file is created
+ * @return true 
+ * @return false if failed to create or to write into the file
+ */
 bool createCowStatsFile( char *path )
 {
 	char pathStatus[strlen( path ) + 12];
@@ -741,13 +758,13 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
 	pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
 	return true;
 }
+
 /**
  * @brief loads an existing cow state from the meta & data files
  * 
  * @param path where the meta & data file is located 
  * @param imageSizePtr 
  */
-
 bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, int isForeground )
 {
 	foreground = isForeground;
@@ -885,11 +902,10 @@ static void writeData( const char *buffer, ssize_t size, size_t netSize, cow_req
 }
 
 /**
- * @brief 
+ * @brief Increases the metadata->dataFileSize by COW_METADATA_STORAGE_CAPACITY.
+ * The space is not reserved on disk.
  * 
- * @param block 
- * @return true 
- * @return false 
+ * @param block for which the space should be reserved.
  */
 static bool allocateMetaBlockData( cow_block_metadata_t *block )
 {
@@ -937,6 +953,15 @@ static bool createL2Block( int l1Offset )
 	return true;
 }
 
+/**
+ * @brief Is called once an fuse write request ist finished. 
+ * Calls the corrsponding fuse reply depending on the type and
+ * success of the request.
+ * 
+ * @param req fuse_req_t
+ * @param cowRequest 
+ */
+
 static void finishWriteRequest( fuse_req_t req, cow_request_t *cowRequest )
 {
 	if ( cowRequest->errorCode != 0 ) {
@@ -958,6 +983,12 @@ static void finishWriteRequest( fuse_req_t req, cow_request_t *cowRequest )
 	free( cowRequest );
 }
 
+/**
+ * @brief Called after the padding data was received from the dnbd3 server.
+ * The data from the write request will be combined witch the data from the server
+ * so that we get a full DNBD3_BLOCK and is then written on the disk.
+ * @param sRequest 
+ */
 static void writePaddedBlock( cow_sub_request_t *sRequest )
 {
 	//copy write Data
@@ -973,9 +1004,10 @@ static void writePaddedBlock( cow_sub_request_t *sRequest )
 	free( sRequest );
 }
 
-// TODO if > remote pad 0
 /**
- * @brief 
+ * @brief If an block does not start or finishes on an multiple of DNBD3_BLOCK_SIZE, the blocks needs to be
+ * padded. If this block is inside the original image size, the padding data will be read fro  the server
+ * otherwise it will be padded with 0 since the it must be the block at the end of the image.
  * 
  */
 static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cowRequest, const char *buffer,
@@ -1018,12 +1050,25 @@ static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cow
 	}
 }
 
+/**
+ * @brief Will be called after a dnbd3_async_t is finished.
+ * Calls the corrsponding callback function, either writePaddedBlock or readRemoteData
+ * depending if the original fuse request was a write or read.
+ * 
+ */
 void cowfile_handleCallback( dnbd3_async_t *request )
 {
 	cow_sub_request_t *sRequest = container_of( request, cow_sub_request_t, dRequest );
 	sRequest->callback( sRequest );
 }
 
+
+/**
+ * @brief called once dnbd3_async_t is finished. Increases bytesWorkedOn by the number of bytes
+ * this request had. Also checks if it was the last dnbd3_async_t to finish the fuse request, if
+ * so replys to fuse and cleans up the request.
+ * 
+ */
 void readRemoteData( cow_sub_request_t *sRequest )
 {
 	atomic_fetch_add( &sRequest->cowRequest->bytesWorkedOn, sRequest->dRequest.length );
@@ -1038,7 +1083,14 @@ void readRemoteData( cow_sub_request_t *sRequest )
 }
 
 
-/// TODO move block padding in write
+/**
+ * @brief Implementation of a write request or an truncate.
+ * 
+ * @param req fuse_req_t
+ * @param cowRequest 
+ * @param offset Offset where the write starts,
+ * @param size Size of the write.
+ */
 void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, size_t size )
 {
 	if ( cowRequest->replyAttr ) {
@@ -1119,8 +1171,6 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 		l1Offset++;
 		l2Offset = 0;
 	}
-	// return to fuse either here or in remote reads/writes
-	// increase file size if its now larger
 	if ( atomic_fetch_sub( &cowRequest->workCounter, 1 ) == 1 ) {
 		finishWriteRequest( req, cowRequest );
 	}
@@ -1156,25 +1206,14 @@ static void readRemote( fuse_req_t req, off_t offset, ssize_t size, char * buffe
 	}
 }
 
-void byte_to_binary( atomic_char *a )
-{
-	for ( int i = 0; i < 8; i++ ) {
-		char tmp = *a;
-		printf( "%d", !!( ( tmp << i ) & 0x80 ) );
-	}
-	printf( "\n" );
-}
-
-/*
-Maybe optimize that remote reads are done first
-*/
 /**
- * @brief 
+ * @brief Reads data at given offset. If the data are available locally,
+ * they are read locally, otherwise they are requested remotely.
  * 
- * @param req Fuse request
+ * @param req fuse_req_t
  * @param size of date to read
- * @param offset 
- * @return uint64_t 
+ * @param offset offset where the read starts.
+ * @return uint64_t Number of bytes read.
  */
 void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 {
@@ -1279,6 +1318,11 @@ fail:;
 }
 
 
+/**
+ * @brief stops the StatUpdater and CowUploader threads
+ * and waits for them to finish, then cleans up curl.
+ * 
+ */
 void cowfile_close()
 {
 	uploadLoop = false;
