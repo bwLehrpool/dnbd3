@@ -103,9 +103,9 @@ typedef int32_t l1;
 typedef cow_block_metadata_t l2[COW_L2_SIZE];
 
 bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr,
-		char *serverAddress, int isForeground );
+		char *serverAddress, bool sStdout, bool sFile );
 
-bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, int isForeground );
+bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, bool sStdout, bool sFile );
 
 void cowfile_read( fuse_req_t req, size_t size, off_t offset );
 

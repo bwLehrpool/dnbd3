@@ -17,10 +17,13 @@ This extension to the fuse dnbd3 client allows it to mount images writable. The 
 # Usage
 
 ### New Parameters
-- `-c <path>` Enables the cow functionality, the argument sets the path for the temporary `.meta` and `.data` file in which the writes are stored
+- `-c <path>` Enables the cow functionality, the argument sets the path for the temporary `meta` and `data` file in which the writes are stored
 - `-C <address>` sets the address of the cow server. The cow server is responsible for merging the original image with the changes from the client.
 - `-L <path>` Similar to `-c <path>` but instead of creating a new session, it loads an existing from the given path.
 - `-m` if set, the client will request a merge after the image is unmounted and all change are uploaded.
+
+- `--cowStatStdout` creates a status file at the same location as the data and meta file. The file contains information about the current session, for more information see [here](#status).
+- `--cowStatFile` similar to `--cowStatStdout` but the information will be printed in the stdout.
 
 Example parameters for creating a new cow session:
 ```
@@ -40,14 +43,14 @@ Split into metadata and data
 
 !-->
 
-The datastructe is split in to main parts. The actual data from the write on the image and its corresponding metadata. Its also important to distinguish between a dnbd3 block which is 4096byte and and cow block which groups 320 dnbd3 blocks together. An cow block has an `cow_block_metadata_t` struct which holds the corresponding meta data.  The metadata is used to determine if and block has bin written on, where this block is stored in the data file, when it was last modified and when it was uploaded. But more later. 
+The datastructe is split in two main parts. The actual data from the write on the image and its corresponding metadata. Its also important to distinguish between a dnbd3 block which is 4096byte and and cow block which groups 320 dnbd3 blocks together. An cow block has an `cow_block_metadata_t` struct which holds the corresponding meta data.  The metadata is used to determine if and block has bin written on, where this block is stored in the data file, when it was last modified and when it was uploaded. But more later. 
 
 
 ### Blockmetadata
 
 ![Datastructure](img/Bild1.jpg)
 
-The data structure for storing metadata about blocks contains a Layer 1(L1) and a Layer 2 (L2). L1 contains pointers to the L2's.
+The data structure for storing metadata about cow blocks contains a Layer 1(L1) and a Layer 2 (L2). L1 contains pointers to the L2's.
 The whole L1 array is initialized at the beginning and cannot be resized, so the size of the L1 array limits the total size of the image.
 The L2's are dynamically created once needed. So at the beginning, all L1 pointer will be null. The L2's are arrays which contains 1024 
 `cow_block_metadata_t` structs.
@@ -61,7 +64,7 @@ typedef struct cow_block_metadata
 	atomic_char bitfield[40];
 } cow_block_metadata_t;
 ```
-Each `cow_block_metadata_t` contains a 40 byte so 320 bit bitfield. The bitfield indicates whether the corresponding data contains data or not. For e.g. if the bitfield starts with 01.., the first 4096 contains not data and the next 4096 contain data.
+Each `cow_block_metadata_t` contains a 40 byte so 320 bit bitfield. The bitfield indicates whether the corresponding dnbd3 block contains data or not. For e.g. if the bitfield starts with 01.., the first 4096 contains not data and the next 4096 contain data.
 So each `cow_block_metadata_t` stores the metadata  of up to 320*4096 byte if all bits are set to 1. The offset is the offset where in the data file is the corresponding data stored. The timeChanged property contains the unix when the block was last modified, and the timeUploaded property contains the unix time when the block was last uploaded. It's 0 if the block was never uploaded.
 
 
@@ -75,7 +78,7 @@ So for example, to get the `cow_block_metadata_t` for offset 4033085440 you woul
 
  Then you would take the fifth `cow_block_metadata_t` in the L2 array because of 
 ```
-(4033085440 mod COW_L2_STORAGE_CAPACITY) / COW_METADATA_STORAGE_CAPACITY
+(4033085440 mod COW_L2_STORAGE_CAPACITY) / COW_METADATA_STORAGE_CAPACITY = 5
 ```
 Where:
 ```
@@ -98,9 +101,8 @@ The graph shown above is somewhat simplified for better visibility. The reads fr
 the fuse buffer. Each request to the dnbd3 server will increase the `workCounter` variable by one and every time a request is done it will be decreased by one. Once `workCounter` is 0 again, fuse_request will be returned. 
 
 Also on the local side, it has to break the loop once the end of an `cow_block_metadata_t` is reached, since the next data offset of the next `cow_block_metadata_t` is very likely not directly after it in the data file.
+
 ### Write Request
-
-
 For the write request, if the start or the end or the end does not align with a multiple of 4096, then the start and/or end block must be padded.
 Because every 4096byte block needs complete data, since if the bit in the bitfield for that block is set, all the data will be read locally.
 To pad the block, if its still in the range of the original image size, the missing bytes will be requested from the dnbd3 server. If its outside of the original image (because the image grown in size) then the missing bytes will be padded with 0.
@@ -112,32 +114,31 @@ The `workCounter` variable is used here again to make sure that if padding was n
 ## Files
 If a new CoW session is started, a new `meta`, `data` and if set so in the Command line arguments a `status.txt` file is created.
 
-### status.txt
-While the cow session is active, the file contains:
+### status
+The `status.txt` can be activated with the `--cowStatFile` command line parameter.
+
+The file will contain:
 
 ```
-uuid: <uuid>
-state: active
+uuid=<uuid>
+state=backgroundUpload
+inQueue=0
+modifiedBlocks=0
+idleBlocks=0
+totalBlocksUploaded=0
+ulspeed=0.00
 ```
 - The `uuid` is the session uuid, which the cow server uses to identify the session.
 
-
-Once the user unmounts the image, the file contains:
-
-```
-uid: <uuid>
-state: uploading
-uploaded: <number>
-totalBlocks: <number>
-```
-- `uploaded` is the number of Blocks which are already uploaded.
-
-- `totalBlocks` is the total Number of Blocks which need to be uploaded.
-
+- The `state` 
+- `inQueue` 
+- `modifiedBlocks`
+- `totalBlocksUploaded` the total amount of cowblocks uploaded since the image was mounted.
+- `ulspeed` the current upload speed in kb/s.
 
 Once all blocks are uploaded, the state will be set to `done`.
 
-
+With the command line parameter `--cowStatStdout` the same output of the stats file will be printed in stdout.
 
 ### meta
 The `meta` file contains the following header:

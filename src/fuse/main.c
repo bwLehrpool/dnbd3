@@ -359,11 +359,12 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -c <path>       Enables cow, creates the cow files at given path\n" );
 	printf( "   -L <path>       Loads the cow files from a given path\n" );
 	printf( "   -C --host       Host address of the cow server\n" );
-	printf( "   -m              merge changes on the server after unmount (only works with -c)\n" );
+	printf( "   --cowStatStdout prints the cow status in stdout" );
+	printf( "   --cowStatFile   creates and updates the cow status file" );
 	exit( exitCode );
 }
 
-static const char *optString = "dfHh:i:l:o:r:SsVvc:L:C:m";
+static const char *optString = "dfHh:i:l:o:r:SsVvc:L:C:mxy";
 static const struct option longOpts[] = {
 	{ "debug", no_argument, NULL, 'd' },
 	{ "help", no_argument, NULL, 'H' },
@@ -378,6 +379,8 @@ static const struct option longOpts[] = {
 	{ "loadcow", required_argument, NULL, 'L' },
 	{ "cowServer", required_argument, NULL, 'C' },
 	{ "merge", no_argument, NULL, 'm' },
+	{ "cowStatStdout", no_argument, NULL, 'x' },
+	{ "cowStatFile", no_argument, NULL, 'y' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -399,6 +402,8 @@ int main( int argc, char *argv[] )
 	int foreground = 0;
 	char *cow_file_path = NULL;
 	bool loadCow = false;
+	bool sStdout = false;
+	bool sFile = false;
 
 	log_init();
 
@@ -479,6 +484,12 @@ int main( int argc, char *argv[] )
 			useCow = true;
 			loadCow = true;
 			break;
+		case 'x':
+			sStdout = true;
+			break;
+		case 'y':
+			sFile = true;
+			break;
 		default:
 			printUsage( argv[0], EXIT_FAILURE );
 		}
@@ -505,7 +516,7 @@ int main( int argc, char *argv[] )
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 	if ( loadCow ) {
-		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address, foreground ) ) {
+		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address, sStdout, sFile ) ) {
 			return EXIT_FAILURE;
 		}
 	} 
@@ -554,7 +565,7 @@ int main( int argc, char *argv[] )
 	owner = getuid();
 
 	if ( useCow & !loadCow) {
-		if( !cowfile_init( cow_file_path, connection_getImageName(), connection_getImageRID(),  &imageSizePtr, cow_server_address, foreground ) ) {
+		if( !cowfile_init( cow_file_path, connection_getImageName(), connection_getImageRID(),  &imageSizePtr, cow_server_address,  sStdout, sFile ) ) {
 			return EXIT_FAILURE;
 		}
 	}

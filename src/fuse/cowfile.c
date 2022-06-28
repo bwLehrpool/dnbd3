@@ -3,7 +3,8 @@
 extern void image_ll_getattr( fuse_req_t req, fuse_ino_t ino, struct fuse_file_info *fi );
 
 static int cowFileVersion = 1;
-static int foreground;
+static bool statStdout;
+static bool statFile;
 static pthread_t tidCowUploader;
 static pthread_t tidStatUpdater;
 static char *cowServerAddress;
@@ -348,17 +349,19 @@ void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, cha
 									 "%s=%s",
 			state,  inQueue, modified, idle, totalBlocksUploaded, COW_SHOW_UL_SPEED ? "ulspeed" : "", speedBuffer );
 
-	if ( foreground ) {
+	if ( statStdout ) {
 		logadd( LOG_INFO, "%s", buffer );
-		return;
-	} else {
+	}
+
+	if ( statFile ) {
 		if ( pwrite( cow.fhs, buffer, len, 43 ) != len ) {
 			logadd( LOG_WARNING, "Could not update cow status file" );
 		}
+		if ( ftruncate( cow.fhs, 43 + len ) ) {
+			logadd( LOG_WARNING, "Could not truncate cow status file" );
+		}
 	}
-	if ( ftruncate( cow.fhs, 43 + len ) ) {
-		logadd( LOG_WARNING, "Could not truncate cow status file" );
-	}
+
 }
 
 /**
@@ -634,19 +637,20 @@ bool createCowStatsFile( char *path )
 	snprintf( pathStatus, strlen( path ) + 12, "%s%s", path, "/status.txt" );
 
 	char buffer[100];
-	int len = snprintf( buffer, 100, "uuid: %s\nstate: active\n", metadata->uuid );
-	if ( foreground ) {
+	int len = snprintf( buffer, 100, "uuid=%s\nstate: active\n", metadata->uuid );
+	if ( statStdout ) {
 		logadd( LOG_INFO, "%s", buffer );
-		return true;
 	}
-	if ( ( cow.fhs = open( pathStatus, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
-		logadd( LOG_ERROR, "Could not create cow status file. Bye.\n" );
-		return false;
-	}
+	if ( statFile ) {
+		if ( ( cow.fhs = open( pathStatus, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
+			logadd( LOG_ERROR, "Could not create cow status file. Bye.\n" );
+			return false;
+		}
 
-	if ( pwrite( cow.fhs, buffer, len, 0 ) != len ) {
-		logadd( LOG_ERROR, "Could not write to cow status file. Bye.\n" );
-		return false;
+		if ( pwrite( cow.fhs, buffer, len, 0 ) != len ) {
+			logadd( LOG_ERROR, "Could not write to cow status file. Bye.\n" );
+			return false;
+		}
 	}
 	return true;
 }
@@ -659,9 +663,10 @@ bool createCowStatsFile( char *path )
  * @param imageSizePtr 
  */
 bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr,
-		char *serverAddress, int isForeground )
+		char *serverAddress, bool sStdout, bool sfile)
 {
-	foreground = isForeground;
+	statStdout = sStdout;
+	statFile = sfile;
 	char pathMeta[strlen( path ) + 6];
 	char pathData[strlen( path ) + 6];
 
@@ -755,7 +760,9 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
 
 	createCowStatsFile( path );
 	pthread_create( &tidCowUploader, NULL, &cowfile_uploader, NULL );
-	pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
+	if ( statFile || statStdout) { 
+		pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
+	}
 	return true;
 }
 
@@ -765,9 +772,10 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
  * @param path where the meta & data file is located 
  * @param imageSizePtr 
  */
-bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, int isForeground )
+bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress,  bool sStdout, bool sFile )
 {
-	foreground = isForeground;
+	statStdout = sStdout;
+	statFile = sFile;
 	cowServerAddress = serverAddress;
 	curl_global_init( CURL_GLOBAL_ALL );
 	curl = curl_easy_init();
@@ -862,8 +870,10 @@ bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *server
 	pthread_mutex_init( &cow.l2CreateLock, NULL );
 	createCowStatsFile( path );
 	pthread_create( &tidCowUploader, NULL, &cowfile_uploader, NULL );
-	pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
 
+	if ( statFile || statStdout) { 
+		pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
+	}
 
 	return true;
 }
@@ -1326,7 +1336,9 @@ fail:;
 void cowfile_close()
 {
 	uploadLoop = false;
-	pthread_join( tidStatUpdater, NULL );
+	if ( statFile || statStdout) { 
+		pthread_join( tidStatUpdater, NULL );
+	}
 	pthread_join( tidCowUploader, NULL );
 	
 	if ( curl ) {
