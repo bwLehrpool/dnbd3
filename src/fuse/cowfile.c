@@ -12,7 +12,7 @@ static CURL *curl;
 static cowfile_metadata_header_t *metadata = NULL;
 static atomic_uint_fast64_t bytesUploaded;
 static uint64_t totalBlocksUploaded = 0;
-
+static atomic_int activeUploads = 0;
 atomic_bool uploadLoop = true;
 atomic_bool uploadLoopDone = false;
 
@@ -106,7 +106,7 @@ static bool checkBit( atomic_char *bitfield, int n )
 	return ( atomic_load( ( bitfield + ( n / 8 ) ) ) >> ( n % 8 ) ) & 1;
 }
 
-/**
+
 /**
  * @brief Implementation of CURLOPT_WRITEFUNCTION , this function will be called when
  * the server sends back data.
@@ -342,12 +342,13 @@ void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, cha
 	}
 
 	int len = snprintf( buffer, 300, "state=%s\n"
-									 "inQueue=%u\n"
-									 "modifiedBlocks=%u\n"
-									 "idleBlocks=%u\n"
-									 "totalBlocksUploaded=%u\n"
+									 "inQueue=%"PRIu64"\n"
+									 "modifiedBlocks=%"PRIu64"\n"
+									 "idleBlocks=%"PRIu64"\n"
+									 "totalBlocksUploaded=%"PRIu64"\n"
+									 "activeUploads:%i\n"
 									 "%s=%s",
-			state,  inQueue, modified, idle, totalBlocksUploaded, COW_SHOW_UL_SPEED ? "ulspeed" : "", speedBuffer );
+			state,  inQueue, modified, idle, totalBlocksUploaded, activeUploads,COW_SHOW_UL_SPEED ? "ulspeed" : "", speedBuffer );
 
 	if ( statStdout ) {
 		logadd( LOG_INFO, "%s", buffer );
@@ -370,7 +371,7 @@ void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, cha
  * @param cm Curl_multi
  * @param curlUploadBlock cow_curl_read_upload_t containing the data for the block to upload
  */
-bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock)
+bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_slist * headers)
 {
 	CURL *eh = curl_easy_init();
 
@@ -391,9 +392,7 @@ bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock)
 		curl_easy_setopt( eh, CURLOPT_XFERINFOFUNCTION, progress_callback );
 		curl_easy_setopt( eh, CURLOPT_XFERINFODATA, eh );
 	}
-	curlUploadBlock->headers  = NULL;
-	curlUploadBlock->headers = curl_slist_append( curlUploadBlock->headers, "Content-Type: application/octet-stream" );
-	curl_easy_setopt( eh, CURLOPT_HTTPHEADER, curlUploadBlock->headers );
+	curl_easy_setopt( eh, CURLOPT_HTTPHEADER, headers);
 	curl_multi_add_handle( cm, eh );
 
 	return true;
@@ -409,7 +408,7 @@ bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock)
  * @return true returned if upload was successful or retries still possible
  * @return false returned if upload was unsuccessful
  */
-bool finishUpload( CURLM *cm, CURLMsg *msg )
+bool finishUpload( CURLM *cm, CURLMsg *msg, struct curl_slist * headers )
 {
 	bool status = true;
 	cow_curl_read_upload_t *curlUploadBlock;
@@ -425,19 +424,20 @@ bool finishUpload( CURLM *cm, CURLMsg *msg )
 		logadd( LOG_ERROR, "COW_API_UPDATE  failed %i/5: %s\n", curlUploadBlock->fails,
 				curl_easy_strerror( msg->data.result ) );
 		if ( curlUploadBlock->fails <= 5 ) {
-			addUpload( cm, curlUploadBlock );
+			addUpload( cm, curlUploadBlock, headers );
 			goto CLEANUP;
 		}
-		curl_slist_free_all(curlUploadBlock->headers);
 		free( curlUploadBlock );
 		status = false;
 		goto CLEANUP;
 	}
 
-	// everything went ok, update timeUploaded
-	curlUploadBlock->block->timeUploaded = curlUploadBlock->time;
+	// everything went ok, update timeChanged
+	atomic_compare_exchange_strong( &curlUploadBlock->block->timeChanged, &curlUploadBlock->time, 0 );
+
+	curlUploadBlock->block->uploads++;
+
 	totalBlocksUploaded++;
-	curl_slist_free_all(curlUploadBlock->headers);
 	free( curlUploadBlock );
 CLEANUP:
 	curl_multi_remove_handle( cm, msg->easy_handle );
@@ -456,7 +456,7 @@ CLEANUP:
  * @return true returned if all upload's were successful 
  * @return false returned if  one ore more upload's failed.
  */
-bool MessageHandler( CURLM *cm, int *activeUploads, bool breakIfNotMax, bool foregroundUpload )
+bool MessageHandler( CURLM *cm, atomic_int *activeUploads, bool breakIfNotMax, bool foregroundUpload, struct curl_slist * headers )
 {
 	CURLMsg *msg;
 	int msgsLeft = -1;
@@ -465,11 +465,11 @@ bool MessageHandler( CURLM *cm, int *activeUploads, bool breakIfNotMax, bool for
 		curl_multi_perform( cm, activeUploads );
 
 		while ( ( msg = curl_multi_info_read( cm, &msgsLeft ) ) ) {
-			if ( !finishUpload( cm, msg ) ) {
+			if ( !finishUpload( cm, msg, headers ) ) {
 				status = false;
 			}
 		}
-		if ( breakIfNotMax && *activeUploads <= ( foregroundUpload ? COW_MAX_PARALLEL_UPLOADS
+		if ( breakIfNotMax && *activeUploads < ( foregroundUpload ? COW_MAX_PARALLEL_UPLOADS
 																		: COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) ) {
 			break;
 		}
@@ -494,7 +494,9 @@ bool MessageHandler( CURLM *cm, int *activeUploads, bool breakIfNotMax, bool for
 bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 {
 	bool success = true;
-	int activeUploads = 0;
+	struct curl_slist * headers = NULL;
+	headers = curl_slist_append( headers, "Content-Type: application/octet-stream" );
+
 	long unsigned int l1MaxOffset = 1 + ( ( metadata->imageSize - 1 ) / COW_L2_STORAGE_CAPACITY );
 	for ( long unsigned int l1Offset = 0; l1Offset < l1MaxOffset; l1Offset++ ) {
 		if ( cow.l1[l1Offset] == -1 ) {
@@ -505,21 +507,21 @@ bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 			if ( block->offset == -1 ) {
 				continue;
 			}
-			if ( block->timeUploaded < block->timeChanged ) {
+			if ( block->timeChanged != 0 ) {
 				if ( ( time( NULL ) - block->timeChanged > COW_MIN_UPLOAD_DELAY ) || ignoreMinUploadDelay ) {
 					do {
-						if ( !MessageHandler( cm, &activeUploads, true, ignoreMinUploadDelay ) ) {
+						if ( !MessageHandler( cm, &activeUploads, true, ignoreMinUploadDelay, headers ) ) {
 							success = false;
 						}
-					} while ( !( activeUploads <= ( ignoreMinUploadDelay ? COW_MAX_PARALLEL_UPLOADS : COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) )
+					} while ( !( activeUploads < ( ignoreMinUploadDelay ? COW_MAX_PARALLEL_UPLOADS : COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) )
 														&& activeUploads );
 					cow_curl_read_upload_t *b = malloc( sizeof( cow_curl_read_upload_t ) );
 					b->block = block;
 					b->blocknumber = ( l1Offset * COW_L2_SIZE + l2Offset );
 					b->fails = 0;
 					b->position = 0;
-					b->time = time( NULL );
-					addUpload( cm, b );
+					b->time = block->timeChanged;
+					addUpload( cm, b, headers );
 					if( !ignoreMinUploadDelay && !uploadLoop ) {
 						goto DONE;
 					}
@@ -529,8 +531,9 @@ bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 	}
 DONE:
 	while ( activeUploads > 0 ) {
-		MessageHandler( cm, &activeUploads, false, ignoreMinUploadDelay );
+		MessageHandler( cm, &activeUploads, false, ignoreMinUploadDelay, headers );
 	}
+	curl_slist_free_all(headers);
 	return success;
 }
 
@@ -560,7 +563,7 @@ void * cowfile_statUpdater(__attribute__( ( unused ) ) void *something ) {
 				if ( block->offset == -1 ) {
 					continue;
 				}
-				if ( block->timeUploaded < block->timeChanged ) {
+				if ( block->timeChanged != 0) {
 					if( !uploadLoop || now >  block->timeChanged + COW_MIN_UPLOAD_DELAY ) {
 						inQueue++;
 					} else { 
@@ -950,8 +953,8 @@ static bool createL2Block( int l1Offset )
 	if ( cow.l1[l1Offset] == -1 ) {
 		for ( int i = 0; i < COW_L2_SIZE; i++ ) {
 			cow.firstL2[metadata->nextL2][i].offset = -1;
-			cow.firstL2[metadata->nextL2][i].timeChanged = 0;
-			cow.firstL2[metadata->nextL2][i].timeUploaded = 0;
+			cow.firstL2[metadata->nextL2][i].timeChanged =  ATOMIC_VAR_INIT( 0 );
+			cow.firstL2[metadata->nextL2][i].uploads = ATOMIC_VAR_INIT( 0 );
 			for ( int j = 0; j < COW_BITFIELD_SIZE; j++ ) {
 				cow.firstL2[metadata->nextL2][i].bitfield[j] = ATOMIC_VAR_INIT( 0 );
 			}

@@ -610,16 +610,18 @@ int main( int argc, char *argv[] )
 		printUsage();
 		return 0;
 	}
-	while ( 1 )
+	int opt;
+	while ((opt = getopt(argc, argv, "d:c:t:v:")) != -1) 
     {
-        int result = getopt( argc, argv, "d:c:t:v:" );
-        if ( result == -1 ) break; /* end of list */
+
+		printf( "res: %i", opt );
 		char * pEnd;
-        switch (result)
+		
+        switch ( opt )
         {
             case 'd':
 				
-				delay =(int) strtol (optarg, &pEnd, 10);
+				delay =(int) strtol ( optarg, &pEnd, 10 );
 				printf("Delay set to %i\n", delay);
                 break;
             case 'c':

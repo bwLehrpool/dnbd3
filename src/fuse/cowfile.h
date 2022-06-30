@@ -51,7 +51,7 @@ typedef struct cow_block_metadata
 {
 	atomic_int_least64_t offset;
 	atomic_uint_least64_t timeChanged;
-	atomic_uint_least64_t timeUploaded;
+	atomic_uint_least64_t uploads;
 	atomic_char bitfield[40];
 } cow_block_metadata_t;
 _Static_assert( sizeof( cow_block_metadata_t ) == COW_METADATA_METADATA_SIZE, "cow_block_metadata_t is messed up" );
@@ -89,13 +89,12 @@ typedef struct cow_sub_request
 
 typedef struct cow_curl_read_upload
 {
+	atomic_uint_least64_t time;
 	cow_block_metadata_t *block;
 	size_t position;
 	long unsigned int blocknumber;
 	int fails;
-	uint64_t time;
 	curl_off_t ulLast;
-	struct curl_slist * headers;
 } cow_curl_read_upload_t;
 
 

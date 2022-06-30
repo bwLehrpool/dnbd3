@@ -27,7 +27,7 @@ This extension to the fuse dnbd3 client allows it to mount images writable. The 
 
 Example parameters for creating a new cow session:
 ```
-./dnbd3-fuse "/home/user/VMs/mount" -f -h localhost -i imagename -c "/home/user/temp" -C "192.168.178.20:5000"
+./dnbd3-fuse "/home/user/VMs/mount" -f -h localhost -i imagename -c "/home/user/temp" -C "192.168.178.20:5000" --cowStatStdout -m
 
 ```
 
@@ -37,13 +37,9 @@ Example parameters for creating a new cow session:
 
 
 
-## Data strucure
-<!---
-Split into metadata and data
+## Data structure
 
-!-->
-
-The datastructe is split in two main parts. The actual data from the write on the image and its corresponding metadata. Its also important to distinguish between a dnbd3 block which is 4096byte and and cow block which groups 320 dnbd3 blocks together. An cow block has an `cow_block_metadata_t` struct which holds the corresponding meta data.  The metadata is used to determine if and block has bin written on, where this block is stored in the data file, when it was last modified and when it was uploaded. But more later. 
+The data structure is split in two main parts. The actual data from the write on the image and its corresponding metadata. Its also important to distinguish between a dnbd3 block which is 4096byte and and cow block which groups 320 dnbd3 blocks together. An cow block has an `cow_block_metadata_t` struct which holds the corresponding meta data.  The metadata is used to determine if and block has bin written on, where this block is stored in the data file, when it was last modified and when it was uploaded. But more later. 
 
 
 ### Blockmetadata
@@ -93,7 +89,7 @@ COW_METADATA_STORAGE_CAPACITY = 320 * 4096
 
 
 For an read request, for every 4096byte block it will be checked if the block is already local on the computer (therefore was already written to before).
-If so it will be read from disk, otherwise it will be requested from the dnbd3 server. To increase performance, multiple following blocks are also local/non local like the block before will be combined to to one larger reads from disc respectively one larger request from the server.
+If so it will be read from disk, otherwise it will be requested from the dnbd3 server. To increase performance, multiple following blocks that are also local/non local like the block before will be combined to to one larger reads from disc respectively one larger request from the server.
 
 ![readrequest](img/readrequest.svg)
 
@@ -126,14 +122,18 @@ inQueue=0
 modifiedBlocks=0
 idleBlocks=0
 totalBlocksUploaded=0
+activeUploads:0
 ulspeed=0.00
 ```
 - The `uuid` is the session uuid, which the cow server uses to identify the session.
 
-- The `state` 
-- `inQueue` 
-- `modifiedBlocks`
-- `totalBlocksUploaded` the total amount of cowblocks uploaded since the image was mounted.
+- The `state` is `backgroundUpload` if the image is still mounted, an cow blocks are uploaded in the background.
+It is `uploading` if the image got dismounted and all not yet uploaded blocks are  uploading.
+it is `done` if the image got dismounted and all blocks are uploaded. 
+- `inQueue` are the cow blocks which are currently uploaded or waiting for an free slot.
+- `modifiedBlocks` are cow block which have changes which are not uploaded to the server yet, because the changes are to recent.
+- `totalBlocksUploaded` the total amount of cow blocks uploaded since the image was mounted.
+- `activeUploads` is the number blocks that are currently uploaded.
 - `ulspeed` the current upload speed in kb/s.
 
 Once all blocks are uploaded, the state will be set to `done`.
@@ -214,7 +214,7 @@ The follwoing configuration variables have been added to ```config.h```.
 #define COW_API_START_MERGE "%s/api/File/StartMerge"
 ```
 
-- ```COW_MIN_UPLOAD_DELAY``` defines the minimum time in seconds that must have elapsed since the last modification of a cow block before it is uploaded.
+- ```COW_MIN_UPLOAD_DELAY``` defines the minimum time in seconds that must have elapsed since the last modification of a cow block before it is uploaded. This value can be fine tuned. A larger value usually reduces duplicate block uploads. While a lower value usually reduces the time for the final upload after the image got unmounted.
 
 - ```COW_STATS_UPDATE_TIME``` defines the update frequency in seconds of the stdout print/ stats file update. Setting this to low could impact the performance since it hast to loop over all blocks.
 - ```COW_MAX_PARALLEL_UPLOADS``` defines to maximal number of parallel block uploads. These number is used once the image hast been dismounted and the final blocks are uploaded
