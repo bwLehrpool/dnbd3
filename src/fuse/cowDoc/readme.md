@@ -56,12 +56,12 @@ typedef struct cow_block_metadata
 {
 	atomic_int_least64_t offset;
 	atomic_uint_least64_t timeChanged;
-	atomic_uint_least64_t timeUploaded;
+	atomic_uint_least64_t uploads;
 	atomic_char bitfield[40];
 } cow_block_metadata_t;
 ```
 Each `cow_block_metadata_t` contains a 40 byte so 320 bit bitfield. The bitfield indicates whether the corresponding dnbd3 block contains data or not. For e.g. if the bitfield starts with 01.., the first 4096 contains not data and the next 4096 contain data.
-So each `cow_block_metadata_t` stores the metadata  of up to 320*4096 byte if all bits are set to 1. The offset is the offset where in the data file is the corresponding data stored. The timeChanged property contains the unix when the block was last modified, and the timeUploaded property contains the unix time when the block was last uploaded. It's 0 if the block was never uploaded.
+So each `cow_block_metadata_t` stores the metadata  of up to 320*4096 byte if all bits are set to 1. The offset is the offset where in the data file is the corresponding data stored. The timeChanged property contains the unix when the block was last modified. It's 0 if it was never modified or if the last changes are already uploaded.
 
 
 The L2 arrays and `cow_block_metadata_t` are sorted to original Offsets. So the first L1 pointer, thus the first L2 array, addresses the first 1024 * 320 * 4096 Bytes (L2Size * bitfieldsize * DNBD3Blocksize) of Data and so on.
@@ -107,6 +107,9 @@ Then the corresponding bit in the bitfields will be set and the `timeChanged` wi
 The `workCounter` variable is used here again to make sure that if padding was needed it is done before the fuse request returns.
 
 
+### Block Upload
+For block upload there is an background threads which loop periodically over all cow blocks and checks if `timeChanged` is not 0 and the time difference between now an `timeChanged` is larger than `COW_MIN_UPLOAD_DELAY`. If so, the block will be uploaded. The `timeChanged` before the upload will be temporary stored. After the upload `timeChanged` will be set to 0 if it still has the same time than temporary stored (if not there was an modification while the upload and it needs to be uploaded again). Once the image is unmounted `COW_MIN_UPLOAD_DELAY` is ignored an all blocks if a time of not 0 will be uploaded. The upload is done via an  [rest request](#/api/file/update). There are two different  limits for the number of parallel uploads in the [config.h](#config-variables).
+
 ## Files
 If a new CoW session is started, a new `meta`, `data` and if set so in the Command line arguments a `status.txt` file is created.
 
@@ -137,6 +140,7 @@ it is `done` if the image got dismounted and all blocks are uploaded.
 - `ulspeed` the current upload speed in kb/s.
 
 Once all blocks are uploaded, the state will be set to `done`.
+If you define `COW_DUMP_BLOCK_UPLOADS`, then after the block upload is complete, a list of all blocks and sorted by the number of uploads will be dumped into status.txt.
 
 With the command line parameter `--cowStatStdout` the same output of the stats file will be printed in stdout.
 
@@ -208,13 +212,14 @@ The follwoing configuration variables have been added to ```config.h```.
 #define COW_MAX_PARALLEL_BACKGROUND_UPLOADS 2 // maximum number of parallel uploads while the image is still mounted
 #define COW_URL_STRING_SIZE 500 // Max string size for an url
 #define COW_SHOW_UL_SPEED 1 // enable display of ul speed in cow status file
+#define COW_MAX_IMAGE_SIZE 1000LL * 1000LL * 1000LL * 1000LL; // Maximum size an image can have(tb*gb*mb*kb)
 // +++++ COW API Endpoints +++++
 #define COW_API_CREATE "%s/api/File/Create"
 #define COW_API_UPDATE "%s/api/File/Update?guid=%s&BlockNumber=%lu"
 #define COW_API_START_MERGE "%s/api/File/StartMerge"
 ```
 
-- ```COW_MIN_UPLOAD_DELAY``` defines the minimum time in seconds that must have elapsed since the last modification of a cow block before it is uploaded. This value can be fine tuned. A larger value usually reduces duplicate block uploads. While a lower value usually reduces the time for the final upload after the image got unmounted.
+- ```COW_MIN_UPLOAD_DELAY``` defines the minimum time in seconds that must have elapsed since the last modification of a cow block before it is uploaded. This value can be fine tuned. A larger value usually reduces duplicate block uploads. While a lower value usually reduces the time for the final upload after the image got unmounted. If you define `COW_DUMP_BLOCK_UPLOADS` and have set the command line parameter `--cowStatFile`, then after the block upload is complete, a list of all blocks and sorted by the number of uploads will be dumped into status.txt. This can help adjusting `COW_MIN_UPLOAD_DELAY`.
 
 - ```COW_STATS_UPDATE_TIME``` defines the update frequency in seconds of the stdout print/ stats file update. Setting this to low could impact the performance since it hast to loop over all blocks.
 - ```COW_MAX_PARALLEL_UPLOADS``` defines to maximal number of parallel block uploads. These number is used once the image hast been dismounted and the final blocks are uploaded

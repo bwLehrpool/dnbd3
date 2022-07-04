@@ -79,7 +79,7 @@ typedef struct cow_sub_request
 	size_t size;
 	off_t inBlockOffset;
 	const char *writeSrc;
-	char * buffer;
+	char *buffer;
 	cow_block_metadata_t *block;
 	cow_callback callback;
 	cow_request_t *cowRequest;
@@ -96,6 +96,13 @@ typedef struct cow_curl_read_upload
 	int fails;
 	curl_off_t ulLast;
 } cow_curl_read_upload_t;
+
+
+typedef struct cow_block_upload_statistics
+{
+	uint64_t blocknumber;
+	uint64_t uploads;
+} cow_block_upload_statistics_t;
 
 
 typedef int32_t l1;

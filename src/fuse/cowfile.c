@@ -272,7 +272,7 @@ bool mergeRequest()
 		return false;
 	}
 	curl_easy_reset( curl );
-	 curl_mime_free( mime) ;
+	curl_mime_free( mime );
 	return true;
 }
 
@@ -329,26 +329,28 @@ int progress_callback( void *clientp, __attribute__( ( unused ) ) curl_off_t dlT
  * @param speedBuffer ptr to char array that contains the current upload speed.
  */
 
-void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, char * speedBuffer )
+void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, char *speedBuffer )
 {
 	char buffer[300];
 	char state[30];
-	if( uploadLoop ) {
+	if ( uploadLoop ) {
 		snprintf( state, 30, "%s", "backgroundUpload" );
-	} else if( !uploadLoopDone ) {
+	} else if ( !uploadLoopDone ) {
 		snprintf( state, 30, "%s", "uploading" );
 	} else {
 		snprintf( state, 30, "%s", "done" );
 	}
 
-	int len = snprintf( buffer, 300, "state=%s\n"
-									 "inQueue=%"PRIu64"\n"
-									 "modifiedBlocks=%"PRIu64"\n"
-									 "idleBlocks=%"PRIu64"\n"
-									 "totalBlocksUploaded=%"PRIu64"\n"
-									 "activeUploads:%i\n"
-									 "%s=%s",
-			state,  inQueue, modified, idle, totalBlocksUploaded, activeUploads,COW_SHOW_UL_SPEED ? "ulspeed" : "", speedBuffer );
+	int len = snprintf( buffer, 300,
+			"state=%s\n"
+			"inQueue=%" PRIu64 "\n"
+			"modifiedBlocks=%" PRIu64 "\n"
+			"idleBlocks=%" PRIu64 "\n"
+			"totalBlocksUploaded=%" PRIu64 "\n"
+			"activeUploads:%i\n"
+			"%s=%s",
+			state, inQueue, modified, idle, totalBlocksUploaded, activeUploads, COW_SHOW_UL_SPEED ? "ulspeed" : "",
+			speedBuffer );
 
 	if ( statStdout ) {
 		logadd( LOG_INFO, "%s", buffer );
@@ -361,8 +363,46 @@ void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, cha
 		if ( ftruncate( cow.fhs, 43 + len ) ) {
 			logadd( LOG_WARNING, "Could not truncate cow status file" );
 		}
+#ifdef COW_DUMP_BLOCK_UPLOADS
+		if ( !uploadLoop && uploadLoopDone ) {
+			dumpBlockUploads();
+		}
+#endif
 	}
+}
+int cmpfunc( const void *a, const void *b )
+{
+	return (int)( ( (cow_block_upload_statistics_t *)b )->uploads - ( (cow_block_upload_statistics_t *)a )->uploads );
+}
+/**
+ * @brief writes all block numbers sorted by the number of uploads into the statsfile
+ * 
+ */
+void dumpBlockUploads()
+{
+	long unsigned int l1MaxOffset = 1 + ( ( metadata->imageSize - 1 ) / COW_L2_STORAGE_CAPACITY );
 
+	cow_block_upload_statistics_t blockUploads[l1MaxOffset * COW_L2_SIZE];
+	uint64_t currentBlock = 0;
+	for ( long unsigned int l1Offset = 0; l1Offset < l1MaxOffset; l1Offset++ ) {
+		if ( cow.l1[l1Offset] == -1 ) {
+			continue;
+		}
+		for ( int l2Offset = 0; l2Offset < COW_L2_SIZE; l2Offset++ ) {
+			cow_block_metadata_t *block = ( cow.firstL2[cow.l1[l1Offset]] + l2Offset );
+
+			blockUploads[currentBlock].uploads = block->uploads;
+			blockUploads[currentBlock].blocknumber = ( l1Offset * COW_L2_SIZE + l2Offset );
+			currentBlock++;
+		}
+	}
+	qsort( blockUploads, currentBlock, sizeof( cow_block_upload_statistics_t ), cmpfunc );
+	lseek( cow.fhs, 0, SEEK_END );
+
+	dprintf( cow.fhs, "\n\nblocknumber: uploads\n==Block Upload Dump===\n" );
+	for ( uint64_t i = 0; i < currentBlock; i++ ) {
+		dprintf( cow.fhs, "%" PRIu64 ": %" PRIu64 " \n", blockUploads[i].blocknumber, blockUploads[i].uploads );
+	}
 }
 
 /**
@@ -371,7 +411,7 @@ void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t idle, cha
  * @param cm Curl_multi
  * @param curlUploadBlock cow_curl_read_upload_t containing the data for the block to upload
  */
-bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_slist * headers)
+bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_slist *headers )
 {
 	CURL *eh = curl_easy_init();
 
@@ -392,7 +432,7 @@ bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_
 		curl_easy_setopt( eh, CURLOPT_XFERINFOFUNCTION, progress_callback );
 		curl_easy_setopt( eh, CURLOPT_XFERINFODATA, eh );
 	}
-	curl_easy_setopt( eh, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt( eh, CURLOPT_HTTPHEADER, headers );
 	curl_multi_add_handle( cm, eh );
 
 	return true;
@@ -408,18 +448,18 @@ bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_
  * @return true returned if upload was successful or retries still possible
  * @return false returned if upload was unsuccessful
  */
-bool finishUpload( CURLM *cm, CURLMsg *msg, struct curl_slist * headers )
+bool finishUpload( CURLM *cm, CURLMsg *msg, struct curl_slist *headers )
 {
 	bool status = true;
 	cow_curl_read_upload_t *curlUploadBlock;
 	CURLcode res;
 	CURLcode res2;
 	res = curl_easy_getinfo( msg->easy_handle, CURLINFO_PRIVATE, &curlUploadBlock );
-	
+
 	long http_code = 0;
 	res2 = curl_easy_getinfo( msg->easy_handle, CURLINFO_RESPONSE_CODE, &http_code );
 
-	if ( res != CURLE_OK || res2 != CURLE_OK || http_code != 200 ||msg->msg != CURLMSG_DONE ) {
+	if ( res != CURLE_OK || res2 != CURLE_OK || http_code != 200 || msg->msg != CURLMSG_DONE ) {
 		curlUploadBlock->fails++;
 		logadd( LOG_ERROR, "COW_API_UPDATE  failed %i/5: %s\n", curlUploadBlock->fails,
 				curl_easy_strerror( msg->data.result ) );
@@ -456,7 +496,8 @@ CLEANUP:
  * @return true returned if all upload's were successful 
  * @return false returned if  one ore more upload's failed.
  */
-bool MessageHandler( CURLM *cm, atomic_int *activeUploads, bool breakIfNotMax, bool foregroundUpload, struct curl_slist * headers )
+bool MessageHandler(
+		CURLM *cm, atomic_int *activeUploads, bool breakIfNotMax, bool foregroundUpload, struct curl_slist *headers )
 {
 	CURLMsg *msg;
 	int msgsLeft = -1;
@@ -469,8 +510,9 @@ bool MessageHandler( CURLM *cm, atomic_int *activeUploads, bool breakIfNotMax, b
 				status = false;
 			}
 		}
-		if ( breakIfNotMax && *activeUploads < ( foregroundUpload ? COW_MAX_PARALLEL_UPLOADS
-																		: COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) ) {
+		if ( breakIfNotMax
+				&& *activeUploads
+						< ( foregroundUpload ? COW_MAX_PARALLEL_UPLOADS : COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) ) {
 			break;
 		}
 		// ony wait if there are active uploads
@@ -494,7 +536,7 @@ bool MessageHandler( CURLM *cm, atomic_int *activeUploads, bool breakIfNotMax, b
 bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 {
 	bool success = true;
-	struct curl_slist * headers = NULL;
+	struct curl_slist *headers = NULL;
 	headers = curl_slist_append( headers, "Content-Type: application/octet-stream" );
 
 	long unsigned int l1MaxOffset = 1 + ( ( metadata->imageSize - 1 ) / COW_L2_STORAGE_CAPACITY );
@@ -513,8 +555,9 @@ bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 						if ( !MessageHandler( cm, &activeUploads, true, ignoreMinUploadDelay, headers ) ) {
 							success = false;
 						}
-					} while ( !( activeUploads < ( ignoreMinUploadDelay ? COW_MAX_PARALLEL_UPLOADS : COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) )
-														&& activeUploads );
+					} while ( !( activeUploads < ( ignoreMinUploadDelay ? COW_MAX_PARALLEL_UPLOADS
+																						 : COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) )
+							&& activeUploads );
 					cow_curl_read_upload_t *b = malloc( sizeof( cow_curl_read_upload_t ) );
 					b->block = block;
 					b->blocknumber = ( l1Offset * COW_L2_SIZE + l2Offset );
@@ -522,7 +565,7 @@ bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 					b->position = 0;
 					b->time = block->timeChanged;
 					addUpload( cm, b, headers );
-					if( !ignoreMinUploadDelay && !uploadLoop ) {
+					if ( !ignoreMinUploadDelay && !uploadLoop ) {
 						goto DONE;
 					}
 				}
@@ -533,10 +576,9 @@ DONE:
 	while ( activeUploads > 0 ) {
 		MessageHandler( cm, &activeUploads, false, ignoreMinUploadDelay, headers );
 	}
-	curl_slist_free_all(headers);
+	curl_slist_free_all( headers );
 	return success;
 }
-
 
 
 /**
@@ -544,16 +586,17 @@ DONE:
  * 
  */
 
-void * cowfile_statUpdater(__attribute__( ( unused ) ) void *something ) {
-	uint64_t lastUpdateTime = time(NULL);
+void *cowfile_statUpdater( __attribute__( ( unused ) ) void *something )
+{
+	uint64_t lastUpdateTime = time( NULL );
 
-	while( !uploadLoopDone ) {
-		sleep(COW_STATS_UPDATE_TIME);
+	while ( !uploadLoopDone ) {
+		sleep( COW_STATS_UPDATE_TIME );
 		int modified = 0;
 		int inQueue = 0;
 		int idle = 0;
 		long unsigned int l1MaxOffset = 1 + ( ( metadata->imageSize - 1 ) / COW_L2_STORAGE_CAPACITY );
-		uint64_t now = time(NULL);
+		uint64_t now = time( NULL );
 		for ( long unsigned int l1Offset = 0; l1Offset < l1MaxOffset; l1Offset++ ) {
 			if ( cow.l1[l1Offset] == -1 ) {
 				continue;
@@ -563,10 +606,10 @@ void * cowfile_statUpdater(__attribute__( ( unused ) ) void *something ) {
 				if ( block->offset == -1 ) {
 					continue;
 				}
-				if ( block->timeChanged != 0) {
-					if( !uploadLoop || now >  block->timeChanged + COW_MIN_UPLOAD_DELAY ) {
+				if ( block->timeChanged != 0 ) {
+					if ( !uploadLoop || now > block->timeChanged + COW_MIN_UPLOAD_DELAY ) {
 						inQueue++;
-					} else { 
+					} else {
 						modified++;
 					}
 				} else {
@@ -577,17 +620,15 @@ void * cowfile_statUpdater(__attribute__( ( unused ) ) void *something ) {
 		char speedBuffer[20];
 
 		if ( COW_SHOW_UL_SPEED ) {
-			now = time(NULL);
+			now = time( NULL );
 			uint64_t bytes = atomic_exchange( &bytesUploaded, 0 );
-			snprintf( speedBuffer, 20, "%.2f",
-				(double)( ( bytes  ) / ( 1 + now -  lastUpdateTime  ) / 1000 ) );
-			
+			snprintf( speedBuffer, 20, "%.2f", (double)( ( bytes ) / ( 1 + now - lastUpdateTime ) / 1000 ) );
+
 			lastUpdateTime = now;
 		}
 
-		
-		updateCowStatsFile( inQueue, modified, idle,  speedBuffer);
-		 
+
+		updateCowStatsFile( inQueue, modified, idle, speedBuffer );
 	}
 }
 
@@ -666,7 +707,7 @@ bool createCowStatsFile( char *path )
  * @param imageSizePtr 
  */
 bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr,
-		char *serverAddress, bool sStdout, bool sfile)
+		char *serverAddress, bool sStdout, bool sfile )
 {
 	statStdout = sStdout;
 	statFile = sfile;
@@ -688,11 +729,11 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
 
 	int maxPageSize = 8192;
 
-	// TODO IMAGE NAME IS FIXED
+
 	size_t metaDataSizeHeader = sizeof( cowfile_metadata_header_t ) + strlen( image_Name );
 
 
-	cow.maxImageSize = 1000LL * 1000LL * 1000LL * 1000LL; // tb*gb*mb*kb todo make this changeable
+	cow.maxImageSize = COW_MAX_IMAGE_SIZE;
 	cow.l1Size = ( ( cow.maxImageSize + COW_L2_STORAGE_CAPACITY - 1LL ) / COW_L2_STORAGE_CAPACITY );
 
 	// size of l1 array + number of l2's * size of l2
@@ -763,7 +804,7 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
 
 	createCowStatsFile( path );
 	pthread_create( &tidCowUploader, NULL, &cowfile_uploader, NULL );
-	if ( statFile || statStdout) { 
+	if ( statFile || statStdout ) {
 		pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
 	}
 	return true;
@@ -775,7 +816,7 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
  * @param path where the meta & data file is located 
  * @param imageSizePtr 
  */
-bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress,  bool sStdout, bool sFile )
+bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, bool sStdout, bool sFile )
 {
 	statStdout = sStdout;
 	statFile = sFile;
@@ -874,7 +915,7 @@ bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *server
 	createCowStatsFile( path );
 	pthread_create( &tidCowUploader, NULL, &cowfile_uploader, NULL );
 
-	if ( statFile || statStdout) { 
+	if ( statFile || statStdout ) {
 		pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL );
 	}
 
@@ -953,7 +994,7 @@ static bool createL2Block( int l1Offset )
 	if ( cow.l1[l1Offset] == -1 ) {
 		for ( int i = 0; i < COW_L2_SIZE; i++ ) {
 			cow.firstL2[metadata->nextL2][i].offset = -1;
-			cow.firstL2[metadata->nextL2][i].timeChanged =  ATOMIC_VAR_INIT( 0 );
+			cow.firstL2[metadata->nextL2][i].timeChanged = ATOMIC_VAR_INIT( 0 );
 			cow.firstL2[metadata->nextL2][i].uploads = ATOMIC_VAR_INIT( 0 );
 			for ( int j = 0; j < COW_BITFIELD_SIZE; j++ ) {
 				cow.firstL2[metadata->nextL2][i].bitfield[j] = ATOMIC_VAR_INIT( 0 );
@@ -983,7 +1024,6 @@ static void finishWriteRequest( fuse_req_t req, cow_request_t *cowRequest )
 	} else {
 		metadata->imageSize = MAX( metadata->imageSize, cowRequest->bytesWorkedOn + cowRequest->fuseRequestOffset );
 		if ( cowRequest->replyAttr ) {
-			//TODO HANDLE ERROR
 			image_ll_getattr( req, cowRequest->ino, cowRequest->fi );
 
 		} else {
@@ -1007,8 +1047,8 @@ static void writePaddedBlock( cow_sub_request_t *sRequest )
 	//copy write Data
 	memcpy( ( sRequest->writeBuffer + ( sRequest->inBlockOffset % DNBD3_BLOCK_SIZE ) ), sRequest->writeSrc,
 			sRequest->size );
-	writeData( sRequest->writeBuffer, DNBD3_BLOCK_SIZE, (ssize_t)sRequest->size, sRequest->cowRequest,
-			sRequest->block, ( sRequest->inBlockOffset - ( sRequest->inBlockOffset % DNBD3_BLOCK_SIZE ) ) );
+	writeData( sRequest->writeBuffer, DNBD3_BLOCK_SIZE, (ssize_t)sRequest->size, sRequest->cowRequest, sRequest->block,
+			( sRequest->inBlockOffset - ( sRequest->inBlockOffset % DNBD3_BLOCK_SIZE ) ) );
 
 
 	if ( atomic_fetch_sub( &sRequest->cowRequest->workCounter, 1 ) == 1 ) {
@@ -1034,7 +1074,7 @@ static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cow
 		writeData( buf, DNBD3_BLOCK_SIZE, (ssize_t)size, cowRequest, block, inBlockOffset );
 		return;
 	}
-	cow_sub_request_t *sRequest = malloc( sizeof( cow_sub_request_t ) + DNBD3_BLOCK_SIZE);
+	cow_sub_request_t *sRequest = malloc( sizeof( cow_sub_request_t ) + DNBD3_BLOCK_SIZE );
 	sRequest->callback = writePaddedBlock;
 	sRequest->inBlockOffset = inBlockOffset;
 	sRequest->block = block;
@@ -1055,10 +1095,11 @@ static void padBlockFromRemote( fuse_req_t req, off_t offset, cow_request_t *cow
 
 	atomic_fetch_add( &cowRequest->workCounter, 1 );
 	if ( !connection_read( &sRequest->dRequest ) ) {
-		atomic_fetch_sub( &cowRequest->workCounter, 1 );
-		// todo check if not  now
 		cowRequest->errorCode = EIO;
 		free( sRequest );
+		if ( atomic_fetch_sub( &sRequest->cowRequest->workCounter, 1 ) == 1 ) {
+			finishWriteRequest( sRequest->dRequest.fuse_req, sRequest->cowRequest );
+		}
 		return;
 	}
 }
@@ -1115,7 +1156,6 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 		// half end block will be padded with original write
 		pSize = pSize - ( ( pSize + offset ) % DNBD3_BLOCK_SIZE );
 		atomic_fetch_add( &cowRequest->workCounter, 1 );
-		//TODO FIX that its actually 0
 		cowfile_write( req, cowRequest, metadata->imageSize, pSize );
 	}
 
@@ -1199,9 +1239,9 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
  * @param buffer into which the data is to be written
  * @param workCounter workCounter is increased by one and later reduced by one again when the request is completed.
  */
-static void readRemote( fuse_req_t req, off_t offset, ssize_t size, char * buffer, cow_request_t *cowRequest )
+static void readRemote( fuse_req_t req, off_t offset, ssize_t size, char *buffer, cow_request_t *cowRequest )
 {
-	cow_sub_request_t *sRequest = malloc( sizeof( cow_sub_request_t ));
+	cow_sub_request_t *sRequest = malloc( sizeof( cow_sub_request_t ) );
 	sRequest->callback = readRemoteData;
 	sRequest->dRequest.length = (uint32_t)size;
 	sRequest->dRequest.offset = offset;
@@ -1211,10 +1251,13 @@ static void readRemote( fuse_req_t req, off_t offset, ssize_t size, char * buffe
 
 	atomic_fetch_add( &cowRequest->workCounter, 1 );
 	if ( !connection_read( &sRequest->dRequest ) ) {
-		atomic_fetch_sub( &cowRequest->workCounter, 1 );
-		//TODO ChECK IF NOT  0  Now
 		cowRequest->errorCode = EIO;
 		free( sRequest );
+		if ( atomic_fetch_sub( &cowRequest->workCounter, 1 ) == 1 ) {
+			fuse_reply_buf( req, cowRequest->readBuffer, cowRequest->bytesWorkedOn );
+		}
+		free( cowRequest->readBuffer );
+		free( cowRequest );
 		return;
 	}
 }
@@ -1282,7 +1325,8 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 		if ( doRead || searchOffset >= endOffset ) {
 			ssize_t sizeToRead = MIN( searchOffset, endOffset ) - lastReadOffset;
 			if ( !isLocal ) {
-				readRemote( req, lastReadOffset, sizeToRead, cowRequest->readBuffer + ( lastReadOffset - offset ), cowRequest );
+				readRemote(
+						req, lastReadOffset, sizeToRead, cowRequest->readBuffer + ( lastReadOffset - offset ), cowRequest );
 			} else {
 				// Compute the offset in the data file where the read starts
 				off_t localRead =
@@ -1339,11 +1383,11 @@ fail:;
 void cowfile_close()
 {
 	uploadLoop = false;
-	if ( statFile || statStdout) { 
+	if ( statFile || statStdout ) {
 		pthread_join( tidStatUpdater, NULL );
 	}
 	pthread_join( tidCowUploader, NULL );
-	
+
 	if ( curl ) {
 		curl_global_cleanup();
 		curl_easy_cleanup( curl );
