@@ -31,7 +31,7 @@ static struct cow
 } cow;
 
 /**
- * @brief computes the l1 offset from the absolute file offset
+ * @brief Computes the l1 offset from the absolute file offset
  * 
  * @param offset absolute file offset
  * @return int l2 offset
@@ -42,7 +42,7 @@ static int getL1Offset( size_t offset )
 }
 
 /**
- * @brief computes the l2 offset from the absolute file offset
+ * @brief Computes the l2 offset from the absolute file offset
  * 
  * @param offset absolute file offset
  * @return int l2 offset
@@ -53,7 +53,7 @@ static int getL2Offset( size_t offset )
 }
 
 /**
- * @brief computes the bit in the bitfield from the absolute file offset
+ * @brief Computes the bit in the bitfield from the absolute file offset
  * 
  * @param offset absolute file offset
  * @return int bit(0-319) in the bitfield
@@ -64,7 +64,7 @@ static int getBitfieldOffset( size_t offset )
 }
 
 /**
- * @brief sets the specified bits in the specified range threadsafe to 1.
+ * @brief Sets the specified bits in the specified range threadsafe to 1.
  * 
  * @param byte of a bitfield
  * @param from start bit
@@ -77,7 +77,7 @@ static void setBits( atomic_char *byte, int from, int to )
 }
 
 /**
- * @brief sets the specified bits in the specified range threadsafe to 1.
+ * @brief Sets the specified bits in the specified range threadsafe to 1.
  * 
  * @param bitfield of a cow_block_metadata
  * @param from start bit
@@ -96,7 +96,7 @@ static void setBitsInBitfield( atomic_char *bitfield, int from, int to )
 }
 
 /**
- * @brief Checks if the n bit of an bitfield is 0 or 1.
+ * @brief Checks if the n bit of a bit field is 0 or 1.
  * 
  * @param bitfield of a cow_block_metadata
  * @param n the bit which should be checked
@@ -112,11 +112,11 @@ static bool checkBit( atomic_char *bitfield, int n )
  * the server sends back data.
  * for more details see: https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION .html
  *  
- * @param buffer contains the response data from the server
+ * @param buffer that contains the response data from the server
  * @param itemSize size of one item
  * @param nitems number of items
- * @param response our userdata which will later contain the uuid
- * @return size_t size we have read
+ * @param response userdata which will later contain the uuid
+ * @return size_t size that have been read
  */
 size_t curlCallbackCreateSession( char *buffer, size_t itemSize, size_t nitems, void *response )
 {
@@ -131,7 +131,7 @@ size_t curlCallbackCreateSession( char *buffer, size_t itemSize, size_t nitems, 
 }
 
 /**
- * @brief Create a Session with the cow server and gets the session guid
+ * @brief Create a Session with the cow server and gets the session guid.
  * 
  * @param imageName 
  * @param version of the original Image
@@ -190,13 +190,13 @@ bool createSession( const char *imageName, uint16_t version )
 }
 
 /**
- * @brief Implementation of CURLOPT_READFUNCTION, this function will first send the bitfield and
+ * @brief Implementation of CURLOPT_READFUNCTION, this function will first send the bit field and
  * then the block data in one bitstream. this function is usually called multiple times per block,
  * because the buffer is usually not large for one block and its bitfield.
  * for more details see: https://curl.se/libcurl/c/CURLOPT_READFUNCTION.html
  * 
  * @param ptr to the buffer
- * @param size size of one element in buffer
+ * @param size of one element in buffer
  * @param nmemb number of elements in buffer
  * @param userdata from CURLOPT_READFUNCTION
  * @return size_t size written in buffer
@@ -229,7 +229,7 @@ size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb, void *
 
 
 /**
- * @brief requests the merging of the image on the cow server
+ * @brief Requests the merging of the image on the cow server.
 
  */
 bool mergeRequest()
@@ -277,7 +277,7 @@ bool mergeRequest()
 }
 
 /**
- * @brief wrapper for mergeRequest so if its fails it will be tried again.
+ * @brief Wrapper for mergeRequest so if its fails it will be tried again.
  * 
  */
 void startMerge()
@@ -375,7 +375,7 @@ int cmpfunc( const void *a, const void *b )
 	return (int)( ( (cow_block_upload_statistics_t *)b )->uploads - ( (cow_block_upload_statistics_t *)a )->uploads );
 }
 /**
- * @brief writes all block numbers sorted by the number of uploads into the statsfile
+ * @brief Writes all block numbers sorted by the number of uploads into the statsfile.
  * 
  */
 void dumpBlockUploads()
@@ -406,10 +406,10 @@ void dumpBlockUploads()
 }
 
 /**
- * @brief Starts the upload of a given block
+ * @brief Starts the upload of a given block.
  * 
  * @param cm Curl_multi
- * @param curlUploadBlock cow_curl_read_upload_t containing the data for the block to upload
+ * @param curlUploadBlock containing the data for the block to upload.
  */
 bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_slist *headers )
 {
@@ -424,6 +424,10 @@ bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_
 	curl_easy_setopt( eh, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
 	curl_easy_setopt( eh, CURLOPT_READDATA, (void *)curlUploadBlock );
 	curl_easy_setopt( eh, CURLOPT_PRIVATE, (void *)curlUploadBlock );
+	// min upload speed of 1kb/s over 10 sec otherwise the upload is canceled.
+	curl_easy_setopt( eh, CURLOPT_LOW_SPEED_TIME, 10L);
+  	curl_easy_setopt( eh, CURLOPT_LOW_SPEED_LIMIT, 1000L);
+
 	curl_easy_setopt(
 			eh, CURLOPT_POSTFIELDSIZE_LARGE, (long)( metadata->bitfieldSize + COW_METADATA_STORAGE_CAPACITY ) );
 	if ( COW_SHOW_UL_SPEED ) {
@@ -445,8 +449,8 @@ bool addUpload( CURLM *cm, cow_curl_read_upload_t *curlUploadBlock, struct curl_
  * 
  * @param cm Curl_multi
  * @param msg CURLMsg
- * @return true returned if upload was successful or retries still possible
- * @return false returned if upload was unsuccessful
+ * @return true returned if the upload was successful or retries are still possible.
+ * @return false returned if the upload was unsuccessful.
  */
 bool finishUpload( CURLM *cm, CURLMsg *msg, struct curl_slist *headers )
 {
