@@ -10,20 +10,20 @@
 
 # Introduction
 
-This extension to the fuse dnbd3 client allows it to mount images writable. The changes to a writable mounted image will be stored in a separate file (also called Copy on Write (Cow)) on the client computer. These changes are uploaded in the background to the cow server. Once the user unmounts the images, all remaining changes will be uploaded. Then the image will be merged on the server (if set so in the startup parameters).
+This extension to the fuse dnbd3 client allows images to be mounted writable. The changes are saved in a separate file (also called Copy on Write, cow for short) on the client computer. These changes are uploaded to the cow server in the background. Once the user unmounts the image, any remaining changes are uploaded. As soon as all changes have been uploaded, the changes can be merged into a copy of the original image on the cow server (this can be set in the start parameters).
 
-
+A typical use case is updating or adding software to an existing image.
 
 # Usage
 
 ### New Parameters
-- `-c <path>` Enables the cow functionality, the argument sets the path for the temporary `meta` and `data` file in which the writes are stored
+- `-c <path>` Enables the cow functionality, the argument sets the path for the temporary `meta` and `data` file in which the writes are stored.
 - `-C <address>` sets the address of the cow server. The cow server is responsible for merging the original image with the changes from the client.
 - `-L <path>` Similar to `-c <path>` but instead of creating a new session, it loads an existing from the given path.
 - `-m` if set, the client will request a merge after the image is unmounted and all change are uploaded.
 
-- `--cowStatStdout` creates a status file at the same location as the data and meta file. The file contains information about the current session, for more information see [here](#status).
-- `--cowStatFile` similar to `--cowStatStdout` but the information will be printed in the stdout.
+- `cowStatFile` creates a status file at the same location as the data and meta file. The file contains information about the current session, for more information see [here](#status).
+- `--cowStatStdout` similar to `--cowStatFile` but the information will be printed in the stdout.
 
 Example parameters for creating a new cow session:
 ```
@@ -44,7 +44,7 @@ The data structure is split in two main parts. The actual data from the write on
 
 ### Blockmetadata
 
-![Datastructure](img/Bild1.jpg)
+![Datastructure](img/datastructure.jpg)
 
 The data structure for storing metadata cow blocks contains a Layer 1(L1) and a Layer 2 (L2). L1 contains pointers to the L2's.
 The whole L1 array is initialized at the beginning and cannot be resized, so the size of the L1 array limits the total size of the image.
