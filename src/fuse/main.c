@@ -345,8 +345,9 @@ static void printUsage( char *argv0, int exitCode )
 	struct fuse_args args = FUSE_ARGS_INIT( 2, arg );
 	fuse_parse_cmdline( &args, NULL, NULL, NULL );
 	printf( "\n" );
-	printf( "Usage: %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
-	printf( "Or:    %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
+	printf( "Usage:   %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
+	printf( "Or:      %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
+	printf( "For cow: %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] -c <path> -C <cowServerAddress> -m [--cowStatStdout] [--cowStatFile] <mountPoint>\n", argv0 );
 	printf( "   -d --debug      Don't fork, write stats file, and print debug output (fuse -> stderr, dnbd3 -> stdout)\n" );
 	printf( "   -f              Don't fork (dnbd3 -> stdout)\n" );
 	printf( "   -h --host       List of space separated hosts to use\n" );
@@ -356,11 +357,11 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -r --rid        Revision to use (omit or pass 0 for latest)\n" );
 	printf( "   -S --sticky     Use only servers from command line (no learning from servers)\n" );
 	printf( "   -s              Single threaded mode\n" );
-	printf( "   -c <path>       Enables cow, creates the cow files at given path\n" );
-	printf( "   -L <path>       Loads the cow files from a given path\n" );
-	printf( "   -C --host       Host address of the cow server\n" );
-	printf( "   --cowStatStdout prints the cow status in stdout" );
-	printf( "   --cowStatFile   creates and updates the cow status file" );
+	printf( "   -c              Enables cow, creates the cow files at given location\n" );
+	printf( "   -L              Loads the cow files from the given location\n" );
+	printf( "   -C              Host address of the cow server\n" );
+	printf( "   --cowStatStdout prints the cow status in stdout\n" );
+	printf( "   --cowStatFile   creates and updates the cow status file\n" );
 	exit( exitCode );
 }
 
@@ -509,6 +510,7 @@ int main( int argc, char *argv[] )
 		}
 	}
 	if( useCow && cow_server_address == NULL ) {
+		printf( "for -c you also need a cow server address. Please also use -C --host \n" );
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 	if( cow_merge_after_upload && !useCow ) {
@@ -516,6 +518,11 @@ int main( int argc, char *argv[] )
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 	if ( loadCow ) {
+		if( cow_server_address == NULL ) {
+			printf( "for -L you also need a cow server address. Please also use -C --host \n" );
+			printUsage( argv[0], EXIT_FAILURE );
+		}
+
 		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address, sStdout, sFile ) ) {
 			return EXIT_FAILURE;
 		}
