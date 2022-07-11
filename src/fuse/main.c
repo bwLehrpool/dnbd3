@@ -269,7 +269,6 @@ static void image_ll_write( fuse_req_t req, fuse_ino_t ino, const char *buf, siz
 	cowRequest->writeBuffer = buf;
 	cowRequest->readBuffer = NULL;
 	cowRequest->errorCode = ATOMIC_VAR_INIT( 0 );
-	cowRequest->replyAttr = false;
 	cowRequest->fuseRequestOffset = off;
 	cowRequest->bytesWorkedOn = ATOMIC_VAR_INIT( 0 );
 	cowfile_write(req, cowRequest, off, size);
@@ -283,18 +282,8 @@ static void image_ll_setattr( fuse_req_t req, fuse_ino_t ino, struct stat *attr,
 	}
 	if (to_set & FUSE_SET_ATTR_SIZE) {
 		if(attr->st_size  > (long)*imageSizePtr) {
-			cow_request_t* cowRequest = malloc(sizeof(cow_request_t));
-			cowRequest->fuseRequestSize = attr->st_size - *imageSizePtr;
-			cowRequest->workCounter = ATOMIC_VAR_INIT( 1 );
-			cowRequest->writeBuffer = NULL;
-			cowRequest->readBuffer = NULL;
-			cowRequest->errorCode = ATOMIC_VAR_INIT( 0 );
-			cowRequest->replyAttr = true;
-			cowRequest->fi = fi;
-			cowRequest->ino = ino;
-			cowRequest->fuseRequestOffset = *imageSizePtr;
-			cowRequest->bytesWorkedOn = ATOMIC_VAR_INIT( 0 );
-			cowfile_write( req,  cowRequest, *imageSizePtr, attr->st_size - *imageSizePtr);
+			
+			cowfile_setSize( req,   attr->st_size, ino, fi);
 		}
 		else{
 			*imageSizePtr = attr->st_size;
