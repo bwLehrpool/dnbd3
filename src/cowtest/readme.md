@@ -18,8 +18,9 @@ This test suit is for verifying that the fuse cow implementation works correctly
 - `-c <path>` generates a test image at given path. This image should be loaded for the tests to work.
 - `-t <path>` runs the tests on the image at the given past.
 - `-v <path>` verifies that previous tests on the image were successful (also reads the image completely).
+- `-r <mountedImagePath> <normalImagePath>` random writes and changes size of two images. After a key press both images are compared for equalness. 
 
-### Example Usage
+### Example usage for standard test
 
 1. Generate the test image with `-c <path>` and copy it to the image location of the dnbd3 server. Also make sure that the cow servers `OriginalImageDirectory` points to the same Directory or copied in that Directory too. This step is only needed once for  setting up.
 2. Start the dnbd3 and cow server.
@@ -29,6 +30,17 @@ This test suit is for verifying that the fuse cow implementation works correctly
 6. Optional unmount the image and then load it again (with `-L <path>` in the fuse client). Then verify the loaded image with `-v <path>`.
 7. Unmount and merge the image.
 8. Verify the merged image from the cow server with `-v <path>`.
+
+### Example usage for random writes
+1. Generate the test image with `-c <path>` and copy it to the image location of the dnbd3 server. Also make sure that the cow servers `OriginalImageDirectory` points to the same Directory or copied in that Directory too. This step is only needed once for  setting up.
+2. Copy the generated image to another location.
+3. Start the dnbd3 and cow server.
+4. Mount the image in cow mode.
+5. Run the test with `-t <mountedImagePath> <normalImagePath>`, where the `<mountedImagePath>` points to the mounted image and `<normalImagePath>` points to the copied image on the disk.
+6. After some time press enter and both images will be compared for equalness.
+7. Unmount the image and merge.
+8. Run `-r <mountedImagePath> <normalImagePath>` where the `<mountedImagePath>` points to the merged image and `<normalImagePath>` points to the copied image on the disk. This will verify that the merged image is equal to the image on the disk.
+
 
 
 # Tests

@@ -10,7 +10,9 @@
 #include <sys/stat.h>
 #include <stdint.h>
 #include <dnbd3/types.h>
-
+#include <stdatomic.h>
+#include <time.h>
+#include <pthread.h>
 
 typedef bool ( *func_ptr )();
 typedef struct verify_test
@@ -20,12 +22,21 @@ typedef struct verify_test
 	func_ptr test;
 } verify_test_t;
 
+typedef struct random_write_args
+{
+	char *mountedImage;
+	char *normalImage;
+} random_write_args_t;
 
 const size_t l2Size = 1024;
 const size_t bitfieldByteSize = 40;
 const size_t l2Capacity = l2Size * DNBD3_BLOCK_SIZE * bitfieldByteSize * 8;
-
 const size_t testFileSize = l2Capacity * 2.9L;
+
+#define MAX_WRITE_SIZE 4096 * 320
+#define TRUNCATE_PROBABILITY 5
+#define UNALIGNED_WRITE_PROBABILITY 5
+
 
 int delay = 0;
 static char filePath[400];
@@ -66,6 +77,8 @@ void printUsage()
 	printf( "   c <path>      Creates test file at the path. \n" );
 	printf( "   t <path>      Runs the standard test procedure. \n" );
 	printf( "   v <path>      verifies a file. \n" );
+	printf(
+			"	r <mountedImage> <normalImage> randomly writes in both images and after cancel compares them if they are equal." );
 }
 
 void printCharInHexadecimal( const char *str, int len )
@@ -116,6 +129,24 @@ bool writeSizeTested( int fh, char *buf, ssize_t size, off_t off, char *error )
 	return true;
 }
 
+bool changeFileSizeAndVerify( char *filePath, size_t size )
+{
+	if ( truncate( filePath, size ) != 0 ) {
+		perror( "truncate failed: " );
+		return false;
+	}
+	// verify
+	struct stat st;
+	stat( filePath, &st );
+	size_t newSize = st.st_size;
+
+	if ( size != newSize ) {
+		printf( "truncate failed, wrong file size\n expectedSize: %zu\n got: %zu\n", size, newSize );
+		return false;
+	}
+	return true;
+}
+
 bool verifySingleBit()
 {
 	char buff[DNBD3_BLOCK_SIZE];
@@ -128,7 +159,7 @@ bool verifySingleBit()
 		return false;
 
 	expected[0] = 0;
-	expected[DNBD3_BLOCK_SIZE/2] = 1;
+	expected[DNBD3_BLOCK_SIZE / 2] = 1;
 	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second read to small" ) )
 		return false;
 	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second write not as expected" ) )
@@ -157,7 +188,8 @@ bool testSingleBit()
 	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second read" ) )
 		return false;
 	expected[0] = 1;
-	if ( !writeSizeTested( fh, expected, 1, DNBD3_BLOCK_SIZE + DNBD3_BLOCK_SIZE / 2 , "SingleBit test Failed: second write failed" ) )
+	if ( !writeSizeTested(
+				  fh, expected, 1, DNBD3_BLOCK_SIZE + DNBD3_BLOCK_SIZE / 2, "SingleBit test Failed: second write failed" ) )
 		return false;
 	return verifySingleBit();
 }
@@ -316,20 +348,10 @@ bool fileSizeChanges()
 {
 	// increase filesize
 
-	printf( "Truncate file to: %zu\n", testFileSize + 2 * l2Capacity );
-	if ( truncate( filePath, testFileSize + 2 * l2Capacity ) != 0 ) {
-		perror( "fileSizeChanges test Failed: first truncate failed." );
+	if ( !changeFileSizeAndVerify( filePath, testFileSize + 2 * l2Capacity ) ) {
 		return false;
 	}
-	// verify
-	struct stat st;
-	stat( filePath, &st );
-	size_t size = st.st_size;
 
-	if ( size != testFileSize + 2 * l2Capacity ) {
-		printf( "fileSizeChanges test Failed\n expectedSize: %zu\n got: %zu\n", testFileSize + 2 * l2Capacity, size );
-		return false;
-	}
 	// check if increased is 0
 	char buff[DNBD3_BLOCK_SIZE * 10];
 	char expected[DNBD3_BLOCK_SIZE * 10];
@@ -353,33 +375,16 @@ bool fileSizeChanges()
 	printf( "writes to new Block Ok\n" );
 	// decrease filesize
 	printf( "Truncate file to: %zu \n", testFileSize );
-	if ( truncate( filePath, testFileSize ) != 0 ) {
-		perror( "fileSizeChanges test Failed: second truncate failed." );
-		return false;
-	}
-	// verify
-	printf( "truncate done, verifying...\n" );
-	stat( filePath, &st );
-	size = st.st_size;
-	if ( size != testFileSize ) {
-		printf(
-				"fileSizeChanges test Failed, decrease not worked.\n expectedSize: %zu\n got: %zu\n", testFileSize, size );
+	if ( !changeFileSizeAndVerify( filePath, testFileSize ) ) {
 		return false;
 	}
 	printf( "size verified\n" );
 	// increase again, check its 0 again
 	printf( "Truncate file to: %zu\n", testFileSize + 2 * l2Capacity );
-	if ( truncate( filePath, testFileSize + 2 * l2Capacity ) != 0 ) {
-		perror( "fileSizeChanges test Failed: second increase failed." );
+	if ( !changeFileSizeAndVerify( filePath, testFileSize + 2 * l2Capacity ) ) {
 		return false;
 	}
-	printf( "truncate done, verifying...\n" );
-	stat( filePath, &st );
-	size = st.st_size;
-	if ( size != ( testFileSize + 2 * l2Capacity ) ) {
-		printf( "fileSizeChanges test Failed, increase not worked.\n expectedSize: %zu\n got: %zu\n", testFileSize, size );
-		return false;
-	}
+
 	printf( "size verified\n" );
 	memset( expected, 0, DNBD3_BLOCK_SIZE * 10 );
 
@@ -448,13 +453,14 @@ bool interleavedTest()
 	return verifyInterleavedTest();
 }
 
-bool verifyMultipleWrites(){
+bool verifyMultipleWrites()
+{
 	size_t size = DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize;
 	char buff[size];
 	char expected[size];
 	off_t offset = 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize;
 	memset( expected, 3, size );
-	if ( !readSizeTested( fh, buff, size , offset, "multipleWrites test Failed: read to small" ) )
+	if ( !readSizeTested( fh, buff, size, offset, "multipleWrites test Failed: read to small" ) )
 		return false;
 	if ( !compare( buff, expected, size, "multipleWrites: read incorrect data" ) )
 		return false;
@@ -462,14 +468,15 @@ bool verifyMultipleWrites(){
 	return true;
 }
 
-bool multipleWrites(){
+bool multipleWrites()
+{
 	printf( "starting multipleWrites\n" );
 	size_t size = DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize;
 	char buff[size];
 	char expected[size];
 	off_t offset = 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize;
-	
-	for (int i = 1; i <= 3; i++ ){
+
+	for ( int i = 1; i <= 3; i++ ) {
 		printf( "multipleWrites: %i/3 \n", i );
 
 		memset( expected, i, size );
@@ -479,14 +486,13 @@ bool multipleWrites(){
 			return false;
 		if ( !compare( buff, expected, size, "multipleWrites: read incorrect data" ) )
 			return false;
-		if( delay > 0 && i < 3 ){
+		if ( delay > 0 && i < 3 ) {
 			printf( "waiting %is\n", delay );
-			sleep(delay);
+			sleep( delay );
 		}
 	}
 	return verifyMultipleWrites();
 }
-
 
 
 void runTest( char *path )
@@ -513,7 +519,7 @@ void runTest( char *path )
 		return;
 	if ( !interleavedTest() )
 		return;
-	if ( !multipleWrites() ){
+	if ( !multipleWrites() ) {
 		return;
 	}
 	if ( !writeLongNonAlignedPattern() ) {
@@ -529,12 +535,13 @@ void verifyTests( verify_test_t *tests )
 {
 	// offset, size, function
 
-	tests[0] = ( verify_test_t ){ 0, 2 * DNBD3_BLOCK_SIZE, verifySingleBit};
+	tests[0] = ( verify_test_t ){ 0, 2 * DNBD3_BLOCK_SIZE, verifySingleBit };
 	tests[1] = ( verify_test_t ){ DNBD3_BLOCK_SIZE * 3, DNBD3_BLOCK_SIZE * 3, verifyWriteOverTwoBlocks };
 	tests[2] = ( verify_test_t ){ DNBD3_BLOCK_SIZE * 11 - DNBD3_BLOCK_SIZE / 2, DNBD3_BLOCK_SIZE * 2,
 		verifyWriteNotOnBlockBorder };
 	tests[3] = ( verify_test_t ){ 35 * DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 10, verifyInterleavedTest };
-	tests[4] = ( verify_test_t ){ 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize, DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize, verifyMultipleWrites };
+	tests[4] = ( verify_test_t ){ 100 * DNBD3_BLOCK_SIZE * bitfieldByteSize, DNBD3_BLOCK_SIZE * 10 * bitfieldByteSize,
+		verifyMultipleWrites };
 	tests[5] = ( verify_test_t ){ l2Capacity * 2 - DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE * 2, verifyWriteOverL2 };
 	tests[6] = ( verify_test_t ){ l2Capacity * 3 - 1, l2Capacity + 2, verifyLongNonAlignedPattern };
 }
@@ -603,45 +610,214 @@ void verifyFinalFile( char *path )
 }
 
 
+void generateRandomData( int fhr, char *dest, size_t size )
+{
+	read( fhr, dest, size );
+}
+
+
+atomic_bool randomTestLoop = true;
+
+void printProgress( float progress )
+{
+	progress = MIN( 1, progress );
+	progress = MAX( 0, progress );
+	int barWidth = 50;
+	char buf[barWidth + 1];
+	buf[barWidth] = 0;
+	int pos = (int)( (float) barWidth * progress );
+	memset( buf, '=', pos );
+	memset( ( buf + pos ), ' ', ( barWidth - pos ) );
+	printf( "\033[F[%s] %i%%\n", buf, (int)( progress * 100 ) );
+}
+
+void compareTwoFiles( char * mountedImagePath, char * normalImagePath, int fhm, int fhn) {
+	char buf[MAX_WRITE_SIZE];
+	char exBuf[MAX_WRITE_SIZE];
+	off_t offset = 0;
+	struct stat st;
+	stat( mountedImagePath, &st );
+	size_t sizeMounted = st.st_size;
+	stat( normalImagePath, &st );
+	size_t sizeNormal = st.st_size;
+
+	if ( sizeMounted != sizeNormal ) {
+		printf( "Error size difference, mounted: %zu normal: %zu \n", sizeMounted, sizeNormal );
+		return;
+	}
+	while ( offset < (off_t)sizeMounted ) {
+		size_t sizeToRead = MIN( MAX_WRITE_SIZE, sizeMounted - offset );
+		read( fhm, buf, sizeToRead );
+
+		read( fhn, exBuf, sizeToRead );
+
+		if ( memcmp( buf, exBuf, sizeToRead ) != 0 ) {
+			printf( "Error: Different data  offset: %zu size:%zu\n", offset, sizeToRead );
+			return;
+		}
+
+		offset += sizeToRead;
+		printProgress( ( (float)offset ) / ( (float)sizeMounted ) );
+	}
+	printf( "\nTest successful !!!\n" );
+}
+
+void startCompareTwoFiles( char * mountedImagePath, char * normalImagePath ) {
+	int fhm, fhn;
+	if ( ( fhm = open( mountedImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
+		perror( "Could not open mounted Image" );
+		printf( "Given path: %s \n", mountedImagePath );
+		return;
+	}
+	if ( ( fhn = open( normalImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
+		perror( "Could not open mounted Image" );
+		printf( "Given path: %s \n", normalImagePath );
+		return;
+	}
+	compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn);
+}
+
+void *randomWriteTest( void *args )
+{
+	char *mountedImagePath = ( (random_write_args_t *)args )->mountedImage;
+	char *normalImagePath = ( (random_write_args_t *)args )->normalImage;
+	free( args );
+	int fhm;
+	int fhn;
+	int fhr;
+	srand( (unsigned)time( NULL ) );
+	char buf[MAX_WRITE_SIZE];
+
+	printf( "===starting random write test ===\n" );
+	printf( "mounted image path %s\n", mountedImagePath );
+	printf( "normal image path %s\n", normalImagePath );
+
+	size_t maxOffset = (size_t)( testFileSize * 1.1L );
+
+	if ( ( fhm = open( mountedImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
+		perror( "Could not open mounted Image" );
+		printf( "Given path: %s \n", mountedImagePath );
+		return NULL;
+	}
+	if ( ( fhn = open( normalImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
+		perror( "Could not open mounted Image" );
+		printf( "Given path: %s \n", normalImagePath );
+		return NULL;
+	}
+	if ( ( fhr = open( "/dev/urandom", O_RDONLY ) ) == -1 ) {
+		perror( "Could not open /dev/urandom" );
+		return NULL;
+	}
+
+	// RANDOM WRITE LOOP
+	printf( "Press any key to cancel\n" );
+	while ( randomTestLoop ) {
+		//select test
+		int r = rand() % 100;
+
+		if ( r < TRUNCATE_PROBABILITY ) {
+			// truncate both images
+			size_t size = (size_t)( ( rand() % (int)( (double) testFileSize * 0.2 ) ) + (double) testFileSize * 0.9 );
+			printf( "change filesize to: %zu\n", size );
+			if ( !changeFileSizeAndVerify( mountedImagePath, size ) ) {
+				return NULL;
+			}
+			if ( !changeFileSizeAndVerify( normalImagePath, size ) ) {
+				return NULL;
+			}
+
+		} else {
+			off_t offset = rand() % maxOffset;
+			size_t size = rand() % MAX_WRITE_SIZE;
+			size = MAX( size, 1 );
+			if ( r > TRUNCATE_PROBABILITY + UNALIGNED_WRITE_PROBABILITY ) {
+				offset = offset - ( offset % 4096 );
+				size = MAX( size - ( size % 4096 ), 4096 );
+			}
+
+			generateRandomData( fhr, buf, size );
+			printf( "write offset: %zu size: %zu\n", offset, size );
+			if ( !writeSizeTested( fhm, buf, size, offset, "failed to write on mounted image" ) )
+				return NULL;
+			if ( !writeSizeTested( fhn, buf, size, offset, "failed to write on normal image" ) )
+				return NULL;
+		}
+	}
+
+	// COMPARE BOTH IMAGES
+	printf( "comparing both files: \n\n" );
+	compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
+	
+	return NULL;
+}
+
+
+void startRandomWriteTest( char *mountedImagePath, char *normalImagePath )
+{
+	// start Thread
+
+	pthread_t tid;
+	random_write_args_t *args = malloc( sizeof( random_write_args_t ) );
+
+	args->mountedImage = mountedImagePath;
+
+	args->normalImage = normalImagePath;
+	pthread_create( &tid, NULL, &randomWriteTest, args );
+	// wait for key
+	getchar();
+	randomTestLoop = false;
+	pthread_join( tid, NULL );
+}
 
 int main( int argc, char *argv[] )
 {
-	if ( argc < 1 ){
+	if ( argc < 1 ) {
 		printUsage();
 		return 0;
 	}
 	int opt;
-	while ((opt = getopt(argc, argv, "d:c:t:v:")) != -1) 
-    {
+	while ( ( opt = getopt( argc, argv, "d:c:t:v:r:x:" ) ) != -1 ) {
+		char *pEnd;
 
-		printf( "res: %i", opt );
-		char * pEnd;
-		
-        switch ( opt )
-        {
-            case 'd':
-				
-				delay =(int) strtol ( optarg, &pEnd, 10 );
-				printf("Delay set to %i\n", delay);
-                break;
-            case 'c':
-				generateTestFile( optarg, testFileSize );
-				break;
-			case 't':
-				printf( "starting standard test\n" );
-				runTest( optarg );
-				break;
-			case 'v':
-				printf( "verifying file \n" );
-				verifyFinalFile( optarg );
-		break;
-            default: 
+		switch ( opt ) {
+		case 'd':
+			delay = (int)strtol( optarg, &pEnd, 10 );
+			printf( "Delay set to %i\n", delay );
+			break;
+		case 'c': 
+			generateTestFile( optarg, testFileSize ); 
+			break;
+		case 't':
+			printf( "starting standard test\n" );
+			runTest( optarg );
+			break;
+		case 'v':
+			printf( "verifying file \n" );
+			verifyFinalFile( optarg );
+			break;
+		case 'r':
+			if ( optind >= argc ) {
 				printUsage();
 				return 0;
-                break;
-        }
-    }
+			}
+			startRandomWriteTest( optarg, argv[optind] );
+			return 0;
+			break;
+		case 'x':
+			
+			if ( optind >= argc ) {
+				printUsage();
+				return 0;
+			}
+			startCompareTwoFiles( optarg, argv[optind] );
+			return 0;
+			break;
+
+		default:
+			printUsage();
+			return 0;
+			break;
+		}
+	}
 	return 0;
 }
-
-
