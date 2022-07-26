@@ -25,10 +25,11 @@ _Static_assert( ATOMIC_LLONG_LOCK_FREE == 2, "ATOMIC LLONG not lock free" );
 _Static_assert( sizeof( atomic_uint_least64_t ) == 8, "atomic_uint_least64_t not 8 byte" );
 _Static_assert( sizeof( atomic_int_least64_t ) == 8, "atomic_int_least64_t not 8 byte" );
 
-enum dataSource {
-    local,
-    remote,
-    zero
+enum dataSource
+{
+	local,
+	remote,
+	zero
 };
 
 #define COW_METADATA_HEADER_SIZE 320
@@ -124,7 +125,7 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 
 void cowfile_handleCallback( dnbd3_async_t *request );
 
-void cowfile_setSize( fuse_req_t req, size_t size , fuse_ino_t ino, struct fuse_file_info *fi) ;
+void cowfile_setSize( fuse_req_t req, size_t size, fuse_ino_t ino, struct fuse_file_info *fi );
 
 void readRemoteData( cow_sub_request_t *sRequest );
 

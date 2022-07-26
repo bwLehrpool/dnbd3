@@ -263,6 +263,13 @@ Used for uploading a block of data. The blocknumber is the absolute block number
 ### /api/File/StartMerge
 
 #### POST
+##### Parameters
+
+| Name | Located in | Description | Required | Schema |
+| ---- | ---------- | ----------- | -------- | ---- |
+| guid | Form |  | Yes | string (uuid) |
+| originalFileSize | Form |  | Yes | integer |
+| newFileSize | Form |  | Yes | integer |
 ##### Responses
 
 | Code | Description |

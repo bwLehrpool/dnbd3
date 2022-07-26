@@ -281,14 +281,7 @@ static void image_ll_setattr( fuse_req_t req, fuse_ino_t ino, struct stat *attr,
 		return;
 	}
 	if (to_set & FUSE_SET_ATTR_SIZE) {
-		if(attr->st_size  > (long)*imageSizePtr) {
-			
-			cowfile_setSize( req,   attr->st_size, ino, fi);
-		}
-		else{
-			*imageSizePtr = attr->st_size;
-			image_ll_getattr(req, ino, fi);
-		}
+		cowfile_setSize( req,   attr->st_size, ino, fi);
 	}
 }
 
