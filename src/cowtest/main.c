@@ -63,12 +63,12 @@ bool printOnError = true;
  * @param size Size of the file in byte
  */
 
-void generateTestFile( char *path, size_t size )
+bool generateTestFile( char *path, size_t size )
 {
 	int fh;
 	if ( ( fh = open( path, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		perror( "Could not create test file: " );
-		return;
+		return false;
 	}
 	/*
 	if ( ftruncate( fh, size ) == -1 ) {
@@ -85,18 +85,18 @@ void generateTestFile( char *path, size_t size )
 		ssize_t tmp = pwrite( fh, buf, sizeToWrite, writtenSize );
 		if ( tmp == 0 ) {
 			printf( "Error while populating the test file:  " );
-			return;
+			return false;
 		}
 		if ( tmp == -1 ) {
 			perror( "Error while populating the test file:  " );
-			return;
+			return false;
 		}
 		writtenSize += tmp;
 	}
 
 	close( fh );
 	printf( "Generated Test File of size: %zu bytes. \n", size );
-	//todo write markers:
+	return true;
 }
 
 
@@ -588,7 +588,7 @@ bool multipleWrites()
 }
 
 
-void runTest( char *path )
+bool runTest( char *path )
 {
 	if ( ( fh = open( path, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		perror( "Could not open test file" );
@@ -599,28 +599,29 @@ void runTest( char *path )
 	printf( "file opened: %s\n", path );
 
 	if ( !testSingleBit() )
-		return;
+		return false;
 	if ( !writeOverTwoBlocks() )
-		return;
+		return false;
 
 	if ( !writeNotOnBlockBorder() )
-		return;
+		return false;
 
 	if ( !writeOverL2() )
-		return;
+		return false;
 	if ( !fileSizeChanges() )
-		return;
+		return false;
 	if ( !interleavedTest() )
-		return;
+		return false;
 	if ( !multipleWrites() ) {
-		return;
+		return false;
 	}
 	if ( !writeLongNonAlignedPattern() ) {
-		return;
+		return false;
 	}
 
 
 	printf( "All test's successful.\n" );
+	return true;
 }
 
 
@@ -642,12 +643,12 @@ void verifyTests( verify_test_t *tests )
 	tests[7] = ( verify_test_t ){ l2Capacity * 3 - 1, l2Capacity + 2, verifyLongNonAlignedPattern };
 }
 
-void verifyFinalFile( char *path )
+bool verifyFinalFile( char *path )
 {
 	if ( ( fh = open( path, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		perror( "Could not open test file" );
 		printf( "Given path: %s \n", path );
-		return;
+		return false;
 	}
 	// verify file size
 
@@ -657,7 +658,7 @@ void verifyFinalFile( char *path )
 	size_t size = st.st_size;
 	if ( size != fileSize ) {
 		printf( "verify Failed, wrong file size\n expectedSize: %zu\n got: %zu\n", fileSize, size );
-		return;
+		return false;
 	}
 
 	// read to whole file
@@ -684,7 +685,7 @@ void verifyFinalFile( char *path )
 		}
 		if ( currentTest < numberOfTests && tests[currentTest].offset == (off_t)offset ) {
 			if ( !tests[currentTest].test() ) {
-				return;
+				return false;
 			}
 			offset += tests[currentTest].size;
 			currentTest++;
@@ -697,18 +698,19 @@ void verifyFinalFile( char *path )
 			if ( sizeRead <= 0 ) {
 				perror( "Error while reading data: " );
 				printf( "verify failed. \n" );
-				return;
+				return false;
 			}
 			if ( !compare( buffer, emptyData, sizeRead, "verify failed. Expected 0 data" ) ) {
 				printf( "Offset: %zu \n", offset );
-				return;
+				return false;
 			}
 			offset += (size_t)sizeRead;
 		}
 	}
 
 	printf( "file verified successful.\n" );
-}
+	return true;
+	}
 
 
 void generateRandomData( int fhr, char *dest, size_t size )
@@ -742,7 +744,7 @@ off_t findDiffOffset( char *buf1, char *buf2, size_t size )
 	return -1;
 }
 
-void compareTwoFiles( char *mountedImagePath, char *normalImagePath, int fhm, int fhn )
+bool compareTwoFiles( char *mountedImagePath, char *normalImagePath, int fhm, int fhn )
 {
 	char buf[RND_MAX_WRITE_SIZE];
 	char exBuf[RND_MAX_WRITE_SIZE];
@@ -755,7 +757,7 @@ void compareTwoFiles( char *mountedImagePath, char *normalImagePath, int fhm, in
 
 	if ( sizeMounted != sizeNormal ) {
 		printf( "Error size difference, mounted: %zu normal: %zu \n", sizeMounted, sizeNormal );
-		return;
+		return false;
 	}
 	printf( "\n" );
 	while ( offset < (off_t)sizeMounted ) {
@@ -768,53 +770,61 @@ void compareTwoFiles( char *mountedImagePath, char *normalImagePath, int fhm, in
 			off_t dif = findDiffOffset( buf, exBuf, sizeToRead );
 			printf( "Error: Different data, offset: %zu \n expected: %i got %i \n", offset + dif, (int)exBuf[dif],
 					(int)buf[dif] );
-			return;
+			return false;
 		}
 
 		offset += sizeToRead;
 		printProgress( ( (float)offset ) / ( (float)sizeMounted ) );
 	}
 	printf( "\nTest successful !!!\n" );
+	return true;
 }
 
-void startCompareTwoFiles( char *mountedImagePath, char *normalImagePath )
+bool startCompareTwoFiles( char *mountedImagePath, char *normalImagePath )
 {
 	int fhm, fhn;
+	bool ok = true;
 	if ( ( fhm = open( mountedImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		perror( "Could not open mounted Image" );
 		printf( "Given path: %s \n", mountedImagePath );
-		return;
+		ok = false;
 	}
 	if ( ( fhn = open( normalImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
-		perror( "Could not open mounted Image" );
+		perror( "Could not open normal Image" );
 		printf( "Given path: %s \n", normalImagePath );
-		return;
+		ok = false;
 	}
-	compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
+	if(!ok){
+		return false;
+	}
+	return compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
 }
 
 
-void specialTwoFilesTest( char *mountedImagePath, char *normalImagePath )
+bool specialTwoFilesTest( char *mountedImagePath, char *normalImagePath )
 {
 	int fhm;
 	int fhn;
 	int fhr;
 	char buf[RND_MAX_WRITE_SIZE];
+	bool ok = true;
 	if ( ( fhm = open( mountedImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		perror( "Could not open mounted Image" );
 		printf( "Given path: %s \n", mountedImagePath );
-		return;
+		ok = false;
 	}
 	if ( ( fhn = open( normalImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
-		perror( "Could not open mounted Image" );
+		perror( "Could not open normal Image" );
 		printf( "Given path: %s \n", normalImagePath );
-		return;
+		ok = false;
 	}
 	if ( ( fhr = open( "/dev/urandom", O_RDONLY ) ) == -1 ) {
 		perror( "Could not open /dev/urandom" );
-		return;
+		ok = false;
 	}
-
+	if(!ok){
+		return false;
+	}
 	special_test_t tests[] = {
 		{976314368, 569344},
 		{970432512, 1253376},
@@ -843,7 +853,7 @@ void specialTwoFilesTest( char *mountedImagePath, char *normalImagePath )
 	}
 
 	printf( "\n" );
-	compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
+	return compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
 }
 
 void *randomWriteTest( void *args )
@@ -852,7 +862,7 @@ void *randomWriteTest( void *args )
 	char *normalImagePath = ( (random_write_args_t *)args )->normalImage;
 	float minSizePercent = ( (random_write_args_t *)args )->minSizePercent;
 	float maxSizePercent = ( (random_write_args_t *)args )->maxSizePercent;
-	free( args );
+	
 	int fhm;
 	int fhn;
 	int fhr;
@@ -872,22 +882,24 @@ void *randomWriteTest( void *args )
 	printf( "mounted image path %s\n", mountedImagePath );
 	printf( "normal image path %s\n", normalImagePath );
 
-
+	bool ok = true;
 	if ( ( fhm = open( mountedImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		perror( "Could not open mounted Image" );
 		printf( "Given path: %s \n", mountedImagePath );
-		return NULL;
+		ok = false;
 	}
 	if ( ( fhn = open( normalImagePath, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
-		perror( "Could not open mounted Image" );
+		perror( "Could not open normal Image" );
 		printf( "Given path: %s \n", normalImagePath );
-		return NULL;
+		ok = false;
 	}
 	if ( ( fhr = open( "/dev/urandom", O_RDONLY ) ) == -1 ) {
 		perror( "Could not open /dev/urandom" );
-		return NULL;
+		ok = false;
 	}
-
+	if(!ok){
+		return (void*) false;
+	}
 	// RANDOM WRITE LOOP
 	printf( "Press any key to cancel\n" );
 	while ( randomTestLoop ) {
@@ -900,10 +912,10 @@ void *randomWriteTest( void *args )
 
 			printf( "change filesize to: %zu\n", size );
 			if ( !changeFileSizeAndVerify( mountedImagePath, size ) ) {
-				return NULL;
+				return (void*) false;
 			}
 			if ( !changeFileSizeAndVerify( normalImagePath, size ) ) {
-				return NULL;
+				return (void*) false;
 			}
 
 		} else {
@@ -918,9 +930,9 @@ void *randomWriteTest( void *args )
 			generateRandomData( fhr, buf, size );
 			printf( "write offset: %zu size: %zu\n", offset, size );
 			if ( !writeSizeTested( fhm, buf, size, offset, "failed to write on mounted image" ) )
-				return NULL;
+				return (void*) false;
 			if ( !writeSizeTested( fhn, buf, size, offset, "failed to write on normal image" ) )
-				return NULL;
+				return (void*) false;
 		}
 	}
 
@@ -928,11 +940,11 @@ void *randomWriteTest( void *args )
 	printf( "comparing both files: \n\n" );
 	compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
 
-	return NULL;
+	return (void*) true;
 }
 
 
-void startRandomWriteTest( char *mountedImagePath, char *normalImagePath, float minSizePercent, float maxSizePercent )
+bool startRandomWriteTest( char *mountedImagePath, char *normalImagePath, float minSizePercent, float maxSizePercent )
 {
 	// start Thread
 
@@ -951,11 +963,15 @@ void startRandomWriteTest( char *mountedImagePath, char *normalImagePath, float 
 	args->minSizePercent = minSizePercent;
 	args->maxSizePercent = maxSizePercent;
 
+	bool *result;
 	pthread_create( &tid, NULL, &randomWriteTest, args );
 	// wait for key
 	getchar();
 	randomTestLoop = false;
-	pthread_join( tid, NULL );
+
+	pthread_join( tid, (void*) &result );
+	free( args );
+	return result;
 }
 
 static const char *optString = "d:c:t:v:r:x:y:z:w:h:";
@@ -1124,24 +1140,26 @@ int main( int argc, char *argv[] )
 			break;
 		}
 	}
-
+	bool result = true;
 	if ( runTestFile ) {
-		generateTestFile( fileCreationPath, generateFileSize );
+		result = generateTestFile( fileCreationPath, generateFileSize );
 	} else if ( runStandardTest ) {
 		printf( "starting standard test\n" );
-		runTest( standardTestPath );
+		result = runTest( standardTestPath );
 	} else if ( runVerifyTest ) {
 		printf( "verifying file \n" );
-		verifyFinalFile( verifyPath );
+		result = verifyFinalFile( verifyPath );
 	} else if ( runRandomTest ) {
-		startRandomWriteTest( rndMountedPath, rndNormalPath, minSizePercent, maxSizePercent );
+		result = startRandomWriteTest( rndMountedPath, rndNormalPath, minSizePercent, maxSizePercent );
 	} else if ( runCompare ) {
-		startCompareTwoFiles( rndMountedPath, rndNormalPath );
+		result = startCompareTwoFiles( rndMountedPath, rndNormalPath );
 	} else if ( runSpecialTwoFiles ) {
-		specialTwoFilesTest( rndMountedPath, rndNormalPath );
+		result = specialTwoFilesTest( rndMountedPath, rndNormalPath );
 	} else {
 		printUsage();
 	}
-
-	return 0;
+	if(!result ){
+		return EXIT_FAILURE;
+	}
+	return EXIT_SUCCESS;
 }
