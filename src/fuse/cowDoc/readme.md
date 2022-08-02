@@ -95,31 +95,31 @@ When a read request is made, it is checked for each 4096-byte block whether the 
 ![readrequest](img/readrequest.svg)
 
 The diagram above is somewhat simplified for clarity. The server's read operations are asynchronous. This means that it does not wait for a response from the server, but continues with the next blocks. As soon as the server's response is complete, the data is written to the fuse buffer. 
-Each request to the dnbd3 server increases the variable `workCounter` by one, and each time a request is completed, it is decreased by one. As soon as `workCounter` is 0 again, fuse_request is returned. This is done to ensure that all asyncronous requests are completed before the request is returned.
+Each request to the dnbd3 server increases the variable `workCounter` by one, and each time a request is completed, it is decreased by one. As soon as `workCounter` is 0 again, fuse_request is returned. This is done to ensure that all asynchronous requests are completed before the request is returned.
 
 
 
-Also on the local side, it has to break the loop once the end of an `cow_block_metadata_t` is reached, since the next data offset of the next `cow_block_metadata_t` is very likely not directly after it in the data file.
+For local blocks, the loop must be interrupted as soon as the end of a `cow_block_metadata_t` is reached, as the next data offset of the next `cow_block_metadata_t` is most likely not directly after it in the data file.
 
 ### Write Request
-For the write request, if the start or the end or the end does not align with a multiple of 4096, then the start and/or end block must be padded.
-Because every 4096byte block needs complete data, since if the bit in the bit field for that block is set, all the data will be read locally.
-To pad the block, if it's still in the range of the original image size, the missing bytes will be requested from the dnbd3 server. If it's outside of the original image (because the image grown in size) then the missing bytes will be padded with 0.
-The write request will write compute the corresponding `cow_block_metadata_t` from the offset. If the corresponding `cow_block_metadata_t` does not exist yet it will be created. The data will be written in the data file, at the offset which is stored in the `cow_block_metadata_t`.
-Then the corresponding bit in the bit fields will be set and the `timeChanged` will be updated. If there is more data to write, the next `cow_block_metadata_t` will be computed and the steps above will be repeated.
-The `workCounter` variable is used here again to make sure that if padding was needed it is done before the fuse request returns.
+If, in a write request, the beginning or end does not match a multiple of 4096, the beginning and/or end block must be padded.
+This is because each 4096-byte block requires complete data, because if the bit in the bit field for that block is set, all data is read locally.
+To fill the block, if it is still within the range of the original image size, the missing bytes are requested from the dnbd3 server. If it is outside the original image size (because the image has become larger), the missing bytes are filled with 0.
+The write request calculates the corresponding `cow_block_metadata_t` from the offset. If the corresponding `cow_block_metadata_t` does not yet exist, it is created. The data will be written to the data file, at the offset stored in the `cow_block_metadata_t`.
+Then the corresponding bit in the bit fields is set and the `timeChanged` is updated. If there is more data to write, the next `cow_block_metadata_t` is calculated and the above steps are repeated.
+The variable `workCounter` is also used here to ensure that the padding of the data occurs before the Fuse request returns.
 
 
 ### Block Upload
-For block upload there is a background thread which loops periodically over all cow blocks and checks if `timeChanged` is not 0 and the time difference between now an `timeChanged` is larger than `COW_MIN_UPLOAD_DELAY`. If so, the block will be uploaded. The `timeChanged` before the upload will be temporary stored. After the upload `timeChanged` will be set to 0 if it still has the same time than temporary stored (if not there was an modification while the upload and it needs to be uploaded again). Once the image is unmounted `COW_MIN_UPLOAD_DELAY` is ignored an all blocks if a time of not 0 will be uploaded. The upload is done via an  [rest request](#/api/file/update). There are two different  limits for the number of parallel uploads in the [config.h](#config-variables).
+For uploading blocks, there is a background thread that periodically loops over all Cow blocks and checks whether `timeChanged` is not 0 and the time difference between now and `timeChanged` is greater than `COW_MIN_UPLOAD_DELAY`. If so, the block is uploaded. The `timeChanged` before the upload is buffered. After the upload, `timeChanged` is set to 0 if it still has the same time as the temporarily stored one (if not, there was a change during the upload and it has to be uploaded again). Once the image is unmounted, `COW_MIN_UPLOAD_DELAY` is ignored and all blocks that have a time other than 0 are uploaded. The upload is done via a [rest request](#/api/file/update). There are two different limits for the number of parallel uploads in the [config.h](#config-variables).
 
 ## Files
-If a new CoW session is started, a new `meta`, `data` and if set so in the Command line arguments a `status.txt` file is created.
+When a new CoW session is started, a new `meta`, `data` and, if so set in the command line arguments, a `status.txt` file is created.
 
 ### status
-The `status.txt` can be activated with the `--cowStatFile` command line parameter.
+The file `status.txt` can be activated with the command line parameter `--cowStatFile`.
 
-The file will contain:
+The file will contain the following:
 
 ```
 uuid=<uuid>
@@ -131,19 +131,19 @@ totalBlocksUploaded=0
 activeUploads:0
 ulspeed=0.00
 ```
-- The `uuid` is the session uuid, which the cow server uses to identify the session.
+- The `uuid` is the session uuid used by the Cow server to identify the session.
 
-- The `state` is `backgroundUpload` if the image is still mounted and cow blocks are uploaded in the background.
-It is `uploading` if the image got dismounted and all not yet uploaded blocks are  uploaded.
-it is `done` if the image got dismounted and all blocks are uploaded. 
-- `inQueue` are the cow blocks which are currently uploaded or waiting for a free slot.
-- `modifiedBlocks` are cow block which have changes which are not uploaded to the server yet, because the changes are to recent.
+- The `status` is `backgroundUpload` when the image is still mounted and cow blocks are uploaded in the background.
+It is `uploading` when the image has been unmounted and all blocks that have not yet been uploaded are uploaded.
+It is `done` when the image has been unmounted and all blocks have been uploaded. 
+- `Queue` are the cow blocks that are currently being uploaded or are waiting for a free slot.
+- `ModifiedBlocks` are cow blocks that have changes that have not yet been uploaded to the server because the changes are too recent.
 - `totalBlocksUploaded` the total amount of cow blocks uploaded since the image was mounted.
-- `activeUploads` is the number blocks that are currently uploaded.
+- `activeUploads` is the number of blocks currently being uploaded.
 - `ulspeed` the current upload speed in kb/s.
 
-Once all blocks are uploaded, the state will be set to `done`.
-If you define `COW_DUMP_BLOCK_UPLOADS`, then after the block upload is complete, a list of all blocks and sorted by the number of uploads will be dumped into status.txt.
+Once all blocks have been uploaded, the status is set to `done`.
+If you define `COW_DUMP_BLOCK_UPLOADS`, a list of all blocks, sorted by the number of uploads, is copied to the status.txt file after the block upload is completed.
 
 With the command line parameter `--cowStatStdout` the same output of the stats file will be printed in stdout.
 
