@@ -24,7 +24,7 @@ A typical use case is updating or adding software to an existing image.
 - `- L <path>` Similar to `-c <path>`, but instead of creating a new session, an existing one is loaded from the specified path.
 - `-m` the client requests a merge after the image has been unmounted and all changes have been uploaded.
 
-- `cowStatFile` creates a status file at the same location as the data and meta file. The file contains information about the current session, for more information see [here](#status).
+- `--cowStatFile` creates a status file at the same location as the data and meta file. The file contains information about the current session, for more information see [here](#status).
 - `--cowStatStdout` similar to `--cowStatFile` but the information will be printed in the stdout.
 
 Example parameters for creating a new cow session:
