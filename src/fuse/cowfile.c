@@ -824,7 +824,7 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
 		return false;
 	}
 	if ( statFile || statStdout ) {
-		if(pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL ) != 0 ){
+		if(pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL ) != 0 ) {
 			logadd( LOG_ERROR, "Could not create stat updater thread");
 			return false;
 		}
@@ -940,7 +940,7 @@ bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *server
 		return false;
 	}
 	if ( statFile || statStdout ) {
-		if(pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL ) != 0 ){
+		if(pthread_create( &tidStatUpdater, NULL, &cowfile_statUpdater, NULL ) != 0 ) {
 			logadd( LOG_ERROR, "Could not create stat updater thread");
 			return false;
 		}
