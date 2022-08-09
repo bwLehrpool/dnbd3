@@ -14,6 +14,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <getopt.h>
+#include <signal.h>
 
 typedef bool ( *func_ptr )();
 typedef struct verify_test
@@ -30,13 +31,7 @@ typedef struct special_test
 
 } special_test_t;
 
-typedef struct random_write_args
-{
-	char *mountedImage;
-	char *normalImage;
-	float minSizePercent;
-	float maxSizePercent;
-} random_write_args_t;
+
 
 const size_t l2Size = 1024;
 const size_t bitfieldByteSize = 40;
@@ -832,9 +827,10 @@ bool specialTwoFilesTest( char *mountedImagePath, char *normalImagePath )
 		{782128012, 0},
 		{945591351, 0},
 		{956534784, 344064},
-		{ 966615040, 397312 }, { 906517288, 0 }, 
+		{966615040, 397312 }, 
+		{906517288, 0 }, 
 		{2062985199, 0},			
-		{ 966663420, 1097920 },
+		{966663420, 1097920 },
 		{969617408, 327680},
 		{957513728, 1105920},
 		{964941207, 1183680},
@@ -856,12 +852,9 @@ bool specialTwoFilesTest( char *mountedImagePath, char *normalImagePath )
 	return compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
 }
 
-void *randomWriteTest( void *args )
+bool randomWriteTest( char *mountedImagePath,  char *normalImagePath, float minSizePercent, float maxSizePercent)
 {
-	char *mountedImagePath = ( (random_write_args_t *)args )->mountedImage;
-	char *normalImagePath = ( (random_write_args_t *)args )->normalImage;
-	float minSizePercent = ( (random_write_args_t *)args )->minSizePercent;
-	float maxSizePercent = ( (random_write_args_t *)args )->maxSizePercent;
+
 	
 	int fhm;
 	int fhn;
@@ -930,9 +923,9 @@ void *randomWriteTest( void *args )
 			generateRandomData( fhr, buf, size );
 			printf( "write offset: %zu size: %zu\n", offset, size );
 			if ( !writeSizeTested( fhm, buf, size, offset, "failed to write on mounted image" ) )
-				return (void*) false;
+				return false;
 			if ( !writeSizeTested( fhn, buf, size, offset, "failed to write on normal image" ) )
-				return (void*) false;
+				return false;
 		}
 	}
 
@@ -940,13 +933,16 @@ void *randomWriteTest( void *args )
 	printf( "comparing both files: \n\n" );
 	compareTwoFiles( mountedImagePath, normalImagePath, fhm, fhn );
 
-	return (void*) true;
+	return  true;
 }
 
+void cancled_handler(int s){
+	randomTestLoop = false;
+}
 
 bool startRandomWriteTest( char *mountedImagePath, char *normalImagePath, float minSizePercent, float maxSizePercent )
 {
-	// start Thread
+
 
 
 	if ( minSizePercent < 0 || maxSizePercent < minSizePercent || maxSizePercent < 0.1 ) {
@@ -955,32 +951,29 @@ bool startRandomWriteTest( char *mountedImagePath, char *normalImagePath, float 
 		maxSizePercent = RND_DEFAULT_MAX_SIZE_PERCENT;
 	}
 	printf( "minSizePercent: %.1f%% maxSizePercent: %.1f%%\n", minSizePercent * 100, maxSizePercent * 100 );
-	pthread_t tid;
-	random_write_args_t *args = malloc( sizeof( random_write_args_t ) );
 
-	args->mountedImage = mountedImagePath;
-	args->normalImage = normalImagePath;
-	args->minSizePercent = minSizePercent;
-	args->maxSizePercent = maxSizePercent;
+   struct sigaction sigIntHandler;
+   sigIntHandler.sa_handler = cancled_handler;
+   sigemptyset(&sigIntHandler.sa_mask);
+   sigIntHandler.sa_flags = SA_SIGINFO;
+   sigaction(SIGINT, &sigIntHandler, NULL);
 
-	bool *result;
-	pthread_create( &tid, NULL, &randomWriteTest, args );
-	// wait for key
-	getchar();
-	randomTestLoop = false;
-
-	pthread_join( tid, (void*) &result );
-	free( args );
-	return result;
+	return randomWriteTest(mountedImagePath, normalImagePath, minSizePercent, maxSizePercent);
 }
 
 static const char *optString = "d:c:t:v:r:x:y:z:w:h:";
-static const struct option longOpts[] = { { "delay", required_argument, NULL, 'd' },
-	{ "testFile", optional_argument, NULL, 'c' }, { "test", required_argument, NULL, 't' },
-	{ "verify", required_argument, NULL, 'v' }, { "specialTwoFiles", required_argument, NULL, 'w' },
-	{ "randomTest", required_argument, NULL, 'r' }, { "compare", required_argument, NULL, 'x' },
-	{ "minSizePercent", required_argument, NULL, 'y' }, { "maxSizePercent", required_argument, NULL, 'z' },
-	{ "help", required_argument, NULL, 'h' }, { 0, 0, 0, 0 } };
+static const struct option longOpts[] = { 
+	{ "delay", 				required_argument, NULL, 'd' },
+	{ "testFile", 			optional_argument, NULL, 'c' }, 
+	{ "test", 				required_argument, NULL, 't' },
+	{ "verify", 			required_argument, NULL, 'v' }, 
+	{ "specialTwoFiles", 	required_argument, NULL, 'w' },
+	{ "randomTest", 		required_argument, NULL, 'r' }, 
+	{ "compare", 			required_argument, NULL, 'x' },
+	{ "minSizePercent", 	required_argument, NULL, 'y' }, 
+	{ "maxSizePercent", 	required_argument, NULL, 'z' },
+	{ "help", 				required_argument, NULL, 'h' }, 
+	{ 0, 0, 0, 0 } };
 
 
 void printUsageStandardTest()
