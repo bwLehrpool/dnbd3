@@ -1,0 +1,158 @@
+name: test fuse cow
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: '5.x.x'
+
+      - name: Install dnbd3 dependencies
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update -y -qq 
+          sudo apt-get install -y -qq make \
+                                      clang-format \
+                                      linux-headers-generic \
+                                      libfuse-dev \
+                                      libjansson-dev \
+                                      libcurl4-openssl-dev \
+                                      rpm
+      - name: Configure dnbd3 build
+        run: |
+          cmake -B ${{ github.workspace }}/build \
+                -S ${{ github.workspace }} \
+                -D CMAKE_BUILD_TYPE=${{ matrix.config.build-type }} \
+                -D DNBD3_KERNEL_MODULE=OFF \
+                -D DNBD3_BENCHMARK=OFF \
+                -D DNBD3_CLIENT_FUSE=ON \
+                -D DNBD3_CLIENT_FUSE_COW_TEST=ON \
+                -D DNBD3_SERVER=ON \
+                -D DNBD3_SERVER_FUSE=OFF \
+                -D DNBD3_SERVER_AFL=OFF \
+                -D DNBD3_SERVER_DEBUG_LOCKS=OFF \
+                -D DNBD3_SERVER_DEBUG_THREADS=OFF \
+                -D DNBD3_RELEASE_HARDEN=OFF \
+                -D DNBD3_PACKAGE_DOCKER=OFF
+
+      - name: Build dnbd3 artifacts
+        working-directory: ${{ github.workspace }}/build
+        run: make
+      - name: Get cow_merger_service
+        working-directory: ${{ github.workspace }}
+        run: git clone --depth 1  --branch "master" "https://github.com/z0Kng/cow_merger_service.git" "../cow_server"
+      - name: Build cow_merger_service
+        working-directory: ${{ github.workspace }}/../cow_server/cow_merger_service
+        run: dotnet publish -c Release -o publish -p:PublishReadyToRun=true -p:PublishSingleFile=true -p:PublishReadyToRunShowWarnings=true --self-contained true --runtime linux-x64
+      - name: Setup cow_merger_service
+        working-directory: ${{ github.workspace }}/../cow_server/
+        run: |
+          mkdir /home/runner/work/WorkingDirectory 
+          mkdir /home/runner/work/OriginalImageDirectory 
+          mkdir /home/runner/work/Output
+          sed -i 's/^        "WorkingDirectory":.*/        "WorkingDirectory": "\/home\/runner\/work\/WorkingDirectory",/g'  cow_merger_service/publish/appsettings.json
+          sed -i 's/^        "OriginalImageDirectory":.*/        "OriginalImageDirectory": "\/home\/runner\/work\/OriginalImageDirectory",/g' cow_merger_service/publish/appsettings.json
+          sed -i 's/^        "DestinationDirectory":.*/        "DestinationDirectory": "\/home\/runner\/work\/Output",/g'  cow_merger_service/publish/appsettings.json           
+          while read line; do echo $line; done < cow_merger_service/publish/appsettings.json
+          cd cow_merger_service/publish/
+          ./cow_merger_service 2>&1 > log.out &
+      - name: Generate test file
+        working-directory: ${{ github.workspace }}/build/src/cowtest
+        run: ./dnbd3-fuse-cow-test -c /home/runner/work/OriginalImageDirectory/test.r1
+      - name: Setup dnbd3 server
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir /home/runner/work/dnbd3-server-config/
+          cp pkg/config/server.conf /home/runner/work/dnbd3-server-config/
+          sed -i "s/^basePath=.*/basePath=\/home\/runner\/work\/OriginalImageDirectory/g" /home/runner/work/dnbd3-server-config/server.conf 
+          cd build/src/server
+          ./dnbd3-server --config /home/runner/work/dnbd3-server-config/
+          sleep 5
+      - name: Run standard test
+        working-directory: ${{ github.workspace }}/build/src
+        run: |
+          mkdir /home/runner/work/mount 
+          mkdir /home/runner/work/tmp 
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 -y -x 2>&1 > /home/runner/work/tmp/standardLog1.out &
+          PID=$!
+          sleep 5
+          echo PID: $PID
+          ./cowtest/dnbd3-fuse-cow-test -t "/home/runner/work/mount/img"  
+          echo unmounting: $PID
+          sudo umount /home/runner/work/mount
+          wait $PID
+          echo unmounted
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 -m -y -x 2>&1 > /home/runner/work/tmp/standardLog2.out &
+          PID=$!
+          sleep 5
+          echo PID: $PID
+          ./cowtest/dnbd3-fuse-cow-test -v "/home/runner/work/mount/img"  
+          echo unmounting: $PID
+          sudo umount /home/runner/work/mount 
+          wait $PID
+          echo unmounted
+          sleep 30
+          echo Output: $(ls /home/runner/work/Output)
+          ./cowtest/dnbd3-fuse-cow-test -v /home/runner/work/Output/test.r2
+      - name: Run random test
+        working-directory: ${{ github.workspace }}/build/src
+        run: |
+          cp /home/runner/work/OriginalImageDirectory/test.r1 /home/runner/work/
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 -y -x 2>&1 > /home/runner/work/tmp/randomLog1.out &
+          PIDFUSE=$!
+          sleep 5
+          echo PIDFUSE : $PIDFUSE
+          ./cowtest/dnbd3-fuse-cow-test --randomTest "/home/runner/work/mount/img" "/home/runner/work/test.r1" 2>&1 > /home/runner/work/tmp/randomTestLog.out &
+          PIDTEST=$!
+          sleep 60
+          echo "stopping test"
+          kill -INT $PIDTEST
+          wait $PIDTEST
+          echo "testStopped"
+          echo unmounting: $PIDFUSE
+          sudo umount /home/runner/work/mount
+          echo unmounted
+          wait $PIDFUSE
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 -m -y -x 2>&1 > /home/runner/work/tmp/randomLog2.out &
+          PIDFUSE=$!
+          sleep 5
+          echo PIDFUSE : $PIDFUSE
+          ./cowtest/dnbd3-fuse-cow-test --compare "/home/runner/work/mount/img" "/home/runner/work/test.r1"
+          echo unmounting: $PIDFUSE
+          sudo umount /home/runner/work/mount
+          echo unmounted
+          wait $PIDFUSE
+          sleep 30
+          echo Output: $(ls /home/runner/work/Output)
+          ./cowtest/dnbd3-fuse-cow-test --compare "/home/runner/work/Output/test.r3" "/home/runner/work/test.r1"
+      - name: Print logs
+        if: always()
+        run: |
+          echo "====fuse-client status.txt===="
+          while read line; do echo $line; done < /home/runner/work/tmp/status.txt
+          echo
+          echo "====fuse-client standardLog1.out===="
+          while read line; do echo $line; done < /home/runner/work/tmp/standardLog1.out
+          echo
+          echo "====fuse-client standardLog2.out===="
+          while read line; do echo $line; done < /home/runner/work/tmp/standardLog2.out
+          echo
+          echo "====fuse-client randomLog1.out===="
+          while read line; do echo $line; done < /home/runner/work/tmp/randomLog1.out
+          echo
+          echo "====fuse-client randomLog2.out===="
+          while read line; do echo $line; done < /home/runner/work/tmp/randomLog2.out
+          echo
+          echo "====fuse-client randomTestLog.out===="
+          while read line; do echo $line; done < /home/runner/work/tmp/randomTestLog.out
+          echo
+          echo "====dnbd3-server===="
+          while read line; do echo $line; done < ${{ github.workspace }}/build/src/server/dnbd3.log
+          echo
+          echo "====cow_merger_service===="
+          while read line; do echo $line; done < ${{ github.workspace }}/../cow_server/cow_merger_service/publish/log.out
+
+
