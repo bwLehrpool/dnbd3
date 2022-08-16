@@ -8,7 +8,7 @@ jobs:
       - name: Setup dotnet
         uses: actions/setup-dotnet@v2
         with:
-          dotnet-version: '5.x.x'
+          dotnet-version: '6.x.x'
 
       - name: Install dnbd3 dependencies
         working-directory: ${{ github.workspace }}
@@ -46,7 +46,7 @@ jobs:
         run: git clone --depth 1  --branch "master" "https://github.com/z0Kng/cow_merger_service.git" "../cow_server"
       - name: Build cow_merger_service
         working-directory: ${{ github.workspace }}/../cow_server/cow_merger_service
-        run: dotnet publish -c Release -o publish -p:PublishReadyToRun=true -p:PublishSingleFile=true -p:PublishReadyToRunShowWarnings=true --self-contained true --runtime linux-x64
+        run: dotnet publish -c Release -o publish -p:PublishReadyToRun=true -p:PublishSingleFile=true -p:PublishTrimmed=True -p:PublishReadyToRunShowWarnings=true --self-contained true --runtime linux-x64
       - name: Setup cow_merger_service
         working-directory: ${{ github.workspace }}/../cow_server/
         run: |
@@ -58,6 +58,9 @@ jobs:
           sed -i 's/^        "DestinationDirectory":.*/        "DestinationDirectory": "\/home\/runner\/work\/Output",/g'  cow_merger_service/publish/appsettings.json           
           while read line; do echo $line; done < cow_merger_service/publish/appsettings.json
           cd cow_merger_service/publish/
+          FILENAME=cow_merger_service
+          FILESIZE=$(stat -c%s "$FILENAME")
+          echo "Size of $FILENAME = $FILESIZE bytes."
           ./cow_merger_service 2>&1 > log.out &
       - name: Generate test file
         working-directory: ${{ github.workspace }}/build/src/cowtest
