@@ -12,7 +12,7 @@ static CURL *curl;
 static cowfile_metadata_header_t *metadata = NULL;
 static atomic_uint_fast64_t bytesUploaded;
 static uint64_t totalBlocksUploaded = 0;
-static atomic_int activeUploads = 0;
+static int activeUploads = 0;
 atomic_bool uploadLoop = true;
 atomic_bool uploadLoopDone = false;
 
@@ -513,13 +513,13 @@ CLEANUP:
  * @return false returned if  one ore more upload's failed.
  */
 bool MessageHandler(
-		CURLM *cm, atomic_int *activeUploads, bool breakIfNotMax, bool foregroundUpload, struct curl_slist *headers )
+		CURLM *cm,  bool breakIfNotMax, bool foregroundUpload, struct curl_slist *headers )
 {
 	CURLMsg *msg;
 	int msgsLeft = -1;
 	bool status = true;
 	do {
-		curl_multi_perform( cm, activeUploads );
+		curl_multi_perform( cm, &activeUploads );
 
 		while ( ( msg = curl_multi_info_read( cm, &msgsLeft ) ) ) {
 			if ( !finishUpload( cm, msg, headers ) ) {
@@ -527,16 +527,16 @@ bool MessageHandler(
 			}
 		}
 		if ( breakIfNotMax
-				&& *activeUploads
+				&& activeUploads
 						< ( foregroundUpload ? COW_MAX_PARALLEL_UPLOADS : COW_MAX_PARALLEL_BACKGROUND_UPLOADS ) ) {
 			break;
 		}
 		// ony wait if there are active uploads
-		if ( *activeUploads ) {
+		if ( activeUploads ) {
 			curl_multi_wait( cm, NULL, 0, 1000, NULL );
 		}
 
-	} while ( *activeUploads );
+	} while ( activeUploads );
 	return status;
 }
 
@@ -568,7 +568,7 @@ bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 			if ( block->timeChanged != 0 ) {
 				if ( ( time( NULL ) - block->timeChanged > COW_MIN_UPLOAD_DELAY ) || ignoreMinUploadDelay ) {
 					do {
-						if ( !MessageHandler( cm, &activeUploads, true, ignoreMinUploadDelay, headers ) ) {
+						if ( !MessageHandler( cm, true, ignoreMinUploadDelay, headers ) ) {
 							success = false;
 						}
 					} while ( !( activeUploads < ( ignoreMinUploadDelay ? COW_MAX_PARALLEL_UPLOADS
@@ -590,7 +590,7 @@ bool uploaderLoop( bool ignoreMinUploadDelay, CURLM *cm )
 	}
 DONE:
 	while ( activeUploads > 0 ) {
-		MessageHandler( cm, &activeUploads, false, ignoreMinUploadDelay, headers );
+		MessageHandler( cm, false, ignoreMinUploadDelay, headers );
 	}
 	curl_slist_free_all( headers );
 	return success;
@@ -646,6 +646,7 @@ void *cowfile_statUpdater( __attribute__( ( unused ) ) void *something )
 
 		updateCowStatsFile( inQueue, modified, idle, speedBuffer );
 	}
+	return NULL;
 }
 
 /**
@@ -968,13 +969,13 @@ static void writeData( const char *buffer, ssize_t size, size_t netSize, atomic_
 				block->offset + inBlockOffset + totalBytesWritten );
 		if ( bytesWritten == -1 ) {
 			logadd( LOG_ERROR,
-					"size:%zu netSize:%zu errorCode:%i bytesWorkedOn:%zu inBlockOffset:%lld block->offset:%lld \n", size,
+					"size:%zu netSize:%zu errorCode:%i bytesWorkedOn:%zu inBlockOffset:%ld block->offset:%ld \n", size,
 					netSize, *errorCode, *bytesWorkedOn, inBlockOffset, block->offset );
 			*errorCode = errno;
 			break;
 		} else if ( bytesWritten == 0 ) {
 			logadd( LOG_ERROR,
-					"size:%zu netSize:%zu errorCode:%i bytesWorkedOn:%zu inBlockOffset:%lld block->offset:%lld \n", size,
+					"size:%zu netSize:%zu errorCode:%i bytesWorkedOn:%zu inBlockOffset:%ld block->offset:%ld \n", size,
 					netSize, *errorCode, *bytesWorkedOn, inBlockOffset, block->offset );
 			*errorCode = EIO;
 			break;
@@ -1261,7 +1262,7 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 {
 	// if beyond end of file, pad with 0
 	if ( offset > (off_t)metadata->imageSize ) {
-		cowfile_setSize( NULL, offset, NULL, NULL );
+		cowfile_setSize( NULL, offset, 0, NULL );
 	}
 
 
@@ -1345,7 +1346,7 @@ void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, siz
 static void readRemote( fuse_req_t req, off_t offset, ssize_t size, char *buffer, cow_request_t *cowRequest )
 {
 	// edgecase: Image size got reduced before on a non block border
-	if ( offset + size > metadata->originalImageSize ) {
+	if ( offset + size > (long int) metadata->originalImageSize ) {
 		size_t padZeroSize = ( offset + size ) - metadata->originalImageSize;
 		off_t padZeroOffset = metadata->originalImageSize - offset;
 		assert( offset > 0 );
@@ -1456,7 +1457,7 @@ void cowfile_read( fuse_req_t req, size_t size, off_t offset )
 		if ( doRead || searchOffset >= endOffset ) {
 			ssize_t sizeToRead = MIN( searchOffset, endOffset );
 			if ( dataState == remote ) {
-				if ( sizeToRead > metadata->originalImageSize ) {
+				if ( sizeToRead > (ssize_t) metadata->originalImageSize ) {
 					//pad rest with 0
 					memset( cowRequest->readBuffer
 									+ ( ( lastReadOffset - offset ) + ( metadata->originalImageSize - offset ) ),
