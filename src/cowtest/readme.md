@@ -41,7 +41,7 @@ This test collection is used to check whether the cow implementation of the fuse
 7. Unmount the image and merge it(`-m` on the fuse client).
 8. Run `-x <mergedImagePath> <normalImagePath>` where `<mergedImagePath>` points to the merged image and `<normalImagePath>` points to the copied image on the hard disk. This verifies that the merged image matches the image on the hard disk.
 
-
+Another help for running or setting up the tests can be the git ci test script [test-cow-fuse.yml](../../.github/workflows/test-cow-fuse.yml). There, a complete test setup is created and the standard test as well as the random test is executed.
 
 # Tests
 
