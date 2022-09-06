@@ -19,8 +19,7 @@ jobs:
                                       linux-headers-generic \
                                       libfuse-dev \
                                       libjansson-dev \
-                                      libcurl4-openssl-dev \
-                                      rpm
+                                      libcurl4-openssl-dev
       - name: Configure dnbd3 build
         run: |
           cmake -B ${{ github.workspace }}/build \
