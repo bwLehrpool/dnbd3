@@ -580,6 +580,11 @@ int main( int argc, char *argv[] )
 			} else {
 				fuse_session_add_chan( _fuseSession, ch );
 				fuse_daemonize( foreground );
+				if ( useCow ) {
+					if ( !cowfile_startBackgroundThreads() ){
+						logadd( LOG_ERROR, "Could not start cow background Threads" );
+					}
+				}
 				if ( single_thread ) {
 					fuse_err = fuse_session_loop( _fuseSession );
 				} else {

@@ -36,9 +36,6 @@ Example parameters for creating a new cow session:
 # Implementation Details
 
 
-
-
-
 ## Data structure
 
 The data structure is divided into two main parts. The actual data of the writing on the image and the corresponding metadata. It is also important to distinguish between a dnbd3 block, which is 4096 bytes in size, and a cow block, which combines 320 dnbd3 blocks. A cow block has a `cow_block_metadata_t` structure that contains the corresponding metadata.  The metadata is used to determine if a dnbd3 block has been written to, where that block is stored in the `data` file, when it was last modified and when it was uploaded. But more on this later. 

@@ -20,6 +20,9 @@ This test collection is used to check whether the cow implementation of the fuse
 - `-v <file>` checks if previous tests of the image were successful (also reads the image completely).
 - `-r <mountedImageFile> <normalImageFile>` writes randomly and changes the size of two images. After pressing ctrl +c, both images are compared for equality. 
 - `-x <mergedImageFile> <normalImageFile>` Checks if both images are equal.
+
+
+
 ### Example usage for standard test
 
 1. Generate the test image with `-c <path>` and copy it into the image directory of the dnbd3 server. Also make sure that the `OriginalImageDirectory` of the Cow server points to the same directory or has also been copied to this directory. This step is only required once for the setup.
