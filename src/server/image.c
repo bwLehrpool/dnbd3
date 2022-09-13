@@ -720,7 +720,7 @@ static bool image_load_all_internal(char *base, char *path)
 		if ( S_ISDIR( st.st_mode ) ) {
 			image_load_all_internal( base, subpath ); // Recurse
 		} else if ( !isForbiddenExtension( subpath ) ) {
-			image_load( base, subpath, true ); // Load image if possible
+			image_load( base, subpath, false ); // Load image if possible
 		}
 	}
 	closedir( dir );
