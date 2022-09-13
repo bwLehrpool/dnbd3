@@ -1114,9 +1114,7 @@ static const struct option longOpts[] = {
 void printUsageStandardTest()
 {
 	printf( "The standard test, tests certain edge cases. Here the previously prepared file (created with -c) must be mounted via the dnbd3 server.\n");
-	printf( "\n" );
 	printf( "The test performs certain read, write and resize operations to ensure functionality and test for edge cases.\n" );
-	printf( "\n" );
 	printf( "\n" );
 	printf( "Instructions on how to use the standard test: \n" );
 	printf(	"1. Generate the test image with -c <path> and copy it to the image location of the dnbd3 server. Also make sure that the cow servers OriginalImageDirectory points to the same Directory or copied in that Directory too. This step is only needed once for setting up.\n" );
@@ -1134,14 +1132,13 @@ void printUsageRandomTest()
 	printf( "For the random test, a test file (created with -c) is mounted via the dnbd3 server and a copy of it on the normal hard disk is required.");
 	printf( "The test performs random identical write and size changes on both test files. When the test is cancelled (ctrl+c), both files are tested for equality. \n" );
 	printf( "\n" );
-	printf( "\n" );
 	printf( "Instructions on how to use the random test: \n" );
 	printf(	"1. Generate the test image with -c <path> and copy it to the image location of the dnbd3 server. Also make sure that the cow servers OriginalImageDirectory points to the same Directory or copied in that Directory too. This step is only needed once for setting up.\n" );
 	printf( "2. Copy the generated image to another location.\n" );
 	printf( "3. Start the dnbd3 and cow server.\n" );
 	printf( "4. Mount the image in cow mode.\n" );
 	printf(	"5. Run the test with -t <mountedFile> <normalFile>, where the <mountedFile> points to the mounted image and <normalFile> points to the copied image on the disk.\n" );
-	printf( "6. After some time press enter and both images will be compared for equalness." );
+	printf( "6. After some time press strg+c and both images will be compared for equalness.\n" );
 	printf( "7. Unmount the image and merge.\n" );
 	printf(	"8. Run -x <mergedFile> <normalFile> where the <mergedFile> points to the merged image and <normalFile> points to the copied image on the disk. This will verify that the merged image is equal to the image on the disk.\n" );
 }
@@ -1157,7 +1154,7 @@ void printUsage()
 	printf(	"   -d  --delay          <seconds>                  Delay in Seconds for multiple block write in the standard test.\n" );
 	printf( "   -t  --test           <file>                     Runs the standard test procedure. \n" );
 	printf( "   -v  --verify         <file>                     verifies a file. \n" );
-	printf(	"   -r  --randomTest     <mountedFile> <normalFile> randomly writes in both file's and after cancel(ENTER) compares them if they are equal.\n" );
+	printf(	"   -r  --randomTest     <mountedFile> <normalFile> randomly writes in both file's and after cancel(strg+c) compares them if they are equal.\n" );
 	printf(	"   -y  --minSizePercent <percent>                  sets the minimum size in percent(integer) the file will be reduced to in the random test.\n" );
 	printf(	"   -z  --maxSizePercent <percent>                  sets the maximum size in percent(integer) the file will be enlarged to in the random test.\n" );
 	printf( "   -x  --compare        <mountedFile> <normalFile> compares two files for equalness.\n" );

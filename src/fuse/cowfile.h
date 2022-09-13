@@ -118,7 +118,7 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, at
 		char *serverAddress, bool sStdout, bool sFile );
 
 bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, bool sStdout, bool sFile );
-
+bool cowfile_startBackgroundThreads();
 void cowfile_read( fuse_req_t req, size_t size, off_t offset );
 
 void cowfile_write( fuse_req_t req, cow_request_t *cowRequest, off_t offset, size_t size );
