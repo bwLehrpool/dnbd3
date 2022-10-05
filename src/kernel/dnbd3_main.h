@@ -122,8 +122,10 @@ extern int dnbd3_rem_server(dnbd3_device_t *dev, dnbd3_host_t *host);
 #define dnbd3_flag_reset(x) atomic_set(&(x), 0)
 #define dnbd3_flag_taken(x) (atomic_read(&(x)) != 0)
 
-/* shims for making older kernels look like the current one, if possible, to avoid too
- * much inline #ifdef which makes code harder to read. */
+/*
+ * shims for making older kernels look like the current one, if possible, to avoid too
+ * much inline #ifdef which makes code harder to read.
+ */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
 #define BLK_EH_DONE BLK_EH_NOT_HANDLED

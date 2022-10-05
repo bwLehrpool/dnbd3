@@ -271,9 +271,10 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 				(unsigned long)ktime_us_delta(end, start);
 
 			rtt = 0;
-			for (k = 0; k < DISCOVER_HISTORY_SIZE; ++k) {
+
+			for (k = 0; k < DISCOVER_HISTORY_SIZE; ++k)
 				rtt += dev->alt_servers[i].rtts[k];
-			}
+
 			rtt /= DISCOVER_HISTORY_SIZE;
 			dev->alt_servers[i].failures = 0;
 			if (dev->alt_servers[i].best_count > 1)
@@ -724,9 +725,9 @@ static bool dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	if (payload == NULL)
 		goto error;
 
-	if (copy_data && device_active(dev)) {
+	if (copy_data && device_active(dev))
 		dev_warn(dnbd3_device_to_dev(dev), "Called handshake function with copy_data enabled when reported_size is not zero\n");
-	}
+
 	// Request filesize
 	request_hdr.cmd = CMD_SELECT_IMAGE;
 	iov[0].iov_base = &request_hdr;
@@ -1084,9 +1085,9 @@ static int dnbd3_set_primary_connection(dnbd3_device_t *dev, struct socket *sock
 	dev->discover_interval = TIMER_INTERVAL_PROBE_SWITCH;
 	queue_work(dev->recv_wq, &dev->recv_work);
 	spin_unlock_irqrestore(&dev->blk_lock, irqflags);
-	if (dev->use_server_provided_alts) {
+
+	if (dev->use_server_provided_alts)
 		dnbd3_send_empty_request(dev, CMD_GET_SERVERS);
-	}
 
 	dnbd3_dev_dbg_host_cur(dev, "connection switched\n");
 	dnbd3_blk_requeue_all_requests(dev);
