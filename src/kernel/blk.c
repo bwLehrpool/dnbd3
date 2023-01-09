@@ -333,7 +333,11 @@ static blk_status_t dnbd3_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_
 	return BLK_STS_OK;
 }
 
-static enum blk_eh_timer_return dnbd3_rq_timeout(struct request *req, bool reserved)
+static enum blk_eh_timer_return dnbd3_rq_timeout(struct request *req
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+		, bool reserved
+#endif
+		)
 {
 	unsigned long irqflags;
 	struct request *rq_iter;
@@ -480,16 +484,26 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	sprintf(dev->disk->disk_name, "dnbd%d", minor);
 	set_capacity(dev->disk, 0);
 	set_disk_ro(dev->disk, 1);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	ret = add_disk(dev->disk);
+	if (ret != 0)
+		goto out_cleanup_queue;
+#else
 	add_disk(dev->disk);
+#endif
 
 	// set up sysfs
 	dnbd3_sysfs_init(dev);
 
 	return 0;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 out_cleanup_queue:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	blk_cleanup_queue(dev->queue);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+	blk_cleanup_disk(dev->disk);
+#else
+	put_disk(dev->disk);
 #endif
 out_cleanup_tags:
 	blk_mq_free_tag_set(&dev->tag_set);
@@ -507,14 +521,13 @@ int dnbd3_blk_del_device(dnbd3_device_t *dev)
 	del_gendisk(dev->disk);
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	blk_cleanup_queue(dev->queue);
-#else
+	put_disk(dev->disk);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
 	blk_cleanup_disk(dev->disk);
-#endif
-	blk_mq_free_tag_set(&dev->tag_set);
-	mutex_destroy(&dev->alt_servers_lock);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
+#else
 	put_disk(dev->disk);
 #endif
+	blk_mq_free_tag_set(&dev->tag_set);
 	mutex_destroy(&dev->alt_servers_lock);
 	return 0;
 }

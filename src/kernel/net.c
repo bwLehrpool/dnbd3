@@ -26,6 +26,11 @@
 
 #include <dnbd3/shared/serialize.h>
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 14)
+#include <linux/prandom.h>
+#else
+#include <linux/random.h>
+#endif
 #include <linux/time.h>
 #include <linux/ktime.h>
 #include <linux/tcp.h>
