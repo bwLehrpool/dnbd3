@@ -26,11 +26,11 @@
 
 #include <dnbd3/shared/serialize.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 14)
-#include <linux/prandom.h>
-#else
 #include <linux/random.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+#define get_random_u32 prandom_u32
 #endif
+
 #include <linux/time.h>
 #include <linux/ktime.h>
 #include <linux/tcp.h>
@@ -203,7 +203,7 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 		check_order[i] = i;
 
 	for (i = 0; i < NUMBER_SERVERS; ++i) {
-		j = prandom_u32() % NUMBER_SERVERS;
+		j = get_random_u32() % NUMBER_SERVERS;
 		if (j != i) {
 			int tmp = check_order[i];
 
@@ -231,7 +231,7 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 		if (host_compare.ss_family == 0)
 			continue; // Empty slot
 		// Reduced probability for hosts that have been unreachable
-		if (!dev->panic && fails > 50 && (prandom_u32() % 4) != 0)
+		if (!dev->panic && fails > 50 && (get_random_u32() % 4) != 0)
 			continue; // If not in panic mode, skip server if it failed too many times
 		if (isize-- <= 0 && !is_same_server(&dev->cur_server.host, &host_compare))
 			continue; // Only test isize servers plus current server
