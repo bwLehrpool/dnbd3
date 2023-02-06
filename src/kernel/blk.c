@@ -113,7 +113,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
 			// set optimal request size for the queue to half the read-ahead
 			blk_queue_io_opt(dev->queue, (msg->read_ahead_kb * 512));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) \
+				&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 			// set readahead from optimal request size of the queue
 			// ra_pages are calculated by following formula: queue_io_opt() * 2 / PAGE_SIZE
 			blk_queue_update_readahead(dev->queue);
@@ -334,7 +335,8 @@ static blk_status_t dnbd3_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_
 }
 
 static enum blk_eh_timer_return dnbd3_rq_timeout(struct request *req
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0) \
+	&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 		, bool reserved
 #endif
 		)
@@ -470,10 +472,11 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	}
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
-	dev->disk->flags |= GENHD_FL_NO_PART_SCAN;
-#else
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0) \
+		|| RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 	dev->disk->flags |= GENHD_FL_NO_PART;
+#else
+	dev->disk->flags |= GENHD_FL_NO_PART_SCAN;
 #endif
 	dev->disk->major = major;
 	dev->disk->first_minor = minor;
@@ -484,7 +487,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	sprintf(dev->disk->disk_name, "dnbd%d", minor);
 	set_capacity(dev->disk, 0);
 	set_disk_ro(dev->disk, 1);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) \
+		|| RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 	ret = add_disk(dev->disk);
 	if (ret != 0)
 		goto out_cleanup_queue;
@@ -500,7 +504,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 out_cleanup_queue:
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	blk_cleanup_queue(dev->queue);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0) \
+		&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 	blk_cleanup_disk(dev->disk);
 #else
 	put_disk(dev->disk);
@@ -522,7 +527,8 @@ int dnbd3_blk_del_device(dnbd3_device_t *dev)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	blk_cleanup_queue(dev->queue);
 	put_disk(dev->disk);
-#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0)
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(6, 0, 0) \
+		&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 	blk_cleanup_disk(dev->disk);
 #else
 	put_disk(dev->disk);

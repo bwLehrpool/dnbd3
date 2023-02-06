@@ -37,6 +37,12 @@
 
 #include <linux/blk-mq.h>
 
+#if defined(RHEL_RELEASE_CODE) && defined(RHEL_RELEASE_VERSION)
+#define RHEL_CHECK_VERSION(CONDITION) (CONDITION)
+#else
+#define RHEL_CHECK_VERSION(CONDITION) (0)
+#endif
+
 extern int major;
 
 typedef struct {
