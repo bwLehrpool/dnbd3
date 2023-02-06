@@ -59,12 +59,16 @@
 
 #define dnbd3_dev_dbg_host(dev, host, fmt, ...) \
 	dev_dbg(dnbd3_device_to_dev(dev), "(%pISpc): " fmt, (host), ##__VA_ARGS__)
+#define dnbd3_dev_info_host(dev, host, fmt, ...) \
+	dev_info(dnbd3_device_to_dev(dev), "(%pISpc): " fmt, (host), ##__VA_ARGS__)
 #define dnbd3_dev_err_host(dev, host, fmt, ...) \
 	dev_err(dnbd3_device_to_dev(dev), "(%pISpc): " fmt, (host), ##__VA_ARGS__)
 
-#define dnbd3_dev_dbg_host_cur(dev, fmt, ...) \
+#define dnbd3_dev_dbg_cur(dev, fmt, ...) \
 	dnbd3_dev_dbg_host(dev, &(dev)->cur_server.host, fmt, ##__VA_ARGS__)
-#define dnbd3_dev_err_host_cur(dev, fmt, ...) \
+#define dnbd3_dev_info_cur(dev, fmt, ...) \
+	dnbd3_dev_info_host(dev, &(dev)->cur_server.host, fmt, ##__VA_ARGS__)
+#define dnbd3_dev_err_cur(dev, fmt, ...) \
 	dnbd3_dev_err_host(dev, &(dev)->cur_server.host, fmt, ##__VA_ARGS__)
 
 static bool dnbd3_drain_socket(dnbd3_device_t *dev, struct socket *sock, int bytes);
@@ -248,9 +252,9 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 
 		// panic mode, take first responding server
 		if (dev->panic) {
-			dnbd3_dev_dbg_host(dev, &host_compare, "panic mode, changing to new server\n");
+			dnbd3_dev_info_host(dev, &host_compare, "panic mode, changing to new server\n");
 			if (!dnbd3_flag_get(dev->connection_lock)) {
-				dnbd3_dev_dbg_host(dev, &host_compare, "...raced, ignoring\n");
+				dnbd3_dev_info_host(dev, &host_compare, "...raced, ignoring\n");
 			} else {
 				// Check global flag, a connect might have been in progress
 				if (best_sock != NULL)
@@ -359,7 +363,7 @@ error:
 	// take server with lowest rtt
 	// if a (dis)connect is already in progress, we do nothing, this is not panic mode
 	if (do_change && device_active(dev) && dnbd3_flag_get(dev->connection_lock)) {
-		dev_info(dnbd3_device_to_dev(dev), "server %pISpc is faster (%lluµs vs. %lluµs)\n",
+		dnbd3_dev_info_cur(dev, "server %pISpc is faster (%lluµs vs. %lluµs)\n",
 				&best_server,
 				(unsigned long long)best_rtt, (unsigned long long)dev->cur_server.rtt);
 		set_socket_timeout(best_sock, false, // recv
@@ -411,7 +415,7 @@ static void dnbd3_send_workfn(struct work_struct *work)
 		if (!dnbd3_send_request(dev->sock, CMD_GET_BLOCK, cmd->handle,
 					blk_rq_pos(blk_request) << 9 /* sectors */, blk_rq_bytes(blk_request))) {
 			if (!dnbd3_flag_taken(dev->connection_lock)) {
-				dnbd3_dev_err_host_cur(dev, "connection to server lost (send)\n");
+				dnbd3_dev_err_cur(dev, "connection to server lost (send)\n");
 				dnbd3_start_discover(dev, true);
 			}
 			break;
@@ -448,16 +452,16 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 		ret = dnbd3_recv_reply(dev->sock, &reply_hdr);
 		if (ret == 0) {
 			/* have not received any data, but remote peer is shutdown properly */
-			dnbd3_dev_dbg_host_cur(dev, "remote peer has performed an orderly shutdown\n");
+			dnbd3_dev_dbg_cur(dev, "remote peer has performed an orderly shutdown\n");
 			goto out_unlock;
 		} else if (ret < 0) {
 			if (ret == -EAGAIN) {
 				if (!dnbd3_flag_taken(dev->connection_lock))
-					dnbd3_dev_err_host_cur(dev, "receive timeout reached\n");
+					dnbd3_dev_err_cur(dev, "receive timeout reached\n");
 			} else {
 				/* for all errors other than -EAGAIN, print errno */
 				if (!dnbd3_flag_taken(dev->connection_lock))
-					dnbd3_dev_err_host_cur(dev, "connection to server lost (receive, errno=%d)\n", ret);
+					dnbd3_dev_err_cur(dev, "connection to server lost (receive, errno=%d)\n", ret);
 			}
 			goto out_unlock;
 		}
@@ -465,14 +469,14 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 		/* check if arrived data is valid */
 		if (ret != sizeof(reply_hdr)) {
 			if (!dnbd3_flag_taken(dev->connection_lock))
-				dnbd3_dev_err_host_cur(dev, "recv partial msg header (%d/%d bytes)\n",
+				dnbd3_dev_err_cur(dev, "recv partial msg header (%d/%d bytes)\n",
 						ret, (int)sizeof(reply_hdr));
 			goto out_unlock;
 		}
 
 		// check error
 		if (reply_hdr.magic != dnbd3_packet_magic) {
-			dnbd3_dev_err_host_cur(dev, "wrong packet magic (receive)\n");
+			dnbd3_dev_err_cur(dev, "wrong packet magic (receive)\n");
 			goto out_unlock;
 		}
 
@@ -492,7 +496,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 			}
 			spin_unlock_irqrestore(&dev->recv_queue_lock, irqflags);
 			if (blk_request == NULL) {
-				dnbd3_dev_err_host_cur(dev, "received block data for unrequested handle (%llx: len=%llu)\n",
+				dnbd3_dev_err_cur(dev, "received block data for unrequested handle (%llx: len=%llu)\n",
 						       reply_hdr.handle,
 						       (u64)reply_hdr.size);
 				goto out_unlock;
@@ -511,15 +515,15 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 				if (ret != bvec->bv_len) {
 					if (ret == 0) {
 						/* have not received any data, but remote peer is shutdown properly */
-						dnbd3_dev_dbg_host_cur(
+						dnbd3_dev_dbg_cur(
 							dev, "remote peer has performed an orderly shutdown\n");
 					} else if (ret < 0) {
 						if (!dnbd3_flag_taken(dev->connection_lock))
-							dnbd3_dev_err_host_cur(dev,
+							dnbd3_dev_err_cur(dev,
 								"disconnect: receiving from net to block layer\n");
 					} else {
 						if (!dnbd3_flag_taken(dev->connection_lock))
-							dnbd3_dev_err_host_cur(dev,
+							dnbd3_dev_err_cur(dev,
 								"receiving from net to block layer (%d bytes)\n", ret);
 					}
 					// Requeue request
@@ -541,7 +545,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 					if (dnbd3_recv_bytes(dev->sock, &new_server, sizeof(new_server))
 							!= sizeof(new_server)) {
 						if (!dnbd3_flag_taken(dev->connection_lock))
-							dnbd3_dev_err_host_cur(dev, "recv CMD_GET_SERVERS payload\n");
+							dnbd3_dev_err_cur(dev, "recv CMD_GET_SERVERS payload\n");
 						goto out_unlock;
 					}
 					// TODO: Log
@@ -567,7 +571,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 					dev_err(dnbd3_device_to_dev(dev), "could not receive CMD_LATEST_RID payload\n");
 			} else {
 				rid = net_order_16(rid);
-				dev_info(dnbd3_device_to_dev(dev), "latest rid of %s is %d (currently using %d)\n",
+				dnbd3_dev_info_cur(dev, "latest rid of %s is %d (currently using %d)\n",
 					 dev->imgname, (int)rid, (int)dev->rid);
 				dev->update_available = (rid > dev->rid ? 1 : 0);
 			}
@@ -904,7 +908,7 @@ static bool dnbd3_drain_socket(dnbd3_device_t *dev, struct socket *sock, int byt
 		iov.iov_len = sizeof(__garbage_mem);
 		ret = kernel_recvmsg(sock, &msg, &iov, 1, MIN(bytes, iov.iov_len), msg.msg_flags);
 		if (ret <= 0) {
-			dnbd3_dev_err_host_cur(dev, "draining payload failed (ret=%d)\n", ret);
+			dnbd3_dev_err_cur(dev, "draining payload failed (ret=%d)\n", ret);
 			return false;
 		}
 		bytes -= ret;
@@ -991,7 +995,7 @@ int dnbd3_new_connection(dnbd3_device_t *dev, struct sockaddr_storage *addr, boo
 
 	ASSERT(dnbd3_flag_taken(dev->connection_lock));
 	if (init && device_active(dev)) {
-		dnbd3_dev_err_host_cur(dev, "device already configured/connected\n");
+		dnbd3_dev_err_cur(dev, "device already configured/connected\n");
 		return -EBUSY;
 	}
 	if (!init && !device_active(dev)) {
@@ -1079,7 +1083,7 @@ static int dnbd3_set_primary_connection(dnbd3_device_t *dev, struct socket *sock
 
 	ASSERT(dnbd3_flag_taken(dev->connection_lock));
 	if (addr->ss_family == 0 || dev->imgname == NULL || sock == NULL) {
-		dnbd3_dev_err_host_cur(dev, "connect: host, image name or sock not set\n");
+		dnbd3_dev_err_cur(dev, "connect: host, image name or sock not set\n");
 		return -EINVAL;
 	}
 
@@ -1094,7 +1098,7 @@ static int dnbd3_set_primary_connection(dnbd3_device_t *dev, struct socket *sock
 	if (dev->use_server_provided_alts)
 		dnbd3_send_empty_request(dev, CMD_GET_SERVERS);
 
-	dnbd3_dev_dbg_host_cur(dev, "connection switched\n");
+	dnbd3_dev_info_cur(dev, "connection switched\n");
 	dnbd3_blk_requeue_all_requests(dev);
 	return 0;
 }
