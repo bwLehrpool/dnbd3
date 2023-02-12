@@ -653,10 +653,9 @@ static void probeAltServers()
 				&& rand() % srv->consecutiveFails >= FAIL_BACKOFF_START_COUNT ) {
 			continue;
 		}
+		srv->rttIndex += 1;
 		if ( srv->rttIndex >= RTT_COUNT ) {
 			srv->rttIndex = 0;
-		} else {
-			srv->rttIndex += 1;
 		}
 		// Probe
 		char hstr[100];
