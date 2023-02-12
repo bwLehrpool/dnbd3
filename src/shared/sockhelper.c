@@ -241,7 +241,10 @@ size_t sock_printable(const struct sockaddr * const addr, const socklen_t addrLe
 			outlen = snprintf( output, len, "[%s]:%s", host, port );
 		}
 	}
-	if ( outlen <= 0 ) return 0;
+	if ( outlen <= 0 ) {
+		output[0] = '\0';
+		return 0;
+	}
 	return MIN( (size_t)outlen, len-1 );
 }
 
