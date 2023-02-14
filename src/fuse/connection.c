@@ -193,7 +193,7 @@ bool connection_init( const char *hosts, const char *lowerImage, const uint16_t 
 			altIndex += 1;
 		}
 		current = end + 1;
-	} while ( end != NULL && altIndex < MAX_ALTS );
+	} while ( *end != '\0' && altIndex < MAX_ALTS );
 	logadd( LOG_INFO, "Got %d servers from init call", altIndex );
 	// Wait a maximum of five seconds if we're not connected yet
 	if ( connection.sockFd == -1 && pendingConnectionAttempts > 0 ) {
