@@ -1,3 +1,5 @@
+#include <dnbd3/config/cow.h>
+#include <dnbd3/types.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
@@ -9,7 +11,6 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <stdint.h>
-#include <dnbd3/types.h>
 #include <stdatomic.h>
 #include <time.h>
 #include <pthread.h>

@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#define container_of( ptr, type, member ) ( (type *)( (char *)( ptr ) - (char *)&( ( (type *)NULL )->member ) ) )
 #endif
 
 #ifndef MIN

@@ -399,7 +399,7 @@ static void* connection_receiveThreadMain( void *sockPtr )
 				}
 			} else {
 				// Found a match
-				const ssize_t ret = receiveRequest( sockFd, request);
+				const ssize_t ret = receiveRequest( sockFd, request );
 				if ( ret != (ssize_t)request->length ) {
 					logadd( LOG_DEBUG1, "receiving payload for a block reply failed" );
 					connection_read( request );
@@ -420,6 +420,7 @@ static void* connection_receiveThreadMain( void *sockPtr )
 					}
 					unlock_rw( &altLock );
 				}
+				// TODO: See comment in receiveRequest()
 				if( useCow ) {
 					cowfile_handleCallback( request );
 				}
@@ -477,8 +478,8 @@ static void* connection_backgroundThread( void *something UNUSED )
 	while ( keepRunning ) {
 		ticks now;
 		timing_get( &now );
-		uint32_t wt1 = timing_diffMs( &now, &nextKeepalive );
-		uint32_t wt2 = timing_diffMs( &now, &nextRttCheck );
+		uint32_t wt1 = (uint32_t)timing_diffMs( &now, &nextKeepalive );
+		uint32_t wt2 = (uint32_t)timing_diffMs( &now, &nextRttCheck );
 		if ( wt1 > 0 && wt2 > 0 ) {
 			int waitRes = signal_wait( connection.panicSignal, (int)MIN( wt1, wt2 ) + 1 );
 			if ( !keepRunning )
@@ -841,15 +842,20 @@ fail:
 	}
 }
 
-static size_t receiveRequest(const int sock, dnbd3_async_t* request ) {
-	if(useCow){
+static size_t receiveRequest(const int sock, dnbd3_async_t* request )
+{
+	if( useCow ) {
 		cow_sub_request_t * cow_request = container_of( request, cow_sub_request_t, dRequest );
-		if( cow_request->callback == readRemoteData){
+		// TODO This is ugly, we have a callback so we don't need to special-case receiving the
+		// reply, yet here we check what the callback function is for some reason :-(
+		// Ideally there should be no cow-related code in this file at all.
+		// This requires moving the callback to dnbd3_async_t from cow_sub_request_t though...
+		if( cow_request->callback == readRemoteData ) {
 			return sock_recv( sock, cow_request->buffer, request->length );
 		} else{
 			return sock_recv( sock, &cow_request->writeBuffer, request->length );
 		}
-	} else {	
+	} else {
 		return sock_recv( sock, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
 	}
 }
