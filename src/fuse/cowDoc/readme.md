@@ -38,82 +38,88 @@ Example parameters for creating a new cow session:
 
 ## Data structure
 
-The data structure is divided into two main parts. The actual data of the writing on the image and the corresponding metadata. It is also important to distinguish between a dnbd3 block, which is 4096 bytes in size, and a cow block, which combines 320 dnbd3 blocks. A cow block has a `cow_block_metadata_t` structure that contains the corresponding metadata.  The metadata is used to determine if a dnbd3 block has been written to, where that block is stored in the `data` file, when it was last modified and when it was uploaded. But more on this later. 
+The data structure is divided into two main parts. The actual data of the writing on the image and the corresponding metadata. It is also important to distinguish between a dnbd3 block, which is 4096 bytes in size, and a cow cluster, which combines 320 dnbd3 blocks. A cow cluster has a `cow_l2_entry_t` structure in its according l2 table that contains the corresponding metadata.  The metadata is used to determine if a dnbd3 block has been written to, where that block is stored in the `data` file, when it was last modified and when it was uploaded. But more on this later.
 
 
-### Blockmetadata
+### Metadata
 
 ![Datastructure](img/datastructure.jpg)
 
-TThe data structure for storing "cow_block_metadata_t" contains a layer 1 (L1) and a layer 2 (L2). L1 contains pointers to the L2's.
-The entire L1 array is initialised at the beginning and cannot be resized, therefore the size of the L1 array limits the total size of the image.
-The L2's are created dynamically as they are needed. So at the beginning all L1 pointers are zero. The L2's are arrays containing 1024 
-`cow_block_metadata_t` structs.
+The metadata file, which ultimately stores the `cow_l2_entry_t` structs, contains a layer 1 (L1) and a layer 2 (L2) table for looking up the struct, which ultimately points to the actual data in the data file.
+The entire L1 table is initialised at the beginning and cannot be resized, therefore the size of the L1 table limits the maximum size of the image.
+The L2 tables are created dynamically as needed. So at the beginning, all L1 pointers are invalid (-1).
+
+The L2 tables contain 1024 `cow_l2_entry_t` structs each. An L2 table is created as soon as any data is written to any offset in the image that corresponds to the range it covers, which is a span of 1024 * 320 * 4096 bytes.
 
 ```C
-typedef struct cow_block_metadata
+typedef struct cow_l2_entry
 {
 	atomic_int_least64_t offset;
 	atomic_uint_least64_t timeChanged;
 	atomic_uint_least64_t uploads;
 	atomic_char bitfield[40];
-} cow_block_metadata_t;
+} cow_l2_entry_t;
 ```
-Each `cow_block_metadata_t` contains a 40 byte, 320 bit bit field. The bit field indicates whether the corresponding dnbd3 block contains data or not. If, for example, the bit field begins with 01... the first 4096 contain no data and the next 4096 contain data.
-So each `cow_block_metadata_t` stores the metadata of up to 320*4096 bytes if all bits are set to 1. The offset field is the offset where in the data file the corresponding data is stored. The property timeChanged contains the Unix time when the block was last changed. It is 0 if it has never been changed or if the last changes have already been uploaded.
+Each `cow_l2_entry_t` contains a 40 byte, 320 bit bit-field. The bit-field indicates whether the corresponding dnbd3 block has been written locally. If, for example, the bit field begins with 01... the first 4096 bytes contain no data and the next 4096 do.
+So each `cow_l2_entry_t` stores the metadata for up to 320\*4096 bytes. The offset field is the offset into the data file where the corresponding data is stored. `timeChanged` contains the unix timestamp when the cluster was last written. It is 0 if it has never been changed or if the latest changes have already been uploaded.
 
 
-The L2 arrays and `cow_block_metadata_t` are sorted according to the original offsets of the image. Thus the first L1 pointer, i.e. the first L2 array, addresses the first 1024 * 320 * 4096 bytes (L2Size * bitfieldsize * DNBD3Blocksize) of data and so on.
-
-
-For example, to get the "cow_block_metadata_t" for offset 4033085440, one would take L1[3], since 
+For example, to get the `cow_l2_entry_t` for offset 4033085440, one would take L1[3], since
 ```
-4033085440 / ( COW_L2_STORAGE_CAPACITY ) ≈ 3.005
+4033085440 / ( COW_FULL_L2_TABLE_DATA_SIZE ) ≈ 3.005
 ```
 
- Then one would take the fifth `cow_block_metadata_t` in the L2 array because of 
+Then one would take the fifth `cow_l2_entry_t` in the L2 array because of
 ```
-(4033085440 mod COW_L2_STORAGE_CAPACITY) / COW_METADATA_STORAGE_CAPACITY = 5
+(4033085440 mod COW_FULL_L2_TABLE_DATA_SIZE) / COW_DATA_CLUSTER_SIZE = 5
 ```
 Where:
 ```
-COW_L2_STORAGE_CAPACITY = 1024 * 320 * 4096 
-COW_METADATA_STORAGE_CAPACITY = 320 * 4096 
+COW_FULL_L2_TABLE_DATA_SIZE = 1024 * 320 * 4096
+COW_DATA_CLUSTER_SIZE = 320 * 4096
 ```
 
+Since the result is an integer, the offset refers to the first dnbd3 block in that cluster. Otherwise, the block number within the cluster be calculated via
+```
+(4033085440 % (320 * 4096)) / 4096
+```
+which is the index in the bit-field that tells whether the block has been written to the data file.
 
- 
+
 ### Read Request
 
-
-
-When a read request is made, it is checked for each 4096-byte block whether the block already exists locally on the computer (i.e. has already been written once). If so, it is read from the hard disk, otherwise it is requested from the dnbd3 server. To increase performance, several subsequent blocks that are also local/non-local are combined into a larger read from the hard disk or request from the server.
+When a read request is made, for each dnbd3 block  block it is checked whether it already exists in the data file (i.e. has already been written to once). If so, it is read from the data file, otherwise it needs to be requested from the dnbd3 server. To increase performance, several subsequent blocks that are also local/non-local are combined into a larger reads from disk or requests from the server.
 
 ![readrequest](img/readrequest.svg)
 
-The diagram above is somewhat simplified for clarity. The server's read operations are asynchronous. This means that it does not wait for a response from the server, but continues with the next blocks. As soon as the server's response is complete, the data is written to the fuse buffer. 
-Each request to the dnbd3 server increases the variable `workCounter` by one, and each time a request is completed, it is decreased by one. As soon as `workCounter` is 0 again, fuse_request is returned. This is done to ensure that all asynchronous requests are completed before the request is returned.
-
-
-
-For local blocks, the loop must be interrupted as soon as the end of a `cow_block_metadata_t` is reached, as the next data offset of the next `cow_block_metadata_t` is most likely not directly after it in the data file.
+The diagram above is somewhat simplified for clarity. The server's read operations are asynchronous. This means that while iterating over the 4k blocks from the read request, it does not wait for a response from the server for blocks that are missing locally, but fires off a request to the dnbd3 server asynchronously, continuing to check the remaining blocks. As soon as all pending requests to the server are completed, the combined data is handed over to fuse, completing the request.
+To keep track of pending requests, each request to the dnbd3 server increments the field `workCounter` in the according `cow_request_t` by one, and each time a request is completed, it is decreased by one. As soon as `workCounter` reaches `0`, all data is known to be fetched properly and assembled in a buffer that can be handed over to fuse.
 
 ### Write Request
-If, in a write request, the beginning or end does not match a multiple of 4096, the beginning and/or end block must be padded.
-This is because each 4096-byte block requires complete data, because if the bit in the bit field for that block is set, all data is read locally.
-To fill the block, if it is still within the range of the original image size, the missing bytes are requested from the dnbd3 server. If it is outside the original image size (because the image has become larger), the missing bytes are filled with 0.
-The write request calculates the corresponding `cow_block_metadata_t` from the offset. If the corresponding `cow_block_metadata_t` does not yet exist, it is created. The data will be written to the data file, at the offset stored in the `cow_block_metadata_t`.
-Then the corresponding bit in the bit fields is set and the `timeChanged` is updated. If there is more data to write, the next `cow_block_metadata_t` is calculated and the above steps are repeated.
-The variable `workCounter` is also used here to ensure that the padding of the data occurs before the Fuse request returns.
+
+If, in a write request, the beginning or end does not match a multiple of 4096, the beginning and/or end block must be padded if the accoding dnbd3 block hasn't been written to before.
+This is because the granularity of the cow bit-field represents a full dnbd3 block of 4096 bytes, so we cannot write partial data to those blocks, as there is no mechanism to annotate which parts of the block have been written to, and which are still missing.
+To work around this limitation, we need to fill the partial block's missing data with data from the dnbd3 server if it is still within the range of the original image size. If it is outside the original image size (because the image has grown), the missing bytes can simply be set to 0 and no request needs to be made.
+The write request calculates the corresponding `cow_l2_entry_t` from the offset. If the corresponding `cow_l2_entry_t` does not yet exist, it is created. The data will be written to the data file, and the offset stored in `cow_l2_entry_t.offset`.
+Then the corresponding bit in the bit-field is set and `timeChanged` is updated. If there is more data to write to the current cluster, the next `cow_l2_entry_t` is calculated and the above steps are repeated.
+The variable `workCounter` is also used here to ensure that the padding of the data occurs before the fuse request returns.
 
 
-### Block Upload
-For uploading blocks, there is a background thread that periodically loops over all Cow blocks and checks whether `timeChanged` is not 0 and the time difference between now and `timeChanged` is greater than `COW_MIN_UPLOAD_DELAY`. If so, the block is uploaded. The `timeChanged` before the upload is buffered. After the upload, `timeChanged` is set to 0 if it still has the same time as the temporarily stored one (if not, there was a change during the upload and it has to be uploaded again). Once the image is unmounted, `COW_MIN_UPLOAD_DELAY` is ignored and all blocks that have a time other than 0 are uploaded. The upload is done via a [rest request](#/api/file/update). There are two different limits for the number of parallel uploads in the [config.h](#config-variables).
+### Background Cluster Upload
+
+For uploading clusters, there is a background thread that periodically loops over all cow clusters and checks whether `timeChanged` is not 0 and the time difference between now and `timeChanged` is greater than `COW_MIN_UPLOAD_DELAY`.
+If so, the entire cluster is uploaded. The `timeChanged` before the upload is remembered.
+After the upload, `timeChanged` is set to 0 if it still has the same time as the temporarily stored one (if not, there was a change during the upload and it has to be uploaded again).
+Once the image is unmounted, `COW_MIN_UPLOAD_DELAY` is ignored and all clusters that still have a `timeChanged` other than 0 are uploaded.
+The upload is done via a [rest request](#/api/file/update).
+There are two different limits for the number of parallel uploads in the [config/cow.h](#config-variables).
 
 ## Files
+
 When a new CoW session is started, a new `meta`, `data` and, if so set in the command line arguments, a `status.txt` file is created.
 
 ### status
+
 The file `status.txt` can be activated with the command line parameter `--cowStatFile`.
 
 The file will contain the following:
@@ -123,28 +129,29 @@ uuid=<uuid>
 state=backgroundUpload
 inQueue=0
 modifiedBlocks=0
-idleBlocks=0
-totalBlocksUploaded=0
-activeUploads:0
+idleClusters=0
+totalClustersUploaded=0
+activeUploads=0
 ulspeed=0.00
 ```
 - The `uuid` is the session uuid used by the Cow server to identify the session.
 
-- The `status` is `backgroundUpload` when the image is still mounted and cow blocks are uploaded in the background.
-It is `uploading` when the image has been unmounted and all blocks that have not yet been uploaded are uploaded.
-It is `done` when the image has been unmounted and all blocks have been uploaded. 
-- `Queue` are the cow blocks that are currently being uploaded or are waiting for a free slot.
-- `ModifiedBlocks` are cow blocks that have changes that have not yet been uploaded to the server because the changes are too recent.
-- `totalBlocksUploaded` the total amount of cow blocks uploaded since the image was mounted.
-- `activeUploads` is the number of blocks currently being uploaded.
+- The `status` is `backgroundUpload` when the image is still mounted and cow clusters are uploaded in the background.
+It is `uploading` when the image has been unmounted and all clusters that have not yet been uploaded are uploaded.
+It is `done` when the image has been unmounted and all clusters have been uploaded.
+- `Queue` are the cow clusters that are currently being uploaded or are waiting for a free slot.
+- `ModifiedClusters` are cow clusters that have changes that have not yet been uploaded to the server because the changes are too recent.
+- `totalClustersUploaded` the total amount of cow clusters uploaded since the image was mounted.
+- `activeUploads` is the number of clusters currently being uploaded.
 - `ulspeed` the current upload speed in kb/s.
 
-Once all blocks have been uploaded, the status is set to `done`.
-If you define `COW_DUMP_BLOCK_UPLOADS`, a list of all blocks, sorted by the number of uploads, is copied to the status.txt file after the block upload is completed.
+Once all clusters have been uploaded, the status is set to `done`.
+If you define `COW_DUMP_BLOCK_UPLOADS`, a list of all clusters, sorted by the number of uploads, is copied to the status.txt file after the cluster upload is completed.
 
 With the command line parameter `--cowStatStdout` the same output of the stats file will be printed in stdout.
 
 ### meta
+
 The `meta` file contains the following header:
 ```C
 // cowfile.h
@@ -167,12 +174,13 @@ typedef struct cowfile_metadata_header
 } cowfile_metadata_header_t;
 ```
 After this header, the above-mentioned l1 and then the l2 data structure begins at byte 8192.
+
 ### data
-The `data` files contain the magicValue and at the 40 * 8 * 4096 offset (capacity of a cowfile_metadata_header_t) the first data block starts.
 
-
+The `data` file starts with `COW_FILE_DATA_MAGIC_VALUE` and at the `COW_DATA_CLUSTER_SIZE` (40 * 8 * 4096) offset the first cluster starts.
 
 ### magic values in the file headers
+
 The magic values in both files are used to ensure that an appropriate file is read and that the machine has the correct endianness.
 ```C
 //config.h
@@ -180,25 +188,24 @@ The magic values in both files are used to ensure that an appropriate file is re
 #define COW_FILE_DATA_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825F) // Magic Value to recognize a Cow data file
 ```
 
-
 ### Threads
-This extension uses two new threads: 
+
+This extension uses two new threads:
 ```
 tidCowUploader
 tidStatUpdater
 ```
-```tidCowUploader``` is the thread that uploads blocks to the cow server.
+`tidCowUploader` is the thread that uploads blocks to the cow server.
 
-```tidStatUpdater``` updates the stats in stdout or the stats files (depending on parameters).
+`tidStatUpdater` updates the stats in stdout or the stats files (depending on parameters).
 
 ### Locks
 
-This extension uses a new lock  ```cow.l2CreateLock```. It is used when a new L2 array is allocated.
-
-
+This extension uses a new lock  `cow.l2CreateLock`. It is used when a new L2 table is allocated.
 
 ### Config Variables
-The following configuration variables have been added to ```config.h```.
+
+The following configuration variables have been added to `config/cow.h`.
 ```c
 //config.h
 // +++++ COW +++++
@@ -206,22 +213,26 @@ The following configuration variables have been added to ```config.h```.
 #define COW_FILE_META_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825E) // Magic Value to recognize a Cow meta file
 #define COW_FILE_DATA_MAGIC_VALUE ((uint64_t)0xEBE44D6E72F7825F) // Magic Value to recognize a Cow data file
 #define COW_MIN_UPLOAD_DELAY 60 // in seconds
-#define COW_STATS_UPDATE_TIME 5 // time in seconds the cow status files gets updated (while uploading blocks)
+#define COW_STATS_UPDATE_TIME 5 // time in seconds the cow status files gets updated (while uploading clusters)
 #define COW_MAX_PARALLEL_UPLOADS 10 // maximum number of parallel uploads
 #define COW_MAX_PARALLEL_BACKGROUND_UPLOADS 2 // maximum number of parallel uploads while the image is still mounted
 #define COW_URL_STRING_SIZE 500 // Max string size for an url
 #define COW_SHOW_UL_SPEED 1 // enable display of ul speed in cow status file
 #define COW_MAX_IMAGE_SIZE 1000LL * 1000LL * 1000LL * 1000LL; // Maximum size an image can have(tb*gb*mb*kb)
 // +++++ COW API Endpoints +++++
-#define COW_API_CREATE "%s/api/File/Create"
-#define COW_API_UPDATE "%s/api/File/Update?guid=%s&BlockNumber=%lu"
-#define COW_API_START_MERGE "%s/api/File/StartMerge"
+#define COW_API_CREATE "%s/api/file/create"
+#define COW_API_UPDATE "%s/api/file/update?guid=%s&clusterindex=%lu"
+#define COW_API_START_MERGE "%s/api/file/merge"
 ```
 
-- ```COW_MIN_UPLOAD_DELAY``` sets the minimum time in seconds that must have elapsed since the last change to a cow block before it is uploaded. This value can be fine-tuned. A larger value usually reduces the double uploading of blocks. A smaller value reduces the time for the final upload after the image has been unmounted. If you set `COW_DUMP_BLOCK_UPLOADS` and set the command line parameter `--cowStatFile`, then a list of all blocks, sorted by the number of uploads, will be written to the status.txt file after the block upload is complete. This can help in fine-tuning `COW_MIN_UPLOAD_DELAY`.
-- ```COW_STATS_UPDATE_TIME``` defines the update frequency of the stdout output/statistics file in seconds. Setting it too low could affect performance as a loop runs over all blocks.
-- ```COW_MAX_PARALLEL_BACKGROUND_UPLOADS``` defines the maximum number of parallel block uploads. This number is used when the image is still mounted and the user is still using it.
-- ```COW_MAX_PARALLEL_UPLOADS``` defines the maximum number of parallel block uploads. This number is used once the image has been unmounted to upload the remaining modified blocks.
+- `COW_MIN_UPLOAD_DELAY` sets the minimum time in seconds that must have elapsed since the last change to a cow cluster before it is uploaded.
+This value can be fine-tuned. A larger value usually reduces redundant uploading of clusters.
+A smaller value reduces the time for the final upload after the image has been unmounted.
+If you set `COW_DUMP_BLOCK_UPLOADS` and set the command line parameter `--cowStatFile`, then a list of all clusters, sorted by the number of uploads, will be written to the status.txt file after the cluster upload is complete.
+This can help in fine-tuning `COW_MIN_UPLOAD_DELAY`.
+- `COW_STATS_UPDATE_TIME` defines the update frequency of the stdout output/statistics file in seconds. Setting it too low could affect performance as a loop runs over all clusters.
+- `COW_MAX_PARALLEL_BACKGROUND_UPLOADS` defines the maximum number of parallel cluster uploads. This number is used when the image is still mounted and the user is still using it.
+- `COW_MAX_PARALLEL_UPLOADS` defines the maximum number of parallel cluster uploads. This number is used once the image has been unmounted to upload the remaining modified clusters.
 
 
 
@@ -248,7 +259,7 @@ This request is used as soon as a new cow session is created. The returned guid 
 | Name | Located in | Description | Required | Schema |
 | ---- | ---------- | ----------- | -------- | ---- |
 | guid | query |  | Yes | string (uuid) |
-| blockNumber | query |  | Yes | integer |
+| clusterNumber | query |  | Yes | integer |
 
 ##### Responses
 
@@ -256,7 +267,7 @@ This request is used as soon as a new cow session is created. The returned guid 
 | ---- | ----------- |
 | 200 | Success |
 
-Used to upload a data block. The block number is the absolute block number. The body contains an "application/octet-stream", where the first bytes are the bit field, directly followed by the actual block data. 
+Used to upload a cluster. The cluster number is the absolute cluster number. The body contains an "application/octet-stream", where the first bytes are the bit field, directly followed by the actual cluster data.
 
 
 ### /api/File/StartMerge
@@ -292,7 +303,7 @@ Used to start the merge on the server.
 | ---- | ----------- |
 | 200 | Success |
 
-This request returns a list containing the block IDs and the number of uploads of this block, sorted by the number of uploads. This is useful to adjust the `COW_MIN_UPLOAD_DELAY`.
+This request returns a list containing the cluster IDs and the number of uploads, sorted by the number of uploads. This is useful if you want to fine-tune `COW_MIN_UPLOAD_DELAY`.
 
 ### /api/File/Status
 
@@ -317,7 +328,7 @@ Returns the SessionStatus model that provides information about the session.
 
 | Name | Type | Description | Required |
 | ---- | ---- | ----------- | -------- |
-| blockNumber | integer |  | Yes |
+| clusterNumber | integer |  | Yes |
 | modifications | integer |  | Yes |
 
 #### SessionState
@@ -334,5 +345,5 @@ Returns the SessionStatus model that provides information about the session.
 | imageName | string |  | Yes |
 | originalImageVersion | integer |  | Yes |
 | newImageVersion | integer |  | Yes |
-| mergedBlocks | integer |  | Yes |
-| totalBlocks | integer |  | Yes |
+| mergedClusters | integer |  | Yes |
+| totalClusters | integer |  | Yes |
