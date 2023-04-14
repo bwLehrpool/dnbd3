@@ -329,7 +329,7 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "\n" );
 	printf( "Usage:   %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
 	printf( "Or:      %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
-	printf( "For cow: %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] -c <path> -C <cowServerAddress> -m [--cowStatStdout] [--cowStatFile] <mountPoint>\n", argv0 );
+	printf( "For cow: %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] -c <path> -C <cowServerAddress> -m [--cow-stats-stdout] [--cow-stats-file] <mountPoint>\n", argv0 );
 	printf( "   -d --debug      Don't fork, write stats file, and print debug output (fuse -> stderr, dnbd3 -> stdout)\n" );
 	printf( "   -f              Don't fork (dnbd3 -> stdout)\n" );
 	printf( "   -h --host       List of space separated hosts to use\n" );
@@ -342,12 +342,13 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -c              Enables cow, creates the cow files at given location\n" );
 	printf( "   -L              Loads the cow files from the given location\n" );
 	printf( "   -C              Host address of the cow server\n" );
-	printf( "   --cowStatStdout prints the cow status in stdout\n" );
-	printf( "   --cowStatFile   creates and updates the cow status file\n" );
+	printf( "--cow-stats-stdout prints the cow status in stdout\n" );
+	printf( "--cow-stats-file   creates and updates the cow status file\n" );
+	printf( "   -m --merge      tell server to merge and create new revision on exit\n" );
 	exit( exitCode );
 }
 
-static const char *optString = "dfHh:i:l:o:r:SsVvc:L:C:mxy";
+static const char *optString = "dfHh:i:l:o:r:SsVvc:L:C:m";
 static const struct option longOpts[] = {
 	{ "debug", no_argument, NULL, 'd' },
 	{ "help", no_argument, NULL, 'H' },
@@ -362,8 +363,8 @@ static const struct option longOpts[] = {
 	{ "loadcow", required_argument, NULL, 'L' },
 	{ "cowServer", required_argument, NULL, 'C' },
 	{ "merge", no_argument, NULL, 'm' },
-	{ "cowStatStdout", no_argument, NULL, 'x' },
-	{ "cowStatFile", no_argument, NULL, 'y' },
+	{ "cow-stats-stdout", no_argument, NULL, 'sout' },
+	{ "cow-stats-file", no_argument, NULL, 'sfil' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -467,10 +468,10 @@ int main( int argc, char *argv[] )
 			useCow = true;
 			loadCow = true;
 			break;
-		case 'x':
+		case 'sout':
 			sStdout = true;
 			break;
-		case 'y':
+		case 'sfil':
 			sFile = true;
 			break;
 		default:

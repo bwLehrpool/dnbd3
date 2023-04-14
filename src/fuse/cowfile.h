@@ -24,9 +24,10 @@ _Static_assert( sizeof( atomic_int_least64_t ) == 8, "atomic_int_least64_t not 8
 
 enum dataSource
 {
-	local,
-	remote,
-	zero
+	ds_invalid,
+	ds_local,
+	ds_remote,
+	ds_zero
 };
 
 #define COW_METADATA_HEADER_SIZE 320
@@ -36,19 +37,20 @@ typedef struct cowfile_metadata_header
 	atomic_uint_least64_t imageSize;        // 8byte
 	int32_t version;                        // 4byte
 	int32_t blocksize;                      // 4byte
-	uint64_t originalImageSize;             // 8byte - the name implies this is the size of the image on the server, but apparently it changes if we truncate the image etc. better name?
-	uint64_t metaDataStart;                 // 8byte
+	uint64_t validRemoteSize;               // 8byte
+	uint32_t startL1;                       // 4byte
+	uint32_t startL2;                       // 4byte
 	int32_t bitfieldSize;                   // 4byte
 	int32_t nextL2;                         // 4byte
-	atomic_uint_least64_t metadataFileSize; // 8byte
-	atomic_uint_least64_t dataFileSize;     // 8byte
+	atomic_int_least64_t metaSize;          // 8byte
+	atomic_int_least64_t nextClusterOffset; // 8byte
 	uint64_t maxImageSize;                  // 8byte
 	uint64_t creationTime;                  // 8byte
 	char uuid[40];                          // 40byte
 	char imageName[200];                    // 200byte
 } cowfile_metadata_header_t;
-_Static_assert(
-		sizeof( cowfile_metadata_header_t ) == COW_METADATA_HEADER_SIZE, "cowfile_metadata_header is messed up" );
+_Static_assert( sizeof( cowfile_metadata_header_t ) == COW_METADATA_HEADER_SIZE,
+		"cowfile_metadata_header is messed up" );
 
 #define COW_L2_ENTRY_SIZE 64
 typedef struct cow_l2_entry
@@ -56,25 +58,25 @@ typedef struct cow_l2_entry
 	atomic_int_least64_t offset;
 	atomic_uint_least64_t timeChanged;
 	atomic_uint_least64_t uploads;
-	atomic_char bitfield[COW_BITFIELD_SIZE];
+	atomic_uchar bitfield[COW_BITFIELD_SIZE];
 } cow_l2_entry_t;
 _Static_assert( sizeof( cow_l2_entry_t ) == COW_L2_ENTRY_SIZE, "cow_l2_entry_t is messed up" );
 
 /**
  * Open request for reading/writing the virtual image we expose.
- * TODO Please verify field comments
  */
 typedef struct cow_request
 {
 	size_t fuseRequestSize; // Number of bytes to be read/written
 	off_t fuseRequestOffset; // Absolute offset into the image, as seen by user space
-	char *readBuffer; // Used only in read case?
-	const char *writeBuffer; // Used only in write case?
-	atomic_size_t bytesWorkedOn; // Used for ???
+	char *readBuffer; // Used only in read case
+	const char *writeBuffer; // Used only in write case
+	atomic_size_t bytesWorkedOn; // Used for tracking how many bytes we have touched (exluding padding etc)
 	atomic_int workCounter; // How many pending sub requests (see below)
 	atomic_int errorCode; // For reporting back to fuse
-	fuse_ino_t ino; // Inode of file, used for ???
-	struct fuse_file_info *fi; // Used for ???
+	fuse_ino_t ino; // Inode of file, used for ??? (For reporting back to fuse, dont know if needed?)
+	struct fuse_file_info *fi; // Used for ??? (For reporting back to fuse, dont know if needed?)
+	//fuse_req_t req; // Fuse request
 } cow_request_t;
 
 typedef struct cow_sub_request cow_sub_request_t;
@@ -88,14 +90,14 @@ typedef void ( *cow_callback )( cow_sub_request_t *sRequest );
 typedef struct cow_sub_request
 {
 	size_t size; // size of this sub-request
-	off_t inClusterOffset; // offset relative to!? cow-block? DNBD3 block? cluster?
-	const char *writeSrc; // ???
-	char *buffer; // ???
+	off_t inClusterOffset; // offset relative to the beginning of the cluster
+	const char *writeSrc; // pointer to the data of a write request which needs padding
+	char *buffer; // The pointer points to the original read buffer to the place where the sub read request should be copied to.
 	cow_l2_entry_t *block; // the cluster inClusterOffset refers to
 	cow_callback callback; // Callback when we're done handling this
 	cow_request_t *cowRequest; // parent request
 	dnbd3_async_t dRequest; // Probably request to dnbd3-server for non-aligned writes (wrt 4k dnbd3 block)
-	char writeBuffer[]; // ???
+	char writeBuffer[]; // buffer for a padding write request, gets filled from a remote read, then the writeSrc data gets copied into it.
 } cow_sub_request_t;
 
 typedef struct cow_curl_read_upload
@@ -103,18 +105,18 @@ typedef struct cow_curl_read_upload
 	atomic_uint_least64_t time;
 	cow_l2_entry_t *block;
 	size_t position;
-	long unsigned int blocknumber;
+	long unsigned int clusterNumber;
 	int fails;
 	int64_t ulLast;
+	atomic_uchar bitfield[COW_BITFIELD_SIZE];
 } cow_curl_read_upload_t;
 
 
-typedef struct cow_block_upload_statistics
+typedef struct cow_cluster_statistics
 {
-	uint64_t blocknumber;
+	uint64_t clusterNumber;
 	uint64_t uploads;
-} cow_block_upload_statistics_t;
-
+} cow_cluster_statistics_t;
 
 typedef int32_t l1;
 typedef cow_l2_entry_t l2[COW_L2_TABLE_SIZE];

@@ -43,7 +43,7 @@ atomic_bool randomTestLoop = true;
 
 #define RND_MAX_WRITE_SIZE 4096 * 320
 #define RND_TRUNCATE_PROBABILITY 5
-#define RND_UNALIGNED_WRITE_PROBABILITY 5
+#define RND_UNALIGNED_WRITE_PROBABILITY 80
 #define RND_DEFAULT_MIN_SIZE_PERCENT 0.9f
 #define RND_DEFAULT_MAX_SIZE_PERCENT 1.1f
 #define BASE_DATA (char)42
@@ -97,10 +97,29 @@ bool generateTestFile( char *path, size_t size )
  * @param str 
  * @param len 
  */
-void printCharInHexadecimal( const char *str, int len )
+void printCharInHexadecimal( const char *str, const char *got, int len )
 {
+	int pr = 0;
 	for ( int i = 0; i < len; ++i ) {
-		printf( "0x%02x ", (int)str[i] );
+		if ( pr > 0 ) {
+			pr--;
+			if ( str[i] != got[i] ) {
+				printf( "[%02x/%02x] ", (int)str[i], (int)got[i] );
+			} else {
+				printf( "%02x ", (int)str[i] );
+			}
+			if ( pr == 0 ) {
+				printf( " .." );
+			}
+		} else {
+			if ( str[i] != got[i] ) {
+				pr = 4;
+				i = MAX( -1, i - 4 );
+				if ( i != -1 ) {
+					printf(".. " );
+				}
+			}
+		}
 	}
 	printf( "\n" );
 }
@@ -118,12 +137,10 @@ void printCharInHexadecimal( const char *str, int len )
 bool compare( char buff[], char expected[], size_t size, char errorMessage[] )
 {
 	if ( memcmp( buff, expected, size ) != 0 ) {
-		printf( "%s", errorMessage );
+		printf( "%s\n", errorMessage );
 		if ( printOnError ) {
-			printf( "Expected: \n" );
-			printCharInHexadecimal( expected, (int)size );
-			printf( "Got: \n " );
-			printCharInHexadecimal( buff, (int)size );
+			printf( "Diff [want/got]: \n" );
+			printCharInHexadecimal( expected, buff, (int)size );
 		}
 		return false;
 	}
@@ -247,14 +264,14 @@ bool verifySingleBit()
 	expected[0] = 1;
 	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, 0, "SingleBit test Failed: first read to small" ) )
 		return false;
-	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: first write not as expected" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: first read not as expected" ) )
 		return false;
 
 	expected[0] = BASE_DATA;
 	expected[DNBD3_BLOCK_SIZE / 2] = 1;
 	if ( !readSizeTested( fh, buff, DNBD3_BLOCK_SIZE, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second read to small" ) )
 		return false;
-	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second write not as expected" ) )
+	if ( !compare( buff, expected, DNBD3_BLOCK_SIZE, "SingleBit test Failed: second read not as expected" ) )
 		return false;
 	printf( "testSingleBit successful!\n" );
 	return true;
@@ -426,7 +443,7 @@ bool verifyLongNonAlignedPattern()
 		if ( !readSizeTested( fh, buffer, sizeToRead, offset, "writeLongNonAlignedPattern test Failed: read failed" ) ) {
 			return false;
 		}
-		if ( !compare( buffer, expected, sizeToRead, "writeLongNonAlignedPattern test Failed:  read failed" ) )
+		if ( !compare( buffer, expected, sizeToRead, "writeLongNonAlignedPattern test Failed: compare failed" ) )
 			return false;
 		offset += sizeToRead;
 	}
@@ -755,7 +772,7 @@ bool verifyFinalFile( char *path )
 
 	size_t fileSize = testFileSize + 2 * l2Capacity;
 	struct stat st;
-	stat( path, &st );
+	fstat( fh, &st );
 	size_t size = st.st_size;
 	if ( size != fileSize ) {
 		printf( "verify Failed, wrong file size\n expectedSize: %zu\n got: %zu\n", fileSize, size );
@@ -1023,7 +1040,7 @@ bool randomWriteTest( char *mountedImagePath,  char *normalImagePath, float minS
 		return (void*) false;
 	}
 	// RANDOM WRITE LOOP
-	printf( "Press any key to cancel\n" );
+	printf( "Press Ctrl-C to stop and compare\n" );
 	while ( randomTestLoop ) {
 		//select test
 		int r = rand() % 100;
@@ -1042,7 +1059,10 @@ bool randomWriteTest( char *mountedImagePath,  char *normalImagePath, float minS
 		} else {
 			// write test
 			off_t offset = rand() % maxOffset;
-			size_t size = rand() % RND_MAX_WRITE_SIZE;
+			size_t size = ( rand() + offset ) % RND_MAX_WRITE_SIZE;
+			if ( size < RND_MAX_WRITE_SIZE / 2 ) {
+				size /= rand() % 8192;
+			}
 			size = MAX( size, 1 );
 			if ( r > RND_TRUNCATE_PROBABILITY + RND_UNALIGNED_WRITE_PROBABILITY ) {
 				// align to block
@@ -1051,7 +1071,7 @@ bool randomWriteTest( char *mountedImagePath,  char *normalImagePath, float minS
 			}
 
 			generateRandomData( fhr, buf, size );
-			printf( "write offset: %zu size: %zu\n", offset, size );
+			printf( "write offset: %zu size: %zu r: %d\n", offset, size, r );
 			if ( !writeSizeTested( fhm, buf, size, offset, "failed to write on mounted image" ) )
 				return false;
 			if ( !writeSizeTested( fhn, buf, size, offset, "failed to write on normal image" ) )
