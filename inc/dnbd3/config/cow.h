@@ -11,7 +11,7 @@
 #define COW_MAX_PARALLEL_BACKGROUND_UPLOADS 2 // maximum number of parallel uploads while the image is still mounted
 #define COW_URL_STRING_SIZE 500 // Max string size for an url
 #define COW_SHOW_UL_SPEED 1 // enable display of ul speed in cow status file
-#define COW_MAX_IMAGE_SIZE 1000LL * 1000LL * 1000LL * 1000LL; // Maximum size an image can have(tb*gb*mb*kb)
+#define COW_MAX_IMAGE_SIZE (1000LL * 1000LL * 1000LL * 1000LL) // Maximum size an image can have(tb*gb*mb*kb)
 // +++++ COW API Endpoints +++++
 #define COW_API_CREATE "%s/api/file/create"
 #define COW_API_UPDATE "%s/api/file/update?guid=%s&clusterindex=%lu"

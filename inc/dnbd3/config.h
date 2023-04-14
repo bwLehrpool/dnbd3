@@ -39,5 +39,6 @@
 
 // +++++ Block Device +++++
 #define DNBD3_BLOCK_SIZE ((uint64_t)4096) // NEVER CHANGE THIS OR THE WORLD WILL END!
+#define DNBD3_BLOCK_MASK ((uint64_t)4095) // NEVER CHANGE THIS OR THE WORLD WILL END!
 
 #endif /* CONFIG_H_ */
