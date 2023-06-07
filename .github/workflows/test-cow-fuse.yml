@@ -78,7 +78,7 @@ jobs:
         run: |
           mkdir /home/runner/work/mount 
           mkdir /home/runner/work/tmp 
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 -y -x 2>&1 > /home/runner/work/tmp/standardLog1.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/tmp/standardLog1.out &
           PID=$!
           sleep 5
           echo PID: $PID
@@ -87,7 +87,7 @@ jobs:
           sudo umount /home/runner/work/mount
           wait $PID
           echo unmounted
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 -m -y -x 2>&1 > /home/runner/work/tmp/standardLog2.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/tmp/standardLog2.out &
           PID=$!
           sleep 5
           echo PID: $PID
@@ -103,7 +103,7 @@ jobs:
         working-directory: ${{ github.workspace }}/build/src
         run: |
           cp /home/runner/work/OriginalImageDirectory/test.r1 /home/runner/work/
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 -y -x 2>&1 > /home/runner/work/tmp/randomLog1.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/tmp/randomLog1.out &
           PIDFUSE=$!
           sleep 5
           echo PIDFUSE : $PIDFUSE
@@ -118,7 +118,7 @@ jobs:
           sudo umount /home/runner/work/mount
           echo unmounted
           wait $PIDFUSE
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 -m -y -x 2>&1 > /home/runner/work/tmp/randomLog2.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/tmp/randomLog2.out &
           PIDFUSE=$!
           sleep 5
           echo PIDFUSE : $PIDFUSE
