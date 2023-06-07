@@ -5,7 +5,7 @@
 
 # check if custom Linux kernel script directory was specified
 if(NOT KERNEL_SCRIPTS_DIR)
-    set(KERNEL_SCRIPTS_DIR "/lib/modules/${CMAKE_SYSTEM_VERSION}/build/scripts"
+    set(KERNEL_SCRIPTS_DIR "${KERNEL_BUILD_DIR}/scripts"
         CACHE PATH "Path to Linux kernel scripts directory")
 endif(NOT KERNEL_SCRIPTS_DIR)
 

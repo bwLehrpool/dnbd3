@@ -15,6 +15,10 @@ if(NOT KERNEL_INSTALL_DIR)
         CACHE PATH "Path to install Linux kernel modules")
 endif(NOT KERNEL_INSTALL_DIR)
 
+if(NOT EXISTS "${KERNEL_BUILD_DIR}/Module.symvers")
+    message(FATAL_ERROR "Module.symvers not found in ${KERNEL_BUILD_DIR}")
+endif()
+
 # find the Linux kernel headers from given KERNEL_BUILD_DIR
 find_path(KernelHeaders_INCLUDE_DIR
           NAMES linux/kernel.h
@@ -24,7 +28,18 @@ find_path(KernelHeaders_INCLUDE_DIR
           NO_DEFAULT_PATH)
 
 # get Linux kernel headers version
-string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${KernelHeaders_INCLUDE_DIR})
+file(READ "${KERNEL_BUILD_DIR}/include/generated/utsrelease.h" tmpvar)
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${tmpvar})
+if("${KernelHeaders_VERSION}" EQUAL "")
+    file(READ "${KERNEL_BUILD_DIR}/include/config/kernel.release" tmpvar)
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${tmpvar})
+endif()
+if("${KernelHeaders_VERSION}" EQUAL "")
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${KernelHeaders_INCLUDE_DIR})
+endif()
+if("${KernelHeaders_VERSION}" EQUAL "")
+    message(FATAL_ERROR "Cannot determine kernel version")
+endif()
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(KernelHeaders
@@ -32,11 +47,6 @@ find_package_handle_standard_args(KernelHeaders
                                   REQUIRED_VARS KernelHeaders_INCLUDE_DIR
                                   VERSION_VAR KernelHeaders_VERSION
                                   FAIL_MESSAGE "Linux kernel headers are not available! Please install them to build kernel modules!")
-
-if(KernelHeaders_FOUND)
-    set(KernelHeaders_INCLUDE_DIRS ${KernelHeaders_INCLUDE_DIR}/include
-        CACHE PATH "Path to Linux kernel header includes")
-endif(KernelHeaders_FOUND)
 
 mark_as_advanced(KernelHeaders_INCLUDE_DIR KernelHeaders_MODULE_INSTALL_DIR)
 
@@ -46,5 +56,4 @@ if(${CMAKE_VERSION} VERSION_GREATER "3.15.0")
     message(VERBOSE "KERNEL_INSTALL_DIR: ${KERNEL_INSTALL_DIR}")
     message(VERBOSE "KernelHeaders_FOUND: ${KernelHeaders_FOUND}")
     message(VERBOSE "KernelHeaders_VERSION: ${KernelHeaders_VERSION}")
-    message(VERBOSE "KernelHeaders_INCLUDE_DIRS: ${KernelHeaders_INCLUDE_DIRS}")
 endif(${CMAKE_VERSION} VERSION_GREATER "3.15.0")
