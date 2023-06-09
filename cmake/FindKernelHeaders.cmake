@@ -16,7 +16,9 @@ if(NOT KERNEL_INSTALL_DIR)
 endif(NOT KERNEL_INSTALL_DIR)
 
 if(NOT EXISTS "${KERNEL_BUILD_DIR}/Module.symvers")
-    message(FATAL_ERROR "Module.symvers not found in ${KERNEL_BUILD_DIR}")
+    message(WARNING "\n\nModule.symvers not found in ${KERNEL_BUILD_DIR}\n"
+    "Your kernel sources don't seem to belong to a built kernel,"
+    " expect missing symbols when building kernel module.\n\n")
 endif()
 
 # find the Linux kernel headers from given KERNEL_BUILD_DIR
