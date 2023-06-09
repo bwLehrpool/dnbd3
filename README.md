@@ -9,10 +9,10 @@ This repository contains the source code for the following dnbd3 components:
   - **dnbd3-fuse**: Fuse client for dnbd3
   - **dnbd3-server**: Server to serve virtual disk images for dnbd3
 
-The dnbd3 components can be built for the following Linux kernel versions and Unix distributions:
+The dnbd3 components have been built/tested on the following Linux kernel versions and Unix distributions:
 
-  - Generic/Vanilla Kernel **4.9** to **5.18**
-  - Archlinux with **Linux kernel 5.15.x** or **5.10.x**
+  - Generic/Vanilla Kernel **4.9** to **6.1**
+  - Archlinux with **Linux kernel 5.15.x** or **6.1.x**
   - Raspberry Pi OS with **Linux kernel 5.4.x**
   - Ubuntu 20.04 with **Linux kernel 5.4.x**
   - Ubuntu 18.04 with **Linux kernel 4.19.x**
