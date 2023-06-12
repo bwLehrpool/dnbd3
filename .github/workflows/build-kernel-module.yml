@@ -23,7 +23,7 @@ jobs:
             kernel-version: 4.18.0-348.2.1
             kernel-source: https://vault.centos.org/8.5.2111/BaseOS/Source/SPackages/kernel-4.18.0-348.2.1.el8_5.src.rpm
           - name: kernel module [Linux kernel 4.19.x]
-            build-os: ubuntu-18.04
+            build-os: ubuntu-20.04
             kernel-type: vanilla
             kernel-version: 4.19.y
           - name: kernel module [Linux kernel 5.4.x]
