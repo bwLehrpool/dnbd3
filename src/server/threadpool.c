@@ -89,7 +89,7 @@ bool threadpool_run(void *(*startRoutine)(void *), void *arg, const char *name)
 			return false;
 		}
 		if ( 0 != thread_create( &(entry->thread), &threadAttrs, threadpool_worker, (void*)entry ) ) {
-			logadd( LOG_WARNING, "Could not create new thread for thread pool\n" );
+			logadd( LOG_WARNING, "Could not create new thread for thread pool (%d active)\n", (int)activeThreads );
 			signal_close( entry->signal );
 			free( entry );
 			return false;
