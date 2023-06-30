@@ -249,7 +249,7 @@ bool image_ensureOpen(dnbd3_image_t *image)
 	int newFd = image->readFd == -1 ? open( image->path, O_RDONLY ) : dup( image->readFd );
 	if ( newFd == -1 ) {
 		if ( !image->problem.read ) {
-			logadd( LOG_WARNING, "Cannot open %s for reading", image->path );
+			logadd( LOG_WARNING, "[access] Cannot open '%s' for reading (errno=%d)", image->path, errno );
 			image->problem.read = true;
 		}
 	} else {
@@ -258,7 +258,7 @@ bool image_ensureOpen(dnbd3_image_t *image)
 		const off_t flen = lseek( newFd, 0, SEEK_END );
 		if ( flen == -1 ) {
 			if ( !image->problem.read ) {
-				logadd( LOG_WARNING, "Could not seek to end of %s (errno %d)", image->path, errno );
+				logadd( LOG_WARNING, "Could not seek to end of %s (errno=%d)", image->path, errno );
 				image->problem.read = true;
 			}
 			close( newFd );
@@ -826,7 +826,9 @@ static bool image_load(char *base, char *path, bool withUplink)
 		fdImage = open( path, O_RDONLY );
 	}
 	if ( fdImage == -1 ) {
-		logadd( LOG_ERROR, "Could not open '%s' for reading...", path );
+		if ( errno != ENOENT ) {
+			logadd( LOG_ERROR, "[load] Cannot open '%s' for reading (errno=%d)", path, errno );
+		}
 		goto load_error;
 	}
 	// Determine file size
