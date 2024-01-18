@@ -225,8 +225,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 							alt_server->best_count = 100;
 						} else {
 							for (j = 0; j < DISCOVER_HISTORY_SIZE; ++j)
-								if (alt_server->rtts[j] < 5000)
-									alt_server->rtts[j] = 5000;
+								if (alt_server->rtts[j] < 500000)
+									alt_server->rtts[j] = 500000;
 							alt_server->best_count = 0;
 						}
 					}
