@@ -41,6 +41,7 @@ macro(add_kernel_module MODULE_NAME KERNEL_BUILD_DIR KERNEL_INSTALL_DIR MODULE_M
                                                    -C ${KERNEL_BUILD_DIR}
                                                     M=${CMAKE_CURRENT_BINARY_DIR}/${MODULE_NAME} modules
                                                     EXTRA_CFLAGS=${KERNEL_C_FLAGS}
+                                                    KBUILD_MODPOST_WARN=1
                                                     KBUILD_EXTRA_SYMBOLS=${MODULE_EXTRA_SYMBOLS})
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${MODULE_NAME}/${MODULE_NAME}.ko
                        COMMAND ${MODULE_BUILD_COMMAND}
