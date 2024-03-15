@@ -473,6 +473,7 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0) \
+		|| (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 132)) \
 		|| RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 	dev->disk->flags |= GENHD_FL_NO_PART;
 #else
