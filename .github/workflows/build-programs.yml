@@ -12,28 +12,28 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - name: debug [default] on Ubuntu 20.04
-            build-os: ubuntu-20.04
+          - name: debug [default] on Ubuntu 22.04
+            build-os: ubuntu-22.04
             build-type: "Debug"
             build-cfg-server-fuse: "OFF"
             build-cfg-harden: "OFF"
-          - name: debug [server with fuse support] on Ubuntu 20.04
-            build-os: ubuntu-20.04
+          - name: debug [server with fuse support] on Ubuntu 22.04
+            build-os: ubuntu-22.04
             build-type: "Debug"
             build-cfg-server-fuse: "ON"
             build-cfg-harden: "OFF"
-          - name: release [default] on Ubuntu 20.04
-            build-os: ubuntu-20.04
+          - name: release [default] on Ubuntu 22.04
+            build-os: ubuntu-22.04
             build-type: "Release"
             build-cfg-server-fuse: "OFF"
             build-cfg-harden: "OFF"
-          - name: release [server with fuse support] on Ubuntu 20.04
-            build-os: ubuntu-20.04
+          - name: release [server with fuse support] on Ubuntu 22.04
+            build-os: ubuntu-22.04
             build-type: "Release"
             build-cfg-server-fuse: "ON"
             build-cfg-harden: "OFF"
-          - name: release [default hardening] on Ubuntu 20.04
-            build-os: ubuntu-20.04
+          - name: release [default hardening] on Ubuntu 22.04
+            build-os: ubuntu-22.04
             build-type: "Release"
             build-cfg-server-fuse: "OFF"
             build-cfg-harden: "ON"
@@ -47,10 +47,9 @@ jobs:
                                       clang-format \
                                       linux-headers-generic \
                                       libfuse-dev \
-                                      libjansson-dev \
-                                      rpm
+                                      libjansson-dev
       - name: Checkout dnbd3 repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Fetch dnbd3 repository tags
         run: git fetch --prune --unshallow
       - name: Configure dnbd3 build

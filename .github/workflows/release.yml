@@ -7,6 +7,7 @@ on:
 jobs:
   release:
     name: Release dnbd3
+    # Use very old system (= libc) for building for best compatibility
     runs-on: ubuntu-18.04
     steps:
       - name: Install dnbd3 dependencies
@@ -19,7 +20,7 @@ jobs:
                                       libjansson-dev \
                                       rpm
       - name: Checkout dnbd3 repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Fetch dnbd3 repository tags
         run: git fetch --prune --unshallow
       - name: Configure dnbd3 release
