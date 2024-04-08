@@ -220,9 +220,10 @@ The following configuration variables have been added to `config/cow.h`.
 #define COW_SHOW_UL_SPEED 1 // enable display of ul speed in cow status file
 #define COW_MAX_IMAGE_SIZE 1000LL * 1000LL * 1000LL * 1000LL; // Maximum size an image can have(tb*gb*mb*kb)
 // +++++ COW API Endpoints +++++
-#define COW_API_CREATE "%s/api/file/create"
-#define COW_API_UPDATE "%s/api/file/update?guid=%s&clusterindex=%lu"
-#define COW_API_START_MERGE "%s/api/file/merge"
+#define COW_API_PREFIX        "%s/v1/"
+#define COW_API_CREATE        COW_API_PREFIX "file/create"
+#define COW_API_UPDATE        COW_API_PREFIX "file/update?guid=%s&clusterindex=%lu"
+#define COW_API_START_MERGE   COW_API_PREFIX "file/merge"
 ```
 
 - `COW_MIN_UPLOAD_DELAY` sets the minimum time in seconds that must have elapsed since the last change to a cow cluster before it is uploaded.
@@ -236,10 +237,12 @@ This can help in fine-tuning `COW_MIN_UPLOAD_DELAY`.
 
 
 
-# REST Api
+# REST API
 The following Rest API is used to transmit the data and commands to the cow server:
 
-### /api/File/Create
+## Required methods
+
+### v1/file/create
 
 #### POST
 ##### Responses
@@ -251,7 +254,7 @@ The following Rest API is used to transmit the data and commands to the cow serv
 This request is used as soon as a new cow session is created. The returned guid is used in all subsequent requests to identify the session.
 
 
-### /api/File/Update
+### v1/file/update
 
 #### POST
 ##### Parameters
@@ -270,7 +273,7 @@ This request is used as soon as a new cow session is created. The returned guid 
 Used to upload a cluster. The cluster number is the absolute cluster number. The body contains an "application/octet-stream", where the first bytes are the bit field, directly followed by the actual cluster data.
 
 
-### /api/File/StartMerge
+### v1/file/merge
 
 #### POST
 ##### Parameters
@@ -287,7 +290,9 @@ Used to upload a cluster. The cluster number is the absolute cluster number. The
 | 200 | Success |
 Used to start the merge on the server.
 
-### /api/File/GetTopModifiedBlocks
+## Optional methods, not used by dnbd3-fuse
+
+### v1/File/GetTopModifiedBlocks
 
 #### GET
 ##### Parameters
@@ -305,7 +310,7 @@ Used to start the merge on the server.
 
 This request returns a list containing the cluster IDs and the number of uploads, sorted by the number of uploads. This is useful if you want to fine-tune `COW_MIN_UPLOAD_DELAY`.
 
-### /api/File/Status
+### v1/File/Status
 
 #### GET
 ##### Parameters
@@ -322,7 +327,7 @@ This request returns a list containing the cluster IDs and the number of uploads
 
 Returns the SessionStatus model that provides information about the session.
 
-### Models
+## Models
 
 #### BlockStatistics
 

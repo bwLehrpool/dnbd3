@@ -13,8 +13,9 @@
 #define COW_SHOW_UL_SPEED 1 // enable display of ul speed in cow status file
 #define COW_MAX_IMAGE_SIZE (1000LL * 1000LL * 1000LL * 1000LL) // Maximum size an image can have(tb*gb*mb*kb)
 // +++++ COW API Endpoints +++++
-#define COW_API_CREATE "%s/api/file/create"
-#define COW_API_UPDATE "%s/api/file/update?guid=%s&clusterindex=%lu"
-#define COW_API_START_MERGE "%s/api/file/merge"
+#define COW_API_PREFIX        "%s/v1/"
+#define COW_API_CREATE        COW_API_PREFIX "file/create"
+#define COW_API_UPDATE        COW_API_PREFIX "file/update?guid=%s&clusterindex=%lu"
+#define COW_API_START_MERGE   COW_API_PREFIX "file/merge"
 
 #endif
