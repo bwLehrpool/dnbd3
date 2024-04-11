@@ -9,8 +9,34 @@
  * */
 
 #include "main.h"
+#include "cowfile.h"
+#include "connection.h"
+#include "helper.h"
+#include <dnbd3/version.h>
+#include <dnbd3/build.h>
+#include <dnbd3/shared/protocol.h>
+#include <dnbd3/shared/log.h>
+#include <dnbd3/config.h>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <assert.h>
+/* for printing uint */
+//#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
+#include <getopt.h>
+#include <time.h>
+#include <signal.h>
+#include <pthread.h>
+#define debugf(...) do { logadd( LOG_DEBUG1, __VA_ARGS__ ); } while (0)
 
+#define INO_ROOT (1)
+#define INO_STATS (2)
+#define INO_IMAGE (3)
 
 static const char *IMAGE_NAME = "img";
 static const char *STATS_NAME = "status";
@@ -46,14 +72,14 @@ static int image_stat( fuse_ino_t ino, struct stat *stbuf )
 	case INO_ROOT:
 		stbuf->st_mode = S_IFDIR | 0550;
 		if( useCow ) {
-			stbuf->st_mode = S_IFDIR | 0777;	
+			stbuf->st_mode = S_IFDIR | 0770;
 		}
 		stbuf->st_nlink = 2;
 		stbuf->st_mtim = startupTime;
 		break;
 	case INO_IMAGE:
 		if ( useCow ) {
-			stbuf->st_mode = S_IFREG | 0777;
+			stbuf->st_mode = S_IFREG | 0660;
 		} else {
 			stbuf->st_mode = S_IFREG | 0440;
 		}
@@ -212,7 +238,7 @@ static void image_ll_read( fuse_req_t req, fuse_ino_t ino, size_t size, off_t of
 			++logInfo.blockRequestCount[startBlock];
 		}
 	}
-	
+
 
 	dnbd3_async_parent_t *parent = malloc( sizeof(dnbd3_async_parent_t) + size );
 	parent->request.length = (uint32_t)size;
@@ -230,7 +256,7 @@ static void noopSigHandler( int signum )
 	(void)signum;
 }
 
-static void image_ll_init( void *userdata, struct fuse_conn_info *conn )
+static void image_ll_init( void *userdata UNUSED, struct fuse_conn_info *conn UNUSED )
 {
 	( void ) userdata;
 	( void ) conn;
@@ -342,6 +368,7 @@ static void printUsage( char *argv0, int exitCode )
 	printf( "   -c              Enables cow, creates the cow files at given location\n" );
 	printf( "   -L              Loads the cow files from the given location\n" );
 	printf( "   -C              Host address of the cow server\n" );
+	printf( "--upload-uuid <id> Use provided UUID as upload session id instead of asking server/loading from file\n" );
 	printf( "--cow-stats-stdout prints the cow status in stdout\n" );
 	printf( "--cow-stats-file   creates and updates the cow status file\n" );
 	printf( "   -m --merge      tell server to merge and create new revision on exit\n" );
@@ -363,6 +390,7 @@ static const struct option longOpts[] = {
 	{ "loadcow", required_argument, NULL, 'L' },
 	{ "cowServer", required_argument, NULL, 'C' },
 	{ "merge", no_argument, NULL, 'm' },
+	{ "upload-uuid", required_argument, NULL, 'uuid' },
 	{ "cow-stats-stdout", no_argument, NULL, 'sout' },
 	{ "cow-stats-file", no_argument, NULL, 'sfil' },
 	{ 0, 0, 0, 0 }
@@ -388,6 +416,7 @@ int main( int argc, char *argv[] )
 	bool loadCow = false;
 	bool sStdout = false;
 	bool sFile = false;
+	const char *cowUuidOverride = NULL;
 
 	log_init();
 
@@ -474,6 +503,9 @@ int main( int argc, char *argv[] )
 		case 'sfil':
 			sFile = true;
 			break;
+		case 'uuid':
+			cowUuidOverride = optarg;
+			break;
 		default:
 			printUsage( argv[0], EXIT_FAILURE );
 		}
@@ -493,7 +525,7 @@ int main( int argc, char *argv[] )
 		}
 	}
 	if( useCow && cow_server_address == NULL ) {
-		printf( "for -c you also need a cow server address. Please also use -C --host \n" );
+		printf( "for -c you also need a cow server address. Please also use -C\n" );
 		printUsage( argv[0], EXIT_FAILURE );
 	}
 	if( cow_merge_after_upload && !useCow ) {
@@ -502,24 +534,26 @@ int main( int argc, char *argv[] )
 	}
 	if ( loadCow ) {
 		if( cow_server_address == NULL ) {
-			printf( "for -L you also need a cow server address. Please also use -C --host \n" );
+			printf( "for -L you also need a cow server address. Please also use -C\n" );
 			printUsage( argv[0], EXIT_FAILURE );
 		}
 
-		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address, sStdout, sFile ) ) {
+		if ( !cowfile_load( cow_file_path, &imageSizePtr, cow_server_address, sStdout, sFile, cowUuidOverride ) ) {
 			return EXIT_FAILURE;
 		}
-	} 
-	// Prepare our handler
-	struct sigaction newHandler;
-	memset( &newHandler, 0, sizeof( newHandler ) );
-	newHandler.sa_handler = &noopSigHandler;
-	sigemptyset( &newHandler.sa_mask );
-	sigaction( SIGHUP, &newHandler, NULL );
-	sigset_t sigmask;
-	sigemptyset( &sigmask );
-	sigaddset( &sigmask, SIGHUP );
-	pthread_sigmask( SIG_BLOCK, &sigmask, NULL );
+	}
+	do {
+		// The empty handler prevents fuse from registering its own handler
+		struct sigaction newHandler = { .sa_handler = &noopSigHandler };
+		sigemptyset( &newHandler.sa_mask );
+		sigaction( SIGHUP, &newHandler, NULL );
+	} while ( 0 );
+		if ( useCow ) {
+			sigset_t sigmask;
+			sigemptyset( &sigmask );
+			sigaddset( &sigmask, SIGQUIT ); // Block here and unblock in cow as abort signal
+			pthread_sigmask( SIG_BLOCK, &sigmask, NULL );
+		}
 
 	if ( !connection_init( server_address, image_Name, rid, learnNewServers ) ) {
 		logadd( LOG_ERROR, "Could not connect to any server. Bye.\n" );
@@ -538,9 +572,9 @@ int main( int argc, char *argv[] )
 	}
 	
 	newArgv[newArgc++] = "-o";
-	if(useCow){
+	if ( useCow ) {
 		newArgv[newArgc++] = "default_permissions";
-	}else{
+	} else {
 		newArgv[newArgc++] = "ro,default_permissions";
 	}
 	// Mount point goes last
@@ -555,7 +589,7 @@ int main( int argc, char *argv[] )
 	owner = getuid();
 
 	if ( useCow & !loadCow) {
-		if( !cowfile_init( cow_file_path, connection_getImageName(), connection_getImageRID(),  &imageSizePtr, cow_server_address,  sStdout, sFile ) ) {
+		if( !cowfile_init( cow_file_path, connection_getImageName(), connection_getImageRID(),  &imageSizePtr, cow_server_address,  sStdout, sFile, cowUuidOverride ) ) {
 			return EXIT_FAILURE;
 		}
 	}
@@ -576,24 +610,24 @@ int main( int argc, char *argv[] )
 		if ( _fuseSession == NULL ) {
 			logadd( LOG_ERROR, "Could not initialize fuse session" );
 		} else {
+			fuse_session_add_chan( _fuseSession, ch );
+			// Do not spawn any threads before we daemonize, they'd die at this point
+			fuse_daemonize( foreground );
 			if ( fuse_set_signal_handlers( _fuseSession ) == -1 ) {
-				logadd( LOG_ERROR, "Could not install fuse signal handlers" );
-			} else {
-				fuse_session_add_chan( _fuseSession, ch );
-				fuse_daemonize( foreground );
-				if ( useCow ) {
-					if ( !cowfile_startBackgroundThreads() ){
-						logadd( LOG_ERROR, "Could not start cow background Threads" );
-					}
-				}
-				if ( single_thread ) {
-					fuse_err = fuse_session_loop( _fuseSession );
-				} else {
-					fuse_err = fuse_session_loop_mt( _fuseSession ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
-				}
-				fuse_remove_signal_handlers( _fuseSession );
-				fuse_session_remove_chan( ch );
+				logadd( LOG_WARNING, "Could not install fuse signal handlers" );
 			}
+			if ( useCow ) {
+				if ( !cowfile_startBackgroundThreads() ) {
+					logadd( LOG_ERROR, "Could not start cow background threads" );
+				}
+			}
+			if ( single_thread ) {
+				fuse_err = fuse_session_loop( _fuseSession );
+			} else {
+				fuse_err = fuse_session_loop_mt( _fuseSession ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
+			}
+			fuse_remove_signal_handlers( _fuseSession );
+			fuse_session_remove_chan( ch );
 			fuse_session_destroy( _fuseSession );
 			_fuseSession = NULL;
 		}
@@ -607,4 +641,12 @@ int main( int argc, char *argv[] )
 	connection_join();
 	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err );
 	return fuse_err;
+}
+
+void main_shutdown(void)
+{
+	fuse_session_exit( _fuseSession );
+	// TODO: Figure out why this doesn't wake up the fuse mainloop.
+	// For now, just send SIGQUIT followed by SIGTERM....
+	kill( 0, SIGINT );
 }

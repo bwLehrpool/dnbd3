@@ -20,6 +20,7 @@ _Static_assert( ATOMIC_INT_LOCK_FREE == 2, "ATOMIC INT not lock free" );
 _Static_assert( ATOMIC_LONG_LOCK_FREE == 2, "ATOMIC LONG not lock free" );
 _Static_assert( ATOMIC_LLONG_LOCK_FREE == 2, "ATOMIC LLONG not lock free" );
 _Static_assert( sizeof( atomic_uint_least64_t ) == 8, "atomic_uint_least64_t not 8 byte" );
+_Static_assert( sizeof( _Atomic(uint32_t) ) == 4, "_Atomic(uint32_t) not 4 byte" );
 _Static_assert( sizeof( atomic_int_least64_t ) == 8, "atomic_int_least64_t not 8 byte" );
 
 enum dataSource
@@ -56,8 +57,9 @@ _Static_assert( sizeof( cowfile_metadata_header_t ) == COW_METADATA_HEADER_SIZE,
 typedef struct cow_l2_entry
 {
 	atomic_int_least64_t offset;
-	atomic_uint_least64_t timeChanged;
-	atomic_uint_least64_t uploads;
+	atomic_int_least64_t timeChanged;
+	_Atomic(uint32_t) uploads;
+	_Atomic(uint32_t) fails;
 	atomic_uchar bitfield[COW_BITFIELD_SIZE];
 } cow_l2_entry_t;
 _Static_assert( sizeof( cow_l2_entry_t ) == COW_L2_ENTRY_SIZE, "cow_l2_entry_t is messed up" );
@@ -93,7 +95,7 @@ typedef struct cow_sub_request
 	off_t inClusterOffset; // offset relative to the beginning of the cluster
 	const char *writeSrc; // pointer to the data of a write request which needs padding
 	char *buffer; // The pointer points to the original read buffer to the place where the sub read request should be copied to.
-	cow_l2_entry_t *block; // the cluster inClusterOffset refers to
+	cow_l2_entry_t *cluster; // the cluster inClusterOffset refers to
 	cow_callback callback; // Callback when we're done handling this
 	cow_request_t *cowRequest; // parent request
 	dnbd3_async_t dRequest; // Probably request to dnbd3-server for non-aligned writes (wrt 4k dnbd3 block)
@@ -103,10 +105,9 @@ typedef struct cow_sub_request
 typedef struct cow_curl_read_upload
 {
 	atomic_uint_least64_t time;
-	cow_l2_entry_t *block;
+	cow_l2_entry_t *cluster;
 	size_t position;
 	long unsigned int clusterNumber;
-	int fails;
 	int64_t ulLast;
 	atomic_uchar bitfield[COW_BITFIELD_SIZE];
 } cow_curl_read_upload_t;
@@ -122,9 +123,9 @@ typedef int32_t l1;
 typedef cow_l2_entry_t l2[COW_L2_TABLE_SIZE];
 
 bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion, atomic_uint_fast64_t **imageSizePtr,
-		char *serverAddress, bool sStdout, bool sFile );
+		char *serverAddress, bool sStdout, bool sFile, const char *cowUuid );
 
-bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, bool sStdout, bool sFile );
+bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, bool sStdout, bool sFile, const char *cowUuid );
 bool cowfile_startBackgroundThreads();
 void cowfile_read( fuse_req_t req, size_t size, off_t offset );
 

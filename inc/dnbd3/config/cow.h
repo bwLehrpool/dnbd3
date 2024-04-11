@@ -15,7 +15,7 @@
 // +++++ COW API Endpoints +++++
 #define COW_API_PREFIX        "%s/v1/"
 #define COW_API_CREATE        COW_API_PREFIX "file/create"
-#define COW_API_UPDATE        COW_API_PREFIX "file/update?guid=%s&clusterindex=%lu"
+#define COW_API_UPDATE        COW_API_PREFIX "file/update?uuid=%s&clusterindex=%lu"
 #define COW_API_START_MERGE   COW_API_PREFIX "file/merge"
 
 #endif

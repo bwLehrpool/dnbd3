@@ -56,7 +56,8 @@ typedef struct cow_l2_entry
 {
 	atomic_int_least64_t offset;
 	atomic_uint_least64_t timeChanged;
-	atomic_uint_least64_t uploads;
+	_Atomic(uint32_t) uploads;
+	_Atomic(uint32_t) fails;
 	atomic_char bitfield[40];
 } cow_l2_entry_t;
 ```
@@ -132,7 +133,7 @@ modifiedBlocks=0
 idleClusters=0
 totalClustersUploaded=0
 activeUploads=0
-ulspeed=0.00
+avgSpeedKb=0.00
 ```
 - The `uuid` is the session uuid used by the Cow server to identify the session.
 
@@ -161,19 +162,20 @@ typedef struct cowfile_metadata_header
 	atomic_uint_least64_t imageSize;        // 8byte
 	int32_t version;                        // 4byte
 	int32_t blocksize;                      // 4byte
-	uint64_t originalImageSize;             // 8byte
-	uint64_t metaDataStart;                 // 8byte
+	uint64_t validRemoteSize;               // 8byte
+	uint32_t startL1;                       // 4byte
+	uint32_t startL2;                       // 4byte
 	int32_t bitfieldSize;                   // 4byte
 	int32_t nextL2;                         // 4byte
-	atomic_uint_least64_t metadataFileSize; // 8byte
-	atomic_uint_least64_t dataFileSize;     // 8byte
+	atomic_int_least64_t metaSize;          // 8byte
+	atomic_int_least64_t nextClusterOffset; // 8byte
 	uint64_t maxImageSize;                  // 8byte
 	uint64_t creationTime;                  // 8byte
 	char uuid[40];                          // 40byte
 	char imageName[200];                    // 200byte
 } cowfile_metadata_header_t;
 ```
-After this header, the above-mentioned l1 and then the l2 data structure begins at byte 8192.
+After this header, the above-mentioned l1 and then the l2 data structure begins at byte offsets specified by members startL1 and startL2. The offsets are absolute from the beginning of the file.
 
 ### data
 
@@ -222,7 +224,7 @@ The following configuration variables have been added to `config/cow.h`.
 // +++++ COW API Endpoints +++++
 #define COW_API_PREFIX        "%s/v1/"
 #define COW_API_CREATE        COW_API_PREFIX "file/create"
-#define COW_API_UPDATE        COW_API_PREFIX "file/update?guid=%s&clusterindex=%lu"
+#define COW_API_UPDATE        COW_API_PREFIX "file/update?uuid=%s&clusterindex=%lu"
 #define COW_API_START_MERGE   COW_API_PREFIX "file/merge"
 ```
 
@@ -251,7 +253,7 @@ The following Rest API is used to transmit the data and commands to the cow serv
 | ---- | ----------- |
 | 200 | Success |
 
-This request is used as soon as a new cow session is created. The returned guid is used in all subsequent requests to identify the session.
+This request is used as soon as a new cow session is created. The returned uuid is used in all subsequent requests to identify the session.
 
 
 ### v1/file/update
@@ -261,7 +263,7 @@ This request is used as soon as a new cow session is created. The returned guid 
 
 | Name | Located in | Description | Required | Schema |
 | ---- | ---------- | ----------- | -------- | ---- |
-| guid | query |  | Yes | string (uuid) |
+| uuid | query |  | Yes | string (uuid) |
 | clusterNumber | query |  | Yes | integer |
 
 ##### Responses
@@ -280,7 +282,7 @@ Used to upload a cluster. The cluster number is the absolute cluster number. The
 
 | Name | Located in | Description | Required | Schema |
 | ---- | ---------- | ----------- | -------- | ---- |
-| guid | Form |  | Yes | string (uuid) |
+| uuid | Form |  | Yes | string (uuid) |
 | originalFileSize | Form |  | Yes | integer |
 | newFileSize | Form |  | Yes | integer |
 ##### Responses
@@ -299,7 +301,7 @@ Used to start the merge on the server.
 
 | Name | Located in | Description | Required | Schema |
 | ---- | ---------- | ----------- | -------- | ---- |
-| guid | query |  | Yes | string (uuid) |
+| uuid | query |  | Yes | string (uuid) |
 | amount | query |  | Yes | integer |
 
 ##### Responses
@@ -317,7 +319,7 @@ This request returns a list containing the cluster IDs and the number of uploads
 
 | Name | Located in | Description | Required | Schema |
 | ---- | ---------- | ----------- | -------- | ---- |
-| guid | query |  | Yes | string (uuid) |
+| uuid | query |  | Yes | string (uuid) |
 
 ##### Responses
 
