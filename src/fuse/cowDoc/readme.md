@@ -56,7 +56,8 @@ typedef struct cow_l2_entry
 {
 	atomic_int_least64_t offset;
 	atomic_uint_least64_t timeChanged;
-	atomic_uint_least64_t uploads;
+	_Atomic(uint32_t) uploads;
+	_Atomic(uint32_t) fails;
 	atomic_char bitfield[40];
 } cow_l2_entry_t;
 ```
@@ -132,7 +133,7 @@ modifiedBlocks=0
 idleClusters=0
 totalClustersUploaded=0
 activeUploads=0
-ulspeed=0.00
+avgSpeedKb=0.00
 ```
 - The `uuid` is the session uuid used by the Cow server to identify the session.
 
@@ -161,19 +162,20 @@ typedef struct cowfile_metadata_header
 	atomic_uint_least64_t imageSize;        // 8byte
 	int32_t version;                        // 4byte
 	int32_t blocksize;                      // 4byte
-	uint64_t originalImageSize;             // 8byte
-	uint64_t metaDataStart;                 // 8byte
+	uint64_t validRemoteSize;               // 8byte
+	uint32_t startL1;                       // 4byte
+	uint32_t startL2;                       // 4byte
 	int32_t bitfieldSize;                   // 4byte
 	int32_t nextL2;                         // 4byte
-	atomic_uint_least64_t metadataFileSize; // 8byte
-	atomic_uint_least64_t dataFileSize;     // 8byte
+	atomic_int_least64_t metaSize;          // 8byte
+	atomic_int_least64_t nextClusterOffset; // 8byte
 	uint64_t maxImageSize;                  // 8byte
 	uint64_t creationTime;                  // 8byte
 	char uuid[40];                          // 40byte
 	char imageName[200];                    // 200byte
 } cowfile_metadata_header_t;
 ```
-After this header, the above-mentioned l1 and then the l2 data structure begins at byte 8192.
+After this header, the above-mentioned l1 and then the l2 data structure begins at byte offsets specified by members startL1 and startL2. The offsets are absolute from the beginning of the file.
 
 ### data
 
