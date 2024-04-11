@@ -846,15 +846,7 @@ static size_t receiveRequest(const int sock, dnbd3_async_t* request )
 {
 	if( useCow ) {
 		cow_sub_request_t * cow_request = container_of( request, cow_sub_request_t, dRequest );
-		// TODO This is ugly, we have a callback so we don't need to special-case receiving the
-		// reply, yet here we check what the callback function is for some reason :-(
-		// Ideally there should be no cow-related code in this file at all.
-		// This requires moving the callback to dnbd3_async_t from cow_sub_request_t though...
-		if( cow_request->callback == readRemoteData ) {
-			return sock_recv( sock, cow_request->buffer, request->length );
-		} else{
-			return sock_recv( sock, &cow_request->writeBuffer, request->length );
-		}
+		return sock_recv( sock, cow_request->buffer, request->length );
 	} else {
 		return sock_recv( sock, container_of( request, dnbd3_async_parent_t, request )->buffer, request->length );
 	}
