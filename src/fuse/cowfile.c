@@ -514,6 +514,7 @@ static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster, stru
 	curl_easy_setopt( eh, CURLOPT_URL, url );
 	curl_easy_setopt( eh, CURLOPT_POST, 1L );
 	curl_easy_setopt( eh, CURLOPT_HEADERFUNCTION, curlHeaderCallbackUploadBlock );
+	curl_easy_setopt( eh, CURLOPT_HEADERDATA, (void *)uploadingCluster );
 	curl_easy_setopt( eh, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
 	curl_easy_setopt( eh, CURLOPT_READDATA, (void *)uploadingCluster );
 	curl_easy_setopt( eh, CURLOPT_PRIVATE, (void *)uploadingCluster );
