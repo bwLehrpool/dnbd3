@@ -109,6 +109,7 @@ typedef struct cow_curl_read_upload
 	size_t position;
 	long unsigned int clusterNumber;
 	int64_t ulLast;
+	int retryTime;
 	atomic_uchar bitfield[COW_BITFIELD_SIZE];
 } cow_curl_read_upload_t;
 

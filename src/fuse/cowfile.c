@@ -49,6 +49,8 @@ static struct cow
 	pthread_mutex_t l2CreateLock;
 } cow;
 
+static size_t curlHeaderCallbackUploadBlock( char *buffer, size_t size, size_t nitems, void *userdata );
+
 static int countOneBits( atomic_uchar *bf, int numBytes )
 {
 	int bitCount = 0;
@@ -511,6 +513,7 @@ static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster, stru
 
 	curl_easy_setopt( eh, CURLOPT_URL, url );
 	curl_easy_setopt( eh, CURLOPT_POST, 1L );
+	curl_easy_setopt( eh, CURLOPT_HEADERFUNCTION, curlHeaderCallbackUploadBlock );
 	curl_easy_setopt( eh, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
 	curl_easy_setopt( eh, CURLOPT_READDATA, (void *)uploadingCluster );
 	curl_easy_setopt( eh, CURLOPT_PRIVATE, (void *)uploadingCluster );
@@ -535,6 +538,40 @@ static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster, stru
 	return true;
 }
 
+static size_t curlHeaderCallbackUploadBlock( char *buffer, size_t size, size_t nitems, void *userdata )
+{
+	size_t len, offset;
+	int delay;
+	cow_curl_read_upload_t *uploadingCluster = (cow_curl_read_upload_t*)userdata;
+
+	// If the "Retry-After" header is set, we interpret this as the server being overloaded
+	// or not ready yet to take another update. We slow down our upload loop then.
+	// We'll only accept a delay in seconds here, not an HTTP Date string.
+	// Otherwise, increase the fails counter.
+	len = size * nitems;
+	if ( len < 13 )
+		return len;
+	for ( int i = 0; i < 11; ++i ) {
+		buffer[i] |= 0x60;
+	}
+	if ( strncmp( buffer, "retry-after:", 12 ) != 0 )
+		return len;
+	offset = 12;
+	while ( offset + 1 < len && buffer[offset] == ' ' ) {
+		offset++;
+	}
+	delay = atoi( buffer + offset );
+	if ( delay > 0 ) {
+		if ( delay > 120 ) {
+			// Cap to two minutes
+			delay = 120;
+		}
+		uploadLoopThrottle = MAX( uploadLoopThrottle, delay );
+		uploadingCluster->retryTime = delay;
+	}
+	return len;
+}
+
 /**
  * @brief After an upload completes, either successful or unsuccessful this
  * function cleans everything up. If unsuccessful and there are some tries left
@@ -547,7 +584,7 @@ static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster, stru
  */
 static bool clusterUploadDoneHandler( CURLM *cm, CURLMsg *msg )
 {
-	bool status = false;
+	bool success = false;
 	cow_curl_read_upload_t *uploadingCluster;
 	CURLcode res;
 	CURLcode res2;
@@ -564,21 +601,8 @@ static bool clusterUploadDoneHandler( CURLM *cm, CURLMsg *msg )
 	} else if ( res != CURLE_OK || res2 != CURLE_OK ) {
 		logadd( LOG_ERROR, "curl_easy_getinfo failed after multifinish (%d, %d)", (int)res, (int)res2 );
 	} else if ( http_code == 503 ) {
-		// If the "Retry-After" header is set, we interpret this as the server being overloaded
-		// or not ready yet to take another update. We slow down our upload loop then.
-		// We'll only accept a delay in seconds here, not an HTTP Date string.
-		// Otherwise, increase the fails counter.
-		struct curl_header *ptr = NULL;
-		int delay;
-		CURLHcode h = curl_easy_header(curl, "Retry-After", 0, CURLH_HEADER, -1, &ptr);
-		if ( h == CURLHE_OK && ptr != NULL && ( delay = atoi( ptr->value ) ) > 0 ) {
-			if ( delay > 120 ) {
-				// Cap to two minutes
-				delay = 120;
-			}
-			logadd( LOG_INFO, "COW server is asking to backoff for %d seconds", delay );
-			uploadLoopThrottle = MAX( uploadLoopThrottle, delay );
-			status = true;
+		if ( uploadingCluster->retryTime > 0 ) {
+			logadd( LOG_INFO, "COW server is asking to backoff for %d seconds", uploadingCluster->retryTime );
 		} else {
 			logadd( LOG_ERROR, "COW server returned 503 without Retry-After value" );
 		}
@@ -590,26 +614,25 @@ static bool clusterUploadDoneHandler( CURLM *cm, CURLMsg *msg )
 		atomic_compare_exchange_strong( &uploadingCluster->cluster->timeChanged, &uploadingCluster->time, 0 );
 		uploadingCluster->cluster->uploads++;
 		totalBlocksUploaded++;
-		free( uploadingCluster );
-		status = true;
+		success = true;
 	}
-	if ( !status ) {
+	if ( !success ) {
 		uploadingCluster->cluster->fails++;
-		if ( uploadLoopThrottle > 0 ) {
+		if ( uploadingCluster->retryTime > 0 ) {
 			// Don't reset timeChanged timestamp, so the next iteration of uploadModifiedClusters
 			// will queue this upload again after the throttle time expired.
-			free( uploadingCluster );
 		} else {
 			logadd( LOG_ERROR, "Uploading cluster failed %i/5 times", uploadingCluster->cluster->fails );
 			// Pretend the block changed again just now, to prevent immediate retry
 			atomic_compare_exchange_strong( &uploadingCluster->cluster->timeChanged, &uploadingCluster->time,
 					time( NULL ) );
-			free( uploadingCluster );
 		}
 	}
 	curl_multi_remove_handle( cm, msg->easy_handle );
 	curl_easy_cleanup( msg->easy_handle );
-	return status;
+	free( uploadingCluster );
+
+	return success;
 }
 
 /**
@@ -709,6 +732,7 @@ bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 			b->cluster = cluster;
 			b->clusterNumber = ( l1Index * COW_L2_TABLE_SIZE + l2Index );
 			b->position = 0;
+			b->retryTime = 0;
 			b->time = cluster->timeChanged;
 			// Copy, so it doesn't change during upload
 			// when we assemble the data in curlReadCallbackUploadBlock()
