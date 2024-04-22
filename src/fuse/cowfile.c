@@ -199,6 +199,7 @@ static bool createSession( const char *imageName, uint16_t rid )
 	char body[1000], reply[500];
 	const char *nameEsc;
 
+	curl_easy_reset( curl );
 	snprintf( url, COW_URL_STRING_SIZE, COW_API_CREATE, cowServerAddress );
 	logadd( LOG_INFO, "COW_API_CREATE URL: %s", url );
 	curl_easy_setopt( curl, CURLOPT_POST, 1L );
@@ -239,7 +240,6 @@ static bool createSession( const char *imageName, uint16_t rid )
 		return false;
 	}
 	strncpy( metadata->uuid, reply, sizeof(metadata->uuid) );
-	curl_easy_reset( curl );
 	logadd( LOG_DEBUG1, "Cow session started, uuid: %s", metadata->uuid );
 	return true;
 }
@@ -324,7 +324,6 @@ static bool postMergeRequest()
 	char *uuid;
 
 	curl_easy_reset( curl );
-
 	snprintf( url, COW_URL_STRING_SIZE, COW_API_START_MERGE, cowServerAddress );
 	curl_easy_setopt( curl, CURLOPT_URL, url );
 	curl_easy_setopt( curl, CURLOPT_POST, 1L );
