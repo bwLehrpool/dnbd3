@@ -171,85 +171,76 @@ static bool checkBit( atomic_uchar *bitfield, int64_t n )
 
 
 /**
- * @brief Implementation of CURLOPT_WRITEFUNCTION , this function will be called when
- * the server sends back data.
- * for more details see: https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION .html
- *  
- * @param buffer that contains the response data from the server
- * @param itemSize size of one item
- * @param nitems number of items
- * @param response userdata which will later contain the uuid
- * @return size_t size that have been read
+ * Generic callback for writing received data to a 500 byte buffer.
+ * MAKE SURE THE BUFFER IS EMPTY AT THE START! (i.e. buffer[0] = '\0')
  */
-static size_t curlCallbackCreateSession( char *buffer, size_t itemSize, size_t nitems, void *response )
+static size_t curlWriteCb500( char *buffer, size_t itemSize, size_t nitems, void *userpointer )
 {
-	uint64_t done = strlen( response );
-	uint64_t bytes = itemSize * nitems;
-	if ( done + bytes > UUID_STRLEN ) {
-		logadd( LOG_INFO, "strlen(response): %"PRIu64" bytes: %"PRIu64"\n", done, bytes );
-		return bytes;
-	}
+	char *dest = (char*)userpointer;
+	size_t done = strlen( dest );
+	size_t bytes = itemSize * nitems;
 
-	strncat( response, buffer, UUID_STRLEN - done + 1 );
+	assert( done < 500 );
+	if ( done < 499 ) {
+		size_t n = MIN( bytes, 499 - done );
+		memcpy( dest + done, buffer, n );
+		dest[done + n] = '\0';
+	}
 	return bytes;
 }
 
 /**
  * @brief Create a Session with the cow server and gets the session uuid.
- * 
- * @param imageName 
- * @param version of the original Image
  */
-static bool createSession( const char *imageName, uint16_t version )
+static bool createSession( const char *imageName, uint16_t rid )
 {
 	CURLcode res;
 	char url[COW_URL_STRING_SIZE];
+	char body[1000], reply[500];
+	const char *nameEsc;
+
 	snprintf( url, COW_URL_STRING_SIZE, COW_API_CREATE, cowServerAddress );
 	logadd( LOG_INFO, "COW_API_CREATE URL: %s", url );
 	curl_easy_setopt( curl, CURLOPT_POST, 1L );
 	curl_easy_setopt( curl, CURLOPT_URL, url );
 
-	curl_mime *mime;
-	curl_mimepart *part;
-	mime = curl_mime_init( curl );
-	part = curl_mime_addpart( mime );
-	curl_mime_name( part, "imageName" );
-	curl_mime_data( part, imageName, CURL_ZERO_TERMINATED );
-	part = curl_mime_addpart( mime );
-	curl_mime_name( part, "version" );
-	char buf[sizeof( int ) * 3 + 2];
-	snprintf( buf, sizeof buf, "%d", version );
-	curl_mime_data( part, buf, CURL_ZERO_TERMINATED );
+	nameEsc = curl_easy_escape( curl, imageName, 0 );
+	if ( nameEsc == NULL ) {
+		logadd( LOG_ERROR, "Error escaping imageName" );
+		nameEsc = imageName; // Hope for the best
+	}
+	snprintf( body, sizeof body, "revision=%d&bitfieldSize=%d&imageName=%s",
+			(int)rid, (int)metadata->bitfieldSize, nameEsc );
+	if ( nameEsc != imageName ) {
+		curl_free( (char*)nameEsc );
+	}
+	curl_easy_setopt( curl, CURLOPT_POSTFIELDS, body );
 
-	part = curl_mime_addpart( mime );
-	curl_mime_name( part, "bitfieldSize" );
-	snprintf( buf, sizeof buf, "%d", metadata->bitfieldSize );
-	curl_mime_data( part, buf, CURL_ZERO_TERMINATED );
-
-	curl_easy_setopt( curl, CURLOPT_MIMEPOST, mime );
-
-	metadata->uuid[0] = '\0';
-	curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, curlCallbackCreateSession );
-	curl_easy_setopt( curl, CURLOPT_WRITEDATA, &metadata->uuid );
+	reply[0] = '\0';
+	curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, curlWriteCb500 );
+	curl_easy_setopt( curl, CURLOPT_WRITEDATA, reply );
 
 	res = curl_easy_perform( curl );
-	curl_mime_free( mime );
 
 	/* Check for errors */
 	if ( res != CURLE_OK ) {
-		logadd( LOG_ERROR, "COW_API_CREATE  failed: %s\n", curl_easy_strerror( res ) );
+		logadd( LOG_ERROR, "COW_API_CREATE  failed: curl says %s", curl_easy_strerror( res ) );
 		return false;
 	}
 
 	long http_code = 0;
 	curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
 	if ( http_code < 200 || http_code >= 300 ) {
-		logadd( LOG_ERROR, "COW_API_CREATE  failed http: %ld\n", http_code );
+		logadd( LOG_ERROR, "COW_API_CREATE  failed: http code %ld, %s", http_code, reply );
 		return false;
 	}
+	if ( strlen( reply ) > UUID_STRLEN ) {
+		logadd( LOG_ERROR, "Returned session id is too long: '%s'", reply );
+		return false;
+	}
+	strncpy( metadata->uuid, reply, sizeof(metadata->uuid) );
 	curl_easy_reset( curl );
-	metadata->uuid[UUID_STRLEN] = '\0';
-	logadd( LOG_DEBUG1, "Cow session started, uuid: %s\n", metadata->uuid );
+	logadd( LOG_DEBUG1, "Cow session started, uuid: %s", metadata->uuid );
 	return true;
 }
 
@@ -329,7 +320,7 @@ static bool postMergeRequest()
 {
 	CURLcode res;
 	char url[COW_URL_STRING_SIZE];
-	char body[500];
+	char body[500], reply[500];
 	char *uuid;
 
 	curl_easy_reset( curl );
@@ -337,6 +328,8 @@ static bool postMergeRequest()
 	snprintf( url, COW_URL_STRING_SIZE, COW_API_START_MERGE, cowServerAddress );
 	curl_easy_setopt( curl, CURLOPT_URL, url );
 	curl_easy_setopt( curl, CURLOPT_POST, 1L );
+	curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, curlWriteCb500 );
+	curl_easy_setopt( curl, CURLOPT_WRITEDATA, reply );
 
 	uuid = curl_easy_escape( curl, metadata->uuid, 0 );
 	if ( uuid == NULL ) {
@@ -350,15 +343,16 @@ static bool postMergeRequest()
 	}
 	curl_easy_setopt( curl, CURLOPT_POSTFIELDS, body );
 
+	reply[0] = '\0';
 	res = curl_easy_perform( curl );
 	if ( res != CURLE_OK ) {
-		logadd( LOG_WARNING, "COW_API_START_MERGE  failed: %s", curl_easy_strerror( res ) );
+		logadd( LOG_WARNING, "COW_API_START_MERGE  failed. curl reported: %s", curl_easy_strerror( res ) );
 		return false;
 	}
 	long http_code = 0;
 	curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &http_code );
 	if ( http_code < 200 || http_code >= 300 ) {
-		logadd( LOG_WARNING, "COW_API_START_MERGE  failed http: %ld", http_code );
+		logadd( LOG_WARNING, "COW_API_START_MERGE  failed with http: %ld: %s", http_code, reply );
 		return false;
 	}
 	return true;
