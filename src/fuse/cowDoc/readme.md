@@ -238,8 +238,8 @@ This can help in fine-tuning `COW_MIN_UPLOAD_DELAY`.
 - `COW_MAX_PARALLEL_UPLOADS` defines the maximum number of parallel cluster uploads. This number is used once the image has been unmounted to upload the remaining modified clusters.
 
 
-
 # REST API
+
 The following Rest API is used to transmit the data and commands to the cow server:
 
 ## Required methods
@@ -247,11 +247,20 @@ The following Rest API is used to transmit the data and commands to the cow serv
 ### v1/file/create
 
 #### POST
+##### Parameters
+
+| Name | Located in | Description | Required | Schema |
+| ---- | ---------- | ----------- | -------- | ---- |
+| imageName | post | Name of image | Yes | relative path |
+| revision | post | revision id of image | Yes | integer |
+| bitfieldSize | post | number of bits per L2 cluster | Yes | integer |
+
 ##### Responses
 
 | Code | Description |
 | ---- | ----------- |
 | 200 | Success |
+| 404 | Source image not found |
 
 This request is used as soon as a new cow session is created. The returned uuid is used in all subsequent requests to identify the session.
 
@@ -264,15 +273,16 @@ This request is used as soon as a new cow session is created. The returned uuid 
 | Name | Located in | Description | Required | Schema |
 | ---- | ---------- | ----------- | -------- | ---- |
 | uuid | query |  | Yes | string (uuid) |
-| clusterNumber | query |  | Yes | integer |
+| clusterindex | query |  | Yes | integer |
 
 ##### Responses
 
 | Code | Description |
 | ---- | ----------- |
 | 200 | Success |
+| 503 | Server can't keep up, if Retry-After header is present, it can request a backoff interval, specified in seconds. |
 
-Used to upload a cluster. The cluster number is the absolute cluster number. The body contains an "application/octet-stream", where the first bytes are the bit field, directly followed by the actual cluster data.
+Used to upload a cluster. The cluster number is the absolute cluster number. The body contains an "application/octet-stream", where the first bytes are the bit field, directly followed by the actual cluster data. The cluster data is sparse, i.e. only blocks for which the bit is set are present, all other blocks are skipped.
 
 
 ### v1/file/merge
@@ -285,6 +295,7 @@ Used to upload a cluster. The cluster number is the absolute cluster number. The
 | uuid | Form |  | Yes | string (uuid) |
 | originalFileSize | Form |  | Yes | integer |
 | newFileSize | Form |  | Yes | integer |
+
 ##### Responses
 
 | Code | Description |
