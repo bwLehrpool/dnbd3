@@ -27,7 +27,7 @@ static bool statStdout;
 static bool statFile;
 static pthread_t tidCowUploader;
 static pthread_t tidStatUpdater;
-static char *cowServerAddress;
+static const char *cowServerAddress;
 static CURL *curl;
 static cowfile_metadata_header_t *metadata = NULL;
 static atomic_uint_fast64_t bytesUploaded;
@@ -37,6 +37,7 @@ static int uploadLoopThrottle = 0;
 static atomic_bool uploadLoop = true; // Keep upload loop running?
 static atomic_bool uploadLoopDone = false; // Upload loop has finished all work?
 static atomic_bool uploadCancelled = false; // Skip uploading remaining blocks
+static struct curl_slist *uploadHeaders = NULL;
 
 static struct cow
 {
@@ -495,7 +496,7 @@ static void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t id
  * @param cm Curl_multi
  * @param uploadingCluster containing the data for the block to upload.
  */
-static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster, struct curl_slist *headers )
+static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster )
 {
 	CURL *eh = curl_easy_init();
 
@@ -526,7 +527,7 @@ static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster, stru
 		curl_easy_setopt( eh, CURLOPT_XFERINFOFUNCTION, progress_callback );
 		curl_easy_setopt( eh, CURLOPT_XFERINFODATA, uploadingCluster );
 	}
-	curl_easy_setopt( eh, CURLOPT_HTTPHEADER, headers );
+	curl_easy_setopt( eh, CURLOPT_HTTPHEADER, uploadHeaders );
 	curl_multi_add_handle( cm, eh );
 
 	return true;
@@ -688,9 +689,7 @@ static bool curlMultiLoop( CURLM *cm, int minNumberUploads )
 bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 {
 	bool success = true;
-	struct curl_slist *headers = NULL;
 	const time_t now = time( NULL );
-	headers = curl_slist_append( headers, "Content-Type: application/octet-stream" );
 
 	long unsigned int l1MaxOffset = 1 + ( ( metadata->imageSize - 1 ) / COW_FULL_L2_TABLE_DATA_SIZE );
 	// Iterate over all blocks, L1 first
@@ -733,7 +732,7 @@ bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 			for ( int i = 0; i < COW_BITFIELD_SIZE; ++i ) {
 				b->bitfield[i] = cluster->bitfield[i];
 			}
-			addUpload( cm, b, headers );
+			addUpload( cm, b );
 			if ( !ignoreMinUploadDelay && !uploadLoop ) {
 				goto DONE;
 			}
@@ -747,7 +746,6 @@ DONE:
 			break;
 		}
 	}
-	curl_slist_free_all( headers );
 	return success;
 }
 
@@ -901,6 +899,30 @@ static bool createCowStatsFile( char *path )
 	return true;
 }
 
+static bool commonInit( const char* serverAddress, const char *cowUuid )
+{
+	CURLcode m;
+
+	if ( cowUuid != NULL && strlen( cowUuid ) > UUID_STRLEN ) {
+		logadd( LOG_ERROR, "COW UUID too long: '%s'", cowUuid );
+		return false;
+	}
+	uploadHeaders = curl_slist_append( uploadHeaders, "Content-Type: application/octet-stream" );
+	pthread_mutex_init( &cow.l2CreateLock, NULL );
+	cowServerAddress = serverAddress;
+	if ( ( m = curl_global_init( CURL_GLOBAL_ALL ) ) != CURLE_OK ) {
+		logadd( LOG_ERROR, "curl_global_init failed: %s",
+				curl_easy_strerror( m ) );
+		return false;
+	}
+	curl = curl_easy_init();
+	if ( curl == NULL ) {
+		logadd( LOG_ERROR, "Error on curl_easy_init" );
+		return false;
+	}
+	return true;
+}
+
 /**
  * @brief initializes the cow functionality, creates the data & meta file.
  * 
@@ -913,15 +935,14 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion,
 		atomic_uint_fast64_t **imageSizePtr,
 		char *serverAddress, bool sStdout, bool sfile, const char *cowUuid )
 {
-	if ( cowUuid != NULL && strlen( cowUuid ) > UUID_STRLEN ) {
-		logadd( LOG_ERROR, "COW UUID too long: '%s'", cowUuid );
+	char pathMeta[strlen( path ) + 6];
+	char pathData[strlen( path ) + 6];
+
+	if ( !commonInit( serverAddress, cowUuid ) )
 		return false;
-	}
 
 	statStdout = sStdout;
 	statFile = sfile;
-	char pathMeta[strlen( path ) + 6];
-	char pathData[strlen( path ) + 6];
 
 	snprintf( pathMeta, strlen( path ) + 6, "%s%s", path, "/meta" );
 	snprintf( pathData, strlen( path ) + 6, "%s%s", path, "/data" );
@@ -1000,15 +1021,6 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion,
 		return false;
 	}
 
-	pthread_mutex_init( &cow.l2CreateLock, NULL );
-
-	cowServerAddress = serverAddress;
-	curl_global_init( CURL_GLOBAL_ALL );
-	curl = curl_easy_init();
-	if ( !curl ) {
-		logadd( LOG_ERROR, "Error on curl init. Bye.\n" );
-		return false;
-	}
 	if ( cowUuid != NULL ) {
 		snprintf( metadata->uuid, UUID_STRLEN, "%s", cowUuid );
 		logadd( LOG_INFO, "Using provided upload session id" );
@@ -1028,22 +1040,17 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion,
  */
 bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *serverAddress, bool sStdout, bool sFile, const char *cowUuid )
 {
-	statStdout = sStdout;
-	statFile = sFile;
-	cowServerAddress = serverAddress;
-	curl_global_init( CURL_GLOBAL_ALL );
-	curl = curl_easy_init();
 	char pathMeta[strlen( path ) + 6];
 	char pathData[strlen( path ) + 6];
 
-	if ( cowUuid != NULL && strlen( cowUuid ) > UUID_STRLEN ) {
-		logadd( LOG_ERROR, "COW UUID too long: '%s'", cowUuid );
+	if ( !commonInit( serverAddress, cowUuid ) )
 		return false;
-	}
+
+	statStdout = sStdout;
+	statFile = sFile;
 
 	snprintf( pathMeta, strlen( path ) + 6, "%s%s", path, "/meta" );
 	snprintf( pathData, strlen( path ) + 6, "%s%s", path, "/data" );
-
 
 	if ( ( cow.fdMeta = open( pathMeta, O_RDWR, S_IRUSR | S_IWUSR ) ) == -1 ) {
 		logadd( LOG_ERROR, "Could not open cow meta file. Bye.\n" );
@@ -1140,7 +1147,6 @@ bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *server
 	*imageSizePtr = &metadata->imageSize;
 	cow.l1 = (l1 *)( cow.metadata_mmap + metadata->startL1 );
 	cow.l2 = (l2 *)( cow.metadata_mmap + metadata->startL2 );
-	pthread_mutex_init( &cow.l2CreateLock, NULL );
 	createCowStatsFile( path );
 	return true;
 }
@@ -1751,6 +1757,7 @@ void cowfile_close()
 		pthread_join( tidStatUpdater, NULL );
 	}
 
+	curl_slist_free_all( uploadHeaders );
 	if ( curl ) {
 		curl_easy_cleanup( curl );
 		curl_global_cleanup();
