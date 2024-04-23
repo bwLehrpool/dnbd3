@@ -1061,7 +1061,7 @@ bool randomWriteTest( char *mountedImagePath,  char *normalImagePath, float minS
 			off_t offset = rand() % maxOffset;
 			size_t size = ( rand() + offset ) % RND_MAX_WRITE_SIZE;
 			if ( size < RND_MAX_WRITE_SIZE / 2 ) {
-				size /= rand() % 8192;
+				size /= 1 + ( rand() % 8192 );
 			}
 			size = MAX( size, 1 );
 			if ( r > RND_TRUNCATE_PROBABILITY + RND_UNALIGNED_WRITE_PROBABILITY ) {
