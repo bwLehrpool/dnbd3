@@ -479,7 +479,7 @@ static void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t id
 		ssize_t extra = MIN( 20, (ssize_t)sizeof(buffer) - len - 1 );
 		memset( buffer + len, '\n', extra );
 		lseek( cow.fdStats, 43, SEEK_SET );
-		if ( write( cow.fdStats, buffer, len + extra ) != len ) {
+		if ( write( cow.fdStats, buffer, len + extra ) != len + extra ) {
 			logadd( LOG_WARNING, "Could not update cow status file" );
 		}
 #ifdef COW_DUMP_BLOCK_UPLOADS
