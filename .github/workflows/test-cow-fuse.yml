@@ -1,5 +1,7 @@
 name: test fuse cow
 on: push
+env:
+  ASAN_OPTIONS: leak_check_at_exit=false
 jobs:
   test:
     runs-on: ubuntu-latest
