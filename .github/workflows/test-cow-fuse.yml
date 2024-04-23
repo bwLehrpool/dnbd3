@@ -60,7 +60,7 @@ jobs:
           FILENAME=cow_merger_service
           FILESIZE=$(stat -c%s "$FILENAME")
           echo "Size of $FILENAME = $FILESIZE bytes."
-          ./cow_merger_service 2>&1 > log.out &
+          ./cow_merger_service &> log.out &
       - name: Generate test file
         working-directory: ${{ github.workspace }}/build/src/cowtest
         run: ./dnbd3-fuse-cow-test -c /home/runner/work/OriginalImageDirectory/test.r1
@@ -79,7 +79,7 @@ jobs:
           mkdir /home/runner/work/mount
           mkdir /home/runner/work/tmp
           mkdir /home/runner/work/logs
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/logs/standardLog1.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/standardLog1.out &
           PID=$!
           sleep 5
           echo PID: $PID
@@ -88,7 +88,7 @@ jobs:
           sudo umount /home/runner/work/mount
           wait $PID
           echo unmounted
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/logs/standardLog2.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/standardLog2.out &
           PID=$!
           sleep 5
           echo PID: $PID
@@ -106,11 +106,11 @@ jobs:
           cp /home/runner/work/OriginalImageDirectory/test.r1 /home/runner/work/
           rm -rf /home/runner/work/tmp
           mkdir /home/runner/work/tmp
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/logs/randomLog1.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/randomLog1.out &
           PIDFUSE=$!
           sleep 5
           echo PIDFUSE : $PIDFUSE
-          ./cowtest/dnbd3-fuse-cow-test --randomTest "/home/runner/work/mount/img" "/home/runner/work/test.r1" 2>&1 > /home/runner/work/logs/randomTestLog1.out &
+          ./cowtest/dnbd3-fuse-cow-test --randomTest "/home/runner/work/mount/img" "/home/runner/work/test.r1" &> /home/runner/work/logs/randomTestLog1.out &
           PIDTEST=$!
           sleep 60
           echo "stopping test"
@@ -121,11 +121,11 @@ jobs:
           sudo umount /home/runner/work/mount
           echo unmounted
           wait $PIDFUSE
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file 2>&1 > /home/runner/work/logs/randomLog2.out &
+          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/randomLog2.out &
           PIDFUSE=$!
           sleep 5
           echo PIDFUSE : $PIDFUSE
-          ./cowtest/dnbd3-fuse-cow-test --compare "/home/runner/work/mount/img" "/home/runner/work/test.r1" 2>&1 > /home/runner/work/logs/randomTestLog2.out &
+          ./cowtest/dnbd3-fuse-cow-test --compare "/home/runner/work/mount/img" "/home/runner/work/test.r1" &> /home/runner/work/logs/randomTestLog2.out &
           echo unmounting: $PIDFUSE
           sudo umount /home/runner/work/mount
           echo unmounted
@@ -136,7 +136,7 @@ jobs:
       - name: Print logs
         if: always()
         run: |
-          tail -n+0 2>&1 \
+          tail -n+0 \
             /home/runner/work/logs/standardLog1.out \
             /home/runner/work/logs/standardLog2.out \
             /home/runner/work/logs/randomLog1.out \
