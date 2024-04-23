@@ -1,5 +1,7 @@
 name: test fuse cow
 on: push
+env:
+  ASAN_OPTIONS: leak_check_at_exit=false
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -24,6 +26,7 @@ jobs:
           cmake -B ${{ github.workspace }}/build \
                 -S ${{ github.workspace }} \
                 -D CMAKE_BUILD_TYPE=${{ matrix.config.build-type }} \
+                -D CMAKE_C_FLAGS=-fsanitize=address \
                 -D DNBD3_KERNEL_MODULE=OFF \
                 -D DNBD3_BENCHMARK=OFF \
                 -D DNBD3_CLIENT_FUSE=ON \
