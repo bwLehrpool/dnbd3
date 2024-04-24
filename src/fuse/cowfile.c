@@ -1355,12 +1355,15 @@ static bool padBlockForWrite( fuse_req_t req, cow_request_t *cowRequest,
 	sub->dRequest.offset = startOffset & ~DNBD3_BLOCK_MASK;
 	sub->dRequest.fuse_req = req;
 
+	atomic_fetch_add( &cowRequest->workCounter, 1 );
+
 	if ( !connection_read( &sub->dRequest ) ) {
 		free( sub );
 		errno = ENOTSOCK;
+		// Don't need to go via finishWriteRequest here since the caller will take care of error handling
+		atomic_fetch_sub( &cowRequest->workCounter, 1 );
 		return false;
 	}
-	atomic_fetch_add( &cowRequest->workCounter, 1 );
 	return true;
 }
 
@@ -1560,6 +1563,7 @@ fail:
 	if ( cowRequest->errorCode == 0 ) {
 		cowRequest->errorCode = errno != 0 ? errno : EIO;
 	}
+	// Fallthrough
 success:
 	finishWriteRequest( req, cowRequest );
 }
