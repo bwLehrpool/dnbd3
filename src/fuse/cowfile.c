@@ -759,7 +759,7 @@ void *cowfile_statUpdater( UNUSED void *something )
 {
 	uint64_t lastUpdateTime = time( NULL );
 	time_t now;
-	char speedBuffer[20];
+	char speedBuffer[20] = "0";
 
 	while ( !uploadLoopDone ) {
 		int modified = 0;
