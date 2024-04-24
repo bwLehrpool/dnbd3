@@ -14,13 +14,13 @@ jobs:
       - name: Install dnbd3 dependencies
         working-directory: ${{ github.workspace }}
         run: |
-          sudo apt-get update -y -qq
-          sudo apt-get install -y -qq make \
+          for i in 1 2 3 4; do sudo apt-get update -y -qq && break; sleep 5; done
+          for i in 1 2 3 4; do sudo apt-get install -y -qq make \
                                       clang-format \
                                       linux-headers-generic \
                                       libfuse-dev \
                                       libjansson-dev \
-                                      libcurl4-openssl-dev
+                                      libcurl4-openssl-dev && break; sleep 5; done
       - name: Configure dnbd3 build
         run: |
           cmake -B ${{ github.workspace }}/build \
