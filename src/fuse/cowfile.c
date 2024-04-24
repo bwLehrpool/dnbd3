@@ -608,6 +608,7 @@ static bool clusterUploadDoneHandler( CURLM *cm, CURLMsg *msg )
 		// didn't get updated again in the meantime.
 		atomic_compare_exchange_strong( &uploadingCluster->cluster->timeChanged, &uploadingCluster->time, 0 );
 		uploadingCluster->cluster->uploads++;
+		uploadingCluster->cluster->fails = 0;
 		totalBlocksUploaded++;
 		success = true;
 	}
