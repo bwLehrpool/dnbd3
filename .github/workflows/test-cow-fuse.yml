@@ -51,12 +51,13 @@ jobs:
       - name: Setup cow_merger_service
         working-directory: ${{ github.workspace }}/../cow_server/
         run: |
-          mkdir /home/runner/work/WorkingDirectory
-          mkdir /home/runner/work/OriginalImageDirectory
-          mkdir /home/runner/work/Output
-          sed -i 's/^        "WorkingDirectory":.*/        "WorkingDirectory": "\/home\/runner\/work\/WorkingDirectory",/g'  cow_merger_service/publish/appsettings.json
-          sed -i 's/^        "OriginalImageDirectory":.*/        "OriginalImageDirectory": "\/home\/runner\/work\/OriginalImageDirectory",/g' cow_merger_service/publish/appsettings.json
-          sed -i 's/^        "DestinationDirectory":.*/        "DestinationDirectory": "\/home\/runner\/work\/Output",/g'  cow_merger_service/publish/appsettings.json
+          sudo mkdir -m 777 /mnt/work
+          mkdir /mnt/work/WorkingDirectory
+          mkdir /mnt/work/OriginalImageDirectory
+          mkdir /mnt/work/Output
+          sed -i 's/^        "WorkingDirectory":.*/        "WorkingDirectory": "\/mnt\/work\/WorkingDirectory",/g'  cow_merger_service/publish/appsettings.json
+          sed -i 's/^        "OriginalImageDirectory":.*/        "OriginalImageDirectory": "\/mnt\/work\/OriginalImageDirectory",/g' cow_merger_service/publish/appsettings.json
+          sed -i 's/^        "DestinationDirectory":.*/        "DestinationDirectory": "\/mnt\/work\/Output",/g'  cow_merger_service/publish/appsettings.json
           while read line; do echo $line; done < cow_merger_service/publish/appsettings.json
           cd cow_merger_service/publish/
           FILENAME=cow_merger_service
@@ -65,54 +66,55 @@ jobs:
           ./cow_merger_service &> log.out &
       - name: Generate test file
         working-directory: ${{ github.workspace }}/build/src/cowtest
-        run: ./dnbd3-fuse-cow-test -c /home/runner/work/OriginalImageDirectory/test.r1
+        run: ./dnbd3-fuse-cow-test -c /mnt/work/OriginalImageDirectory/test.r1
       - name: Setup dnbd3 server
         working-directory: ${{ github.workspace }}
         run: |
-          mkdir /home/runner/work/dnbd3-server-config/
-          cp pkg/config/server.conf /home/runner/work/dnbd3-server-config/
-          sed -i "s/^basePath=.*/basePath=\/home\/runner\/work\/OriginalImageDirectory/g" /home/runner/work/dnbd3-server-config/server.conf
+          mkdir /mnt/work/dnbd3-server-config/
+          cp pkg/config/server.conf /mnt/work/dnbd3-server-config/
+          sed -i "s/^basePath=.*/basePath=\/mnt\/work\/OriginalImageDirectory/g" /mnt/work/dnbd3-server-config/server.conf
           cd build/src/server
-          ./dnbd3-server --config /home/runner/work/dnbd3-server-config/
+          ./dnbd3-server --config /mnt/work/dnbd3-server-config/
           sleep 5
       - name: Run standard test
         working-directory: ${{ github.workspace }}/build/src
         run: |
-          mkdir /home/runner/work/mount
-          mkdir /home/runner/work/tmp
-          mkdir /home/runner/work/logs
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/standardLog1.out &
+          mkdir /mnt/work/mount
+          mkdir /mnt/work/tmp
+          mkdir /mnt/work/logs
+          ./fuse/dnbd3-fuse "/mnt/work/mount" -f -h localhost -i test -c "/mnt/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file &> /mnt/work/logs/standardLog1.out &
           PID=$!
           sleep 5
           echo PID: $PID
-          ./cowtest/dnbd3-fuse-cow-test -t "/home/runner/work/mount/img"
+          ./cowtest/dnbd3-fuse-cow-test -t "/mnt/work/mount/img"
           echo unmounting: $PID
-          sudo umount /home/runner/work/mount
+          sudo umount /mnt/work/mount
           wait $PID
           echo unmounted
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/standardLog2.out &
+          ./fuse/dnbd3-fuse "/mnt/work/mount" -f -h localhost -i test -L "/mnt/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file &> /mnt/work/logs/standardLog2.out &
           PID=$!
           sleep 5
           echo PID: $PID
-          ./cowtest/dnbd3-fuse-cow-test -v "/home/runner/work/mount/img"
+          ./cowtest/dnbd3-fuse-cow-test -v "/mnt/work/mount/img"
           echo unmounting: $PID
-          sudo umount /home/runner/work/mount
+          sudo umount /mnt/work/mount
           wait $PID
           echo unmounted
           sleep 30
-          echo Output: $(ls /home/runner/work/Output)
-          ./cowtest/dnbd3-fuse-cow-test -v /home/runner/work/Output/test.r2
+          echo Output: $(ls /mnt/work/Output)
+          ./cowtest/dnbd3-fuse-cow-test -v /mnt/work/Output/test.r2
+          rm /mnt/work/Output/test.r2
+          rm -rf /mnt/work/tmp
       - name: Run random test
         working-directory: ${{ github.workspace }}/build/src
         run: |
-          cp /home/runner/work/OriginalImageDirectory/test.r1 /home/runner/work/
-          rm -rf /home/runner/work/tmp
-          mkdir /home/runner/work/tmp
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -c "/home/runner/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/randomLog1.out &
+          cp /mnt/work/OriginalImageDirectory/test.r1 /mnt/work/
+          mkdir /mnt/work/tmp
+          ./fuse/dnbd3-fuse "/mnt/work/mount" -f -h localhost -i test -c "/mnt/work/tmp" -C localhost:5000 --cow-stats-stdout --cow-stats-file &> /mnt/work/logs/randomLog1.out &
           PIDFUSE=$!
           sleep 5
           echo PIDFUSE : $PIDFUSE
-          ./cowtest/dnbd3-fuse-cow-test --randomTest "/home/runner/work/mount/img" "/home/runner/work/test.r1" &> /home/runner/work/logs/randomTestLog1.out &
+          ./cowtest/dnbd3-fuse-cow-test --randomTest "/mnt/work/mount/img" "/mnt/work/test.r1" &> /mnt/work/logs/randomTestLog1.out &
           PIDTEST=$!
           sleep 60
           echo "stopping test"
@@ -120,31 +122,30 @@ jobs:
           wait $PIDTEST
           echo "testStopped"
           echo unmounting: $PIDFUSE
-          sudo umount /home/runner/work/mount
+          sudo umount /mnt/work/mount
           echo unmounted
           wait $PIDFUSE
-          ./fuse/dnbd3-fuse "/home/runner/work/mount" -f -h localhost -i test -L "/home/runner/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file &> /home/runner/work/logs/randomLog2.out &
+          ./fuse/dnbd3-fuse "/mnt/work/mount" -f -h localhost -i test -L "/mnt/work/tmp" -C localhost:5000 --merge --cow-stats-stdout --cow-stats-file &> /mnt/work/logs/randomLog2.out &
           PIDFUSE=$!
           sleep 5
           echo PIDFUSE : $PIDFUSE
-          ./cowtest/dnbd3-fuse-cow-test --compare "/home/runner/work/mount/img" "/home/runner/work/test.r1" &> /home/runner/work/logs/randomTestLog2.out &
+          ./cowtest/dnbd3-fuse-cow-test --compare "/mnt/work/mount/img" "/mnt/work/test.r1"
           echo unmounting: $PIDFUSE
-          sudo umount /home/runner/work/mount
+          sudo umount /mnt/work/mount
           echo unmounted
           wait $PIDFUSE
           sleep 30
-          echo Output: $(ls /home/runner/work/Output)
-          ./cowtest/dnbd3-fuse-cow-test --compare "/home/runner/work/Output/test.r3" "/home/runner/work/test.r1"
+          echo Output: $(ls /mnt/work/Output)
+          ./cowtest/dnbd3-fuse-cow-test --compare "/mnt/work/Output/test.r2" "/mnt/work/test.r1"
       - name: Print logs
         if: always()
         run: |
           tail -n+0 \
-            /home/runner/work/logs/standardLog1.out \
-            /home/runner/work/logs/standardLog2.out \
-            /home/runner/work/logs/randomLog1.out \
-            /home/runner/work/logs/randomTestLog1.out \
-            /home/runner/work/logs/randomLog2.out \
-            /home/runner/work/logs/randomTestLog2.out \
-            /home/runner/work/tmp/status.txt \
+            /mnt/work/logs/standardLog1.out \
+            /mnt/work/logs/standardLog2.out \
+            /mnt/work/logs/randomLog1.out \
+            /mnt/work/logs/randomTestLog1.out \
+            /mnt/work/logs/randomLog2.out \
+            /mnt/work/tmp/status.txt \
             ${{ github.workspace }}/build/src/server/dnbd3.log \
             ${{ github.workspace }}/../cow_server/cow_merger_service/publish/log.out
