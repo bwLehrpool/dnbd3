@@ -402,7 +402,6 @@ int main( int argc, char *argv[] )
 	char *cow_server_address = NULL;
 	char *image_Name = NULL;
 	char *log_file = NULL;
-	cow_merge_after_upload  = false;
 	uint16_t rid = 0;
 	char **newArgv;
 	int newArgc;
@@ -548,12 +547,12 @@ int main( int argc, char *argv[] )
 		sigemptyset( &newHandler.sa_mask );
 		sigaction( SIGHUP, &newHandler, NULL );
 	} while ( 0 );
-		if ( useCow ) {
-			sigset_t sigmask;
-			sigemptyset( &sigmask );
-			sigaddset( &sigmask, SIGQUIT ); // Block here and unblock in cow as abort signal
-			pthread_sigmask( SIG_BLOCK, &sigmask, NULL );
-		}
+	if ( useCow ) {
+		sigset_t sigmask;
+		sigemptyset( &sigmask );
+		sigaddset( &sigmask, SIGQUIT ); // Block here and unblock in cow as abort signal
+		pthread_sigmask( SIG_BLOCK, &sigmask, NULL );
+	}
 
 	if ( !connection_init( server_address, image_Name, rid, learnNewServers ) ) {
 		logadd( LOG_ERROR, "Could not connect to any server. Bye.\n" );
