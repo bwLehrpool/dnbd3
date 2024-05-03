@@ -810,7 +810,6 @@ void quitSigHandler( int sig UNUSED )
 {
 	uploadCancelled = true;
 	uploadLoop = false;
-	main_shutdown();
 }
 
 /**

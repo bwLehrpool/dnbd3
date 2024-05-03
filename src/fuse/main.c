@@ -546,6 +546,7 @@ int main( int argc, char *argv[] )
 		struct sigaction newHandler = { .sa_handler = &noopSigHandler };
 		sigemptyset( &newHandler.sa_mask );
 		sigaction( SIGHUP, &newHandler, NULL );
+		sigaction( SIGQUIT, &newHandler, NULL );
 	} while ( 0 );
 	if ( useCow ) {
 		sigset_t sigmask;
@@ -640,12 +641,4 @@ int main( int argc, char *argv[] )
 	connection_join();
 	logadd( LOG_DEBUG1, "Terminating. FUSE REPLIED: %d\n", fuse_err );
 	return fuse_err;
-}
-
-void main_shutdown(void)
-{
-	fuse_session_exit( _fuseSession );
-	// TODO: Figure out why this doesn't wake up the fuse mainloop.
-	// For now, just send SIGQUIT followed by SIGTERM....
-	kill( 0, SIGINT );
 }
