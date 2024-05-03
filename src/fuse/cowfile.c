@@ -1023,7 +1023,7 @@ bool cowfile_init( char *path, const char *image_Name, uint16_t imageVersion,
 	}
 
 	if ( cowUuid != NULL ) {
-		snprintf( metadata->uuid, UUID_STRLEN, "%s", cowUuid );
+		snprintf( metadata->uuid, sizeof(metadata->uuid), "%s", cowUuid );
 		logadd( LOG_INFO, "Using provided upload session id" );
 	} else if ( !createSession( image_Name, imageVersion ) ) {
 		return false;
@@ -1142,7 +1142,7 @@ bool cowfile_load( char *path, atomic_uint_fast64_t **imageSizePtr, char *server
 
 	if ( cowUuid != NULL ) {
 		logadd( LOG_INFO, "Overriding stored upload session id with provided one" );
-		snprintf( metadata->uuid, UUID_STRLEN, "%s", cowUuid );
+		snprintf( metadata->uuid, sizeof(metadata->uuid), "%s", cowUuid );
 	}
 
 	*imageSizePtr = &metadata->imageSize;
