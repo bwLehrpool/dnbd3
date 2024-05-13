@@ -18,6 +18,7 @@ jobs:
                                       clang-format \
                                       linux-headers-generic \
                                       libfuse-dev \
+                                      libcurl4-openssl-dev \
                                       libjansson-dev \
                                       rpm
       - name: Checkout dnbd3 repository

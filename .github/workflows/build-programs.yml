@@ -47,6 +47,7 @@ jobs:
                                       clang-format \
                                       linux-headers-generic \
                                       libfuse-dev \
+                                      libcurl4-openssl-dev \
                                       libjansson-dev
       - name: Checkout dnbd3 repository
         uses: actions/checkout@v4
