@@ -307,8 +307,10 @@ static void image_ll_setattr( fuse_req_t req, fuse_ino_t ino, struct stat *attr,
 		return;
 	}
 	if (to_set & FUSE_SET_ATTR_SIZE) {
-		cowfile_setSize( req,   attr->st_size, ino, fi);
+		cowfile_setSize( req, attr->st_size, ino, fi);
+		return;
 	}
+	fuse_reply_error( req, EACCES );
 }
 
 /* map the implemented fuse operations */
