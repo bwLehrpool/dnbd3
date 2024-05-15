@@ -424,9 +424,10 @@ static void dumpBlockUploads()
 	}
 	qsort( blockUploads, currentBlock, sizeof( cow_cluster_statistics_t ), cmpfunc );
 
-	dprintf( cow.fdStats, "\n\nclusterNumber: uploads\n==Block Upload Dump===\n" );
+	dprintf( cow.fdStats, "\n\n[BlockStats]\n" );
 	for ( uint64_t i = 0; i < currentBlock; i++ ) {
-		dprintf( cow.fdStats, "%" PRIu64 ": %" PRIu64 " \n", blockUploads[i].clusterNumber, blockUploads[i].uploads );
+		dprintf( cow.fdStats, "%" PRIu64 "=%" PRIu64 " \n",
+				blockUploads[i].clusterNumber, blockUploads[i].uploads );
 	}
 }
 #endif
@@ -454,6 +455,7 @@ static void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t id
 
 	int len = snprintf( buffer, sizeof buffer,
 			"[General]\n"
+			"uuid=%s\n"
 			"state=%s\n"
 			"inQueue=%" PRIu64 "\n"
 			"modifiedClusters=%" PRIu64 "\n"
@@ -461,6 +463,7 @@ static void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t id
 			"totalClustersUploaded=%" PRIu64 "\n"
 			"activeUploads=%i\n"
 			"%s%s\n",
+			metadata->uuid,
 			state, inQueue, modified, idle, totalBlocksUploaded, activeUploads,
 			COW_SHOW_UL_SPEED ? "avgSpeedKb=" : "",
 			speedBuffer );
@@ -478,12 +481,12 @@ static void updateCowStatsFile( uint64_t inQueue, uint64_t modified, uint64_t id
 		// Pad with a bunch of newlines so we don't change the file size all the time
 		ssize_t extra = MIN( 20, (ssize_t)sizeof(buffer) - len - 1 );
 		memset( buffer + len, '\n', extra );
-		lseek( cow.fdStats, 43, SEEK_SET );
-		if ( write( cow.fdStats, buffer, len + extra ) != len + extra ) {
+		if ( pwrite( cow.fdStats, buffer, len + extra, 0 ) != len + extra ) {
 			logadd( LOG_WARNING, "Could not update cow status file" );
 		}
 #ifdef COW_DUMP_BLOCK_UPLOADS
 		if ( !uploadLoop && uploadLoopDone ) {
+			lseek( cow.fdStats, len + extra, SEEK_SET );
 			dumpBlockUploads();
 		}
 #endif
@@ -883,10 +886,10 @@ static bool createCowStatsFile( char *path )
 {
 	char pathStatus[strlen( path ) + 12];
 
-	snprintf( pathStatus, strlen( path ) + 12, "%s%s", path, "/status.txt" );
+	snprintf( pathStatus, strlen( path ) + 12, "%s%s", path, "/status" );
 
 	char buffer[100];
-	int len = snprintf( buffer, 100, "uuid=%s\nstate: active\n", metadata->uuid );
+	int len = snprintf( buffer, 100, "[General]\nuuid=%s\nstate=active\n", metadata->uuid );
 	if ( statStdout ) {
 		logadd( LOG_INFO, "%s", buffer );
 	}

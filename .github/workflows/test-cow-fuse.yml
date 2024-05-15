@@ -146,6 +146,6 @@ jobs:
             /mnt/work/logs/randomLog1.out \
             /mnt/work/logs/randomTestLog1.out \
             /mnt/work/logs/randomLog2.out \
-            /mnt/work/tmp/status.txt \
+            /mnt/work/tmp/status \
             ${{ github.workspace }}/build/src/server/dnbd3.log \
             ${{ github.workspace }}/../cow_server/cow_merger_service/publish/log.out

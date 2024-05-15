@@ -24,12 +24,12 @@ A typical use case is updating or adding software to an existing image.
 - `- L <path>` Similar to `-c <path>`, but instead of creating a new session, an existing one is loaded from the specified path.
 - `-m` the client requests a merge after the image has been unmounted and all changes have been uploaded.
 
-- `--cowStatFile` creates a status file at the same location as the data and meta file. The file contains information about the current session, for more information see [here](#status).
-- `--cowStatStdout` similar to `--cowStatFile` but the information will be printed in the stdout.
+- `--cow-stats-file` creates a status file at the same location as the data and meta file. The file contains information about the current session, for more information see [here](#status).
+- `--cow-stats-stdout` similar to `--cow-stats-file` but the information will be printed in the stdout.
 
 Example parameters for creating a new cow session:
 ```
-./dnbd3-fuse "/home/user/VMs/mount" -f -h localhost -i imagename -c "/home/user/temp" -C "192.168.178.20:5000" --cowStatStdout -m
+./dnbd3-fuse "/home/user/VMs/mount" -f -h localhost -i imagename -c "/home/user/temp" -C "192.168.178.20:5000" --cow-stats-stdout -m
 
 ```
 
@@ -117,11 +117,11 @@ There are two different limits for the number of parallel uploads in the [config
 
 ## Files
 
-When a new CoW session is started, a new `meta`, `data` and, if so set in the command line arguments, a `status.txt` file is created.
+When a new CoW session is started, a new `meta`, `data` and, if so set in the command line arguments, a `status` file is created.
 
 ### status
 
-The file `status.txt` can be activated with the command line parameter `--cowStatFile`.
+The file `status` can be activated with the command line parameter `--cow-stats-file`.
 
 The file will contain the following:
 
@@ -147,9 +147,9 @@ It is `done` when the image has been unmounted and all clusters have been upload
 - `ulspeed` the current upload speed in kb/s.
 
 Once all clusters have been uploaded, the status is set to `done`.
-If you define `COW_DUMP_BLOCK_UPLOADS`, a list of all clusters, sorted by the number of uploads, is copied to the status.txt file after the cluster upload is completed.
+If you define `COW_DUMP_BLOCK_UPLOADS`, a list of all clusters, sorted by the number of uploads, is copied to the status file after the cluster upload is completed.
 
-With the command line parameter `--cowStatStdout` the same output of the stats file will be printed in stdout.
+With the command line parameter `--cow-stats-stdout` the same output of the stats file will be printed in stdout.
 
 ### meta
 
@@ -231,7 +231,7 @@ The following configuration variables have been added to `config/cow.h`.
 - `COW_MIN_UPLOAD_DELAY` sets the minimum time in seconds that must have elapsed since the last change to a cow cluster before it is uploaded.
 This value can be fine-tuned. A larger value usually reduces redundant uploading of clusters.
 A smaller value reduces the time for the final upload after the image has been unmounted.
-If you set `COW_DUMP_BLOCK_UPLOADS` and set the command line parameter `--cowStatFile`, then a list of all clusters, sorted by the number of uploads, will be written to the status.txt file after the cluster upload is complete.
+If you set `COW_DUMP_BLOCK_UPLOADS` and set the command line parameter `--cow-stats-file`, then a list of all clusters, sorted by the number of uploads, will be written to the status file after the cluster upload is complete.
 This can help in fine-tuning `COW_MIN_UPLOAD_DELAY`.
 - `COW_STATS_UPDATE_TIME` defines the update frequency of the stdout output/statistics file in seconds. Setting it too low could affect performance as a loop runs over all clusters.
 - `COW_MAX_PARALLEL_BACKGROUND_UPLOADS` defines the maximum number of parallel cluster uploads. This number is used when the image is still mounted and the user is still using it.
