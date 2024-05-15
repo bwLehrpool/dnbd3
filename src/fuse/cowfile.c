@@ -511,6 +511,8 @@ static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster )
 	curl_easy_setopt( eh, CURLOPT_HEADERDATA, (void *)uploadingCluster );
 	curl_easy_setopt( eh, CURLOPT_READFUNCTION, curlReadCallbackUploadBlock );
 	curl_easy_setopt( eh, CURLOPT_READDATA, (void *)uploadingCluster );
+	curl_easy_setopt( eh, CURLOPT_WRITEFUNCTION, curlWriteCb500 );
+	curl_easy_setopt( eh, CURLOPT_WRITEDATA, (void *)uploadingCluster->replyBuffer );
 	curl_easy_setopt( eh, CURLOPT_PRIVATE, (void *)uploadingCluster );
 	// min upload speed of 1kb/s over 10 sec otherwise the upload is canceled.
 	curl_easy_setopt( eh, CURLOPT_LOW_SPEED_TIME, 10L );
@@ -593,16 +595,18 @@ static bool clusterUploadDoneHandler( CURLM *cm, CURLMsg *msg )
 	} else if ( msg->data.result != CURLE_OK ) {
 		logadd( LOG_ERROR, "curl_easy returned non-OK after multi-finish: %s",
 				curl_easy_strerror( msg->data.result ) );
+		logadd( LOG_ERROR, "(%ld, %s)", http_code, uploadingCluster->replyBuffer );
 	} else if ( res != CURLE_OK || res2 != CURLE_OK ) {
 		logadd( LOG_ERROR, "curl_easy_getinfo failed after multifinish (%d, %d)", (int)res, (int)res2 );
 	} else if ( http_code == 503 ) {
 		if ( uploadingCluster->retryTime > 0 ) {
 			logadd( LOG_INFO, "COW server is asking to backoff for %d seconds", uploadingCluster->retryTime );
 		} else {
-			logadd( LOG_ERROR, "COW server returned 503 without Retry-After value" );
+			logadd( LOG_ERROR, "COW server returned 503 without Retry-After value: %s",
+					uploadingCluster->replyBuffer );
 		}
 	} else if ( http_code < 200 || http_code >= 300 ) {
-		logadd( LOG_ERROR, "COW server returned HTTP %ld", http_code );
+		logadd( LOG_ERROR, "COW server returned HTTP %ld: %s", http_code, uploadingCluster->replyBuffer );
 	} else {
 		// everything went ok, reset timeChanged of underlying cluster, but only if it
 		// didn't get updated again in the meantime.
@@ -728,6 +732,7 @@ bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 			b->position = 0;
 			b->retryTime = 0;
 			b->time = cluster->timeChanged;
+			b->replyBuffer[0] = '\0';
 			// Copy, so it doesn't change during upload
 			// when we assemble the data in curlReadCallbackUploadBlock()
 			for ( int i = 0; i < COW_BITFIELD_SIZE; ++i ) {

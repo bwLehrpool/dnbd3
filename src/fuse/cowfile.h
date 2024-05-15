@@ -107,10 +107,11 @@ typedef struct cow_curl_read_upload
 	atomic_uint_least64_t time;
 	cow_l2_entry_t *cluster;
 	size_t position;
-	long unsigned int clusterNumber;
+	uint64_t clusterNumber;
 	int64_t ulLast;
 	int retryTime;
 	atomic_uchar bitfield[COW_BITFIELD_SIZE];
+	char replyBuffer[500];
 } cow_curl_read_upload_t;
 
 
