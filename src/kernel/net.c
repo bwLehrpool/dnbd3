@@ -143,6 +143,7 @@ static void dnbd3_start_discover(dnbd3_device_t *dev, bool panic)
 			// Panic freshly turned on
 			dev->panic = true;
 			dev->discover_interval = TIMER_INTERVAL_PROBE_PANIC;
+			dev->discover_count = 0;
 		}
 		spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 		dnbd3_flag_reset(dev->connection_lock);
@@ -218,6 +219,10 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 
 	best_server.ss_family = 0;
 	best_rtt = RTT_UNREACHABLE;
+
+	if (dev->panic) {
+		dnbd3_dev_dbg_host(dev, &host_compare, "Discover in panic mode\n");
+	}
 
 	if (!ready || dev->panic)
 		isize = NUMBER_SERVERS;
@@ -446,7 +451,9 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 	int remaining;
 	int ret;
 
+	dnbd3_dev_dbg_cur(dev, "starting receive worker...\n");
 	mutex_lock(&dev->recv_mutex);
+	dnbd3_dev_dbg_cur(dev, "receive worker started\n");
 	while (dev->sock) {
 		// receive net reply
 		ret = dnbd3_recv_reply(dev->sock, &reply_hdr);
@@ -594,6 +601,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 out_unlock:
 	// This will check if we actually still need a new connection
 	dnbd3_start_discover(dev, true);
+	dnbd3_dev_dbg_cur(dev, "Receive worker exited\n");
 	mutex_unlock(&dev->recv_mutex);
 }
 
@@ -623,7 +631,7 @@ static void set_socket_timeout(struct socket *sock, bool set_send, int timeout_m
 static int dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage *addr, struct socket **sock_out)
 {
 	ktime_t start;
-	int ret, connect_time_ms;
+	int ret, connect_time_ms, diff;
 	struct socket *sock;
 	int retries = 4;
 	const int addrlen = addr->ss_family == AF_INET ? sizeof(struct sockaddr_in)
@@ -659,7 +667,7 @@ static int dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage *addr, str
 
 	if (dev->panic && dev->panic_count > 1) {
 		/* in panic mode for some time, start increasing timeouts */
-		connect_time_ms = dev->panic_count * 1000;
+		connect_time_ms = dev->panic_count * 333;
 	} else {
 		/* otherwise, use 2*RTT of current server */
 		connect_time_ms = dev->cur_server.rtt * 2 / 1000;
@@ -667,21 +675,21 @@ static int dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage *addr, str
 	/* but obey a minimal configurable value, and maximum sanity check */
 	if (connect_time_ms < SOCKET_TIMEOUT_SEND * 1000)
 		connect_time_ms = SOCKET_TIMEOUT_SEND * 1000;
-	else if (connect_time_ms > 60000)
-		connect_time_ms = 60000;
+	else if (connect_time_ms > 15000)
+		connect_time_ms = 15000;
 	set_socket_timeout(sock, false, connect_time_ms); // recv
 	set_socket_timeout(sock, true, connect_time_ms); // send
 	start = ktime_get_real();
 	while (--retries > 0) {
 		ret = kernel_connect(sock, (struct sockaddr *)addr, addrlen, 0);
-		connect_time_ms = (int)ktime_ms_delta(ktime_get_real(), start);
-		if (connect_time_ms > 2 * SOCKET_TIMEOUT_SEND * 1000) {
+		diff = (int)ktime_ms_delta(ktime_get_real(), start);
+		if (diff > 2 * connect_time_ms) {
 			/* Either I'm losing my mind or there was a specific build of kernel
 			 * 5.x where SO_RCVTIMEO didn't affect the connect call above, so
 			 * this function would hang for over a minute for unreachable hosts.
-			 * Leave in this debug check for twice the configured timeout
+			 * Leave in this debug check for twice the configured timeout.
 			 */
-			dnbd3_dev_dbg_host(dev, addr, "connect: call took %dms\n",
+			dnbd3_dev_err_host(dev, addr, "connect: call took %dms\n",
 					connect_time_ms);
 		}
 		if (ret != 0) {
