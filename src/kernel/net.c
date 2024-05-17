@@ -86,7 +86,7 @@ static bool dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 		struct sockaddr_storage *addr, uint16_t *remote_version, bool copy_image_info);
 
 static bool dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage *addr,
-		struct socket *sock);
+		struct socket *sock, u64 test_start, u32 test_size);
 
 static bool dnbd3_send_empty_request(dnbd3_device_t *dev, u16 cmd);
 
@@ -193,10 +193,14 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 {
 	struct socket *sock, *best_sock = NULL;
 	dnbd3_alt_server_t *alt;
+	struct request *blk_request;
 	struct sockaddr_storage host_compare, best_server;
 	uint16_t remote_version;
 	ktime_t start, end;
 	unsigned long rtt = 0, best_rtt = 0;
+	u64 test_start = 0;
+	u32 test_size = RTT_BLOCK_SIZE;
+	unsigned long irqflags;
 	int i, j, k, isize, fails, rtt_threshold;
 	int do_change = 0;
 	u8 check_order[NUMBER_SERVERS];
@@ -254,6 +258,24 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 		if (!dnbd3_execute_handshake(dev, sock, &host_compare, &remote_version, false))
 			goto error;
 
+		if (dev->panic) {
+			// In panic mode, use next pending request for testing, this has a higher chance of
+			// filtering out a server which can't actually handle our requests, instead of just
+			// requesting the very first block which should be cached by every server.
+			spin_lock_irqsave(&dev->send_queue_lock, irqflags);
+			if (!list_empty(&dev->send_queue)) {
+				blk_request = list_entry(dev->send_queue.next, struct request, queuelist);
+				test_start = blk_rq_pos(blk_request) << 9; /* sectors to bytes */
+				test_size = blk_rq_bytes(blk_request);
+			}
+			spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
+		}
+
+		// actual rtt measurement is just the first block request and reply
+		start = ktime_get_real();
+		if (!dnbd3_request_test_block(dev, &host_compare, sock, test_start, test_size))
+			goto error;
+		end = ktime_get_real();
 
 		// panic mode, take first responding server
 		if (dev->panic) {
@@ -264,19 +286,16 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 				// Check global flag, a connect might have been in progress
 				if (best_sock != NULL)
 					sock_release(best_sock);
-				set_socket_timeout(sock, false, SOCKET_TIMEOUT_RECV * 1000 + 1000);
+				set_socket_timeout(sock, false, MAX(
+							SOCKET_TIMEOUT_RECV * 1000,
+							(int)ktime_ms_delta(end, start)
+						) + 1000);
 				if (dnbd3_set_primary_connection(dev, sock, &host_compare, remote_version) != 0)
 					sock_release(sock);
 				dnbd3_flag_reset(dev->connection_lock);
 				return;
 			}
 		}
-
-		// actual rtt measurement is just the first block requests and reply
-		start = ktime_get_real();
-		if (!dnbd3_request_test_block(dev, &host_compare, sock))
-			goto error;
-		end = ktime_get_real();
 
 		mutex_lock(&dev->alt_servers_lock);
 		if (is_same_server(&dev->alt_servers[i].host, &host_compare)) {
@@ -924,23 +943,24 @@ static bool dnbd3_drain_socket(dnbd3_device_t *dev, struct socket *sock, int byt
 	return true;
 }
 
-static bool dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage *addr, struct socket *sock)
+static bool dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storage *addr,
+		struct socket *sock, u64 test_start, u32 test_size)
 {
 	dnbd3_reply_t reply_hdr;
 
 	// Request block
-	if (!dnbd3_send_request(sock, CMD_GET_BLOCK, 0, 0, RTT_BLOCK_SIZE)) {
+	if (!dnbd3_send_request(sock, CMD_GET_BLOCK, 0, test_start, test_size)) {
 		dnbd3_err_dbg_host(dev, addr, "requesting test block failed\n");
 		return false;
 	}
 
-	// receive net reply
+	// receive reply header
 	if (dnbd3_recv_reply(sock, &reply_hdr) != sizeof(reply_hdr)) {
 		dnbd3_err_dbg_host(dev, addr, "receiving test block header packet failed\n");
 		return false;
 	}
 	if (reply_hdr.magic != dnbd3_packet_magic || reply_hdr.cmd != CMD_GET_BLOCK
-			|| reply_hdr.size != RTT_BLOCK_SIZE || reply_hdr.handle != 0) {
+			|| reply_hdr.size != test_size || reply_hdr.handle != 0) {
 		dnbd3_err_dbg_host(dev, addr,
 				"unexpected reply to block request: cmd=%d, size=%d, handle=%llu (discover)\n",
 				(int)reply_hdr.cmd, (int)reply_hdr.size, reply_hdr.handle);
@@ -948,7 +968,7 @@ static bool dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storag
 	}
 
 	// receive data
-	return dnbd3_drain_socket(dev, sock, RTT_BLOCK_SIZE);
+	return dnbd3_drain_socket(dev, sock, test_size);
 }
 #undef dnbd3_err_dbg_host
 
