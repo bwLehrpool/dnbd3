@@ -31,10 +31,10 @@ find_path(KernelHeaders_INCLUDE_DIR
 
 # get Linux kernel headers version
 file(READ "${KERNEL_BUILD_DIR}/include/generated/utsrelease.h" tmpvar)
-string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${tmpvar})
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION "${tmpvar}")
 if("${KernelHeaders_VERSION}" EQUAL "")
     file(READ "${KERNEL_BUILD_DIR}/include/config/kernel.release" tmpvar)
-    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${tmpvar})
+    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION "${tmpvar}")
 endif()
 if("${KernelHeaders_VERSION}" EQUAL "")
     string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" KernelHeaders_VERSION ${KernelHeaders_INCLUDE_DIR})
