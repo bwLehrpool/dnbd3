@@ -552,7 +552,7 @@ static size_t curlHeaderCallbackUploadBlock( char *buffer, size_t size, size_t n
 	if ( len < 13 )
 		return len;
 	for ( int i = 0; i < 11; ++i ) {
-		buffer[i] |= 0x60;
+		buffer[i] |= 0x20;
 	}
 	if ( strncmp( buffer, "retry-after:", 12 ) != 0 )
 		return len;
