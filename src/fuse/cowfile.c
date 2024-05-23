@@ -261,6 +261,10 @@ static size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb,
 {
 	cow_curl_read_upload_t *uploadBlock = (cow_curl_read_upload_t *)userdata;
 	size_t len = 0;
+
+	if ( size * nmemb < DNBD3_BLOCK_SIZE ) {
+		logadd( LOG_INFO, "Wow, curl read callback with %d bytes left", (int)( size * nmemb ) );
+	}
 	// Check if we're still in the bitfield
 	if ( uploadBlock->position < COW_BITFIELD_SIZE ) {
 		size_t lenCpy = MIN( COW_BITFIELD_SIZE - uploadBlock->position, size * nmemb );
@@ -276,8 +280,9 @@ static size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb,
 		ssize_t spaceLeft = ( size * nmemb ) - len;
 		// Only read blocks that have been written to the cluster. Saves bandwidth. Not optimal since
 		// we do a lot of 4k/32k reads, but it's not that performance critical I guess...
-		while ( spaceLeft >= (ssize_t)DNBD3_BLOCK_SIZE && inClusterOffset < (off_t)COW_DATA_CLUSTER_SIZE ) {
+		while ( spaceLeft > 0 && inClusterOffset < (off_t)COW_DATA_CLUSTER_SIZE ) {
 			int bitNumber = (int)( inClusterOffset / DNBD3_BLOCK_SIZE );
+			uint32_t blockOffset = (uint32_t)( inClusterOffset % DNBD3_BLOCK_SIZE );
 			size_t readSize;
 			// Small performance hack: All bits one in a byte, do a 32k instead of 4k read
 			// TODO: preadv with a large iov, reading unchanged blocks into a trash-buffer
@@ -288,8 +293,13 @@ static size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb,
 			} else {
 				readSize = DNBD3_BLOCK_SIZE;
 			}
+			readSize -= blockOffset;
+			if ( (ssize_t)readSize > spaceLeft ) {
+				readSize = spaceLeft;
+			}
 			// If handling single block, check bits in our copy, as global bitfield could change
-			if ( readSize != DNBD3_BLOCK_SIZE || checkBit( uploadBlock->bitfield, bitNumber ) ) {
+			// If uploading 8 blocks at once, check already happened above
+			if ( readSize > DNBD3_BLOCK_SIZE || checkBit( uploadBlock->bitfield, bitNumber ) ) {
 				ssize_t lengthRead = pread( cow.fdData, ( ptr + len ), readSize,
 						uploadBlock->cluster->offset + inClusterOffset );
 				if ( lengthRead == -1 ) {
