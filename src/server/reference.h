@@ -5,8 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef container_of
 #define container_of(ptr, type, member) \
 	((type *)((char *)(ptr) - (char *)&(((type *)NULL)->member)))
+#endif
 
 void ref_init( ref *reference, void ( *freefun )( ref * ), long count );
 
