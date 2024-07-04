@@ -24,7 +24,7 @@ typedef struct
 {
 	dnbd3_image_t *image; // Image to check
 	int block;            // Block to check
-	int count;            // How many blocks to check starting at .block
+	int count;            // How many blocks to check starting at .block (CHECK_ALL for entire image)
 } queue_entry;
 
 static pthread_t thread;
@@ -91,19 +91,36 @@ start_over:
 	for (int i = 0; i < queueLen; ++i) {
 		if ( freeSlot == -1 && checkQueue[i].image == NULL ) {
 			freeSlot = i;
-		} else if ( checkQueue[i].image == image && checkQueue[i].block <= block ) {
-			if ( checkQueue[i].count == CHECK_ALL ) {
-				logadd( LOG_DEBUG2, "Dominated by full image scan request (%d/%d) (at %d)", i, queueLen, checkQueue[i].block );
-			} else if ( checkQueue[i].block + checkQueue[i].count == block ) {
-				checkQueue[i].count += 1;
-				logadd( LOG_DEBUG2, "Attaching to existing check request (%d/%d) (at %d, %d to go)", i, queueLen, checkQueue[i].block, checkQueue[i].count );
-			} else if ( checkQueue[i].block + checkQueue[i].count > block ) {
-				logadd( LOG_DEBUG2, "Dominated by existing check request (%d/%d) (at %d, %d to go)", i, queueLen, checkQueue[i].block, checkQueue[i].count );
-			} else {
-				continue;
-			}
+			continue;
+		}
+		if ( checkQueue[i].image != image ) {
+			continue;
+		}
+		// There is an existing check request for the given image, see if we can merge
+		if ( block == -1 ) {
+			// New request is supposed to check entire image, reset existing queue item
+			checkQueue[i].block = 0;
+			checkQueue[i].count = CHECK_ALL;
 			mutex_unlock( &integrityQueueLock );
 			return;
+		}
+		if ( checkQueue[i].block <= block ) {
+			// The block to check is after the block to check in queue
+			if ( checkQueue[i].count == CHECK_ALL ) {
+				logadd( LOG_DEBUG2, "Dominated by full image scan request (%d/%d) (at %d)",
+						i, queueLen, checkQueue[i].block );
+			} else if ( checkQueue[i].block + checkQueue[i].count == block ) {
+				checkQueue[i].count += 1;
+				logadd( LOG_DEBUG2, "Attaching to existing check request (%d/%d) (at %d, %d to go)",
+						i, queueLen, checkQueue[i].block, checkQueue[i].count );
+			} else if ( checkQueue[i].block + checkQueue[i].count > block ) {
+				logadd( LOG_DEBUG2, "Dominated by existing check request (%d/%d) (at %d, %d to go)",
+						i, queueLen, checkQueue[i].block, checkQueue[i].count );
+			} else {
+				continue; // Keep looking
+			}
+			mutex_unlock( &integrityQueueLock );
+			return; // Nothing to do for one of the reasons above
 		}
 	}
 	if ( freeSlot == -1 ) {
