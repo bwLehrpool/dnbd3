@@ -75,7 +75,7 @@ static poll_list_t *listeners = NULL;
  * Time the server was started
  */
 static ticks startupTime;
-static bool sigReload = false, sigLogCycle = false;
+static bool sigReload = false, sigLogCycle = false, sigHashAll = false;
 
 /**
  * Copied to in signal handler so we can print info
@@ -445,6 +445,11 @@ int main(int argc, char *argv[])
 			else
 				logadd( LOG_WARNING, "Could not cycle log file." );
 		}
+		if ( sigHashAll ) {
+			sigHashAll = false;
+			logadd( LOG_INFO, "SIGUSR1 received, verifying checksum of all images..." );
+			image_hashAllImages();
+		}
 		//
 		len = sizeof(client);
 		fd = sock_accept( listeners, &client, &len );
@@ -543,8 +548,10 @@ static void dnbd3_handleSignal(int signum)
 	if ( _shutdown ) return;
 	if ( signum == SIGINT || signum == SIGTERM ) {
 		_shutdown = true;
-	} else if ( signum == SIGUSR1 || signum == SIGHUP ) {
+	} else if ( signum == SIGHUP ) {
 		sigReload = true;
+	} else if ( signum == SIGUSR1 ) {
+		sigHashAll = true;
 	} else if ( signum == SIGUSR2 ) {
 		sigLogCycle = true;
 	}

@@ -51,6 +51,10 @@ bool image_ensureDiskSpaceLocked(uint64_t size, bool force);
 
 bool image_saveCacheMap(dnbd3_image_t *image);
 
+void image_checkForNextFullCheck(void);
+
+void image_hashAllImages(void);
+
 /**
  * Check if given range is cached. Be careful when using this function because:
  * 1) you need to hold a reference to the cache map

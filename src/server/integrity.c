@@ -40,7 +40,7 @@ static void flushFileRange(dnbd3_image_t *image, uint64_t start, uint64_t end);
 /**
  * Initialize the integrity check thread
  */
-void integrity_init()
+void integrity_init(void)
 {
 	assert( queueLen == -1 );
 	mutex_init( &integrityQueueLock, LOCK_INTEGRITY_QUEUE );
@@ -56,7 +56,7 @@ void integrity_init()
 	}
 }
 
-void integrity_shutdown()
+void integrity_shutdown(void)
 {
 	assert( queueLen != -1 );
 	if ( !bRunning )
@@ -98,11 +98,16 @@ start_over:
 		}
 		// There is an existing check request for the given image, see if we can merge
 		if ( block == -1 ) {
-			// New request is supposed to check entire image, reset existing queue item
-			checkQueue[i].block = 0;
-			checkQueue[i].count = CHECK_ALL;
-			mutex_unlock( &integrityQueueLock );
-			return;
+			// New request is supposed to check entire image
+			if ( checkQueue[i].block == 0 && checkQueue[i].count == CHECK_ALL ) {
+				// Existing full check that didn't start yet, bail out
+				mutex_unlock( &integrityQueueLock );
+				return;
+			}
+			// Mark existing queue item as void
+			checkQueue[i].block = -1;
+			checkQueue[i].count = -1;
+			continue;
 		}
 		if ( checkQueue[i].block <= block ) {
 			// The block to check is after the block to check in queue
@@ -148,9 +153,20 @@ start_over:
 	mutex_unlock( &integrityQueueLock );
 }
 
+void integrity_trigger(void)
+{
+	if ( !bRunning )
+		return;
+	mutex_lock( &integrityQueueLock );
+	pthread_cond_signal( &queueSignal );
+	mutex_unlock( &integrityQueueLock );
+}
+
 static void* integrity_main(void * data UNUSED)
 {
 	int i;
+	bool queueAnother;
+
 	setThreadName( "image-check" );
 	blockNoncriticalSignals();
 #if defined(__linux__)
@@ -165,6 +181,7 @@ static void* integrity_main(void * data UNUSED)
 		if ( queueLen == 0 ) {
 			mutex_cond_wait( &queueSignal, &integrityQueueLock );
 		}
+		queueAnother = true;
 		for (i = queueLen - 1; i >= 0; --i) {
 			if ( _shutdown ) break;
 			dnbd3_image_t * const image = image_lock( checkQueue[i].image );
@@ -202,7 +219,7 @@ static void* integrity_main(void * data UNUSED)
 					if ( _shutdown )
 						break;
 					// Open for direct I/O if possible; this prevents polluting the fs cache
-					if ( directFd == -1 && ( end % DNBD3_BLOCK_SIZE ) == 0 ) {
+					if ( directFd == -1 && ( MIN( end, fileSize ) % DNBD3_BLOCK_SIZE ) == 0 ) {
 						// Use direct I/O only if read length is multiple of 4096 to be on the safe side
 						directFd = open( image->path, O_RDONLY | O_DIRECT );
 						if ( directFd == -1 ) {
@@ -231,7 +248,7 @@ static void* integrity_main(void * data UNUSED)
 						// If this is not a full check, queue one
 						if ( qCount != CHECK_ALL ) {
 							logadd( LOG_INFO, "Queueing full check for %s", image->name );
-							integrity_check( image, -1, false );
+							image->wantCheck = true;
 						}
 						foundCorrupted = true;
 					}
@@ -244,12 +261,17 @@ static void* integrity_main(void * data UNUSED)
 				}
 				mutex_lock( &integrityQueueLock );
 				assert( checkQueue[i].image == image );
-				if ( qCount != CHECK_ALL ) {
+				if ( checkQueue[i].block == -1 && checkQueue[i].count == -1 ) {
+					// Marked as dominated while we were checking - discard silently
+				} else if ( qCount != CHECK_ALL ) {
 					// Not a full check; update the counter
+					assert( checkQueue[i].count != CHECK_ALL );
 					checkQueue[i].count -= ( blocks[0] - checkQueue[i].block );
 					if ( checkQueue[i].count < 0 ) {
 						logadd( LOG_WARNING, "BUG! checkQueue counter ran negative" );
 					}
+				} else {
+					assert( checkQueue[i].count == CHECK_ALL );
 				}
 				if ( checkCount > 0 || checkQueue[i].count <= 0 ) {
 					// Done with this task as nothing left
@@ -258,6 +280,7 @@ static void* integrity_main(void * data UNUSED)
 				} else {
 					// Still more blocks to go...
 					checkQueue[i].block = blocks[0];
+					queueAnother = false; // Still busy
 				}
 			}
 			if ( foundCorrupted && !_shutdown ) {
@@ -266,6 +289,12 @@ static void* integrity_main(void * data UNUSED)
 			}
 			// Release :-)
 			image_release( image );
+		}
+		// See if there's another image queued for check
+		if ( queueAnother ) {
+			mutex_unlock( &integrityQueueLock );
+			image_checkForNextFullCheck();
+			mutex_lock( &integrityQueueLock );
 		}
 	}
 	mutex_unlock( &integrityQueueLock );

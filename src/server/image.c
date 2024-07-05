@@ -2125,3 +2125,38 @@ static void loadImageMeta(dnbd3_image_t *image)
 	timing_gets( &image->atime, offset );
 }
 
+void image_checkForNextFullCheck(void)
+{
+	int i;
+	dnbd3_image_t *check = NULL;
+
+	mutex_lock( &imageListLock );
+	for (i = 0; i < _num_images; ++i) {
+		dnbd3_image_t * const image = _images[i];
+		if ( image != NULL && image->wantCheck ) {
+			image->wantCheck = false;
+			check = image;
+			break;
+		}
+	}
+	mutex_unlock( &imageListLock );
+	if ( check != NULL ) {
+		logadd( LOG_DEBUG1, "Queueing next full image check" );
+		integrity_check( check, -1, false );
+	}
+}
+
+void image_hashAllImages(void)
+{
+	int i;
+
+	mutex_lock( &imageListLock );
+	for (i = 0; i < _num_images; ++i) {
+		dnbd3_image_t * const image = _images[i];
+		if ( image != NULL ) {
+			image->wantCheck = true;
+		}
+	}
+	mutex_unlock( &imageListLock );
+	integrity_trigger();
+}

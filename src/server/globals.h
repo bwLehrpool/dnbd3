@@ -159,6 +159,7 @@ struct _dnbd3_image
 	} problem;
 	uint16_t rid;          // revision of image
 	bool accessed;         // image was accessed since .meta was written
+	bool wantCheck;        // true if the entire image should be checked as soon as the according thread is idle
 	pthread_mutex_t lock;
 };
 #define PIMG(x) (x)->name, (int)(x)->rid
