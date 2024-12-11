@@ -30,7 +30,7 @@
 /**
  * Print currently connected server IP:PORT
  */
-ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
+static ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
 {
 	ssize_t ret;
 
@@ -44,7 +44,7 @@ ssize_t show_cur_server_addr(char *buf, dnbd3_device_t *dev)
  * List alt servers. One line per server, format is:
  * IP:PORT RTT consecutive_failures best_count
  */
-ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
+static ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 {
 	int i, size = PAGE_SIZE;
 	ssize_t ret;
@@ -78,7 +78,7 @@ ssize_t show_alt_servers(char *buf, dnbd3_device_t *dev)
 /**
  * Show name of image in use
  */
-ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
+static ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
 {
 	ssize_t ret;
 
@@ -91,13 +91,13 @@ ssize_t show_image_name(char *buf, dnbd3_device_t *dev)
 /**
  * Show rid of image in use
  */
-ssize_t show_rid(char *buf, dnbd3_device_t *dev)
+static ssize_t show_rid(char *buf, dnbd3_device_t *dev)
 {
 	// No locking here, primitive type, no pointer to allocated memory
 	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->rid), PAGE_SIZE);
 }
 
-ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
+static ssize_t show_update_available(char *buf, dnbd3_device_t *dev)
 {
 	// Same story
 	return MIN(snprintf(buf, PAGE_SIZE, "%d\n", dev->update_available), PAGE_SIZE);
@@ -133,7 +133,7 @@ device_attr_t update_available = {
 	.store = NULL,
 };
 
-ssize_t device_show(struct kobject *kobj, struct attribute *attr, char *buf)
+static ssize_t device_show(struct kobject *kobj, struct attribute *attr, char *buf)
 {
 	device_attr_t *device_attr = container_of(attr, device_attr_t, attr);
 	dnbd3_device_t *dev = container_of(kobj, dnbd3_device_t, kobj);
@@ -157,7 +157,7 @@ const struct sysfs_ops device_ops = {
 	.show = device_show,
 };
 
-void release(struct kobject *kobj)
+static void release(struct kobject *kobj)
 {
 	kobj->state_initialized = 0;
 }

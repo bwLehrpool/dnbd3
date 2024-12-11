@@ -110,15 +110,17 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			dev->use_server_provided_alts = msg->use_server_provided_alts;
 
 			dev_info(dnbd3_device_to_dev(dev), "opening device.\n");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
+			/* nothing to do here, set at creation time */
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
 			// set optimal request size for the queue to half the read-ahead
 			blk_queue_io_opt(dev->queue, (msg->read_ahead_kb * 512));
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) \
+# if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) \
 				&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 			// set readahead from optimal request size of the queue
 			// ra_pages are calculated by following formula: queue_io_opt() * 2 / PAGE_SIZE
 			blk_queue_update_readahead(dev->queue);
-#endif
+# endif
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 			if (blk_queue->backing_dev_info != NULL)
 				blk_queue->backing_dev_info->ra_pages = (msg->read_ahead_kb * 1024) / PAGE_SIZE;
@@ -386,6 +388,7 @@ struct blk_mq_ops dnbd3_mq_ops = {
 	.timeout  = dnbd3_rq_timeout,
 };
 
+#define ONE_MEG (1048576)
 int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 {
 	int ret;
@@ -429,7 +432,21 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
 	// set up blk-mq and disk
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
+	do {
+		struct queue_limits lim = {
+			.logical_block_size = DNBD3_BLOCK_SIZE, // in bytes
+			.physical_block_size = DNBD3_BLOCK_SIZE, // in bytes
+			.io_opt = ONE_MEG >> 2, // 256kb
+			.max_hw_sectors = ONE_MEG >> SECTOR_SHIFT, // in 512byte sectors
+			.max_segments		= USHRT_MAX,
+			.max_segment_size	= UINT_MAX,
+		};
+		dev->disk = blk_mq_alloc_disk(&dev->tag_set, &lim, dev);
+	} while (0);
+# else
 	dev->disk = blk_mq_alloc_disk(&dev->tag_set, dev);
+# endif
 	if (IS_ERR(dev->disk)) {
 		dev_err(dnbd3_device_to_dev(dev), "blk_mq_alloc_disk failed\n");
 		ret = PTR_ERR(dev->disk);
@@ -447,20 +464,19 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->queue->queuedata = dev;
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 	blk_queue_logical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
 	blk_queue_physical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
 	blk_queue_flag_set(QUEUE_FLAG_NONROT, dev->queue);
 	blk_queue_flag_clear(QUEUE_FLAG_ADD_RANDOM, dev->queue);
-#else
+# else
 	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, dev->queue);
-#endif
-#define ONE_MEG (1048576)
+# endif
 	blk_queue_max_segment_size(dev->queue, ONE_MEG);
 	blk_queue_max_segments(dev->queue, 0xffff);
 	blk_queue_max_hw_sectors(dev->queue, ONE_MEG / DNBD3_BLOCK_SIZE);
-	dev->queue->limits.max_sectors = 256;
-#undef ONE_MEG
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 14, 0)
 	// set up disk
@@ -517,6 +533,7 @@ out:
 	mutex_destroy(&dev->alt_servers_lock);
 	return ret;
 }
+#undef ONE_MEG
 
 int dnbd3_blk_del_device(dnbd3_device_t *dev)
 {
