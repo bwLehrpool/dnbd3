@@ -708,16 +708,16 @@ static int dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage *addr, str
 			 * this function would hang for over a minute for unreachable hosts.
 			 * Leave in this debug check for twice the configured timeout.
 			 */
-			dnbd3_dev_err_host(dev, addr, "connect: call took %dms\n",
-					connect_time_ms);
+			dnbd3_dev_err_host(dev, addr, "connect: call took %dms (timeout: %dms)\n",
+					diff, connect_time_ms);
 		}
 		if (ret != 0) {
 			if (ret == -EINTR)
-				dnbd3_dev_dbg_host(dev, addr, "connect: interrupted system call  (blocked %dms)\n",
-						connect_time_ms);
+				dnbd3_dev_dbg_host(dev, addr, "connect: interrupted system call, blocked %dms (timeout: %dms)\n",
+						diff, connect_time_ms);
 			else
-				dnbd3_dev_dbg_host(dev, addr, "connect: failed (%d, blocked %dms)\n",
-						ret, connect_time_ms);
+				dnbd3_dev_dbg_host(dev, addr, "connect: failed (%d, blocked %dms, timeout %dms)\n",
+						ret, diff, connect_time_ms);
 			goto error;
 		}
 		*sock_out = sock;
