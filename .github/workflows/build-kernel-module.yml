@@ -52,6 +52,10 @@ jobs:
             build-os: ubuntu-22.04
             kernel-type: vanilla
             kernel-version: 6.6.y
+          - name: Vanilla [6.12.x]
+            build-os: ubuntu-24.04
+            kernel-type: vanilla
+            kernel-version: 6.12.y
     name: Build dnbd3 ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.build-os }}
     steps:
