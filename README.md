@@ -93,6 +93,7 @@ yum install git \
             cmake \
             gcc \
             clang-tools-extra \
+            curl-devel \
             kernel-devel \
             elfutils-libelf-devel \
             fuse-devel \
