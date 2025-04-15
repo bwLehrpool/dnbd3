@@ -162,7 +162,7 @@ static void release(struct kobject *kobj)
 	kobj->state_initialized = 0;
 }
 
-struct kobj_type device_ktype = {
+const struct kobj_type device_ktype = {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
 	.default_attrs = device_attrs,
 #else
@@ -176,7 +176,7 @@ void dnbd3_sysfs_init(dnbd3_device_t *dev)
 {
 	int error;
 	struct kobject *kobj = &dev->kobj;
-	struct kobj_type *ktype = &device_ktype;
+	const struct kobj_type *ktype = &device_ktype;
 	struct kobject *parent = &disk_to_dev(dev->disk)->kobj;
 
 	error = kobject_init_and_add(kobj, ktype, parent, "%s", "net");

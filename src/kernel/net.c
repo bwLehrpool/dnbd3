@@ -31,6 +31,16 @@
 #define get_random_u32 prandom_u32
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
+// Old
+#define dnbd3_kmap kmap
+#define dnbd3_kunmap(page, addr) kunmap(page)
+#else
+// New
+#define dnbd3_kmap kmap_local_page
+#define dnbd3_kunmap(page, addr) kunmap_local(addr)
+#endif
+
 #include <linux/time.h>
 #include <linux/ktime.h>
 #include <linux/tcp.h>
@@ -224,9 +234,8 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 	best_server.ss_family = 0;
 	best_rtt = RTT_UNREACHABLE;
 
-	if (dev->panic) {
+	if (dev->panic)
 		dnbd3_dev_dbg_host(dev, &host_compare, "Discover in panic mode\n");
-	}
 
 	if (!ready || dev->panic)
 		isize = NUMBER_SERVERS;
@@ -540,11 +549,11 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 						bvec->bv_len, remaining);
 					ret = -1;
 				} else {
-					kaddr = kmap(bvec->bv_page) + bvec->bv_offset;
+					kaddr = dnbd3_kmap(bvec->bv_page) + bvec->bv_offset;
 					iov.iov_base = kaddr;
 					iov.iov_len = bvec->bv_len;
 					ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags);
-					kunmap(bvec->bv_page);
+					dnbd3_kunmap(bvec->bv_page, kaddr);
 				}
 				if (ret != bvec->bv_len) {
 					if (ret == 0) {
@@ -837,7 +846,7 @@ static bool dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 				(int)MIN_SUPPORTED_SERVER);
 		goto error;
 	}
-	if (name == NULL) {
+	if (name == NULL || *name == '\0') {
 		dnbd3_err_dbg_host(dev, addr, "server did not supply an image name\n");
 		goto error;
 	}
@@ -847,20 +856,22 @@ static bool dnbd3_execute_handshake(dnbd3_device_t *dev, struct socket *sock,
 	}
 
 	if (copy_data) {
+		const size_t namelen = strlen(name);
+
 		if (filesize < DNBD3_BLOCK_SIZE) {
 			dnbd3_err_dbg_host(dev, addr, "reported size by server is < 4096\n");
 			goto error;
 		}
 		spin_lock_irqsave(&dev->blk_lock, irqflags);
-		if (strlen(dev->imgname) < strlen(name)) {
-			dev->imgname = krealloc(dev->imgname, strlen(name) + 1, GFP_KERNEL);
+		if (strlen(dev->imgname) < namelen) {
+			dev->imgname = krealloc(dev->imgname, namelen + 1, GFP_KERNEL);
 			if (dev->imgname == NULL) {
 				spin_unlock_irqrestore(&dev->blk_lock, irqflags);
 				dnbd3_err_dbg_host(dev, addr, "reallocating buffer for new image name failed\n");
 				goto error;
 			}
 		}
-		strcpy(dev->imgname, name);
+		strscpy(dev->imgname, name, namelen + 1);
 		dev->rid = rid;
 		// store image information
 		dev->reported_size = filesize;
