@@ -467,7 +467,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 	void *kaddr;
 	unsigned long irqflags;
 	uint16_t rid;
-	int remaining;
+	u32 remaining;
 	int ret;
 
 	dnbd3_dev_dbg_cur(dev, "starting receive worker...\n");
@@ -528,16 +528,24 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 				goto out_unlock;
 			}
 			// receive data and answer to block layer
+			remaining = reply_hdr.size;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
 			rq_for_each_segment(bvec_inst, blk_request, iter) {
 #else
 			rq_for_each_segment(bvec, blk_request, iter) {
 #endif
-				kaddr = kmap(bvec->bv_page) + bvec->bv_offset;
-				iov.iov_base = kaddr;
-				iov.iov_len = bvec->bv_len;
-				ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags);
-				kunmap(bvec->bv_page);
+				if (bvec->bv_len > remaining) {
+					dnbd3_dev_dbg_cur(
+						dev, "request has more data remaining than is left in reply (want: %u, have: %u)\n",
+						bvec->bv_len, remaining);
+					ret = -1;
+				} else {
+					kaddr = kmap(bvec->bv_page) + bvec->bv_offset;
+					iov.iov_base = kaddr;
+					iov.iov_len = bvec->bv_len;
+					ret = kernel_recvmsg(dev->sock, &msg, &iov, 1, bvec->bv_len, msg.msg_flags);
+					kunmap(bvec->bv_page);
+				}
 				if (ret != bvec->bv_len) {
 					if (ret == 0) {
 						/* have not received any data, but remote peer is shutdown properly */
@@ -546,18 +554,29 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 					} else if (ret < 0) {
 						if (!dnbd3_flag_taken(dev->connection_lock))
 							dnbd3_dev_err_cur(dev,
-								"disconnect: receiving from net to block layer\n");
+								"receiving from net to block layer failed (ret=%d)\n", ret);
 					} else {
 						if (!dnbd3_flag_taken(dev->connection_lock))
 							dnbd3_dev_err_cur(dev,
 								"receiving from net to block layer (%d bytes)\n", ret);
 					}
-					// Requeue request
-					spin_lock_irqsave(&dev->send_queue_lock, irqflags);
-					list_add(&blk_request->queuelist, &dev->send_queue);
-					spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
-					goto out_unlock;
+					goto segment_loop_end;
 				}
+				remaining -= ret;
+			}
+segment_loop_end: /* Make this a goto as rq_for_each_segment is opaque and can be any number of nested loops */
+			if (remaining != 0) {
+				if (ret > 0) {
+					/* No previous error, the reply must've had more payload than the according request */
+					dnbd3_dev_err_cur(dev,
+						"reply has payload left, but block request already satisfied (len: %u, remaining: %u)\n",
+						reply_hdr.size, remaining);
+				}
+				// Requeue request
+				spin_lock_irqsave(&dev->send_queue_lock, irqflags);
+				list_add(&blk_request->queuelist, &dev->send_queue);
+				spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
+				goto out_unlock;
 			}
 			blk_mq_end_request(blk_request, BLK_STS_OK);
 			break;
@@ -567,7 +586,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 			if (dev->use_server_provided_alts) {
 				dnbd3_server_entry_t new_server;
 
-				while (remaining >= sizeof(dnbd3_server_entry_t)) {
+				while (remaining >= sizeof(new_server)) {
 					if (dnbd3_recv_bytes(dev->sock, &new_server, sizeof(new_server))
 							!= sizeof(new_server)) {
 						if (!dnbd3_flag_taken(dev->connection_lock))
