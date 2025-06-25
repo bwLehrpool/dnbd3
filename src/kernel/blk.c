@@ -110,7 +110,8 @@ static int dnbd3_blk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 			dev->use_server_provided_alts = msg->use_server_provided_alts;
 
 			dev_info(dnbd3_device_to_dev(dev), "opening device.\n");
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0) \
+				|| RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 6))
 			/* nothing to do here, set at creation time */
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
 			// set optimal request size for the queue to half the read-ahead
@@ -432,7 +433,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
 	// set up blk-mq and disk
-# if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0)
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0) \
+		|| RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 6))
 	do {
 		struct queue_limits lim = {
 			.logical_block_size = DNBD3_BLOCK_SIZE, // in bytes
@@ -464,7 +466,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->queue->queuedata = dev;
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) \
+		&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 6))
 	blk_queue_logical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
 	blk_queue_physical_block_size(dev->queue, DNBD3_BLOCK_SIZE);
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
