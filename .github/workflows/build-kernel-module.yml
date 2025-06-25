@@ -20,14 +20,22 @@ jobs:
             build-os: ubuntu-22.04
             kernel-type: centos-rpm
             kernel-source: https://vault.centos.org/8.5.2111/BaseOS/Source/SPackages/kernel-4.18.0-348.2.1.el8_5.src.rpm
-          - name: CentOS 9.3 [5.14.0]
+          - name: Rocky 9.3 [5.14.0-362]
             build-os: ubuntu-22.04
-            kernel-type: centos-tar
-            kernel-source: https://files.bwlp.ks.uni-freiburg.de/stuff/centos/linux-5.14.0-362.18.1.el9_3.tar.xz
-          - name: CentOS 9.4 [5.14.0]
+            kernel-type: centos-rpm
+            kernel-source: https://dl.rockylinux.org/vault/rocky/9.3/BaseOS/source/tree/Packages/k/kernel-5.14.0-362.24.1.el9_3.0.1.src.rpm
+          - name: Rocky 9.4 [5.14.0-427]
             build-os: ubuntu-22.04
-            kernel-type: centos-tar
-            kernel-source: https://files.bwlp.ks.uni-freiburg.de/stuff/centos/linux-5.14.0-427.el9.tar.xz
+            kernel-type: centos-rpm
+            kernel-source: https://dl.rockylinux.org/vault/rocky/9.4/BaseOS/source/tree/Packages/k/kernel-5.14.0-427.42.1.el9_4.src.rpm
+          - name: Rocky 9.5 [5.14.0-503]
+            build-os: ubuntu-22.04
+            kernel-type: centos-rpm
+            kernel-source: https://dl.rockylinux.org/vault/rocky/9.5/BaseOS/source/tree/Packages/k/kernel-5.14.0-503.40.1.el9_5.src.rpm
+          - name: Rocky 9.6 [5.14.0-570]
+            build-os: ubuntu-22.04
+            kernel-type: centos-rpm
+            kernel-source: https://dl.rockylinux.org/vault/rocky/9.6/BaseOS/source/tree/Packages/k/kernel-5.14.0-570.22.1.el9_6.src.rpm
           - name: Vanilla [4.19.x]
             build-os: ubuntu-22.04
             kernel-type: vanilla
