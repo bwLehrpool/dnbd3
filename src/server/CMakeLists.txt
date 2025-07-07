@@ -49,6 +49,7 @@ set(DNBD3_SERVER_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/image.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/ini.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/integrity.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/iscsi.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/locks.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/net.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/reference.c
@@ -65,6 +66,7 @@ set(DNBD3_SERVER_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/image.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/ini.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/integrity.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/iscsi.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/locks.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/net.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/reference.h
