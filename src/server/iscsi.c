@@ -387,6 +387,9 @@ void iscsi_hashmap_key_destroy(uint8_t *key) {
  * be a multiple of 8 bytes which is NOT checked, so
  * be careful.
  * @param[in] value Value of the key, NULL is allowed.
+ * @param[in] user_data This argument is not used by
+ * this function and should be always NULL for now, as
+ * there is a possibility for future usage.
  * @return Always returns 0 as this function cannot fail.
  */
 int iscsi_hashmap_key_destroy_value_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data)
@@ -1093,6 +1096,72 @@ int iscsi_validate_data_digest(const iscsi_bhs_packet *packet_data, const int he
 }
 
 /**
+ * Validates an iSCSI protocol key and value pair for compliance
+ * with the iSCSI specs.
+ *
+ * @param[in] packet_data Pointer to key / value pair to be
+ * validated. NULL is an illegal value, so be careful.
+ * @param[in] len Length of the remaining packet data.
+ * @return Number of bytes used by the key / vair pair or
+ * a negative value in case of an error. This can be used for
+ * incrementing the offset to the next key / value pair.
+ */
+static int iscsi_validate_text_key_value_pair(const uint8_t *packet_data, const uint32_t len)
+{
+	const uint key_val_len = strnlen( packet_data, len );
+	const uint8_t *key_end = memchr( packet_data, '=', key_val_len );
+
+	if ( key_end == NULL )
+		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Missing separator '=' for key / value pair -> invalid iSCSI packet data
+
+	const uint key_len = (key_end - packet_data);
+
+	if ( key_len == 0 )
+		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Zero length is not allowed -> invalid iSCSI packet data
+
+	if ( key_len > ISCSI_TEXT_KEY_MAX_LEN )
+		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS;
+
+	const uint val_len = strnlen( key_end + 1UL, key_val_len - key_len - 1UL );
+	const uint max_len = (memcmp( packet_data, "CHAP_C=", (key_len + 1UL) ) == 0) || (memcmp( packet_data, "CHAP_R=", (key_len + 1UL) ) == 0) ? ISCSI_TEXT_VALUE_MAX_LEN : ISCSI_TEXT_VALUE_MAX_SIMPLE_LEN;
+
+	if ( val_len > max_len )
+		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Value exceeds maximum length -> invalid iSCSI packet data
+
+	return key_len + 1UL + val_len + 1UL; // Number of bytes for processed key / value pair (+1 for '=' and NUL terminator)
+}
+
+/**
+ * Validates all iSCSI protocol key and value pairs for
+ * compliance with the iSCSI specs.
+ *
+ * @param[in] packet_data Pointer to first key and value pair to
+ * be validated. NULL is an illegal value here, so be careful.
+ * @param[in] len Length of the remaining packet data.
+ * @return 0 if validation for each text key and value pair was
+ * successful, a negative error code in case iSCSI specs
+ * are violated.
+ */
+static int iscsi_validate_key_value_pairs(const uint8_t *packet_data, uint len)
+{
+	if ( len == 0 )
+		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Zero length is not allowed -> invalid iSCSI packet data
+
+	int offset = 0L;
+
+	while ( (offset < len) && (packet_data[offset] != '\0') ) {
+		const int rc = iscsi_validate_text_key_value_pair( (packet_data + offset), (len - offset) );
+
+		if ( rc < ISCSI_VALIDATE_PACKET_RESULT_OK )
+			return rc;
+
+		offset += rc;
+	}
+
+	return (offset != len) ? ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS : ISCSI_VALIDATE_PACKET_RESULT_OK;
+}
+
+/**
  * Checks whether packet data is an iSCSI packet or not.
  * Since iSCSI doesn't have a magic identifier for its packets, a
  * partial heuristic approach is needed for it. There is not always
@@ -1180,6 +1249,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 			if ( (login_req_pkt->reserved != 0) || (login_req_pkt->reserved2[0] != 0) || (login_req_pkt->reserved2[1] != 0) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
+			return iscsi_validate_key_value_pairs( ((const uint8_t *) login_req_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
+
 			break;
 		}
 		case ISCSI_CLIENT_TEXT_REQ : {
@@ -1190,6 +1261,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			if ( (text_req_pkt->reserved != 0) || (text_req_pkt->reserved2[0] != 0) || (text_req_pkt->reserved2[1] != 0) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+
+			return iscsi_validate_key_value_pairs( ((const uint8_t *) text_req_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
 			break;
 		}
@@ -1271,6 +1344,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 			if ( (login_response_pkt->reserved != 0) || (login_response_pkt->reserved2 != 0) || (login_response_pkt->reserved3 != 0) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
+			return iscsi_validate_key_value_pairs( ((const uint8_t *) login_response_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
+
 			break;
 		}
 		case ISCSI_SERVER_TEXT_RES : {
@@ -1281,6 +1356,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			if ( (text_response_pkt->reserved != 0) || (text_response_pkt->reserved2[0] != 0) || (text_response_pkt->reserved2[1] != 0) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+
+			return iscsi_validate_key_value_pairs( ((const uint8_t *) text_response_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
 			break;
 		}
@@ -1456,7 +1533,7 @@ static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *
  * @param[in] packet_data Pointer to first key and value pair to
  * be parsed. NULL is an illegal value here, so be careful.
  * @param[in] len Length of the remaining packet data.
- * @param[in] cbit Non-zero value of C bit was set in previously.
+ * @param[in] c_bit Non-zero value of C bit was set in previously.
  * @param[in] partial_pairs Array of partial pair pointers in
  * case C bit was set (multiple iSCSI packets for text data).
  * @retval -1 An error occured during parsing key.
@@ -1535,6 +1612,114 @@ int iscsi_parse_key_value_pairs(iscsi_hashmap **pairs, const uint8_t *packet_dat
 	}
 
 	return 0L;
+}
+
+/**
+ * Callback function for constructing an iSCSI packet data
+ * stream for a single key=value text pair.
+ *
+ * @param[in] key Pointer to zero padded key. NULL is
+ * an invalid pointer here, so be careful.
+ * @param[in] key_size Number of bytes for the key, MUST
+ * be a multiple of 8 bytes which is NOT checked, so
+ * be careful.
+ * @param[in] value Value of the key, NULL creates an
+ * empty key assignment.
+ * @param[in] user_data Pointer to a data structure
+ * containing the memory buffer and length for the
+ * iSCSI packet data (iscsi_key_value_pair_packet
+ * structure), may NOT be NULL, so be careful.
+ * @retval 0 The NUL terminated key=value pair has been
+ * generated successfully.
+ * @retval -1 The NUL terminated key=value pair could
+ * NOT be created (probably due to memory exhaustion).
+ */
+int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data)
+{
+	iscsi_key_value_pair_packet *packet_data = (iscsi_key_value_pair_packet *) user_data;
+	const uint8_t *buf = iscsi_sprintf_alloc( "%s=%s", key, ((value != NULL) ? value : "") );
+
+	if ( buf == NULL ) {
+		logadd( LOG_ERROR, "iscsi_create_key_value_pair_callback: Out of memory generating text key / value pair DataSegment" );
+
+		return -1L;
+	}
+
+	const uint len = strlen( buf ) + 1;
+	const uint new_len = packet_data->len + len;
+
+	uint8_t *new_buf = realloc( packet_data->buf, new_len );
+
+	if ( new_buf == NULL ) {
+		logadd( LOG_ERROR, "iscsi_create_key_value_pair_callback: Out of memory generating text key / value pair DataSegment" );
+
+		free( buf );
+
+		return -1L;
+	}
+
+	memcpy( (new_buf + packet_data->len), buf, len );
+
+	packet_data->buf = new_buf;
+	packet_data->len = new_len;
+
+	return 0L;
+}
+
+/**
+ * Creates a properly aligned iSCSI DataSegment
+ * containing NUL terminated key=value pairs
+ * out of an hash map. The result can directly
+ * be attached to a BHS/AHS packet and sent
+ * via TCP/IP.
+ *
+ * @param[in] pairs Pointer to hash map containing
+ * the key and value pairs to construct the
+ * DataSegment from, may NOT be NULL, so be careful.
+ * @return Pointer to iscsi_key_value_pair_packet
+ * structure containing the properly aligned
+ * DataSegment buffer and its unaligned length or
+ * NULL in case of an error (most likely due to
+ * memory exhaustion).
+ */
+iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(const iscsi_hashmap *pairs)
+{
+	iscsi_key_value_pair_packet *packet_data = (iscsi_key_value_pair_packet *) malloc( sizeof(struct iscsi_key_value_pair_packet) );
+
+	if ( packet_data == NULL ) {
+		logadd( LOG_ERROR, "iscsi_create_key_value_pairs: Out of memory generating text key / value pair DataSegment" );
+
+		return NULL;
+	}
+
+	packet_data->buf = NULL;
+	packet_data->len = 0UL;
+
+	if ( iscsi_hashmap_iterate( pairs, iscsi_create_key_value_pair_packet_callback, packet_data ) < 0L ) {
+		if ( packet_data->buf != NULL )
+			free( packet_data->buf );
+
+		free( packet_data );
+
+		return NULL;
+	}
+
+	if ( (packet_data->len & (ISCSI_ALIGN_SIZE - 1UL)) != 0 ) {
+		uint8_t *new_buf = realloc( packet_data->buf, iscsi_align(packet_data->len, ISCSI_ALIGN_SIZE) );
+
+		if ( new_buf == NULL ) {
+			logadd( LOG_ERROR, "iscsi_create_key_value_pairs: Out of memory generating text key / value pair DataSegment" );
+
+			free( packet_data->buf );
+			free( packet_data );
+
+			return NULL;
+		}
+
+		memset( (packet_data->buf + packet_data->len), 0, (packet_data->len & (ISCSI_ALIGN_SIZE - 1UL)) );
+	}
+
+	return packet_data;
 }
 
 /**
@@ -1620,7 +1805,10 @@ void iscsi_connection_destroy(iscsi_connection *conn)
  * be a multiple of 8 bytes which is NOT checked, so
  * be careful.
  * @param[in] value Value of the key, NULL is allowed.
- * @return Always returns 0a as this function cannot fail.
+ * @param[in] user_data This argument is not used by
+ * this function and should be always NULL for now, as
+ * there is a possibility for future usage.
+ * @return Always returns 0 as this function cannot fail.
  */
 int iscsi_connection_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data)
 {

@@ -2868,6 +2868,8 @@ void iscsi_calc_header_digest(const iscsi_bhs_packet *packet_data); // Calculate
 int iscsi_validate_header_digest(const iscsi_bhs_packet *packet_data); // Validates a stored iSCSI header digest (CRC32C) with actual header data
 void iscsi_calc_data_digest(const iscsi_bhs_packet *packet_data, const int header_digest_size); // Calculate iSCSI data digest (CRC32C)
 int iscsi_validate_data_digest(const iscsi_bhs_packet *packet_data, const int header_digest_size); // Validates a stored iSCSI data digest (CRC32C) with actual DataSegment
+static int iscsi_validate_text_key_value_pair(const uint8_t *packet_data, const uint32_t len); // Validates a single text key / value pair according to iSCSI specs
+static int iscsi_validate_key_value_pairs(const uint8_t *packet_data, uint len); // Validates all text key / value pairs according to iSCSI specs
 int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint32_t len, const int header_digest_size, const int data_digest_size); // Check if valid iSCSI packet and validate if necessarily
 
 #define ISCSI_TEXT_KEY_MAX_LEN 63UL // Maximum length of a key according to iSCSI specs
@@ -2891,8 +2893,15 @@ typedef struct iscsi_key_value_pair {
 	uint8_t *value; // Value of key
 } iscsi_key_value_pair;
 
+typedef struct iscsi_key_value_pair_packet {
+    uint8_t *buf; // Current text buffer containing multiple zeroes
+    uint len; // Current length of buffer including final zero terminator
+} iscsi_key_value_pair_packet;
+
 static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *packet_data, const uint32_t len); // Extracts a single text key / value pairs out of an iSCSI packet into a hash map
 int iscsi_parse_key_value_pairs(iscsi_hashmap **pairs, const uint8_t *packet_data, uint len, int cbit, uint8_t **partial_pair); // Extracts all text key / value pairs out of an iSCSI packet into a hash map
+int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Creates a single partial iSCSI packet stream out of a single text key and value pair
+iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(const iscsi_hashmap *pairs); // Creates a properly aligned iSCSI packet DataSegment out of a hash map containing text key and value pairs
 
 typedef struct iscsi_connection {
     iscsi_hashmap *key_value_pairs; // Hash map containing text key / value pairs associated to this connection

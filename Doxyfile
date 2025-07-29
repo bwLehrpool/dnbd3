@@ -1,0 +1,54 @@
+# Doxyfile for dnbd3 project
+
+# Project Info
+PROJECT_NAME           = dnbd3
+PROJECT_BRIEF          = "Documentation for dnbd3 C project"
+OUTPUT_DIRECTORY       = docs
+CREATE_SUBDIRS         = NO
+
+# HTML output
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_COLORSTYLE_HUE    = 220
+
+# Input
+INPUT                  = src README.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.c *.h CMakeLists.txt *.md
+
+# Exclude unnecessary stuff (e.g., markdown or docs if not needed)
+#EXCLUDE_PATTERNS       = */cowDoc/* *.md
+
+# Source browsing
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = YES
+STRIP_CODE_COMMENTS    = NO
+
+# Preprocessor
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+SKIP_FUNCTION_MACROS   = YES
+
+# Warnings
+WARN_IF_UNDOCUMENTED   = YES
+WARN_NO_PARAMDOC       = YES
+
+# Dot (call graphs etc.)
+HAVE_DOT               = YES
+CALL_GRAPH             = YES
+CALLER_GRAPH           = YES
+DOT_MULTI_TARGETS      = YES
+
+# Other output (disabled)
+GENERATE_LATEX         = NO
+GENERATE_MAN           = NO
+GENERATE_RTF           = NO
+GENERATE_XML           = NO
+
+# Misc
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+QUIET                  = NO
