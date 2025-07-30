@@ -34,13 +34,15 @@
  * @brief iSCSI implementation for DNBD3.
  *
  * This file contains the iSCSI implementation according to
- * RFC7143 for dnbd3-server.
+ * RFC7143 for dnbd3-server.\n
  * All server-side network sending and client-side network
- * receiving code is done here.
+ * receiving code is done here.\n
  * @see https://www.rfc-editor.org/rfc/rfc7143
  */
 
 /**
+ * @brief Allocates and appends a buffer and sprintf's it.
+ *
  * Merges multiple strings using printf style formatting
  * and allocates memory for holding the result.
  *
@@ -77,6 +79,8 @@ uint8_t *iscsi_vsprintf_append_realloc(char *buf, const char *format, va_list ar
 }
 
 /**
+ * @brief Allocates and appends a buffer and sprintf's it.
+ *
  * Merges strings using printf style formatting and allocates
  * memory for holding the result.
  *
@@ -97,6 +101,8 @@ uint8_t *iscsi_sprintf_append_realloc(char *buf, const char *format, ...)
 }
 
 /**
+ * @brief Allocates a buffer and sprintf's it.
+ *
  * Merges strings using printf style formatting and allocates
  * memory for holding the result.
  *
@@ -110,6 +116,8 @@ uint8_t *iscsi_vsprintf_alloc(const char *format, va_list args)
 }
 
 /**
+ * @brief Allocates a buffer and sprintf's it.
+ *
  * Allocates a buffer large enough to hold printf style
  * string concatenation and fills it using vspnrintf.
  *
@@ -129,11 +137,13 @@ uint8_t *iscsi_sprintf_alloc(const char *format, ... )
 }
 
 /**
+ * @brief Creates an empty hash map with either specified or default capacity.
+ *
  * Creates a ultra hardcore speed optimized empty hash map and
- * allocates enough buckets to hold default capacity elements.
+ * allocates enough buckets to hold default capacity elements.\n
  * The speed optimizations require all keys having a size of
  * a multiple of 8 bytes with zero padding. Also the capacity
- * always nas to be a power of two.
+ * always nas to be a power of two.\n
  * TODO: Move all hash map related functions to different source file
  * later and implement in a lock-free way for better concurrency.
  *
@@ -186,6 +196,8 @@ iscsi_hashmap *iscsi_hashmap_create(const uint capacity)
 }
 
 /**
+ * @brief Deallocates the hash map objects and buckets, not elements. Use iscsi_hashmap_iterate to deallocate the elements themselves.
+ *
  * Deallocates all buckets and the hash map itself allocated
  * by iscsi_hashmap_create. The elements associated with the
  * buckets are NOT freed by this function, this has to be done
@@ -205,6 +217,8 @@ void iscsi_hashmap_destroy(iscsi_hashmap *map)
 }
 
 /**
+ * @brief Puts an old bucket into a resized hash map.
+ *
  * Puts an old bucket into a resized hash map.
  *
  * @param[in] map Pointer to resized hash map, may NOT be NULL, so
@@ -231,6 +245,8 @@ static iscsi_hashmap_bucket *iscsi_hashmap_resize_entry(iscsi_hashmap *map, cons
 }
 
 /**
+ * @brief Resizes a hash map by doubling its bucket capacity and purges any removed buckets.
+ *
  * Resizes a hash map by doubling its bucket capacity. if any
  * buckets have been removed, they are finally purged. The
  * old bucket list is freed after the resize operation has
@@ -281,6 +297,8 @@ static int iscsi_hashmap_resize(iscsi_hashmap *map)
 }
 
 /**
+ * @brief Calculates the hash code of data with a specified length.
+ *
  * Calculates the hash code of data with a specified length.
  *
  * @param[in] data Pointer to data to be hashed, NULL is NOT
@@ -306,6 +324,8 @@ static inline uint32_t iscsi_hashmap_hash_data(const uint8_t *data, const size_t
 }
 
 /**
+ * @brief Finds a bucket by key of a specified hash map by key, key size and hash code.
+ *
  * Finds a bucket by key of a specified hash map by
  * key, key size and hash code. This function may
  * only be called if the bucket is guaranteed to
@@ -335,8 +355,10 @@ static iscsi_hashmap_bucket *iscsi_hashmap_find_entry(iscsi_hashmap *map, const 
 }
 
 /**
+ * @brief Creates a key suitable for hashmap usage (ensures 8-byte boundary and zero padding).
+ *
  * Creates a key from data and size and ensures
- * its requirements for usage in hash map buckets.
+ * its requirements for usage in hash map buckets.\n
  * Currently keys to be used in a hash map bucket
  * require a size of multiple by 8 bytes with
  * the zero padding.
@@ -366,6 +388,8 @@ uint8_t *iscsi_hashmap_key_create(const uint8_t *data, const size_t len)
 }
 
 /**
+ * @brief Deallocates all resources acquired by iscsi_hashmap_create_key.
+ *
  * Deallocates a key allocated with the function
  * iscsi_hashmap_key_create.
  *
@@ -377,6 +401,8 @@ void iscsi_hashmap_key_destroy(uint8_t *key) {
 }
 
 /**
+ * @brief Deallocates all key / value pairs in a hash map by calling free (default destructor).
+ *
  * Default callback function for deallocation of
  * allocated hash map resources by simply calling
  * free.
@@ -387,7 +413,7 @@ void iscsi_hashmap_key_destroy(uint8_t *key) {
  * be a multiple of 8 bytes which is NOT checked, so
  * be careful.
  * @param[in] value Value of the key, NULL is allowed.
- * @param[in] user_data This argument is not used by
+ * @param[in,out] user_data This argument is not used by
  * this function and should be always NULL for now, as
  * there is a possibility for future usage.
  * @return Always returns 0 as this function cannot fail.
@@ -403,9 +429,11 @@ int iscsi_hashmap_key_destroy_value_callback(uint8_t *key, const size_t key_size
 }
 
 /**
+ * @brief Assigns key / value pair to hash map without making copies.
+ *
  * Adds a key / value pair to a specified hash map
  * bucket list, if it doesn't exist already. The
- * buckets are resized automatically if required.
+ * buckets are resized automatically if required.\n
  * This function neither does make a copy of the key,
  * nor of the value. Keys should be allocated using
  * the function iscsi_hashmap_key_create or freed by
@@ -453,12 +481,14 @@ int iscsi_hashmap_put(iscsi_hashmap *map, const uint8_t *key, const size_t key_s
 }
 
 /**
+ * @brief Assigns key / value pair to hash map without making copies.
+ *
  * Adds a key / value pair if it doesn't exist
  * using the value of `*out_in_val`. If the pair
  * does exist, value will be set in `*out_in`,
  * meaning the value of the pair will be in
  * '*out_in` regardless of whether or not it it
- * existed in the first place.
+ * existed in the first place.\n
  * The buckets are resized automatically if required.
  * This function neither does make a copy of the key,
  * nor of the value. Keys should be allocated using
@@ -511,13 +541,15 @@ int iscsi_hashmap_get_put(iscsi_hashmap *map, const uint8_t *key, const size_t k
 }
 
 /**
+ * @brief Assigns key / value pair to hash map without making copies with callback function in case the key already exists.
+ *
  * Adds a key / value pair to a specified hash map
  * bucket list. If the key already exists, it will
  * be overwritten and a callback function will be
  * invoked in order to allow, e.g. deallocation of
  * resources, if necessary. The buckets are resized
  * automatically if required. This function neither
- * does make a copy of the key, nor of the value.
+ * does make a copy of the key, nor of the value.\n
  * Keys should be allocated using the function
  * iscsi_hashmap_key_create or freed by using
  * iscsi_hashmap_key_destroy in order to ensure the
@@ -538,7 +570,7 @@ int iscsi_hashmap_get_put(iscsi_hashmap *map, const uint8_t *key, const size_t k
  * overwritten key and value pair. The function is
  * invoked just before overwriting the old values.
  * This may NOT be NULL, so take caution.
- * @param[in] user_data Pointer to user specific data
+ * @param[in,out] user_data Pointer to user specific data
  * passed to the callback function in case more
  * information is needed.
  * @return -1 in case adding key / value pair would
@@ -580,6 +612,8 @@ int iscsi_hashmap_put_free(iscsi_hashmap *map, const uint8_t *key, const size_t 
 }
 
 /**
+ * @brief Checks whether a specified key exists.
+ *
  * Checks whether a specified key exists in a hash map.
  *
  * @param[in] map Pointer to the hash map to be searched
@@ -602,6 +636,8 @@ int iscsi_hashmap_contains(iscsi_hashmap *map, const uint8_t *key, const size_t 
 }
 
 /**
+ * @brief Retrieves the value of a specified key.
+ *
  * Retrieves the value of a specified key from a hash map. Since the
  * hash map supports NULL values, it is stored in an output variable.
  *
@@ -633,6 +669,8 @@ int iscsi_hashmap_get(iscsi_hashmap *map, const uint8_t *key, const size_t key_s
 }
 
 /**
+ * @brief Marks an element for removal by setting key and value both to NULL.
+ *
  * Removes an element from the bucket list of the hash map.
  * Buckets are marked as removed by setting their key and
  * value to NULL. The actual removal will be done upon next
@@ -661,7 +699,9 @@ void iscsi_hashmap_remove(iscsi_hashmap *map, const uint8_t *key, const size_t k
 }
 
 /**
- * Removes an element from the bucket list of the hash map.
+ * @brief Marks an element for removal by setting key and value both to NULL, but invokes a callback function before actual marking for removal.
+ *
+ * Removes an element from the bucket list of the hash map.\n
  * Buckets are marked as removed by setting their key and
  * value to NULL. The actual removal will be done upon next
  * resize operation. A callback function is invoked if the
@@ -681,7 +721,7 @@ void iscsi_hashmap_remove(iscsi_hashmap *map, const uint8_t *key, const size_t k
  * key and value pair to be removed. The function is
  * invoked just before marking the key / value pair
  * as removed. This may NOT be NULL, so take caution.
- * @param[in] user_data Pointer to user specific data
+ * @param[in,out] user_data Pointer to user specific data
  * passed to the callback function in case more
  * information is needed.
  */
@@ -701,6 +741,8 @@ void iscsi_hashmap_remove_free(iscsi_hashmap *map, const uint8_t *key, const siz
 }
 
 /**
+ * @brief Retrieves the number of elements of the hash map, ignoring elements marked for removal.
+ *
  * Returns the number of elements stored in the specified
  * hash map. Elements marked for removal are not included.
  *
@@ -715,6 +757,8 @@ int iscsi_hashmap_size(iscsi_hashmap *map)
 }
 
 /**
+ * @brief Iterator with callback function invoked on each element which has not been removed.
+ *
  * An iterator through the elements of a specified
  * hash map which uses a callback function for each
  * element not marked for removal, which also can
@@ -726,7 +770,7 @@ int iscsi_hashmap_size(iscsi_hashmap *map)
  * invoked for each element not marked for removal
  * in the hash map. If the return value of the callback
  * function is below zero, the iteration will stop.
- * @param[in] user_data Pointer to user specific data
+ * @param[in,out] user_data Pointer to user specific data
  * passed to the callback function in case more
  * information is needed.
  * @return The return code from the last invoked
@@ -753,6 +797,8 @@ int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, u
 }
 
 /**
+ * @brief Allocate and initialize an iSCSI BHS packet.
+ *
  * Allocates an iSCSI packet data Basic Header Segment (BHS)
  * and zero fills the structure.
  *
@@ -786,6 +832,8 @@ iscsi_bhs_packet *iscsi_create_packet()
 }
 
 /**
+ * @brief Free resources allocated by iscsi_create_packet.
+ *
  * Deallocates all aquired resources by iscsi_create_packet.
  *
  * @param[in] packet_data Pointer to packet data to deallocate. If this is
@@ -798,9 +846,11 @@ void iscsi_destroy_packet(iscsi_bhs_packet *packet_data)
 }
 
 /**
+ * @brief Allocate and initialize an iSCSI AHS packet and append to existing data stream.
+ *
  * Constructs and appends an Additional Header Segment (AHS) to already allocated
  * packet data. There is no guarantee that the pointer stays the same. Any references
- * to the old structure need to be updated!
+ * to the old structure need to be updated!\n
  * This function currently throws away any data beyond AHS.
  *
  * @param[in] packet_data Pointer to packet data to append to. If NULL, a Basic
@@ -847,6 +897,8 @@ iscsi_bhs_packet *iscsi_append_ahs_packet(iscsi_bhs_packet *packet_data, const u
 }
 
 /**
+ * @brief Counts number of AHS packets in an iSCSI data packet stream.
+ *
  * Gets the total number of AHS packets.
  *
  * @param[in] packet_data Pointer to packet data of which the
@@ -878,6 +930,8 @@ int iscsi_get_ahs_packets(const iscsi_bhs_packet *packet_data)
 }
 
 /**
+ * @brief Retrieves the pointer to an specific AHS packet by index.
+ *
  * Gets the pointer of an AHS packet by specified index.
  *
  * @param[in] packet_data Pointer to packet data of which the
@@ -914,9 +968,11 @@ iscsi_ahs_packet *iscsi_get_ahs_packet(const iscsi_bhs_packet *packet_data, cons
 }
 
 /**
- * Constructs and appends DataSegment (DS) to already allocated packet data.
+ * @brief Allocate and initialize an iSCSI DS packet and append to existing data stream.
+ *
+ * Constructs and appends DataSegment (DS) to already allocated packet data.\n
  * There is no guarantee that the pointer stays the same. Any references
- * to the old structure need to be updated!
+ * to the old structure need to be updated!\n
  * This function currently erases an already available DataSegment and
  * throws away any data beyond DS.
  *
@@ -961,7 +1017,8 @@ iscsi_bhs_packet *iscsi_append_ds_packet(iscsi_bhs_packet *packet_data, const in
 	return packet_data;
 }
 
-static const uint32_t crc32c_lut[] = { // Created with a polynomial reflect value of 0x82F63B78
+/// CRC32C lookup table. Created with a polynomial reflect value of 0x82F63B78.
+static const uint32_t crc32c_lut[] = {
 	0x00000000, 0xF26B8303, 0xE13B70F7, 0x1350F3F4, 0xC79A971F, 0x35F1141C, 0x26A1E7E8, 0xD4CA64EB,
 	0x8AD958CF, 0x78B2DBCC, 0x6BE22838, 0x9989AB3B, 0x4D43CFD0, 0xBF284CD3, 0xAC78BF27, 0x5E133C24,
 	0x105EC76F, 0xE235446C, 0xF165B798, 0x030E349B, 0xD7C45070, 0x25AFD373, 0x36FF2087, 0xC494A384,
@@ -996,7 +1053,9 @@ static const uint32_t crc32c_lut[] = { // Created with a polynomial reflect valu
 	0x79B737BA, 0x8BDCB4B9, 0x988C474D, 0x6AE7C44E, 0xBE2DA0A5, 0x4C4623A6, 0x5F16D052, 0xAD7D5351};
 
 /**
- * Calculates CRC32C with 0x82F63B78 polynomial reflect according to iSCSI specs
+ * @brief Calculates digest (CRC32C).
+ *
+ * Calculates CRC32C with 0x82F63B78 polynomial reflect according to iSCSI specs.\n
  * TODO: Implement optimized SSE4.2 and ARM versions
  *
  * @param[in] data Pointer to data to calculate CRC32C for.
@@ -1018,6 +1077,8 @@ static inline uint32_t iscsi_crc32c_update(const uint8_t *data, const uint len, 
 }
 
 /**
+ * @brief Calculate and store iSCSI header digest (CRC32C).
+ *
  * Calculates header digest (CRC32C) with 0x82F63B78 polynomial reflect
  * according to iSCSI specs and stores the result in the iSCSI packet
  * data. This function cannot fail.
@@ -1034,6 +1095,8 @@ void iscsi_calc_header_digest(const iscsi_bhs_packet *packet_data)
 }
 
 /**
+ * @brief Validates a stored iSCSI header digest (CRC32C) with actual header data.
+ *
  * Verifies header digest (CRC32C) with 0x82F63B78 polynomial reflect
  * according to iSCSI specs. This function cannot fail.
  *
@@ -1051,8 +1114,10 @@ int iscsi_validate_header_digest(const iscsi_bhs_packet *packet_data)
 }
 
 /**
+ * @brief Calculate iSCSI data digest (CRC32C).
+ *
  * Calculates data digest (CRC32) with 0x82F63B78 polynomial reflect
- * of a whole DataSegment (CRC32C) according to the iSCSI specs.
+ * of a whole DataSegment (CRC32C) according to the iSCSI specs.\n
  * The resulting CRC32C will be stored in the iSCSI packet.
  *
  * @param[in] packet_data Pointer to ISCSI DS packet to calculate CRC32C for.
@@ -1073,6 +1138,8 @@ void iscsi_calc_data_digest(const iscsi_bhs_packet *packet_data, const int heade
 }
 
 /**
+ * @brief Validates a stored iSCSI data digest (CRC32C) with actual DataSegment.
+ *
  * Verifies data digest (CRC32C) with 0x82F63B78 polynomial reflect
  * according to iSCSI specs. This function cannot fail.
  *
@@ -1096,6 +1163,8 @@ int iscsi_validate_data_digest(const iscsi_bhs_packet *packet_data, const int he
 }
 
 /**
+ * @brief Validates a single text key / value pair according to iSCSI specs.
+ *
  * Validates an iSCSI protocol key and value pair for compliance
  * with the iSCSI specs.
  *
@@ -1132,6 +1201,8 @@ static int iscsi_validate_text_key_value_pair(const uint8_t *packet_data, const 
 }
 
 /**
+ * @brief Validates all text key / value pairs according to iSCSI specs.
+ *
  * Validates all iSCSI protocol key and value pairs for
  * compliance with the iSCSI specs.
  *
@@ -1158,11 +1229,13 @@ static int iscsi_validate_key_value_pairs(const uint8_t *packet_data, uint len)
 		offset += rc;
 	}
 
-	return (offset != len) ? ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS : ISCSI_VALIDATE_PACKET_RESULT_OK;
+	return (iscsi_align(offset, ISCSI_ALIGN_SIZE) != iscsi_align(len, ISCSI_ALIGN_SIZE)) ? ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS : ISCSI_VALIDATE_PACKET_RESULT_OK;
 }
 
 /**
- * Checks whether packet data is an iSCSI packet or not.
+ * @brief Check if valid iSCSI packet and validate if necessarily.
+ *
+ * Checks whether packet data is an iSCSI packet or not.\n
  * Since iSCSI doesn't have a magic identifier for its packets, a
  * partial heuristic approach is needed for it. There is not always
  * a guarantee that a packet clearly belongs to iSCSI. If header
@@ -1210,8 +1283,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_nop_out_packet *nop_out_pkt = (const iscsi_nop_out_packet *) packet_data;
 
-			if ( (*(uint16_t *) nop_out_pkt->reserved != 0) || (nop_out_pkt->reserved[2] != 0) || (nop_out_pkt->reserved2[0] != 0) || (nop_out_pkt->reserved2[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (nop_out_pkt->flags != -0x80) || (nop_out_pkt->reserved != 0) || (nop_out_pkt->reserved2[0] != 0) || (nop_out_pkt->reserved2[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags always MUST be 0x80 for now and remaining reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1232,43 +1305,43 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_task_mgmt_func_req_packet *task_mgmt_func_req_pkt = (const iscsi_task_mgmt_func_req_packet *) packet_data;
 
-			if ( (task_mgmt_func_req_pkt->reserved != 0) || (task_mgmt_func_req_pkt->reserved2 != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (task_mgmt_func_req_pkt->func >= 0) || (task_mgmt_func_req_pkt->reserved != 0) || (task_mgmt_func_req_pkt->reserved2 != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Function bit 7 always MUST be set and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			break;
 		}
 		case ISCSI_CLIENT_LOGIN_REQ : {
-			if ( (packet_data->opcode != (opcode | 0x40)) || (ahs_len != 0) || (ds_len != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bit 6 always MUST be set, AHS and DataSegment MUST be zero according to specs -> invalid iSCSI packet data
+			if ( (packet_data->opcode != (opcode | 0x40)) || (ahs_len != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bit 6 always MUST be set and AHS MUST be zero according to specs -> invalid iSCSI packet data
 
 			const iscsi_login_req_packet *login_req_pkt = (const iscsi_login_req_packet *) packet_data;
 
 			if ( (ISCSI_VERSION_MIN < login_req_pkt->version_min) || (ISCSI_VERSION_MAX > login_req_pkt->version_max) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_UNSUPPORTED_VERSION;
 
-			if ( (login_req_pkt->reserved != 0) || (login_req_pkt->reserved2[0] != 0) || (login_req_pkt->reserved2[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( ((login_req_pkt->flags < 0) && ((login_req_pkt->flags & ISCSI_LOGIN_REQ_FLAGS_CONTINUE) != 0)) || (login_req_pkt->flags & ~(ISCSI_LOGIN_REQ_FLAGS_CONTINUE | ISCSI_LOGIN_REQ_FLAGS_TRANSMIT) != 0) || (login_req_pkt->reserved != 0) || (login_req_pkt->reserved2[0] != 0) || (login_req_pkt->reserved2[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // If C bit is set, T MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			return iscsi_validate_key_value_pairs( ((const uint8_t *) login_req_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
 			break;
 		}
 		case ISCSI_CLIENT_TEXT_REQ : {
-			if ( ((int8_t) packet_data->opcode < 0) || (ds_len == 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // MSB always MUST be cleared for this opcode and DataSegment is mandatory -> invalid iSCSI packet data
+			if ( (int8_t) packet_data->opcode < 0 )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // MSB always MUST be cleared for this opcode -> invalid iSCSI packet data
 
 			const iscsi_text_req_packet *text_req_pkt = (const iscsi_text_req_packet *) packet_data;
 
-			if ( (text_req_pkt->reserved != 0) || (text_req_pkt->reserved2[0] != 0) || (text_req_pkt->reserved2[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( ((text_req_pkt->flags < 0) && ((text_req_pkt->flags & ISCSI_TEXT_REQ_FLAGS_CONTINUE) != 0)) || (text_req_pkt->flags & ~(ISCSI_TEXT_REQ_FLAGS_CONTINUE | ISCSI_TEXT_REQ_FLAGS_FINAL) != 0) || (text_req_pkt->reserved != 0) || (text_req_pkt->reserved2[0] != 0) || (text_req_pkt->reserved2[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // If C bit is set, F MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			return iscsi_validate_key_value_pairs( ((const uint8_t *) text_req_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
 			break;
 		}
 		case ISCSI_CLIENT_SCSI_DATA_OUT : {
-			if ( (packet_data->opcode != opcode) || (ds_len == 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode and DataSegment is mandatory -> invalid iSCSI packet data
+			if ( packet_data->opcode != opcode )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode -> invalid iSCSI packet data
 
 			const iscsi_scsi_data_out_req_packet *scsi_data_out_req_pkt = (const iscsi_scsi_data_out_req_packet *) packet_data;
 
@@ -1283,8 +1356,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_logout_req_packet *logout_req_pkt = (const iscsi_logout_req_packet *) packet_data;
 
-			if ( (logout_req_pkt->reserved != 0) || (logout_req_pkt->reserved2 != 0) || (logout_req_pkt->reserved3 != 0) || (logout_req_pkt->reserved4[0] != 0) || (logout_req_pkt->reserved4[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (logout_req_pkt->reason_code >= 0) || (logout_req_pkt->reserved != 0) || (logout_req_pkt->reserved2 != 0) || (logout_req_pkt->reserved3 != 0) || (logout_req_pkt->reserved4[0] != 0) || (logout_req_pkt->reserved4[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reason code always MUST have bit 7 set and Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1294,8 +1367,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_snack_req_packet *snack_req_pkt = (const iscsi_snack_req_packet *) packet_data;
 
-			if ( (snack_req_pkt->reserved != 0) || (snack_req_pkt->reserved2 != 0) || (snack_req_pkt->reserved3 != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (snack_req_pkt->type >= 0) || (snack_req_pkt->reserved != 0) || (snack_req_pkt->reserved2 != 0) || (snack_req_pkt->reserved3 != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bit 7 of type always MUST be set and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1310,14 +1383,19 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_nop_in_packet *nop_in_pkt = (const iscsi_nop_in_packet *) packet_data;
 
-			if ( (*(uint16_t *) nop_in_pkt->reserved != 0) || (nop_in_pkt->reserved[2] != 0) || (nop_in_pkt->reserved2[0] != 0) || (nop_in_pkt->reserved2[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (nop_in_pkt->flags != -0x80) || (nop_in_pkt->reserved != 0) || (nop_in_pkt->reserved2[0] != 0) || (nop_in_pkt->reserved2[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags always MUST be 0x80 for now and remaining reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			break;
 		}
 		case ISCSI_SERVER_SCSI_RESPONSE : {
 			if ( packet_data->opcode != opcode )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode -> invalid iSCSI packet data
+
+			const iscsi_scsi_response_packet *scsi_response_pkt = (iscsi_scsi_response_packet *) packet_data;
+
+			if ( scsi_response_pkt->flags >= 0 )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags always MUST have bit 7 set -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1327,43 +1405,43 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_task_mgmt_func_response_packet *task_mgmt_func_response_pkt = (const iscsi_task_mgmt_func_response_packet *) packet_data;
 
-			if ( (task_mgmt_func_response_pkt->reserved != 0) || (task_mgmt_func_response_pkt->reserved2 != 0) || (task_mgmt_func_response_pkt->reserved3 != 0) || (task_mgmt_func_response_pkt->reserved4 != 0) || (task_mgmt_func_response_pkt->reserved5 != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (task_mgmt_func_response_pkt->flags != -0x80) || (task_mgmt_func_response_pkt->reserved != 0) || (task_mgmt_func_response_pkt->reserved2 != 0) || (task_mgmt_func_response_pkt->reserved3 != 0) || (task_mgmt_func_response_pkt->reserved4 != 0) || (task_mgmt_func_response_pkt->reserved5 != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags must be always 0x80 for now and remaining reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			break;
 		}
 		case ISCSI_SERVER_LOGIN_RES : {
-			if ( (packet_data->opcode != opcode) || (ds_len == 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode -> invalid iSCSI packet data and DataSegment is mandatory
+			if ( packet_data->opcode != opcode )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode -> invalid iSCSI packet data is mandatory
 
 			const iscsi_login_response_packet *login_response_pkt = (const iscsi_login_response_packet *) packet_data;
 
 			if ( (ISCSI_VERSION_MIN < login_response_pkt->version_max) || (ISCSI_VERSION_MAX > login_response_pkt->version_max) || (ISCSI_VERSION_MIN < login_response_pkt->version_active) || (ISCSI_VERSION_MAX > login_response_pkt->version_active) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_UNSUPPORTED_VERSION;
 
-			if ( (login_response_pkt->reserved != 0) || (login_response_pkt->reserved2 != 0) || (login_response_pkt->reserved3 != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( ((login_response_pkt->flags < 0) && ((login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_CONTINUE) != 0)) || (login_response_pkt->flags & ~(ISCSI_LOGIN_RESPONSE_FLAGS_CONTINUE | ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT) != 0) || (login_response_pkt->reserved != 0) || (login_response_pkt->reserved2 != 0) || (login_response_pkt->reserved3 != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // If C bit is set, T MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			return iscsi_validate_key_value_pairs( ((const uint8_t *) login_response_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
 			break;
 		}
 		case ISCSI_SERVER_TEXT_RES : {
-			if ( (packet_data->opcode != opcode) || (ds_len == 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode and DataSegment is mandatory -> invalid iSCSI packet data
+			if ( packet_data->opcode != opcode )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode -> invalid iSCSI packet data
 
 			const iscsi_text_response_packet *text_response_pkt = (const iscsi_text_response_packet *) packet_data;
 
-			if ( (text_response_pkt->reserved != 0) || (text_response_pkt->reserved2[0] != 0) || (text_response_pkt->reserved2[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( ((text_response_pkt->flags < 0) && ((text_response_pkt->flags & ISCSI_TEXT_RESPONSE_FLAGS_CONTINUE) != 0)) || (text_response_pkt->flags & ~(ISCSI_TEXT_RESPONSE_FLAGS_CONTINUE | ISCSI_TEXT_RESPONSE_FLAGS_FINAL) != 0) || (text_response_pkt->reserved != 0) || (text_response_pkt->reserved2[0] != 0) || (text_response_pkt->reserved2[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // If C bit is set, F MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			return iscsi_validate_key_value_pairs( ((const uint8_t *) text_response_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
 			break;
 		}
 		case ISCSI_SERVER_SCSI_DATA_IN : {
-			if ( (packet_data->opcode != opcode) || (ds_len == 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode and DataSegment is mandatory -> invalid iSCSI packet data
+			if ( packet_data->opcode != opcode )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Bits 6 and 7 always MUST be cleared for this opcode -> invalid iSCSI packet data
 
 			const iscsi_scsi_data_in_response_packet *scsi_data_in_pkt = (const iscsi_scsi_data_in_response_packet *) packet_data;
 
@@ -1378,8 +1456,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_logout_response_packet *logout_response_pkt = (const iscsi_logout_response_packet *) packet_data;
 
-			if ( (logout_response_pkt->reserved != 0) || (logout_response_pkt->reserved2 != 0) || (logout_response_pkt->reserved3 != 0) || (logout_response_pkt->reserved4 != 0) || (logout_response_pkt->reserved5 != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (logout_response_pkt->flags != -0x80) || (logout_response_pkt->reserved != 0) || (logout_response_pkt->reserved2 != 0) || (logout_response_pkt->reserved3 != 0) || (logout_response_pkt->reserved4 != 0) || (logout_response_pkt->reserved5 != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags must be always 0x80 for now and remaining reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1389,8 +1467,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_r2t_packet *r2t_pkt = (const iscsi_r2t_packet *) packet_data;
 
-			if ( r2t_pkt->reserved != 0 )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved field needs to be zero, but is NOT -> invalid iSCSI packet data
+			if ( (r2t_pkt->flags != -0x80) || (r2t_pkt->reserved != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags must be always 0x80 for now and remaining reserved field needs to be zero, but is NOT -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1400,8 +1478,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_async_msg_packet *async_msg_pkt = (const iscsi_async_msg_packet *) packet_data;
 
-			if ( (async_msg_pkt->tag != 0xFFFFFFFFUL) || (async_msg_pkt->reserved != 0) || (async_msg_pkt->reserved2 != 0) || (async_msg_pkt->reserved3 != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (async_msg_pkt->flags != -0x80) || (async_msg_pkt->tag != 0xFFFFFFFFUL) || (async_msg_pkt->reserved != 0) || (async_msg_pkt->reserved2 != 0) || (async_msg_pkt->reserved3 != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags must be always 0x80 for now, remaining reserved fields need all to be zero, but are NOT and tag always MUST be 0xFFFFFFFF -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1416,8 +1494,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 
 			const iscsi_reject_packet *reject_pkt = (const iscsi_reject_packet *) packet_data;
 
-			if ( (reject_pkt->tag != 0xFFFFFFFFUL) || (reject_pkt->reserved != 0) || (reject_pkt->reserved2 != 0) || (reject_pkt->reserved3 != 0) || (reject_pkt->reserved4[0] != 0) || (reject_pkt->reserved4[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Reserved fields need all to be zero, but are NOT, tag always MUST be 0xFFFFFFFFUL -> invalid iSCSI packet data
+			if ( (reject_pkt->flags != -0x80) || (reject_pkt->tag != 0xFFFFFFFFUL) || (reject_pkt->reserved != 0) || (reject_pkt->reserved2 != 0) || (reject_pkt->reserved3 != 0) || (reject_pkt->reserved4[0] != 0) || (reject_pkt->reserved4[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Flags must be always 0x80 for now, remaining reserved fields need all to be zero, but are NOT and tag always MUST be 0xFFFFFFFF -> invalid iSCSI packet data
 
 			break;
 		}
@@ -1438,6 +1516,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 }
 
 /**
+ * @brief Extracts a single text key / value pairs out of an iSCSI packet into a hash map.
+ *
  * Parses and extracts a specific key and value pair out of an iSCSI packet
  * data stream amd puts the extracted data into a hash map to be used by
  * the iSCSI implementation.
@@ -1524,6 +1604,8 @@ static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *
 }
 
 /**
+ * @brief Extracts all text key / value pairs out of an iSCSI packet into a hash map.
+ *
  * Parses and extracts all key and value pairs out of iSCSI packet
  * data amd puts the extracted data into a hash map to be used by
  * the iSCSI implementation.
@@ -1540,7 +1622,7 @@ static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *
  * @retval 0 Key and value pair was parsed successfully and was added to
  * hash map.
  */
-int iscsi_parse_key_value_pairs(iscsi_hashmap **pairs, const uint8_t *packet_data, uint len, int c_bit, uint8_t **partial_pairs)
+int iscsi_parse_key_value_pairs(iscsi_hashmap *pairs, const uint8_t *packet_data, uint len, int c_bit, uint8_t **partial_pairs)
 {
 	if ( len == 0 )
 		return 0L; // iSCSI specs don't allow zero length
@@ -1615,6 +1697,8 @@ int iscsi_parse_key_value_pairs(iscsi_hashmap **pairs, const uint8_t *packet_dat
 }
 
 /**
+ * @brief Creates a single partial iSCSI packet stream out of a single text key and value pair.
+ *
  * Callback function for constructing an iSCSI packet data
  * stream for a single key=value text pair.
  *
@@ -1625,7 +1709,7 @@ int iscsi_parse_key_value_pairs(iscsi_hashmap **pairs, const uint8_t *packet_dat
  * be careful.
  * @param[in] value Value of the key, NULL creates an
  * empty key assignment.
- * @param[in] user_data Pointer to a data structure
+ * @param[in,out] user_data Pointer to a data structure
  * containing the memory buffer and length for the
  * iSCSI packet data (iscsi_key_value_pair_packet
  * structure), may NOT be NULL, so be careful.
@@ -1640,7 +1724,7 @@ int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_s
 	const uint8_t *buf = iscsi_sprintf_alloc( "%s=%s", key, ((value != NULL) ? value : "") );
 
 	if ( buf == NULL ) {
-		logadd( LOG_ERROR, "iscsi_create_key_value_pair_callback: Out of memory generating text key / value pair DataSegment" );
+		logadd( LOG_ERROR, "iscsi_create_key_value_pair_packet_callback: Out of memory generating text key / value pair DataSegment" );
 
 		return -1L;
 	}
@@ -1651,7 +1735,7 @@ int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_s
 	uint8_t *new_buf = realloc( packet_data->buf, new_len );
 
 	if ( new_buf == NULL ) {
-		logadd( LOG_ERROR, "iscsi_create_key_value_pair_callback: Out of memory generating text key / value pair DataSegment" );
+		logadd( LOG_ERROR, "iscsi_create_key_value_pair_packet_callback: Out of memory generating text key / value pair DataSegment" );
 
 		free( buf );
 
@@ -1667,6 +1751,8 @@ int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_s
 }
 
 /**
+ * @brief Creates a properly aligned iSCSI packet DataSegment out of a hash map containing text key and value pairs.
+ *
  * Creates a properly aligned iSCSI DataSegment
  * containing NUL terminated key=value pairs
  * out of an hash map. The result can directly
@@ -1723,6 +1809,8 @@ iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(const iscsi_has
 }
 
 /**
+ * @brief Creates data structure for an iSCSI connection request.
+ *
  * Creates a data structure for an incoming iSCSI connection request
  * from iSCSI packet data.
  *
@@ -1742,7 +1830,7 @@ iscsi_connection *iscsi_connection_create(const iscsi_login_req_packet *login_re
 		return NULL;
 	}
 
-	conn->key_value_pairs = iscsi_hashmap_create( 0UL );
+	conn->key_value_pairs = iscsi_hashmap_create( 32UL );
 
 	if ( conn->key_value_pairs == NULL ) {
 		logadd( LOG_ERROR, "iscsi_create_connection: Out of memory while allocating iSCSI text key / value pair hash map" );
@@ -1770,6 +1858,8 @@ iscsi_connection *iscsi_connection_create(const iscsi_login_req_packet *login_re
 }
 
 /**
+ * @brief Deallocates all resources acquired by iscsi_connection_create.
+ *
  * Deallocates a data structure of an iSCSI connection
  * request and all allocated hash maps which don't
  * require closing of external resources like closing
@@ -1795,6 +1885,8 @@ void iscsi_connection_destroy(iscsi_connection *conn)
 }
 
 /**
+ * @brief iSCSI connection destructor callback for hash map.
+ *
  * Callback function for deallocation of an iSCSI
  * connection stored in the hash map managing all
  * iSCSI connections.
@@ -1805,7 +1897,7 @@ void iscsi_connection_destroy(iscsi_connection *conn)
  * be a multiple of 8 bytes which is NOT checked, so
  * be careful.
  * @param[in] value Value of the key, NULL is allowed.
- * @param[in] user_data This argument is not used by
+ * @param[in,out] user_data This argument is not used by
  * this function and should be always NULL for now, as
  * there is a possibility for future usage.
  * @return Always returns 0 as this function cannot fail.
