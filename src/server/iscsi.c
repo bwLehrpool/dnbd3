@@ -24,7 +24,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <sys/socket.h>
 #include <dnbd3/shared/log.h>
+#include <time.h>
 #include "iscsi.h"
 
 /**
@@ -57,7 +59,7 @@ uint8_t *iscsi_vsprintf_append_realloc(char *buf, const char *format, va_list ar
 	uint orig_size = 0;
 
 	if ( buf != NULL )
-		orig_size = strlen( (char *) buf );
+		orig_size = (uint) strlen( (char *) buf );
 
 	va_copy( args_copy, args );
 	uint new_size = vsnprintf( NULL, 0, format, args_copy );
@@ -186,7 +188,7 @@ iscsi_hashmap *iscsi_hashmap_create(const uint capacity)
 		return NULL;
 	}
 
-	map->cap_load      = (map->capacity * 3UL) >> 2UL; // 75% of capacity
+	map->cap_load      = (uint) ((map->capacity * 3UL) >> 2UL); // 75% of capacity
 	map->count         = 0;
 	map->removed_count = 0;
 	map->first         = NULL;
@@ -273,7 +275,7 @@ static int iscsi_hashmap_resize(iscsi_hashmap *map)
 		return -1;
 	}
 
-	map->cap_load      = (map->capacity * 3UL) >> 2UL; // 75% of capacity
+	map->cap_load      = (uint) ((map->capacity * 3UL) >> 2UL); // 75% of capacity
 	map->last          = (iscsi_hashmap_bucket *) &map->first;
 	map->count        -= map->removed_count;
 	map->removed_count = 0;
@@ -455,7 +457,7 @@ int iscsi_hashmap_key_destroy_value_callback(uint8_t *key, const size_t key_size
  * memory exhaustion).
  * @retval 0 Key / value pair was added successfully.
  */
-int iscsi_hashmap_put(iscsi_hashmap *map, const uint8_t *key, const size_t key_size, uint8_t *value)
+int iscsi_hashmap_put(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t *value)
 {
 	if ( ((map->count + 1) > map->cap_load) && (iscsi_hashmap_resize( map ) < 0) )
 		return -1;
@@ -512,7 +514,7 @@ int iscsi_hashmap_put(iscsi_hashmap *map, const uint8_t *key, const size_t key_s
  * @retval 0 Key / value pair was added successfully.
  * @retval 1 Key already existed.
  */
-int iscsi_hashmap_get_put(iscsi_hashmap *map, const uint8_t *key, const size_t key_size, uint8_t **out_in_value)
+int iscsi_hashmap_get_put(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t **out_in_value)
 {
 	if ( ((map->count + 1) > map->cap_load) && (iscsi_hashmap_resize( map ) < 0) )
 		return -1;
@@ -580,7 +582,7 @@ int iscsi_hashmap_get_put(iscsi_hashmap *map, const uint8_t *key, const size_t k
  * the callback function also returned 0, otherwise
  * the return value got by the callbuck function.
  */
-int iscsi_hashmap_put_free(iscsi_hashmap *map, const uint8_t *key, const size_t key_size, uint8_t *value, iscsi_hashmap_callback callback, uint8_t *user_data)
+int iscsi_hashmap_put_free(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t *value, iscsi_hashmap_callback callback, uint8_t *user_data)
 {
 	if ( ((map->count + 1) > map->cap_load) && (iscsi_hashmap_resize( map ) < 0) )
 		return -1;
@@ -751,7 +753,7 @@ void iscsi_hashmap_remove_free(iscsi_hashmap *map, const uint8_t *key, const siz
  * @return Number of elements currently in use by the
  * hash map. Buckets marked for removal are not counted.
  */
-int iscsi_hashmap_size(iscsi_hashmap *map)
+uint iscsi_hashmap_size(const iscsi_hashmap *map)
 {
 	return (map->count - map->removed_count);
 }
@@ -815,16 +817,16 @@ iscsi_bhs_packet *iscsi_create_packet()
 		return bhs_pkt;
 	}
 
-    bhs_pkt->opcode = 0; // Initialize everything to zero
+    bhs_pkt->opcode           = 0; // Initialize everything to zero
     bhs_pkt->opcode_fields[0] = 0;
     bhs_pkt->opcode_fields[1] = 0;
     bhs_pkt->opcode_fields[2] = 0;
-	bhs_pkt->total_ahs_len = 0;
-	bhs_pkt->ds_len[0] = 0;
-	bhs_pkt->ds_len[1] = 0;
-	bhs_pkt->ds_len[2] = 0;
-	bhs_pkt->lun_opcode.lun = 0ULL;
-	bhs_pkt->init_task_tag = 0UL;
+	bhs_pkt->total_ahs_len    = 0;
+	bhs_pkt->ds_len[0]        = 0;
+	bhs_pkt->ds_len[1]        = 0;
+	bhs_pkt->ds_len[2]        = 0;
+	bhs_pkt->lun_opcode.lun   = 0ULL;
+	bhs_pkt->init_task_tag    = 0UL;
 
 	memset( bhs_pkt->opcode_spec_fields, 0, sizeof(bhs_pkt->opcode_spec_fields) );
 
@@ -870,10 +872,10 @@ iscsi_bhs_packet *iscsi_append_ahs_packet(iscsi_bhs_packet *packet_data, const u
 	}
 
 	const uint32_t old_pkt_size = (const uint32_t) sizeof(struct iscsi_bhs_packet) + (packet_data->total_ahs_len << 2UL);
-	const uint32_t new_pkt_size = old_pkt_size + iscsi_align(ahs_len, ISCSI_ALIGN_SIZE);
+	const uint32_t new_pkt_size = (uint32_t) (old_pkt_size + iscsi_align(ahs_len, ISCSI_ALIGN_SIZE));
 
 	if ( new_pkt_size > (sizeof(struct iscsi_bhs_packet) + 1020UL) ) {
-		logadd( LOG_ERROR, "iscsi_append_ahs_packet: Total numer of AHS packets exceeds 255 DWORDs" );
+		logadd( LOG_ERROR, "iscsi_append_ahs_packet: Total numer of AHS packet size exceeds 255 DWORDs" );
 
 		return NULL;
 	}
@@ -887,11 +889,11 @@ iscsi_bhs_packet *iscsi_append_ahs_packet(iscsi_bhs_packet *packet_data, const u
 	}
 
 	iscsi_ahs_packet *ahs_pkt = (iscsi_ahs_packet *) ((uint8_t *) packet_data + old_pkt_size);
-	ahs_pkt->len = iscsi_get_be16(ahs_len);
+	ahs_pkt->len = iscsi_get_be16((uint16_t) ahs_len);
 	ahs_pkt->type = 0;
 	ahs_pkt->specific = 0;
 	memset( ahs_pkt->data, 0, (new_pkt_size - old_pkt_size) - offsetof(struct iscsi_ahs_packet, data) );
-	packet_data->total_ahs_len += (ahs_len + (ISCSI_ALIGN_SIZE - 1)) >> 2UL;
+	packet_data->total_ahs_len += (uint8_t) ((ahs_len + (ISCSI_ALIGN_SIZE - 1)) >> 2UL);
 
 	return packet_data;
 }
@@ -922,7 +924,7 @@ int iscsi_get_ahs_packets(const iscsi_bhs_packet *packet_data)
 		len = iscsi_align(len, ISCSI_ALIGN_SIZE);
 
 		ahs_len -= len;
-		ahs_pkt = ((uint8_t *) ahs_pkt) + (len - offsetof(struct iscsi_ahs_packet, data)); // Advance pointer to next AHS packet
+		ahs_pkt = (iscsi_ahs_packet *) (((uint8_t *) ahs_pkt) + (len - offsetof(struct iscsi_ahs_packet, data))); // Advance pointer to next AHS packet
 		count++;
 	}
 
@@ -959,12 +961,60 @@ iscsi_ahs_packet *iscsi_get_ahs_packet(const iscsi_bhs_packet *packet_data, cons
 		len = iscsi_align(len, ISCSI_ALIGN_SIZE);
 
 		ahs_len -= len;
-		ahs_pkt = ((uint8_t *) ahs_pkt) + (len - offsetof(struct iscsi_ahs_packet, data)); // Advance pointer to next AHS packet
+		ahs_pkt = (iscsi_ahs_packet *) (((uint8_t *) ahs_pkt) + (len - offsetof(struct iscsi_ahs_packet, data))); // Advance pointer to next AHS packet
 	}
 
 	logadd( LOG_ERROR, "iscsi_get_ahs_packet: Specified index for AHS packet does not exist" );
 
 	return NULL;
+}
+
+/**
+ * @brief Allocate and initialize an iSCSI header digest (CRC32C) and appends it to existing data stream.
+ *
+ * Constructs and appends an header digest (CRC32C) to already allocated
+ * packet data. There is no guarantee that the pointer stays the same.
+ * Any references to the old structure need to be updated!\n
+ * This function currently throws away any data beyond AHS.
+ *
+ * @param[in] packet_data Pointer to packet data to append to. If NULL, a Basic
+ * Header Segment (BHS) will be created and initialized before adding the
+ * header digest.
+ * @param[in] header_digest_size Length of header digest. Currently, only
+ * 0, in which case the header digest will be removed, or 4 for CRC32C
+ * are allowed.
+ * @return New pointer to BHS structure with additional header digest attached
+ * or NULL in case of an reallocation error or header digest is neither 0 nor 4.
+ */
+iscsi_bhs_packet *iscsi_append_header_digest_packet(iscsi_bhs_packet *packet_data, const int header_digest_size)
+{
+	if ( packet_data == NULL ) {
+		packet_data = iscsi_create_packet();
+
+		if ( packet_data == NULL )
+			return packet_data;
+	}
+
+	if ( (header_digest_size != 0) || (header_digest_size != ISCSI_DIGEST_SIZE) ) {
+		logadd( LOG_ERROR, "iscsi_append_header_digest_packet: Header digest size MUST be either 0 or 4 bytes" );
+
+		return NULL;
+	}
+
+	const uint32_t old_pkt_size = (const uint32_t) sizeof(struct iscsi_bhs_packet) + (packet_data->total_ahs_len << 2UL);
+	const uint32_t new_pkt_size = old_pkt_size + header_digest_size;
+
+	packet_data = (iscsi_bhs_packet *) realloc( packet_data, new_pkt_size );
+
+	if ( packet_data == NULL ) {
+		logadd( LOG_ERROR, "iscsi_append_header_digest_packet: Out of memory while allocating iSCSI header digest packet data for appending" );
+
+		return packet_data;
+	}
+
+	memset( (((uint8_t *) packet_data) + old_pkt_size), 0, header_digest_size );
+
+	return packet_data;
 }
 
 /**
@@ -1001,7 +1051,7 @@ iscsi_bhs_packet *iscsi_append_ds_packet(iscsi_bhs_packet *packet_data, const in
 	}
 
 	const uint32_t old_pkt_size = (const uint32_t) sizeof(struct iscsi_bhs_packet) + ((uint32_t) packet_data->total_ahs_len << 2UL);
-	const uint32_t new_pkt_size = old_pkt_size + header_digest_size + iscsi_align(ds_len, ISCSI_ALIGN_SIZE) + data_digest_size;
+	const uint32_t new_pkt_size = (uint32_t) (old_pkt_size + header_digest_size + iscsi_align(ds_len, ISCSI_ALIGN_SIZE) + data_digest_size);
 
 	packet_data = (iscsi_bhs_packet *) realloc( packet_data, new_pkt_size );
 
@@ -1011,7 +1061,7 @@ iscsi_bhs_packet *iscsi_append_ds_packet(iscsi_bhs_packet *packet_data, const in
 		return packet_data;
 	}
 
-	iscsi_put_be24( packet_data->ds_len, ds_len );
+	iscsi_put_be24( (uint8_t *) &packet_data->ds_len, ds_len );
 	memset( ((uint8_t *) packet_data) + old_pkt_size, 0, (new_pkt_size - old_pkt_size) );
 
 	return packet_data;
@@ -1177,13 +1227,13 @@ int iscsi_validate_data_digest(const iscsi_bhs_packet *packet_data, const int he
  */
 static int iscsi_validate_text_key_value_pair(const uint8_t *packet_data, const uint32_t len)
 {
-	const uint key_val_len = strnlen( packet_data, len );
+	const uint key_val_len = (uint) strnlen( (char *) packet_data, len );
 	const uint8_t *key_end = memchr( packet_data, '=', key_val_len );
 
 	if ( key_end == NULL )
 		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Missing separator '=' for key / value pair -> invalid iSCSI packet data
 
-	const uint key_len = (key_end - packet_data);
+	const uint key_len = (uint) (key_end - packet_data);
 
 	if ( key_len == 0 )
 		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Zero length is not allowed -> invalid iSCSI packet data
@@ -1191,13 +1241,13 @@ static int iscsi_validate_text_key_value_pair(const uint8_t *packet_data, const 
 	if ( key_len > ISCSI_TEXT_KEY_MAX_LEN )
 		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS;
 
-	const uint val_len = strnlen( key_end + 1UL, key_val_len - key_len - 1UL );
+	const uint val_len = (uint) strnlen( (char *) (key_end + 1UL), key_val_len - key_len - 1UL );
 	const uint max_len = (memcmp( packet_data, "CHAP_C=", (key_len + 1UL) ) == 0) || (memcmp( packet_data, "CHAP_R=", (key_len + 1UL) ) == 0) ? ISCSI_TEXT_VALUE_MAX_LEN : ISCSI_TEXT_VALUE_MAX_SIMPLE_LEN;
 
 	if ( val_len > max_len )
 		return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Value exceeds maximum length -> invalid iSCSI packet data
 
-	return key_len + 1UL + val_len + 1UL; // Number of bytes for processed key / value pair (+1 for '=' and NUL terminator)
+	return (int) (key_len + 1UL + val_len + 1UL); // Number of bytes for processed key / value pair (+1 for '=' and NUL terminator)
 }
 
 /**
@@ -1220,7 +1270,7 @@ static int iscsi_validate_key_value_pairs(const uint8_t *packet_data, uint len)
 
 	int offset = 0L;
 
-	while ( (offset < len) && (packet_data[offset] != '\0') ) {
+	while ( ((uint) offset < len) && (packet_data[offset] != '\0') ) {
 		const int rc = iscsi_validate_text_key_value_pair( (packet_data + offset), (len - offset) );
 
 		if ( rc < ISCSI_VALIDATE_PACKET_RESULT_OK )
@@ -1319,8 +1369,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 			if ( (ISCSI_VERSION_MIN < login_req_pkt->version_min) || (ISCSI_VERSION_MAX > login_req_pkt->version_max) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_UNSUPPORTED_VERSION;
 
-			if ( ((login_req_pkt->flags < 0) && ((login_req_pkt->flags & ISCSI_LOGIN_REQ_FLAGS_CONTINUE) != 0)) || (login_req_pkt->flags & ~(ISCSI_LOGIN_REQ_FLAGS_CONTINUE | ISCSI_LOGIN_REQ_FLAGS_TRANSMIT) != 0) || (login_req_pkt->reserved != 0) || (login_req_pkt->reserved2[0] != 0) || (login_req_pkt->reserved2[1] != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // If C bit is set, T MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (ISCSI_LOGIN_REQ_FLAGS_GET_CURRENT_STAGE(login_req_pkt->flags) == ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_RESERVED) || ((ISCSI_LOGIN_REQ_FLAGS_GET_NEXT_STAGE(login_req_pkt->flags) == ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_RESERVED) && ((login_req_pkt->flags & ISCSI_LOGIN_REQ_FLAGS_TRANSMIT) != 0)) || ((login_req_pkt->flags < 0) && ((login_req_pkt->flags & ISCSI_LOGIN_REQ_FLAGS_CONTINUE) != 0)) || (login_req_pkt->flags & ~(ISCSI_LOGIN_REQ_FLAGS_CONTINUE | ISCSI_LOGIN_REQ_FLAGS_TRANSMIT) != 0) || (login_req_pkt->reserved != 0) || (login_req_pkt->reserved2[0] != 0) || (login_req_pkt->reserved2[1] != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Current Stage (CSG) is set to reserved and Next Stage (NSG) is reserved and T bit is set, if C bit is set, T MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			return iscsi_validate_key_value_pairs( ((const uint8_t *) login_req_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
@@ -1419,8 +1469,8 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 			if ( (ISCSI_VERSION_MIN < login_response_pkt->version_max) || (ISCSI_VERSION_MAX > login_response_pkt->version_max) || (ISCSI_VERSION_MIN < login_response_pkt->version_active) || (ISCSI_VERSION_MAX > login_response_pkt->version_active) )
 				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_UNSUPPORTED_VERSION;
 
-			if ( ((login_response_pkt->flags < 0) && ((login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_CONTINUE) != 0)) || (login_response_pkt->flags & ~(ISCSI_LOGIN_RESPONSE_FLAGS_CONTINUE | ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT) != 0) || (login_response_pkt->reserved != 0) || (login_response_pkt->reserved2 != 0) || (login_response_pkt->reserved3 != 0) )
-				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // If C bit is set, T MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
+			if ( (ISCSI_LOGIN_RESPONSES_FLAGS_GET_CURRENT_STAGE(login_response_pkt->flags) == ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_RESERVED) || ((ISCSI_LOGIN_RESPONSES_FLAGS_GET_NEXT_STAGE(login_response_pkt->flags) == ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_RESERVED) && ((login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT) != 0)) || ((login_response_pkt->flags < 0) && ((login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_CONTINUE) != 0)) || (login_response_pkt->flags & ~(ISCSI_LOGIN_RESPONSE_FLAGS_CONTINUE | ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT) != 0) || (login_response_pkt->reserved != 0) || (login_response_pkt->reserved2 != 0) || (login_response_pkt->reserved3 != 0) )
+				return ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS; // Current Stage (CSG) is set to reserved and Next Stage (NSG) is reserved and T bit is set, if C bit is set, T MUST be cleared and reserved fields need all to be zero, but are NOT -> invalid iSCSI packet data
 
 			return iscsi_validate_key_value_pairs( ((const uint8_t *) login_response_pkt) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE), ds_len );
 
@@ -1533,7 +1583,7 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
  */
 static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *packet_data, const uint32_t len)
 {
-	const uint key_val_len = strnlen( packet_data, len );
+	const uint key_val_len = (uint) strnlen( (char *) packet_data, len );
 	const uint8_t *key_end = memchr( packet_data, '=', key_val_len );
 
 	if ( key_end == NULL ) {
@@ -1542,7 +1592,7 @@ static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *
 		return -1L;
 	}
 
-	const uint key_len = (key_end - packet_data);
+	const uint key_len = (uint) (key_end - packet_data);
 
 	if ( key_len == 0 ) {
 		logadd( LOG_ERROR, "iscsi_parse_text_key_value_pair: Empty key found which is NOT allowed according to iSCSI specs" );
@@ -1572,8 +1622,8 @@ static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *
 		return -1L;
 	}
 
-	const uint val_len = strnlen( key_end + 1UL, key_val_len - key_len - 1UL );
-	const uint max_len = (strcmp( hash_key, "CHAP_C" ) == 0) || (strcmp( hash_key, "CHAP_R" ) == 0) ? ISCSI_TEXT_VALUE_MAX_LEN : ISCSI_TEXT_VALUE_MAX_SIMPLE_LEN;
+	const uint val_len = (uint) strnlen( (char *) (key_end + 1UL), key_val_len - key_len - 1UL );
+	const uint max_len = (strcmp( (char *) hash_key, "CHAP_C" ) == 0) || (strcmp( (char *) hash_key, "CHAP_R" ) == 0) ? ISCSI_TEXT_VALUE_MAX_LEN : ISCSI_TEXT_VALUE_MAX_SIMPLE_LEN;
 
 	if ( val_len > max_len ) {
 		logadd( LOG_ERROR, "iscsi_parse_text_key_value_pair: Value length larger than iSCSI specs allow" );
@@ -1583,7 +1633,7 @@ static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *
 		return -1L;
 	}
 
-	const uint8_t *hash_val = (uint8_t *) malloc( val_len + 1UL );
+	uint8_t *hash_val = (uint8_t *) malloc( val_len + 1UL );
 
 	if ( hash_val == NULL ) {
 		logadd( LOG_ERROR, "iscsi_parse_text_key_value_pair: Out of memory allocating memory for value string" );
@@ -1600,7 +1650,7 @@ static int iscsi_parse_text_key_value_pair(iscsi_hashmap *pairs, const uint8_t *
 	if ( rc < 0 )
 		return -1L;
 
-	return hash_key_len + val_len + 1UL; // Number of bytes for processed key / value pair (+1 for '=' and NUL terminator)
+	return (int) (hash_key_len + val_len + 1UL); // Number of bytes for processed key / value pair (+1 for '=' and NUL terminator)
 }
 
 /**
@@ -1633,12 +1683,12 @@ int iscsi_parse_key_value_pairs(iscsi_hashmap *pairs, const uint8_t *packet_data
 		for (key_val_pair_len = 0; (key_val_pair_len < len) && packet_data[key_val_pair_len] != '\0'; key_val_pair_len++) {
 		}
 
-		const uint8_t *tmp_partial_buf = iscsi_sprintf_alloc( "%s%s", *partial_pairs, (const char *) packet_data );
+		uint8_t *tmp_partial_buf = iscsi_sprintf_alloc( "%s%s", *partial_pairs, (const char *) packet_data );
 
 		if ( tmp_partial_buf == NULL )
 			return -1L;
 
-		const int rc = iscsi_parse_text_key_value_pair( pairs, tmp_partial_buf, (key_val_pair_len + strlen( *partial_pairs )) );
+		const int rc = iscsi_parse_text_key_value_pair( pairs, tmp_partial_buf, (uint32_t) (key_val_pair_len + strlen( (char *) *partial_pairs )) );
 		free( tmp_partial_buf );
 
 		if ( rc < 0 )
@@ -1684,7 +1734,7 @@ int iscsi_parse_key_value_pairs(iscsi_hashmap *pairs, const uint8_t *packet_data
 
 	int offset = 0L;
 
-	while ( (offset < len) && (packet_data[offset] != '\0') ) {
+	while ( ((uint) offset < len) && (packet_data[offset] != '\0') ) {
 		const int rc = iscsi_parse_text_key_value_pair( pairs, (packet_data + offset), (len - offset) );
 
 		if ( rc < 0 )
@@ -1721,7 +1771,7 @@ int iscsi_parse_key_value_pairs(iscsi_hashmap *pairs, const uint8_t *packet_data
 int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data)
 {
 	iscsi_key_value_pair_packet *packet_data = (iscsi_key_value_pair_packet *) user_data;
-	const uint8_t *buf = iscsi_sprintf_alloc( "%s=%s", key, ((value != NULL) ? value : "") );
+	uint8_t *buf = iscsi_sprintf_alloc( "%s=%s", key, ((value != NULL) ? value : (uint8_t *) "") );
 
 	if ( buf == NULL ) {
 		logadd( LOG_ERROR, "iscsi_create_key_value_pair_packet_callback: Out of memory generating text key / value pair DataSegment" );
@@ -1729,7 +1779,7 @@ int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_s
 		return -1L;
 	}
 
-	const uint len = strlen( buf ) + 1;
+	const uint len = (uint) strlen( (char *) buf ) + 1;
 	const uint new_len = packet_data->len + len;
 
 	uint8_t *new_buf = realloc( packet_data->buf, new_len );
@@ -1759,7 +1809,7 @@ int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_s
  * be attached to a BHS/AHS packet and sent
  * via TCP/IP.
  *
- * @param[in] pairs Pointer to hash map containing
+ * @param[in] key_value_pairs Pointer to hash map containing
  * the key and value pairs to construct the
  * DataSegment from, may NOT be NULL, so be careful.
  * @return Pointer to iscsi_key_value_pair_packet
@@ -1768,7 +1818,7 @@ int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_s
  * NULL in case of an error (most likely due to
  * memory exhaustion).
  */
-iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(const iscsi_hashmap *pairs)
+iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(iscsi_hashmap *key_value_pairs)
 {
 	iscsi_key_value_pair_packet *packet_data = (iscsi_key_value_pair_packet *) malloc( sizeof(struct iscsi_key_value_pair_packet) );
 
@@ -1781,7 +1831,7 @@ iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(const iscsi_has
 	packet_data->buf = NULL;
 	packet_data->len = 0UL;
 
-	if ( iscsi_hashmap_iterate( pairs, iscsi_create_key_value_pair_packet_callback, packet_data ) < 0L ) {
+	if ( iscsi_hashmap_iterate( key_value_pairs, iscsi_create_key_value_pair_packet_callback, (uint8_t *) packet_data ) < 0L ) {
 		if ( packet_data->buf != NULL )
 			free( packet_data->buf );
 
@@ -1809,18 +1859,825 @@ iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(const iscsi_has
 }
 
 /**
- * @brief Creates data structure for an iSCSI connection request.
+ * @brief Extracts a string from a key and value pair.
  *
- * Creates a data structure for an incoming iSCSI connection request
- * from iSCSI packet data.
+ * This function calculates the length of the key
+ * for the hash map function and returns the value
+ * as string.
  *
- * @param[in] login_req_pkt Pointer to iSCSI packet data to construct iSCSI
- * connection request from. May be NULL in which case this function does
- * nothing.
+ * @param[in] key_value_pairs The hash map containing the key and value pairs to be extracted.
+ * @param[in] key The key to retrieve the string value from.
+ * @param[out] out_value The string value of the key is stored here.
+ * @retval -1 An error occured during value retrieval.
+ * 'out value' is unchanged.
+ * @retval 0 The value of the key has been successfully
+ * stored in the 'out_value'.
+ */
+static int iscsi_get_key_value_pair(iscsi_hashmap *key_value_pairs, const uint8_t *key, uint8_t **out_value)
+{
+	const uint key_len = (uint) strlen( (char *) key ) + 1;
+
+	return iscsi_hashmap_get( key_value_pairs, key, key_len, out_value );
+}
+
+/**
+ * @brief Allocates and adds a string value to a key / value hash map pair.
+ *
+ * This function allocates memory for a string key
+ * and its string value.
+ *
+ * @param[in] key_value_pairs Pointer to the hash map which should
+ * contain the added string key and value pair. NULL is NOT
+ * allowed here, so be careful.
+ * @param[in] key String containing the key name as string. May
+ * NOT be NULL, so take caution.
+ * @param[in] value String containing the value to be stored.
+ * @return 0 on successful operation, or a negative value on
+ * error (memory exhaustion).
+ */
+static int iscsi_add_key_value_pair(iscsi_hashmap *key_value_pairs, const uint8_t *key, const uint8_t *value)
+{
+	const uint key_len = (uint) strlen( (char *) key ) + 1;
+	uint8_t *hash_key = iscsi_hashmap_key_create( key, key_len );
+
+	if ( hash_key == NULL ) {
+		logadd( LOG_ERROR, "iscsi_add_key_value_pair: Out of memory allocating key." );
+
+		return -1L;
+	}
+
+	const uint val_len = (uint) strlen( (char *) value ) + 1;
+	uint8_t *hash_val = (uint8_t *) malloc( val_len );
+
+	if ( hash_val == NULL ) {
+		logadd( LOG_ERROR, "iscsi_add_key_value_pair: Out of memory allocating string value." );
+
+		return -1L;
+	}
+
+	memcpy( hash_val, value, val_len );
+
+	return iscsi_hashmap_put( key_value_pairs, hash_key, key_len, hash_val );
+}
+
+/**
+ * @brief Extracts an integer value from a key and value pair.
+ *
+ * This function converts a string representation of a
+ * key and value pair to an integer value.
+ *
+ * @param[in] key_value_pairs The hash map containing the key and value pairs to be extracted.
+ * @param[in] key The key to retrieve the integer value from.
+ * @param[out] out_value The integer value of the key is stored here
+ * or 0 in case of an error during string to integer conversion.
+ * @retval -1 An error occured during value retrieval.
+ * 'out value' is unchanged.
+ * @retval 0 The value of the key has been successfully
+ * stored in the 'out_value'.
+ */
+static int iscsi_get_int_key_value_pair(iscsi_hashmap *key_value_pairs, const uint8_t *key, int32_t *out_value)
+{
+	uint8_t *str_val;
+	int rc = iscsi_get_key_value_pair( key_value_pairs, key, &str_val );
+
+	if ( rc == 0 )
+		*out_value = (int32_t) atol( (char *) str_val );
+
+	return rc;
+}
+
+/**
+ * @brief Allocates and adds an integer value to a key / value hash map pair.
+ *
+ * This function allocates memory for a string key
+ * and its integer representation as string value.
+ *
+ * @param[in] key_value_pairs Pointer to the hash map which should
+ * contain the added integer key and value pair. NULL is NOT
+ * allowed here, so be careful.
+ * @param[in] key String containing the key name as string. May
+ * NOT be NULL, so take caution.
+ * @param[in] value Integer containing the value to be stored.
+ * @return 0 on successful operation, or a negative value on
+ * error (memory exhaustion).
+ */
+static int iscsi_add_int_key_value_pair(iscsi_hashmap *key_value_pairs, const uint8_t *key, const int value)
+{
+	const uint8_t *hash_val = iscsi_sprintf_alloc( "%ld", value );
+
+	if ( hash_val == NULL ) {
+		logadd( LOG_ERROR, "iscsi_add_int_key_value_pair: Out of memory allocating integer value." );
+
+		return -1L;
+	}
+
+	return iscsi_add_key_value_pair( key_value_pairs, key, hash_val );
+}
+
+/**
+ * @brief Extracts a boolean value from a key and value pair.
+ *
+ * This function converts a string representation of a
+ * key and value pair to a boolean value.
+ *
+ * @param[in] key_value_pairs The hash map containing the key and value pairs to be extracted.
+ * @param[in] key The key to retrieve the boolean value from.
+ * @param[out] out_value The boolean value of the key is stored here.
+ * 'Yes' represents true and any other string results in false.
+ * @retval -1 An error occured during value retrieval.
+ * 'out value' is unchanged.
+ * @retval 0 The value of the key has been successfully
+ * stored in the 'out_value'.
+ */
+static int iscsi_get_bool_key_value_pair(iscsi_hashmap *key_value_pairs, const uint8_t *key, int32_t *out_value)
+{
+	uint8_t *value;
+	int rc = iscsi_get_key_value_pair( key_value_pairs, key, &value );
+
+	if ( rc == 0 )
+		*out_value = (strcasecmp( (char *) value, "Yes" ) == 0) ? true : false;
+
+	return rc;
+}
+
+/**
+ * @brief Allocates and adds an boolean value to a key / value hash map pair.
+ *
+ * This function allocates memory for a string key
+ * and its integer value.\n
+ * The string representation for true is: Yes\n
+ * The string representation for false is: No
+ *
+ * @param[in] key_value_pairs Pointer to the hash map which should
+ * contain the added boolean key and value pair. NULL is NOT
+ * allowed here, so be careful.
+ * @param[in] key String containing the key name as string. May
+ * NOT be NULL, so take caution.
+ * @param[in] value Boolean containing the value to be stored
+ * as string.
+ * @return 0 on successful operation, or a negative value on
+ * error (memory exhaustion).
+ */
+static int iscsi_add_bool_key_value_pair(iscsi_hashmap *key_value_pairs, const uint8_t *key, const int value)
+{
+	const uint8_t *hash_val = (uint8_t *) ((value != 0) ? "Yes" : "No");
+
+	return iscsi_add_key_value_pair( key_value_pairs, key, hash_val );
+}
+
+/**
+ * @brief Creates and initializes an iSCSI portal group.
+ *
+ * Specified tag and flags are used for portal group
+ * initialization.
+ * @param[in] tag Tag to associate with the portal group.
+ * @param[in] flags Flags to set for the portal group.
+ * @return Pointer to allocated and initialized portal group
+ * or NULL in case of memory
+ */
+iscsi_portal_group *iscsi_portal_group_create(const int tag, const int flags)
+{
+	iscsi_portal_group *portal_group = (iscsi_portal_group *) malloc( sizeof(struct iscsi_portal_group) );
+
+	if ( portal_group == NULL ) {
+		logadd( LOG_ERROR, "iscsi_portal_group_create: Out of memory allocating iSCSI portal group structure" );
+
+		return NULL;
+	}
+
+	portal_group->portals = iscsi_hashmap_create( 0UL );
+
+	if ( portal_group->portals == NULL ) {
+		logadd( LOG_ERROR, "iscsi_portal_group_create: Out of memory allocating iSCSI portal hash map" );
+
+		free( portal_group );
+
+		return NULL;
+	}
+
+	portal_group->ref_count  = 0L;
+	portal_group->tag        = tag;
+	portal_group->flags      = flags;
+	portal_group->chap_group = 0L;
+
+	return portal_group;
+}
+
+/**
+ * @brief iSCSI portal destructor callback for hash map.
+ *
+ * Callback function for deallocation of an iSCSI
+ * portal stored in the iSCSI portal group hash map.
+ *
+ * @param[in] key Pointer to zero padded key. NULL is
+ * an invalid pointer here, so be careful.
+ * @param[in] key_size Number of bytes for the key, MUST
+ * be a multiple of 8 bytes which is NOT checked, so
+ * be careful.
+ * @param[in] value Value of the key, NULL is allowed.
+ * @param[in,out] user_data This argument is not used by
+ * this function and should be always NULL for now, as
+ * there is a possibility for future usage.
+ * @return Always returns 0 as this function cannot fail.
+ */
+int iscsi_portal_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data)
+{
+	iscsi_portal_destroy( (iscsi_portal *) value );
+	iscsi_hashmap_key_destroy( key );
+
+	return 0L;
+}
+
+/**
+ * @brief Deallocates resources acquired by iscsi_portal_group_create.
+ *
+ * This function frees the associated hash map containing the
+ * poptals and the structure itself.
+ * @param[in] portal_group Pointer to iSCSI portal group to deallocate.
+ * May be NULL in which case this function does nothing.
+ */
+void iscsi_portal_group_destroy(iscsi_portal_group *portal_group)
+{
+	if ( portal_group != NULL ) {
+		if ( portal_group->portals != NULL ) {
+			iscsi_hashmap_iterate( portal_group->portals, iscsi_portal_destroy_callback, NULL );
+			iscsi_hashmap_destroy( portal_group->portals );
+
+			portal_group->portals = NULL;
+		}
+
+		free( portal_group );
+	}
+}
+
+/**
+ * @brief Adds an iSCSI portal to the iSCSI portal group hash map.
+ *
+ * This function allocates host:port of iSCSI portal for use
+ * as key and sets the portal group in the portal.
+ *
+ * @param[in] iSCSI portal group to add portal to. May NOT be NULL,
+ * so take caution.
+ * @param[in] iSCSI portal to add to portal group. NULL is NOT
+ * allowed here, so be careful.
+ * @retval -1 An error occured during adding the portal,
+ * usually caused by memory exhaustion
+ * @retval 0 The portal has been added successfully to the
+ * portal group.
+ */
+int iscsi_portal_group_add_portal(iscsi_portal_group *portal_group, iscsi_portal *portal)
+{
+	uint8_t *tmp_buf = iscsi_sprintf_alloc( "%s:%s", portal->host, portal->port );
+
+	if ( tmp_buf == NULL )
+		return -1L;
+
+	const uint key_len = (uint) strlen( (char *) tmp_buf ) + 1;
+	uint8_t *key = iscsi_hashmap_key_create( tmp_buf, key_len );
+
+	free( tmp_buf );
+
+	if ( key == NULL ) {
+		logadd( LOG_ERROR, "iscsi_portal_group_add_portal: Out of memory allocating key for iSCSI portal" );
+
+		return -1L;
+	}
+
+	int rc = iscsi_hashmap_put( portal_group->portals, key, key_len, (uint8_t *) portal );
+
+	if ( rc < 0 ) {
+		logadd( LOG_ERROR, "iscsi_portal_group_add_portal: Adding portal to hash map containing iSCSI portal group failed" );
+
+		iscsi_hashmap_key_destroy( key );
+
+		return rc;
+	}
+
+	portal->group = portal_group;
+
+	return 0L;
+}
+
+/**
+ * @brief Allocates and initializes an iSCSI portal structure.
+ *
+ * This function makes a copy of the passed host / IP address
+ * and port, but does NOT initialize the socket.
+ *
+ * @param[in] host Host / IP address of the portal.
+ * @param[in] port Port of the portal.
+ * @return Pointer to iSCSI portal structure or NULL
+ * in case of an error (memory exhausted).
+ */
+iscsi_portal *iscsi_portal_create(const uint8_t *host, const uint8_t *port)
+{
+	iscsi_portal *portal = (iscsi_portal *) malloc( sizeof(struct iscsi_portal) );
+
+	if ( portal == NULL ) {
+		logadd( LOG_ERROR, "iscsi_portal_create: Out of memory allocating iSCSI portal structure" );
+
+		return NULL;
+	}
+
+	portal->group = NULL;
+
+	const uint host_len = (uint) strlen( (char *) host ) + 1;
+
+	portal->host = (uint8_t *) malloc( host_len );
+
+	if ( portal->host == NULL ) {
+		logadd( LOG_ERROR, "iscsi_portal_create: Out of memory allocating iSCSI portal host name" );
+
+		return NULL;
+	}
+
+	memcpy( portal->host, host, host_len );
+
+	const uint port_len = (uint) strlen( (char *) port ) + 1;
+
+	portal->port = (uint8_t *) malloc( port_len );
+
+	if ( portal->port == NULL ) {
+		logadd( LOG_ERROR, "iscsi_portal_create: Out of memory allocating iSCSI portal port" );
+
+		return NULL;
+	}
+
+	memcpy( portal->port, port, port_len );
+
+	portal->sock = -1L;
+
+	return portal;
+}
+
+/**
+ * @brief Deallocates all resources acquired by iscsi_portal_create.
+ *
+ * This function frees the memory acquired for host / IP address
+ * and port but does NOT remove it from the portal group hash map.
+ *
+ * @param[in] portal Pointer to iSCSI portal to be deallocated,
+ * which may be NULL in which case the function does nothing.
+ */
+void iscsi_portal_destroy(iscsi_portal *portal)
+{
+	if ( portal != NULL ) {
+		if ( portal->port != NULL ) {
+			free( portal->port );
+
+			portal->port = NULL;
+		}
+
+		if ( portal->host != NULL ) {
+			free( portal->host );
+
+			portal->host = NULL;
+		}
+
+		free( portal );
+	}
+}
+
+/**
+ * @brief Allocates and initializes an iSCSI port.
+ *
+ * THis function marks the port in use, but does
+ * NOT set a transport ID. Everything else is
+ * initialized, however.
+ *
+ * @param[in] name Pointer to port name. This
+ * may NOT be NULL, so be careful.
+ * @param[in] id Identifier for this port.
+ * @param[in] index Index number for this port.
+ * @return Pointer to initialized iSCSI port or NULL
+ * in case of memory exhaustion.
+ */
+iscsi_port *iscsi_port_create(const uint8_t *name, const uint64_t id, const uint16_t index)
+{
+	iscsi_port *port = (iscsi_port *) malloc( sizeof(struct iscsi_port) );
+
+	if ( port == NULL ) {
+		logadd( LOG_ERROR, "iscsi_port_create: Out of memory allocating iSCSI port" );
+
+		return NULL;
+	}
+
+	const uint name_len = (uint) strlen( (char *) name ) + 1;
+
+	port->name = (uint8_t *) malloc( name_len );
+
+	if ( port->name == NULL ) {
+		logadd( LOG_ERROR, "iscsi_port_create: Out of memory allocating iSCSI port name" );
+
+		free( port );
+
+		return NULL;
+	}
+
+	memcpy( port->name, name, name_len );
+
+	port->transport_id     = NULL;
+	port->id               = id;
+	port->index            = index;
+	port->flags            = ISCSI_PORT_FLAGS_IN_USE;
+	port->transport_id_len = 0U;
+
+	return port;
+}
+
+/**
+ * @brief Deallocates all resources acquired iscsi_port_create.
+ *
+ * This function also frees the port name and transport ID,
+ * if they exist.
+ *
+ * @param[in] port iSCSI port to deallocate. This may
+ * be NULL in which case nothing happens.
+ */
+void iscsi_port_destroy(iscsi_port *port)
+{
+	if ( port != NULL ) {
+		if ( port->name != NULL ) {
+			free( port->name );
+
+			port->name = NULL;
+		}
+
+		if ( port->transport_id != NULL ) {
+			free( port->transport_id );
+
+			port->transport_id = NULL;
+		}
+
+		free( port );
+	}
+}
+
+/**
+ * @brief Retrieves the name of an iSCSI port.
+ *
+ * This function is just a getter.
+ *
+ * @param[in] port Pointer to iSCSI port to retrieve
+ * the name from and may NOT be NULL, so be
+ * careful.
+ * @return Pointer to string containing the name
+ * of the iSCSI port.
+ */
+uint8_t *iscsi_port_get_name(const iscsi_port *port)
+{
+        return port->name;
+}
+
+/**
+ * @brief Sets the SCSI transport ID of the iSCSI port.
+ *
+ * This function constructs the SCSI packet data
+ * for the SCSI transport id by assigning a name
+ * and the Initiator Session ID (ISID).\n
+ * Currently, always transport ID format 0x1 will
+ * be created.
+ *
+ * @param[in] Pointer to iSCSI port to assign the
+ * SCSI transport ID to. May NOT be NULL, so be
+ * careful.
+ * @param[in] Pointer to iSCSI name to assign
+ * along with the ISID as name.
+ * @param[in] Initiator Session ID (ISID).
+ * @return 0 if transport ID could be created
+ * successfully, a negative error code
+ * otherwise.
+ */
+int iscsi_port_transport_id_set(iscsi_port *port, const uint8_t *name, const uint64_t isid)
+{
+	uint8_t *tmp_buf = iscsi_sprintf_alloc( "%s,i,0x%12.12" PRIx64, name, isid );
+
+	if ( tmp_buf == NULL ) {
+		logadd( LOG_ERROR, "iscsi_port_transport_id_set: Out of memory allocating SCSI transport ID name for iSCSI port" );
+
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	const uint name_len = (uint) strlen( (char *) tmp_buf ) + 1;
+	const uint len = iscsi_align(name_len, ISCSI_ALIGN_SIZE);
+
+	if ( (len < 20UL) || ((len + offsetof(struct iscsi_transport_id, name)) >= 65536UL) ) {
+		logadd( LOG_ERROR, "iscsi_port_transport_id_set: Out of memory allocating SCSI transport ID for iSCSI port" );
+
+		free( tmp_buf );
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER;
+	}
+
+	port->transport_id = (iscsi_transport_id *) malloc( sizeof(struct iscsi_transport_id) + len );
+
+	if ( port->transport_id == NULL ) {
+		logadd( LOG_ERROR, "iscsi_port_transport_id_set: Out of memory allocating SCSI transport ID for iSCSI port" );
+
+		free( tmp_buf );
+
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	port->transport_id->id       = (ISCSI_TRANSPORT_ID_FORMAT << 6U) | ISCSI_TRANSPORT_ID_PROTOCOL_ID_ISCSI;
+	port->transport_id->reserved = 0U;
+	iscsi_put_be16( (uint8_t *) &port->transport_id->add_len, (uint16_t) len );
+
+	memcpy( ((uint8_t *) port->transport_id) + offsetof(struct iscsi_transport_id, name), tmp_buf, name_len );
+	memset( ((uint8_t *) port->transport_id) + offsetof(struct iscsi_transport_id, name) + name_len, 0, (name_len & (ISCSI_ALIGN_SIZE - 1)) );
+
+	port->transport_id_len = (uint16_t) (offsetof(struct iscsi_transport_id, name) + len);
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Gets an iSCSI device being in use by portal group identifier.
+ *
+ * This function uses the unique portal group
+ * identifier in order to get the port.
+ *
+ * @param[in] device Pointer to iSCSI device to be searched. May
+ * NOT be NULL, so take caution.
+ * @param[in] id Portal group ID to be searched for.
+ * @return Pointer to iSCSI port belonging to the iSCSI
+ * portal group ID or NULL if either the portal
+ * group ID does not exist or the port is NOT in use.
+ */
+iscsi_port *iscsi_device_find_port_by_portal_group_tag(const iscsi_device *device, const uint64_t id)
+{
+	iscsi_port *port;
+
+	if ( iscsi_hashmap_get( device->ports, (uint8_t *) &id, sizeof(id), (uint8_t **) &port ) < 0 )
+		return NULL;
+
+	if ( (port == NULL) || ((port->flags & ISCSI_PORT_FLAGS_IN_USE) == 0) )
+		return NULL;
+
+    return port;
+}
+
+/**
+ * @brief Finds an iSCSI target node by case insensitive name search.
+ *
+ * Callback function for each element while iterating
+ * through the iSCSI target nodes.
+ *
+ * @param[in] key Pointer to zero padded key. NULL is
+ * an invalid pointer here, so be careful.
+ * @param[in] key_size Number of bytes for the key, MUST
+ * be a multiple of 8 bytes which is NOT checked, so
+ * be careful.
+ * @param[in] value Value of the key, NULL creates an
+ * empty key assignment.
+ * @param[in,out] user_data Pointer to a data structure
+ * containing the iSCSI target node and the name to be
+ * searched for and may NOT be NULL, so be careful.
+ * @retval -1 The target node has been found and stored
+ * in the result strcuture. Therefore, no further
+ * searching is needed.
+ * @retval 0 The target node has not been found yet.
+ */
+int iscsi_target_node_find_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data)
+{
+	iscsi_target_node_find_name *target_find = (iscsi_target_node_find_name *) user_data;
+	iscsi_target_node *target = (iscsi_target_node *) value;
+
+	if ( strcasecmp( (char *) target->name, (char *) target_find->name ) != 0 )
+		return 0L;
+
+	target_find->target = target;
+
+	return -1L;
+}
+
+/**
+ * @brief Searches an iSCSI target node by name using case insensitive search.
+ *
+ * This function searches for an iSCSI target node
+ * by iterating through the iSCSI global target node
+ * hash map.
+ *
+ * @param[in] target_name Pointer to string containing the name
+ * of the iSCSI target node to be searched for.
+ * @return Pointer to found iSCSI target node or NULL
+ * in case no iSCSI target node has a matching name.
+ */
+iscsi_target_node *iscsi_target_node_find(uint8_t *target_name)
+{
+	if ( target_name == NULL )
+		return NULL;
+
+	iscsi_target_node_find_name target_find = {NULL, target_name};
+
+	iscsi_hashmap_iterate( iscsi_globvec->target_nodes, iscsi_target_node_find_callback, (uint8_t *) &target_find );
+
+	return target_find.target;
+}
+
+/**
+ * @brief Retrieves target node redirection address.
+ *
+ * This function checks whether the target node needs
+ * a redirect and is used for informing the client
+ * about a necessary redirection.
+ *
+ * @param[in] conn Pointer to iSCSI connection, may NOT
+ * be NULL, so be careful.
+ * @param[in] target Pointer to iSCSI target node where
+ * NULL is NOT allowed, so take caution.
+ * @return Pointer to redirect target address or NULL
+ * if no redirection.
+ */
+uint8_t *iscsi_target_node_get_redirect(iscsi_connection *conn, iscsi_target_node *target)
+{
+	// TODO: Implement function
+
+	return NULL;
+}
+
+/**
+ * @brief Checks if target node is accessible.
+ *
+ * This function checks whether access is possible
+ * to a specific iSCSI IQN and IP address.
+ *
+ * @param[in] conn Pointer to iSCSI connection which
+ * may NOT be NULL, so be careful.
+ * @param[in] target Pointer to iSCSI target node. NULL
+ * is not allowed here, to take caution.
+ * @param[in] iqn Pointer to iSCSI IQN string. This
+ * is not allowed to be NULL, so be careful.
+ * @param[in] adr Pointer to IP address, NULL is not
+ * allowed, so take care.
+ * @return 0 if access is possible, a negative error
+ * code otherwise.
+ */
+int iscsi_target_node_access(iscsi_connection *conn, iscsi_target_node *target, const uint8_t *iqn, const uint8_t *adr)
+{
+	// TODO: Implement access check function
+
+	return 0L;
+}
+
+/**
+ * @brief Creates and initializes an iSCSI session.
+ *
+ * This function creates and initializes all relevant
+ * data structures of an ISCSI session.\n
+ * Default key and value pairs are created and
+ * assigned before they are negotiated at the
+ * login phase.
+ *
+ * @param[in] conn Pointer to iSCSI connection to associate with the session.
+ * @param[in] target Pointer to iSCSI target node to assign with the session.
+ * @param[in] type Session type to initialize the session with.
+ * @return Pointer to initialized iSCSI session or NULL in case an error
+ * occured (usually due to memory exhaustion).
+ */
+iscsi_session *iscsi_session_create(iscsi_connection *conn, iscsi_target_node *target, const int type)
+{
+	iscsi_session *session = (iscsi_session *) malloc( sizeof(struct iscsi_session) );
+
+	if ( session == NULL ) {
+		logadd( LOG_ERROR, "iscsi_session_create: Out of memory allocating iSCSI session" );
+
+		return NULL;
+	}
+
+	session->max_conns              = ISCSI_SESSION_DEFAULT_MAX_CONNECTIONS;
+	session->max_outstanding_r2t    = ISCSI_SESSION_DEFAULT_MAX_OUTSTANDING_R2T;
+	session->default_time_to_wait   = ISCSI_SESSION_DEFAULT_TIME_TO_WAIT;
+	session->default_time_to_retain = ISCSI_SESSION_DEFAULT_TIME_TO_RETAIN;
+	session->first_burst_len        = ISCSI_SESSION_DEFAULT_FIRST_BURST_LEN;
+	session->max_burst_len          = ISCSI_SESSION_DEFAULT_MAX_BURST_LEN;
+	session->init_r2t               = ISCSI_SESSION_DEFAULT_INIT_R2T;
+	session->immediate_data         = ISCSI_SESSION_DEFAULT_IMMEDIATE_DATA;
+	session->data_pdu_in_order      = ISCSI_SESSION_DEFAULT_DATA_PDU_IN_ORDER;
+	session->data_seq_in_order      = ISCSI_SESSION_DEFAULT_DATA_SEQ_IN_ORDER;
+	session->err_recovery_level     = ISCSI_SESSION_DEFAULT_ERR_RECOVERY_LEVEL;
+	session->tag                    = conn->pg_tag;
+
+	session->connections = iscsi_hashmap_create( session->max_conns );
+
+	if ( session->connections == NULL ) {
+		logadd( LOG_ERROR, "iscsi_session_create: Out of memory allocating iSCSI session connection hash map" );
+
+		free( session );
+
+		return NULL;
+	}
+
+	uint8_t *conn_key = iscsi_hashmap_key_create( (uint8_t *) &conn->cid, sizeof(conn->cid) );
+
+	if ( conn_key == NULL ) {
+		logadd( LOG_ERROR, "iscsi_session_create: Out of memory allocating iSCSI session connection hash map" );
+
+		iscsi_hashmap_destroy( session->connections );
+		free( session );
+
+		return NULL;
+	}
+
+	iscsi_hashmap_put( session->connections, conn_key, sizeof(conn->cid), (uint8_t *) conn );
+
+	session->target                     = target;
+	session->isid                       = 0LL;
+	session->type                       = type;
+	session->current_text_init_task_tag = 0xFFFFFFFFUL;
+
+	session->key_value_pairs = iscsi_hashmap_create( 0UL );
+
+	if ( session->key_value_pairs == NULL ) {
+		logadd( LOG_ERROR, "iscsi_session_create: Out of memory allocating iSCSI session key and value pairs hash map" );
+
+		iscsi_hashmap_key_destroy( conn_key );
+		iscsi_hashmap_destroy( session->connections );
+		free( session );
+
+		return NULL;
+	}
+
+	int rc = iscsi_add_int_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_CONNECTIONS, session->max_conns );
+	rc    |= iscsi_add_int_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_OUTSTANDING_R2T, session->max_outstanding_r2t );
+	rc    |= iscsi_add_int_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DEFAULT_TIME_WAIT, session->default_time_to_wait );
+	rc    |= iscsi_add_int_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DEFAULT_TIME_RETAIN, session->default_time_to_retain );
+	rc    |= iscsi_add_int_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_FIRST_BURST_LEN, session->first_burst_len );
+	rc    |= iscsi_add_int_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_BURST_LEN, session->max_burst_len );
+	rc    |= iscsi_add_bool_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IMMEDIATE_DATA, session->immediate_data );
+	rc    |= iscsi_add_bool_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_PDU_IN_ORDER, session->data_pdu_in_order );
+	rc    |= iscsi_add_bool_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_SEQ_IN_ORDER, session->data_seq_in_order );
+	rc    |= iscsi_add_int_key_value_pair( session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_ERR_RECOVERY_LEVEL, session->err_recovery_level );
+	rc    |= iscsi_add_int_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_RECV_DS_LEN, conn->max_recv_ds_len );
+
+	if ( rc != 0 ) {
+		logadd( LOG_ERROR, "iscsi_session_create: Out of memory adding iSCSI session key and integer value pair" );
+
+		iscsi_hashmap_iterate( session->key_value_pairs, iscsi_hashmap_key_destroy_value_callback, NULL );
+		iscsi_hashmap_destroy( session->key_value_pairs );
+		iscsi_hashmap_key_destroy( conn_key );
+		iscsi_hashmap_destroy( session->connections );
+		free( session );
+
+		return NULL;
+	}
+
+	return session;
+}
+
+/**
+ * @brief Deallocates all resources acquired by iscsi_session_create.
+ *
+ * This function also frees the associated key and value pairs,
+ * the attached connections as well as frees the initator port.
+ *
+ * @param[in] session iSCSI session to be freed. May be NULL
+ * in which case this function does nothing at all.
+ */
+void iscsi_session_destroy(iscsi_session *session)
+{
+	if ( session != NULL ) {
+		session->tag    = 0L;
+		session->target = NULL;
+		session->type   = ISCSI_SESSION_TYPE_INVALID;
+
+		if ( session->key_value_pairs != NULL ) {
+			iscsi_hashmap_iterate( session->key_value_pairs, iscsi_hashmap_key_destroy_value_callback, NULL );
+			iscsi_hashmap_destroy( session->key_value_pairs );
+
+			session->key_value_pairs = NULL;
+		}
+
+		if ( session->connections != NULL ) {
+			iscsi_hashmap_iterate( session->connections, iscsi_connection_destroy_callback, NULL );
+			iscsi_hashmap_destroy( session->connections );
+
+			session->connections = NULL;
+		}
+
+		if ( session->initiator_port != NULL ) {
+			iscsi_port_destroy( session->initiator_port );
+
+			session->initiator_port = NULL;
+		}
+
+		free( session ); // TODO: Check if potential reusage of session makes sense.
+	}
+}
+
+/**
+ * @brief Creates data structure for an iSCSI connection from iSCSI portal and TCP/IP socket.
+ *
+ * Creates a data structure for incoming iSCSI connection
+ * requests from iSCSI packet data.
+ *
+ * @param[in] portal Pointer to iSCSI portal to associate the
+ * connection with.
+ * @param[in] sock TCP/IP socket to associate the connection with.
  * @return Pointer to initialized iSCSI connection structure or NULL in
  * case of an error (invalid iSCSI packet data or memory exhaustion).
  */
-iscsi_connection *iscsi_connection_create(const iscsi_login_req_packet *login_req_pkt)
+iscsi_connection *iscsi_connection_create(iscsi_portal *portal, const int sock)
 {
 	iscsi_connection *conn = (iscsi_connection *) malloc( sizeof(struct iscsi_connection) );
 
@@ -1830,6 +2687,7 @@ iscsi_connection *iscsi_connection_create(const iscsi_login_req_packet *login_re
 		return NULL;
 	}
 
+	conn->session         = NULL;
 	conn->key_value_pairs = iscsi_hashmap_create( 32UL );
 
 	if ( conn->key_value_pairs == NULL ) {
@@ -1840,48 +2698,39 @@ iscsi_connection *iscsi_connection_create(const iscsi_login_req_packet *login_re
 		return NULL;
 	}
 
-	conn->header_digest = 0L;
-	conn->data_digest = 0L;
-
-	conn->isid.a = login_req_pkt->isid.a;
-	conn->isid.b = iscsi_get_be16(login_req_pkt->isid.b);
-	conn->isid.c = login_req_pkt->isid.c;
-	conn->isid.d = iscsi_get_be16(login_req_pkt->isid.d);
-
-	conn->tsih = login_req_pkt->tsih; // Identifier, no need for endianess conversion
-	conn->init_task_tag = login_req_pkt->init_task_tag; // Identifier, no need for endianess conversion
-	conn->cid = login_req_pkt->cid; // Identifier, no need for endianess conversion
-	conn->cmd_sn = iscsi_get_be32(login_req_pkt->cmd_sn);
-	conn->exp_stat_sn = iscsi_get_be32(login_req_pkt->exp_stat_sn);
+	conn->partial_pairs      = NULL;
+	conn->device             = NULL;
+	conn->init_port          = NULL;
+	conn->init_name          = NULL;
+	conn->init_adr           = NULL;
+	conn->target             = NULL;
+	conn->target_port        = NULL;
+	conn->target_name_short  = NULL;
+	conn->portal_host        = NULL;
+	conn->portal_port        = NULL;
+	conn->header_digest      = 0L;
+	conn->data_digest        = 0L;
+    conn->pdu_processing     = NULL;
+	conn->login_response_pdu = NULL;
+	conn->sock               = sock;
+	conn->pdu_recv_state     = ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_READY;
+	conn->flags              = 0L;
+	conn->state              = ISCSI_CONNECT_STATE_INVALID;
+	conn->max_recv_ds_len    = ISCSI_DEFAULT_RECV_DS_LEN;
+	conn->pg_tag             = portal->group->tag;
+	conn->isid.a             = 0;
+	conn->isid.b             = 0;
+	conn->isid.c             = 0;
+	conn->isid.d             = 0;
+	conn->tsih               = 0U;
+	conn->cid           	 = 0U;
+	conn->init_task_tag      = 0UL;
+	conn->auth_chap.phase    = ISCSI_AUTH_CHAP_PHASE_NONE;
+	conn->chap_group         = 0L;
+	conn->stat_sn            = 0UL;
+	conn->exp_stat_sn        = 0UL;
 
 	return conn;
-}
-
-/**
- * @brief Deallocates all resources acquired by iscsi_connection_create.
- *
- * Deallocates a data structure of an iSCSI connection
- * request and all allocated hash maps which don't
- * require closing of external resources like closing
- * TCP/IP socket connections.
- *
- * @param[in] conn Pointer to iSCSI connection structure to be
- * deallocated, TCP/IP connections are NOT closed by this
- * function, use iscsi_connection_close for this. This may be
- * NULL in which case this function does nothing.
- */
-void iscsi_connection_destroy(iscsi_connection *conn)
-{
-	if ( conn != NULL ) {
-		if ( conn->key_value_pairs != NULL ) {
-			iscsi_hashmap_iterate( conn->key_value_pairs, iscsi_hashmap_key_destroy_value_callback, NULL );
-			iscsi_hashmap_destroy( conn->key_value_pairs );
-
-			conn->key_value_pairs = NULL;
-		}
-
-		free( conn );
-	}
 }
 
 /**
@@ -1908,4 +2757,2223 @@ int iscsi_connection_destroy_callback(uint8_t *key, const size_t key_size, uint8
 	iscsi_hashmap_key_destroy( key );
 
 	return 0L;
+}
+
+/**
+ * @brief Deallocates all resources acquired by iscsi_connection_create.
+ *
+ * Deallocates a data structure of an iSCSI connection
+ * request and all allocated hash maps which don't
+ * require closing of external resources like closing
+ * TCP/IP socket connections.
+ *
+ * @param[in] conn Pointer to iSCSI connection structure to be
+ * deallocated, TCP/IP connections are NOT closed by this
+ * function, use iscsi_connection_close for this. This may be
+ * NULL in which case this function does nothing.
+ */
+void iscsi_connection_destroy(iscsi_connection *conn)
+{
+	if ( conn != NULL ) {
+		if ( conn->portal_port != NULL ) {
+			free ( conn->portal_port );
+
+			conn->portal_port = NULL;
+		}
+
+		if ( conn->portal_host != NULL ) {
+			free ( conn->portal_host );
+
+			conn->portal_host = NULL;
+		}
+
+		if ( conn->target_name_short != NULL ) {
+			free ( conn->target_name_short );
+
+			conn->target_name_short = NULL;
+		}
+
+		if ( conn->init_adr != NULL ) {
+			free ( conn->init_adr );
+
+			conn->init_adr = NULL;
+		}
+
+		if ( conn->init_name != NULL ) {
+			free ( conn->init_name );
+
+			conn->init_name = NULL;
+		}
+
+		if ( conn->partial_pairs != NULL ) {
+			free ( conn->partial_pairs );
+
+			conn->partial_pairs = NULL;
+		}
+
+
+		if ( conn->key_value_pairs != NULL ) {
+			iscsi_hashmap_iterate( conn->key_value_pairs, iscsi_hashmap_key_destroy_value_callback, NULL );
+			iscsi_hashmap_destroy( conn->key_value_pairs );
+
+			conn->key_value_pairs = NULL;
+		}
+
+		free( conn );
+	}
+}
+
+/**
+ * @brief Drops all connections based on matching pattern.
+ *
+ * @param[in] conn Pointer to iSCSI connection which may
+ * NOT be NULL, so be careful.
+ * @param[in] conn_match Pointer to match string, NULL is
+ * not allowd here, so take caution.
+ * @param[in] all Non-zero number indicating removing all
+ * connections.
+ * @return 0 on success, a negative error code otherwise.
+ */
+int iscsi_connection_drop(iscsi_connection *conn, const uint8_t *conn_match, const int all)
+{
+	// TODO: Implement function.
+
+	return 0;
+}
+
+/**
+ * @brief Schedules an iSCSI connection.
+ *
+ * @param[in] conn Pointer to ISCSI connection to be
+ * scheduled. May NOT be NULL, so be careful.
+ */
+void iscsi_connection_schedule(iscsi_connection *conn)
+{
+	// TODO: Implement function.
+}
+
+/**
+ * @brief Reads data for the specified iSCSI connection from its TCP socket.
+ *
+ * The TCP socket is marked as non-blocking, so this function may not read
+ * all data requested.
+ *
+ * Returns ISCSI_CONNECT_PDU_READ_ERR_FATAL if the operation
+ * indicates a fatal error with the TCP connection (including
+ * if the TCP connection was closed unexpectedly).
+ *
+ * Otherwise returns the number of bytes successfully read.
+ */
+int iscsi_connection_read(const iscsi_connection *conn, uint8_t *buf, const uint len)
+{
+	if ( len == 0 )
+		return 0;
+
+	const int rc = (int) recv( conn->sock, buf, len, MSG_WAITALL );
+
+	return (rc > 0) ? rc : ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+}
+
+/**
+ * @brief Writes data for the specified iSCSI connection to its TCP socket.
+ *
+ * The TCP socket is marked as non-blocking, so this function may not read
+ * all data requested.
+ *
+ * Returns ISCSI_CONNECT_PDU_READ_ERR_FATAL if the operation
+ * indicates a fatal error with the TCP connection (including
+ * if the TCP connection was closed unexpectedly).
+ *
+ * Otherwise returns the number of bytes successfully written.
+ */
+int iscsi_connection_write(const iscsi_connection *conn, uint8_t *buf, const uint len)
+{
+	if ( len == 0 )
+		return 0;
+
+	const int rc = (int) send( conn->sock, buf, len, 0L );
+
+	return (rc > 0) ? rc : ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+}
+
+/**
+ * @brief Copies retrieved key and value pairs into SCSI connection and session structures.
+ *
+ * This function converts string representations of
+ * integer and boolean key and value pairs.
+ *
+ * @param[in] conn iSCSI connection which holds the
+ * copies of the key and value pairs.
+ * @retval -1 An error occured during the copy process,
+ * e.g. memory is exhausted.
+ * @retval 0 All key and value pairs were copied successfully.
+ */
+int iscsi_connection_copy_key_value_pairs(iscsi_connection *conn)
+{
+	int32_t int_val;
+
+	int rc = iscsi_get_int_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_RECV_DS_LEN, &int_val);
+
+	if ( rc != 0 )
+		return rc;
+
+	if ( (int_val <= 0L) || (int_val > (int32_t) ISCSI_DEFAULT_MAX_RECV_DS_LEN) )
+		int_val = ISCSI_DEFAULT_MAX_RECV_DS_LEN;
+
+	conn->max_recv_ds_len = int_val;
+
+	uint8_t *value;
+
+	rc = iscsi_get_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_HEADER_DIGEST, &value);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->header_digest = (strcasecmp( (char *) value, "CRC32C" ) == 0) ? ISCSI_DIGEST_SIZE : 0L;
+
+	rc = iscsi_get_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_DIGEST, &value);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->data_digest = (strcasecmp( (char *) value, "CRC32C" ) == 0) ? ISCSI_DIGEST_SIZE : 0L;
+
+	rc = iscsi_get_int_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_CONNECTIONS, &int_val);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->session->max_conns = int_val;
+
+	rc = iscsi_get_int_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_OUTSTANDING_R2T, &int_val);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->session->max_outstanding_r2t = int_val;
+
+	rc = iscsi_get_int_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_FIRST_BURST_LEN, &int_val);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->session->first_burst_len = int_val;
+
+	rc = iscsi_get_int_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_BURST_LEN, &int_val);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->session->max_burst_len = int_val;
+
+	rc = iscsi_get_bool_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_INITIAL_R2T, &int_val);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->session->init_r2t = int_val;
+
+	rc = iscsi_get_bool_key_value_pair( conn->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IMMEDIATE_DATA, &int_val);
+
+	if ( rc != 0 )
+		return rc;
+
+	conn->session->immediate_data = int_val;
+
+	return 0L;
+}
+
+/**
+ * @brief Checks buffer sizes of an iSCSI connection with it's associated session for consistency.
+ *
+ * This function ensures that, for example, first
+ * burst length does not exceed maximum burst
+ * length and that the buffers don't exceed their
+ * minimum and maximum allowed values.
+ *
+ * @param[in] conn Pointer to iSCSI connection which holds the
+ * values to be checked for consistency. May NOT be NULL,
+ * so take caution.
+ * @retval -1 At least one value check failed the consistency check.
+ * @retval 0 All consistency checks have passed successfully.
+ */
+static int iscsi_connection_check_key_value_pairs(iscsi_connection *conn)
+{
+	if ( (conn->session->first_burst_len > conn->session->max_burst_len) || (conn->session->first_burst_len < 512) || (conn->session->max_burst_len < 512) || (conn->session->max_burst_len > ISCSI_SESSION_DEFAULT_MAX_BURST_LEN) || (conn->max_recv_ds_len < 512) || (conn->max_recv_ds_len > ISCSI_SESSION_DEFAULT_MAX_BURST_LEN) )
+		return -1;
+
+	return 0;
+}
+
+/**
+ * @brief Updates iSCSI connection and session values after being retrieved from the client.
+ *
+ * This function copies the key and value pairs into the
+ * internal connection and session structure and checks
+ * them for consistency.\n
+ * The TCP receive buffer will be adjusted to the new
+ * updated value but is never lower than 4KiB and never
+ * higher than 8KiB plus header overhead and a factor of
+ * 4 for receiving four packets at once.
+ *
+ * @param[in] conn Pointer to ISCSI connection which should
+ * be updated.
+ * @retval -1 An error occured, e.g. socket is already closed.
+ * @retval 0 All values have been updated successfully and
+ * the socket is still alive.
+ */
+static int iscsi_connection_update_key_value_pairs(iscsi_connection *conn)
+{
+	int rc = iscsi_connection_copy_key_value_pairs( conn );
+
+	if ( rc < 0 ) {
+		if ( conn->state < ISCSI_CONNECT_STATE_EXITING )
+			conn->state = ISCSI_CONNECT_STATE_EXITING;
+
+		return rc;
+	}
+
+	rc = iscsi_connection_check_key_value_pairs( conn );
+
+	if ( (rc < 0) && (conn->state < ISCSI_CONNECT_STATE_EXITING) )
+		conn->state = ISCSI_CONNECT_STATE_EXITING;
+
+	if ( conn->sock < 0 )
+		return -1L;
+
+	uint recv_buf_len = conn->session->first_burst_len;
+
+	if ( recv_buf_len < 4096 )
+		recv_buf_len = 4096UL;
+	else if ( recv_buf_len > 8192 )
+		recv_buf_len = 8192UL;
+
+	recv_buf_len  += (uint) (sizeof(struct iscsi_bhs_packet) + 1020UL + conn->header_digest + conn->data_digest); // BHS + maximum AHS size + header and data digest overhead
+	recv_buf_len <<= 2UL; // Receive up to four streams at once.
+
+	setsockopt( conn->sock, SOL_SOCKET, SO_RCVBUF, &recv_buf_len, sizeof(recv_buf_len)); // Not being able to set the buffer is NOT fatal, so ignore error.
+
+	return rc;
+}
+
+/**
+ * @brief Prepares an iSCSI login response PDU and sends it via TCP/IP.
+ *
+ * This function constructs the login response PDU
+ * to be sent via TCP/IP.
+ *
+ * @param[in] conn Pointer to ISCSI connection to send the TCP/IP
+ * packet with.
+ * @param[in] login_response_pdu Pointer to login response PDU to
+ * be sent via TCP/IP.
+ * @param[in] key_value_pairs Pointer to hash map of key and value pairs
+ * to be used for login response storage.
+ * @paran[in] callback Pointer to post processing callback function
+ * after sending the TCP/IP packet.
+ */
+static void iscsi_connection_pdu_login_response(iscsi_connection *conn, iscsi_pdu *login_response_pdu, iscsi_hashmap *key_value_pairs, iscsi_connection_xfer_complete_callback callback)
+{
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+
+	login_response_pkt->version_max    = ISCSI_VERSION_MAX;
+	login_response_pkt->version_active = ISCSI_VERSION_MAX;
+
+	iscsi_put_be24( (uint8_t *) &login_response_pkt->ds_len, login_response_pdu->ds_len );
+	iscsi_put_be32( (uint8_t *) &login_response_pkt->stat_sn, conn->stat_sn++ );
+
+	if ( conn->session != NULL ) {
+		iscsi_put_be32( (uint8_t *) &login_response_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
+		iscsi_put_be32( (uint8_t *) &login_response_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	} else {
+		iscsi_put_be32( (uint8_t *) &login_response_pkt->exp_cmd_sn, login_response_pdu->cmd_sn );
+		iscsi_put_be32( (uint8_t *) &login_response_pkt->max_cmd_sn, login_response_pdu->cmd_sn );
+	}
+
+	if ( login_response_pkt->status_class != ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SUCCESS )
+		login_response_pkt->flags &= (int8_t) ~(ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT | ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK | ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK );
+
+	iscsi_hashmap_iterate( key_value_pairs, iscsi_hashmap_key_destroy_value_callback, NULL );
+	iscsi_hashmap_destroy( key_value_pairs );
+
+	iscsi_connection_pdu_write( conn, login_response_pdu, callback, (uint8_t *) conn );
+}
+
+/**
+ * @brief Callback function after login response has been sent.
+ *
+ * This function is invoked after the login
+ * response has been sent to the client via
+ * TCP/IP.
+ *
+ * @param[in] user_data Pointer to iSCSI connection which
+ * was used for sending the response.
+ */
+static void iscsi_connection_pdu_login_err_complete(uint8_t *user_data)
+{
+	iscsi_connection *conn = (iscsi_connection *) user_data;
+
+	if ( (conn->flags & ISCSI_CONNECT_FLAGS_FULL_FEATURE) != 0 )
+		iscsi_connection_update_key_value_pairs( conn );
+}
+
+/**
+ * @brief Callback function after login response has been sent.
+ *
+ * This function is invoked after the login
+ * response has been sent to the client via
+ * TCP/IP.
+ *
+ * @param[in] user_data Pointer to iSCSI connection which
+ * was used for sending the response.
+ */
+static void iscsi_connection_pdu_login_ok_complete(uint8_t *user_data)
+{
+	iscsi_connection *conn = (iscsi_connection *) user_data;
+
+	if ( conn->state >= ISCSI_CONNECT_STATE_EXITING )
+		return;
+
+	if ( (conn->flags & ISCSI_CONNECT_FLAGS_FULL_FEATURE) != 0 ) {
+		iscsi_connection_update_key_value_pairs( conn );
+
+		iscsi_connection_schedule( conn );
+	}
+}
+
+/**
+ * @brief Initializes an iSCSI login response PDU structure.
+ *
+ * This function initializes the internal login
+ * response data structure which is part of the iSCSI
+ * login procedure.
+ *
+ * @param[in] login_response_pdu Pointer to login response PDU, NULL
+ * is not an allowed value here, so take caution.
+ * @param[in] pdu Pointer to login request PDU from client,
+ * may NOT be NULL, so be careful.
+ * @return 0 if initialization was successful, a negative error
+ * code otherwise.
+ */
+static int iscsi_login_response_init(iscsi_pdu *login_response_pdu, const iscsi_pdu *pdu)
+{
+	iscsi_login_req_packet *login_req_pkt = (iscsi_login_req_packet *) pdu->bhs_pkt;
+	iscsi_login_response_packet *bhs_pkt  = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+
+	bhs_pkt->opcode = ISCSI_SERVER_LOGIN_RES;
+
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) iscsi_append_ds_packet( (iscsi_bhs_packet *) bhs_pkt, pdu->header_digest_size, ISCSI_DEFAULT_RECV_DS_LEN, pdu->data_digest_size );
+
+	if ( login_response_pkt == NULL ) {
+		bhs_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
+		bhs_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	login_response_pdu->bhs_pkt     = (iscsi_bhs_packet *) login_response_pkt;
+	login_response_pdu->ds_cmd_data = (iscsi_ds_cmd_data *) (((uint8_t *) login_response_pkt) + sizeof(struct iscsi_bhs_packet) + pdu->header_digest_size);
+	login_response_pdu->ds_len      = ISCSI_DEFAULT_RECV_DS_LEN;
+
+	login_response_pkt->flags |= (int8_t) (login_req_pkt->flags & (ISCSI_LOGIN_REQ_FLAGS_TRANSMIT | ISCSI_LOGIN_REQ_FLAGS_CONTINUE | ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_MASK));
+
+	if ( (login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT) != 0 )
+		login_response_pkt->flags |= (login_req_pkt->flags & ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_MASK);
+
+	login_response_pkt->isid.a        = login_req_pkt->isid.a;
+	login_response_pkt->isid.b        = login_req_pkt->isid.b; // Copying over doesn't change endianess.
+	login_response_pkt->isid.c        = login_req_pkt->isid.c;
+	login_response_pkt->isid.d        = login_req_pkt->isid.d; // Copying over doesn't change endianess.
+	login_response_pkt->tsih          = login_req_pkt->tsih; // Copying over doesn't change endianess.'
+	login_response_pkt->init_task_tag = login_req_pkt->init_task_tag; // Copying over doesn't change endianess.
+	login_response_pdu->cmd_sn        = iscsi_get_be32(login_req_pkt->cmd_sn);
+
+	if ( login_response_pkt->tsih != 0 )
+		login_response_pkt->stat_sn = login_req_pkt->exp_stat_sn; // Copying over doesn't change endianess.'
+
+	if ( ((login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT) != 0) && ((login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_CONTINUE) != 0) ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISC;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	} else if ( (ISCSI_VERSION_MIN < login_req_pkt->version_min) || (ISCSI_VERSION_MAX > login_req_pkt->version_max) ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_WRONG_VERSION;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	} else if ( (ISCSI_LOGIN_RESPONSES_FLAGS_GET_NEXT_STAGE(login_response_pkt->flags) == ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_RESERVED) && ((login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT) != 0) ) {
+		login_response_pkt->flags        &= (int8_t) ~(ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK | ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT | ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK);
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISC;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	} else {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SUCCESS;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SUCCESS;
+	}
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Saves incoming key / value pairs from the client of a login request PDU.
+ *
+ * The login response structure has status detail
+ * invalid login request type set in case of an error.
+ *
+ * @param[in] conn Pointer to iSCSI connection
+ * used for key and value pair extraction.
+ * @param[out] key_value_pairs Pointer to hash map which
+ * stores all the parsed key and value pairs.
+ * @param[in] login_response_pdu Pointer to iSCSI login response
+ * PDU, may NOT be NULL, so be careful.
+ * @param[in] pdu Pointer to iSCSI login request packet
+ * PDU, may NOT be NULL, so be careful.
+ * @retval -1 An error occured during parse of
+ * key and value pairs (memory exhaustion).
+ * @retval 0 All key and value pairs have been parsed successfully.
+ */
+int iscsi_connection_save_incoming_key_value_pairs(iscsi_connection *conn, iscsi_hashmap *key_value_pairs, iscsi_pdu *login_response_pdu, const iscsi_pdu *pdu)
+{
+	iscsi_login_req_packet *login_req_pkt           = (iscsi_login_req_packet *) pdu->bhs_pkt;
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+	const int rc = iscsi_parse_key_value_pairs( key_value_pairs, (uint8_t *) pdu->ds_cmd_data, pdu->ds_len, ((login_req_pkt->flags & ISCSI_LOGIN_REQ_FLAGS_CONTINUE) != 0), &conn->partial_pairs );
+
+	if ( rc < 0 ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISC;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER;
+	}
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Extracts the Initiator Session ID (ISID) from packet data into a 64-bit unsigned integer.
+ *
+ * The ISID is constructed by OR'ing and shifting the
+ * four parts a, b, c and d into their proper places
+ * with d being in the LSB area.\n
+ * Since the ISID is only 48 bit wide, the 16
+ * MSB bits are always cleared.
+ *
+ * @param[in] isid Pointer to the ISID part of packet data.
+ * May NOT be NULL, so be careful.
+ * @return The 64-bit unsigned integer value representing
+ * the Initiator Session ID (ISID).
+ */
+static inline uint64_t iscsi_connection_get_isid(const iscsi_isid *isid)
+{
+	return ((uint64_t) isid->a << 40ULL) | ((uint64_t) iscsi_get_be16(isid->b) << 24ULL) | ((uint64_t) isid->c << 16ULL) | (uint64_t) iscsi_get_be16(isid->d);
+}
+
+/**
+ * @brief Initializes the login response port names.
+ *
+ * This function extracts the initiator name from the
+ * key and value pair and stores the result in
+ * the iSCSI connection, as well as a full qualified
+ * initiator port name.
+ *
+ * @param[in] conn Pointer to iSCSI connection where to
+ * store the initiator name.
+ * @param[in] response_pdu Pointer to response PDU to initialize the
+ * port from, NULL is NOT allowed here, so be careful.
+ * @param[in] key_value_pairs Pointer to the hash map containing the key
+ * and value pair for the initator name. May NOT be NULL,
+ * so take caution.
+ * @param[out] init_port_name Pointer to store the full qualified name
+ * of the initiator port and may NOT be NULL, so be careful.
+ * @return 0 in case the port could be initialized
+ * successfully, a negative error code otherwise
+ * in which case the status class and detail are
+ * set as well.
+ */
+static int iscsi_connection_login_init_port(iscsi_connection *conn, iscsi_pdu *response_pdu, iscsi_hashmap *key_value_pairs, uint8_t **init_port_name)
+{
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) response_pdu->bhs_pkt;
+	uint8_t *init_name;
+	int rc = iscsi_get_key_value_pair( key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_INITIATOR_NAME, &init_name );
+
+	if ( rc != 0 ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISSING_PARAMETER;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	}
+
+	conn->init_name = iscsi_sprintf_alloc( "%s", init_name );
+
+	if ( conn->init_name == NULL ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	*init_port_name = iscsi_sprintf_alloc( "%s,i,0x%12.12" PRIx64, init_name, iscsi_connection_get_isid( &login_response_pkt->isid ) );
+
+	if ( *init_port_name == NULL ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+		free( conn->init_name );
+		conn->init_name = NULL;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Determines the session type of login.
+ *
+ * This function is used to retrieve the
+ * login session type and checks the
+ * relevant key and value pair for
+ * errors.
+ *
+ * @param[in] login_response_pdu Pointer to login response PDU,
+ * NULL is not allowed, so take caution.
+ * @param[in] key_value_pairs Pointer to key and value pairs which
+ * contain the session type parameter to be evaluated,
+ * which may NOT be NULL, so take caution.
+ * @param[out] type Pointer to integer which stores the
+ * determined session type and is NOT allowed to be
+ * NULL, so be careful.
+ * @return 0 on successful operation, a negative error code
+ * otherwise. The output session 'type' is unchanged, if
+ * an invalid session type value was retrieved.
+ */
+static int iscsi_connection_login_session_type(iscsi_pdu *login_response_pdu, iscsi_hashmap *key_value_pairs, int *type )
+{
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+	uint8_t *type_str;
+	int rc = iscsi_get_key_value_pair( key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_SESSION_TYPE, &type_str );
+
+	if ( (rc == 0) && (type_str != NULL) ) {
+		if ( strcasecmp( (char *) type_str, "Discovery" ) == 0 ) {
+			*type = ISCSI_SESSION_TYPE_DISCOVERY;
+		} else if ( strcasecmp( (char *) type_str, "Normal" ) == 0 ) {
+			*type = ISCSI_SESSION_TYPE_NORMAL;
+		} else {
+			*type = ISCSI_SESSION_TYPE_INVALID;
+
+			login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+			login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISSING_PARAMETER;
+
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+		}
+	} else {
+		if ( login_response_pkt->tsih != 0 ) {
+			*type = ISCSI_SESSION_TYPE_NORMAL;
+		} else {
+			login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+			login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISSING_PARAMETER;
+
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+		}
+	}
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Checks the target node info and sets login response PDU accordingly.
+ *
+ * This function also checks if the target node is
+ * redirected and if so, sets the response to the
+ * client response to the temporarily redirection
+ * URL.\n
+ * THe accessibility of the target node is
+ * also checked.
+ *
+ * @param[in] conn Pointer to iSCSI connection which may NOT be
+ * NULL, so be careful.
+ * @param[in] login_response_pdu Pointer to login response PDU
+ * to set the parameters for. NULL is NOT allowed
+ * here, so take caution.
+ * @param[in] target_name Pointer to target node name and may
+ * NOT be NULL, be careful.
+ * @param[out] Pointer where to store the target node belonging
+ * to the target name. May NOT be NULL, so take caution.
+ * @return 0 if the check was successful or a negative
+ * error code otherwise.
+ */
+static int iscsi_connection_login_check_target(iscsi_connection *conn, iscsi_pdu *login_response_pdu, uint8_t *target_name, iscsi_target_node **target)
+{
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+
+	*target = iscsi_target_node_find( target_name );
+
+	if ( *target == NULL ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_NOT_FOUND;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	}
+
+	if ( ((*target)->flags & ISCSI_TARGET_NODE_FLAGS_DESTROYED) != 0 ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_TARGET_REMOVED;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	}
+
+	uint8_t *redirect_adr = iscsi_target_node_get_redirect( conn, *target );
+
+	if ( redirect_adr != NULL ) {
+		if ( iscsi_add_key_value_pair( login_response_pdu->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ADDRESS, redirect_adr ) == 0 ) {
+			login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_REDIRECT;
+			login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_REDIRECT_TEMP;
+
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+		}
+
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	if ( iscsi_target_node_access( conn, *target, conn->init_name, conn->init_adr ) < 0 ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_AUTH_FAIL;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	}
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Retrieves iSCSI session by Target Session Identifying Handle (TSIH).
+ *
+ * This function checks if the TSIH is valid and if so,
+ * retrieves the pointer to its iSCSI session structure.
+ *
+ * @param[in] tsih Target Session Identifying Handle (TSIH).
+ * @return Pointer to related iSCSI session or NULL in case
+ * the TSIH is invalid or not found.
+ */
+static iscsi_session *iscsi_session_get_by_tsih(const uint16_t tsih)
+{
+	if ( tsih == 0 )
+		return NULL;
+
+	const uint64_t hash_key = tsih;
+	iscsi_session *session;
+	int rc = iscsi_hashmap_get( iscsi_globvec->sessions, (uint8_t *) &hash_key, sizeof(hash_key), (uint8_t **) &session );
+
+	return (rc == 0) ? session : NULL;
+}
+
+/**
+ * @brief Appends an iSCSI connection to a session.
+ *
+ * This function checks if the maximum number of
+ * connections per session is not exceeded and if
+ * there is session spanning.
+ * @param[in] conn Pointer to iSCSI connection, may NOT
+ * be NULL, so be careful.
+ * @param[in] init_port_name Pointer to initiator port name,
+ * may NOT be NULL, so take caution.
+ * @param[in] tsih Target Session Identifying Handle (TSIH).
+ * @param[in] cid Connection ID (CID).
+ * @return Upper 8 bits of contain status class, lower 8
+ * bits status detail. All 16 bits set to zero
+ * indicate success.
+ */
+static uint16_t iscsi_session_append(iscsi_connection *conn, const uint8_t *init_port_name, const uint16_t tsih, const uint16_t cid)
+{
+	iscsi_session *session = iscsi_session_get_by_tsih( tsih );
+
+	if ( (session == NULL) || (conn->pg_tag != session->tag) || (strcasecmp( (char *) init_port_name, (char *) iscsi_port_get_name( session->initiator_port ) ) != 0) || (conn->target != session->target) )
+		return (ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR << 8U) | ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_NO_SESSION_SPANNING;
+
+	if ( iscsi_hashmap_size( session->connections ) >= session->max_conns )
+		return (ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR << 8U) | ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_TOO_MANY_CONNECTIONS;
+
+	conn->session = session;
+
+	uint8_t *conn_key = iscsi_hashmap_key_create( (uint8_t *) &cid, sizeof(cid) );
+
+	if ( conn_key == NULL )
+		return (ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR << 8U) | ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+	iscsi_hashmap_put( session->connections, conn_key, sizeof(cid), (uint8_t *) conn );
+
+	return (ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SUCCESS << 8U) | ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SUCCESS;
+}
+
+/**
+ * @brief Checks whether the session is valid.
+ *
+ * This function also appends the connection
+ * to a session if it's valid.'
+ *
+ * @param[in] conn Pointer to iSCSI connection,
+ * may NOT be NULL, so take caution.
+ * @param[in] login_response_pdu Pointer to login response PDU,
+ * NULL is not allowed, hence be careful.
+ * @param[in] init_port_name Pointer to initiator port name.
+ * Non-NULL only, so be careful.
+ * @param[in] cid Connection ID (CID).
+ * @return 0 if valid session, a negative error code
+ * otherwise.
+ */
+static int iscsi_connection_login_check_session(iscsi_connection *conn, iscsi_pdu *login_response_pdu, uint8_t *init_port_name, uint cid)
+{
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+	int rc = 0L;
+
+	if ( login_response_pkt->tsih != 0 ) {
+		rc = iscsi_session_append( conn, init_port_name, iscsi_get_be16(login_response_pkt->tsih), (uint16_t) cid );
+
+		if ( rc != 0 ) {
+			login_response_pkt->status_class  = (uint8_t) (rc >> 8U);
+			login_response_pkt->status_detail = (uint8_t) rc;
+
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+		}
+	} else if ( (iscsi_globvec->flags & ISCSI_GLOBALS_FLAGS_ISID_ALLOW_DUPLICATES) != 0 ) {
+		iscsi_connection_drop( conn, init_port_name, 0 );
+	}
+
+	return rc;
+}
+
+/**
+ * @brief Initializes a rejecting login response packet.
+ *
+ * The login response structure has status detail
+ * invalid login request type set.
+ *
+ * @param[in] login_response_pdu Pointer to iSCSI login response PDU,
+ * NULL is an invalid value here, so take caution.
+ * @param[in] pdu Pointer to iSCSI login request PDU, may NOT
+ * be NULL, so be careful.
+ */
+void iscsi_login_response_reject_init(iscsi_pdu *login_response_pdu, const iscsi_pdu *pdu)
+{
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+
+	login_response_pkt->opcode         = ISCSI_SERVER_LOGIN_RES;
+	login_response_pkt->version_max    = ISCSI_VERSION_MAX;
+	login_response_pkt->version_active = ISCSI_VERSION_MAX;
+	login_response_pkt->init_task_tag  = ((iscsi_login_req_packet *) pdu->bhs_pkt)->init_task_tag;
+	login_response_pkt->status_class   = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+	login_response_pkt->status_detail  = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_INVALID_LOGIN_REQ_TYPE;
+}
+
+/**
+ * @brief Creates an iSCSI PDU structure used by connections.
+ *
+ * The PDU structure is used for allowing partial
+ * reading from the TCP/IP socket and correctly
+ * filling the data until everything has been read.
+ *
+ * @param[in] conn Pointer to connection to link the PDU with.
+ * If this is NULL the connection has to be linked later.
+ * @return Pointer to allocated and zero filled PDU or NULL
+ * in case of an error (usually memory exhaustion).
+ */
+iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn)
+{
+	iscsi_pdu *pdu = (iscsi_pdu *) malloc( sizeof(struct iscsi_pdu) );
+
+	if ( pdu == NULL ) {
+		logadd( LOG_ERROR, "iscsi_pdu_create: Out of memory while allocating iSCSI PDU" );
+
+		return NULL;
+	}
+
+	pdu->bhs_pkt = iscsi_create_packet();
+
+	if ( pdu->bhs_pkt == NULL ) {
+		free( pdu );
+
+		return NULL;
+	}
+
+	pdu->ahs_pkt                = NULL;
+	pdu->header_digest          = NULL;
+	pdu->ds_cmd_data            = NULL;
+	pdu->data_digest            = NULL;
+	pdu->key_value_pairs        = iscsi_hashmap_create( 32UL );
+
+	if ( pdu->key_value_pairs == NULL ) {
+		free( pdu );
+
+		return NULL;
+	}
+
+	pdu->flags                  = 0L;
+	pdu->header_digest_size     = 0L;
+	pdu->header_digest_read_len = 0UL;
+	pdu->data_digest_size       = 0L;
+	pdu->data_digest_read_len   = 0UL;
+	pdu->bhs_read_len           = 0UL;
+	pdu->ahs_len                = 0UL;
+	pdu->ahs_read_len           = 0UL;
+	pdu->ds_len                 = 0UL;
+	pdu->buf_len                = 0UL;
+	pdu->conn                   = conn;
+	pdu->cmd_sn                 = 0UL;
+
+	return pdu;
+}
+
+/**
+ * @brief Destroys an iSCSI PDU structure used by connections.
+ *
+ * All associated data which has been read so
+ * far will be freed as well.
+ *
+ * @param[in] pdu PDU structure to be deallocated, may be NULL
+ * in which case this function does nothing.
+ */
+void iscsi_connection_pdu_destroy(iscsi_pdu *pdu)
+{
+	if ( pdu != NULL ) {
+		if ( pdu->key_value_pairs != NULL ) {
+			iscsi_hashmap_iterate( pdu->key_value_pairs, iscsi_hashmap_key_destroy_value_callback, NULL );
+			iscsi_hashmap_destroy( pdu->key_value_pairs );
+
+			pdu->key_value_pairs = NULL;
+		}
+
+		if ( pdu->bhs_pkt != NULL ) {
+			free( pdu->bhs_pkt );
+
+			pdu->bhs_pkt = NULL;
+		}
+
+		free( pdu );
+	}
+}
+
+/**
+ * @brief Writes and sends a response PDU to the client.
+ *
+ * This function sends a response PDU to the
+ * client after being processed by the server.\n
+ * If a header or data digest (CRC32C) needs to
+ * be calculated, this is done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI server response PDU to send.
+ * May NOT be NULL, so be careful.
+ * @param[in] callback Callback function to be invoked
+ * after TCP/IP packet has been sent successfully.
+ * May be NULL in case no further action is required.
+ * @param[in,out] user_data Data for the callback
+ * function. May be NULL if the callback function
+ * doesn't require additional data.
+ */
+void iscsi_connection_pdu_write(iscsi_connection *conn, iscsi_pdu *pdu, iscsi_connection_xfer_complete_callback callback, uint8_t *user_data)
+{
+	if ( conn->state >= ISCSI_CONNECT_STATE_EXITING )
+		return;
+
+	if ( ISCSI_GET_OPCODE(pdu->bhs_pkt->opcode) != ISCSI_CLIENT_LOGIN_REQ ) {
+		if ( conn->header_digest != 0 )
+			iscsi_calc_header_digest( pdu->bhs_pkt );
+
+		if ( (conn->data_digest != 0) && (pdu->ds_len != 0) )
+			iscsi_calc_data_digest( pdu->bhs_pkt, conn->header_digest );
+	}
+
+	const uint len = (uint) (sizeof(struct iscsi_bhs_packet) + pdu->ahs_len + conn->header_digest + iscsi_align(pdu->ds_len, ISCSI_ALIGN_SIZE) + conn->data_digest);
+
+	// TODO: Do the writing in a queue.
+	iscsi_connection_write( conn, (uint8_t *) pdu->bhs_pkt, len );
+
+	if ( callback != NULL )
+		callback( user_data );
+}
+
+/**
+ * @brief Constructs and sends an iSCSI reject response to the client.
+ *
+ * This function constructs an reject response PDU with its
+ * packet data.\n
+ * The original rejected packet data is appended as DataSegment
+ * according by iSCSI standard specification.
+ *
+ * @param[in] conn Pointer to iSCSI connection for reject packet construction.
+ * @param[in] pdu Pointer to iSCSI source PDU which contains the rejected packet data.
+ * @param[in] reason_code Reason code for rejected packet data.
+ * @retval -1 An error occured during reject packet generation,
+ * currently only happens on memory exhaustion.
+ * @retval 0 Reject packet and PDU constructed and sent successfully to the client.
+ */
+static int iscsi_connection_handle_reject(iscsi_connection *conn, iscsi_pdu *pdu, const int reason_code)
+{
+	pdu->flags |= ISCSI_PDU_FLAGS_REJECTED;
+
+	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn );
+
+	if ( response_pdu == NULL ) {
+		logadd( LOG_ERROR, "iscsi_pdu_create: Out of memory while allocating iSCSI reject response PDU" );
+
+		return -1L;
+	}
+
+	const uint32_t ds_len = (uint32_t) sizeof(struct iscsi_bhs_packet) + ((uint32_t) pdu->bhs_pkt->total_ahs_len << 2UL) + conn->header_digest;
+	iscsi_reject_packet *reject_pkt = (iscsi_reject_packet *) iscsi_append_ds_packet( pdu->bhs_pkt, conn->header_digest, ds_len, conn->data_digest );
+
+	if ( reject_pkt == NULL ) {
+		logadd( LOG_ERROR, "iscsi_pdu_create: Out of memory while allocating iSCSI reject packet data" );
+
+		iscsi_connection_pdu_destroy( response_pdu );
+
+		return -1L;
+	}
+
+	response_pdu->bhs_pkt = (iscsi_bhs_packet *) reject_pkt;
+
+	if ( conn->header_digest != 0 ) {
+		response_pdu->header_digest      = (iscsi_header_digest *) (((iscsi_bhs_packet *) reject_pkt) + 1);
+		response_pdu->header_digest_size = conn->header_digest;
+	}
+
+	response_pdu->ds_cmd_data = (iscsi_ds_cmd_data *) (((uint8_t *) reject_pkt) + sizeof(struct iscsi_bhs_packet) + conn->header_digest);
+	response_pdu->ds_len      = ds_len;
+
+	if ( conn->data_digest != 0 ) {
+		response_pdu->data_digest      = (iscsi_data_digest *) (((uint8_t *) response_pdu->ds_cmd_data) + iscsi_align(ds_len, ISCSI_ALIGN_SIZE));
+		response_pdu->data_digest_size = conn->data_digest;
+	}
+
+	reject_pkt->opcode = ISCSI_SERVER_REJECT;
+	reject_pkt->flags |= -0x80;
+	reject_pkt->reason = (uint8_t) reason_code;
+	iscsi_put_be24( (uint8_t *) &reject_pkt->ds_len, ds_len );
+	reject_pkt->tag    = 0xFFFFFFFFUL;
+	iscsi_put_be32( (uint8_t *) &reject_pkt->stat_sn, conn->stat_sn++ );
+
+	if ( conn->session != NULL ) {
+		iscsi_put_be32( (uint8_t *) &reject_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
+		iscsi_put_be32( (uint8_t *) &reject_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	} else {
+		iscsi_put_be32( (uint8_t *) &reject_pkt->exp_cmd_sn, 1 );
+		iscsi_put_be32( (uint8_t *) &reject_pkt->max_cmd_sn, 1 );
+	}
+
+	memcpy( ((uint8_t *) reject_pkt) + sizeof(struct iscsi_bhs_packet), pdu->bhs_pkt, ds_len );
+
+	iscsi_connection_pdu_write( conn, response_pdu, NULL, NULL );
+
+	return 0L;
+}
+
+/**
+ * @brief Updates Command Sequence Number (CmdSN) of an incoming iSCSI PDU request.
+ *
+ * This function updates the Command Sequence
+ * Number (CmdSN) for incoming data sent by
+ * the client.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_update_cmd_sn(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement update CmdSN.
+
+	return 0L;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header login request PDU.
+ *
+ * This function handles login request header
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_login_req(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	if ( ((conn->flags & ISCSI_CONNECT_FLAGS_FULL_FEATURE) != 0) && (conn->session != NULL) && (conn->session->type == ISCSI_SESSION_TYPE_DISCOVERY) )
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+	const iscsi_login_req_packet *login_req_pkt = (iscsi_login_req_packet *) pdu->bhs_pkt;
+
+	pdu->cmd_sn = iscsi_get_be32(login_req_pkt->cmd_sn);
+
+	if ( pdu->ds_len > ISCSI_DEFAULT_RECV_DS_LEN )
+		return iscsi_connection_handle_reject( conn, pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
+
+	iscsi_pdu *login_response_pdu = iscsi_connection_pdu_create( conn );
+
+	if ( login_response_pdu == NULL )
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+	const int rc = iscsi_login_response_init( login_response_pdu, pdu );
+
+	if ( rc < 0 ) {
+		iscsi_connection_pdu_login_response( conn, login_response_pdu, NULL, iscsi_connection_pdu_login_err_complete );
+
+		return ISCSI_CONNECT_PDU_READ_OK;
+	}
+
+	conn->login_response_pdu = login_response_pdu;
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header NOP-Out request PDU.
+ *
+ * This function handles NOP-Out request header
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_nop_out(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header SCSI command request PDU.
+ *
+ * This function handles SCSI command request
+ * header data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_scsi_cmd(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header task management function request PDU.
+ *
+ * This function handles task management function
+ * request header data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_task_func_req(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header text request PDU.
+ *
+ * This function handles text request header
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_text_req(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header SCSI data out PDU.
+ *
+ * This function handles header SCSI data out
+ * sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_scsi_data_out(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header logout request PDU.
+ *
+ * This function handles logout request header
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_logout_req(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header SNACK request PDU.
+ *
+ * This function handles SNACK request header
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle_snack_req(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0;
+}
+
+/**
+ * @brief Handles an incoming iSCSI header PDU.
+ *
+ * This function handles all header data sent
+ * by the client, including authentication.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_header_handle(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	if ( pdu == NULL )
+		return -1L;
+
+	const int opcode = ISCSI_GET_OPCODE(pdu->bhs_pkt->opcode);
+
+	if ( opcode == ISCSI_CLIENT_LOGIN_REQ )
+		return iscsi_connection_pdu_header_handle_login_req( conn, pdu );
+
+	if ( ((conn->flags & ISCSI_CONNECT_FLAGS_FULL_FEATURE) == 0) && (conn->state == ISCSI_CONNECT_STATE_RUNNING) ) {
+		iscsi_pdu *login_response_pdu = iscsi_connection_pdu_create( conn );
+
+		if ( login_response_pdu == NULL )
+			return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+		iscsi_login_response_reject_init( login_response_pdu, pdu );
+		iscsi_connection_pdu_write( conn, login_response_pdu, NULL, NULL );
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	} else if ( conn->state == ISCSI_CONNECT_STATE_INVALID ) {
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	int rc = iscsi_connection_update_cmd_sn( conn, pdu );
+
+	if ( rc != 0 )
+		return rc;
+
+	switch ( opcode ) {
+		case ISCSI_CLIENT_NOP_OUT : {
+			rc = iscsi_connection_pdu_header_handle_nop_out( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_SCSI_CMD : {
+			rc = iscsi_connection_pdu_header_handle_scsi_cmd( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_TASK_FUNC_REQ : {
+			rc = iscsi_connection_pdu_header_handle_task_func_req( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_TEXT_REQ : {
+			rc = iscsi_connection_pdu_header_handle_text_req( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_SCSI_DATA_OUT : {
+			rc = iscsi_connection_pdu_header_handle_scsi_data_out( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_LOGOUT_REQ : {
+			rc = iscsi_connection_pdu_header_handle_logout_req( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_SNACK_REQ : {
+			rc = iscsi_connection_pdu_header_handle_snack_req( conn, pdu );
+
+			break;
+		}
+		default : {
+			return iscsi_connection_handle_reject( conn, pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
+
+			break;
+		}
+	}
+
+	return rc;
+}
+
+/**
+ * @brief Handles an incoming iSCSI payload data NOP-Out request PDU.
+ *
+ * This function handles NOP-Out request payload
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_data_handle_nop_out(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0L;
+}
+
+/**
+ * @brief Handles an incoming iSCSI payload data SCSI command request PDU.
+ *
+ * This function handles SCSI command request payload
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_data_handle_scsi_cmd(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0L;
+}
+
+/**
+ * @brief Allocates and replaces a string value to a key / value hash map pair.
+ *
+ * This function allocates memory for a string key
+ * and its string value and replaces a original
+ * key and value pair if it exists.
+ *
+ * @param[in] conn Pointer to iSCSI connection to update the
+ * login key and value pair for and may NOT
+ * be NULL, so take care.
+ * @param[in] key_value_pairs Pointer to the hash map which should
+ * contain the replaced string key and value pair. NULL is NOT
+ * allowed here, so be careful.
+ * @param[in] key String containing the key name as string. May
+ * NOT be NULL, so take caution.
+ * @param[in] value String containing the value to be stored.
+ * @return 0 on successful operation, or a negative value on
+ * error (memory exhaustion).
+ */
+static int iscsi_connection_login_update_key_value_pair(iscsi_connection *conn, const uint8_t *key, const uint8_t *value)
+{
+	const uint key_len = (uint) strlen( (char *) key ) + 1;
+	uint8_t *hash_key = iscsi_hashmap_key_create( key, key_len );
+
+	if ( hash_key == NULL ) {
+		logadd( LOG_ERROR, "iscsi_connection_login_update_key_value_pair: Out of memory allocating key." );
+
+		return -1L;
+	}
+
+	const uint val_len = (uint) strlen( (char *) value ) + 1;
+	uint8_t *hash_val = (uint8_t *) malloc( val_len );
+
+	if ( hash_val == NULL ) {
+		logadd( LOG_ERROR, "iscsi_connection_login_update_key_value_pair: Out of memory allocating string value." );
+
+		return -1L;
+	}
+
+	memcpy( hash_val, value, val_len );
+
+	return iscsi_hashmap_put_free( conn->key_value_pairs, hash_key, key_len, hash_val, iscsi_hashmap_key_destroy_value_callback, NULL );
+}
+
+/**
+ * @brief Negotiates connection authentication method (none or CHAP).
+ *
+ * This function updates the key and value pairs if, and only if
+ * CHAP is either disabled or required.
+ *
+ * @param[in] conn Pointer to iSCSI connection to update the key
+ * and value pairs for. May NOT be NULL, so be careful.
+ * @return 0 on successful update, a negative error code otherwise.
+ */
+static int iscsi_connection_chap_negotiate(iscsi_connection *conn)
+{
+	int rc = 0;
+
+	if ( (conn->flags & ISCSI_CONNECT_FLAGS_CHAP_DISABLE) != 0 )
+		rc = iscsi_connection_login_update_key_value_pair( conn, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD, (uint8_t *) "None" );
+	else if ( (conn->flags & ISCSI_CONNECT_FLAGS_CHAP_REQUIRE) != 0 )
+		rc = iscsi_connection_login_update_key_value_pair( conn, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD, (uint8_t *) "CHAP" );
+
+	return rc;
+}
+
+/**
+ * @brief Discovers iSCSI CHAP authentication session.
+ *
+ * This function copies over the global CHAP configuration
+ * into the iSCSI connection structure and then negotiates.
+ *
+ * @param[in] conn Pointer to iSCSI connection for iSCSI
+ * CHAP authentication discovery. May NOT be
+ * NULL, so be careful.
+ * @return 0 on successful negotiation, a negative error
+ * code otherwise.
+ */
+static int iscsi_connection_login_session_chap_discovery(iscsi_connection *conn)
+{
+	conn->flags &= ~(ISCSI_CONNECT_FLAGS_CHAP_DISABLE | ISCSI_CONNECT_FLAGS_CHAP_REQUIRE | ISCSI_CONNECT_FLAGS_CHAP_MUTUAL);
+
+	if ( (iscsi_globvec->flags & ISCSI_GLOBALS_FLAGS_CHAP_DISABLE) != 0 )
+		conn->flags |= ISCSI_CONNECT_FLAGS_CHAP_DISABLE;
+
+	if ( (iscsi_globvec->flags & ISCSI_GLOBALS_FLAGS_CHAP_REQUIRE) != 0 )
+		conn->flags |= ISCSI_CONNECT_FLAGS_CHAP_REQUIRE;
+
+	if ( (iscsi_globvec->flags & ISCSI_GLOBALS_FLAGS_CHAP_MUTUAL) != 0 )
+		conn->flags |= ISCSI_CONNECT_FLAGS_CHAP_MUTUAL;
+
+	conn->chap_group = iscsi_globvec->chap_group;
+
+	return iscsi_connection_chap_negotiate( conn );
+}
+
+/**
+ * @brief Negotiates CHAP authentication.
+ *
+ * This function updates the key and value pairs if, and only if
+ * CHAP authentication is either disabled or required in the
+ * target node.
+ *
+ * @param[in] conn Pointer to iSCSI connection to update the key
+ * and value pairs for. May NOT be NULL, so be careful.
+ * @param[in] target Pointer to iSCSI target node used to check
+ * the CHAP authentication. NULL is not allowed here,
+ * so take caution.
+ * @return 0 on successful update, a negative error code otherwise.
+ */
+static int iscsi_connection_login_chap_negotiate(iscsi_connection *conn, const iscsi_target_node *target)
+{
+	conn->flags &= ~(ISCSI_CONNECT_FLAGS_CHAP_DISABLE | ISCSI_CONNECT_FLAGS_CHAP_REQUIRE | ISCSI_CONNECT_FLAGS_CHAP_MUTUAL);
+
+	if ( (target->flags & ISCSI_TARGET_NODE_FLAGS_CHAP_DISABLE) != 0 )
+		conn->flags |= ISCSI_CONNECT_FLAGS_CHAP_DISABLE;
+
+	if ( (target->flags & ISCSI_TARGET_NODE_FLAGS_CHAP_REQUIRE) != 0 )
+		conn->flags |= ISCSI_CONNECT_FLAGS_CHAP_REQUIRE;
+
+	if ( (target->flags & ISCSI_TARGET_NODE_FLAGS_CHAP_MUTUAL) != 0 )
+		conn->flags |= ISCSI_CONNECT_FLAGS_CHAP_MUTUAL;
+
+	conn->chap_group = target->chap_group;
+
+	return iscsi_connection_chap_negotiate( conn );
+}
+
+/**
+ * @brief Negotiates connection header and data digest (CRC32C).
+ *
+ * This function updates the key and value pairs if, and only if
+ * header and data digests are enabled in the target node.
+ *
+ * @param[in] conn Pointer to iSCSI connection to update the key
+ * and value pairs for. May NOT be NULL, so be careful.
+ * @param[in] target Pointer to iSCSI target node used to check
+ * the digest status. NULL is not allowed here, so take
+ * caution.
+ * @return 0 on successful update, a negative error code otherwise.
+ */
+static int iscsi_connection_login_digest_negotiate(iscsi_connection *conn, const iscsi_target_node *target)
+{
+	if ( target->header_digest != 0 ) {
+		const int rc = iscsi_connection_login_update_key_value_pair( conn, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_HEADER_DIGEST, (uint8_t *) "CRC32C" );
+
+		return rc;
+	}
+
+	if ( target->data_digest != 0 ) {
+		const int rc = iscsi_connection_login_update_key_value_pair( conn, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_DIGEST, (uint8_t *) "CRC32C" );
+
+		return rc;
+	}
+
+	return 0L;
+}
+
+/**
+ * @brief Determines iSCSI session login steps for normal authentication.
+ *
+ * This function also does related validation checks.
+ *
+ * @param[in] conn Pointer to iSCSI connection, may NOT be
+ * NULL, so take caution.
+ * @param[in] login_response_pdu Pointer to login response PDU where
+ * NULL is not allowed, so be careful.
+ * @param[in] key_value_pairs Pointer to hash map containing the login
+ * request key and value pairs and may NOT be NULL, so
+ * take caution.
+ * @param[in] init_port_name Pointer to iSCSI initiator port name. NULL
+ * is NOT an allowed value, so be careful.
+ * @param[in] cid Connection ID (CID).
+ * @return 0 on successful operation, a negative error code
+ * otherwise.
+ */
+static int iscsi_connection_login_session_normal(iscsi_connection *conn, iscsi_pdu *login_response_pdu, iscsi_hashmap *key_value_pairs, uint8_t *init_port_name, const uint cid)
+{
+	iscsi_target_node *target = NULL;
+	uint8_t *target_name;
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+	int rc = iscsi_get_key_value_pair( key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_NAME, &target_name );
+
+	if ( (rc < 0) || (target_name == NULL) ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISSING_PARAMETER;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	}
+
+	const uint8_t *target_name_short = (uint8_t *) strstr( (char *) target_name, ":" );
+
+	conn->target_name_short = iscsi_sprintf_alloc( "%s", ((target_name_short != NULL) ? ++target_name_short : target_name) );
+
+	if ( conn->target_name_short == NULL ) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
+
+	rc = iscsi_connection_login_check_target( conn, login_response_pdu, target_name, &target );
+
+	if ( rc < 0 )
+		return rc;
+
+	conn->device      = target->device;
+	conn->target      = target;
+	conn->target_port = iscsi_device_find_port_by_portal_group_tag( target->device, conn->pg_tag );
+
+	rc = iscsi_connection_login_check_session( conn, login_response_pdu, init_port_name, cid );
+
+	if ( rc < 0 )
+		return rc;
+
+	rc = iscsi_connection_login_chap_negotiate( conn, target );
+
+	if ( rc == 0 )
+		rc = iscsi_connection_login_digest_negotiate( conn, target );
+
+	if (rc != 0) {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_INVALID_LOGIN_REQ_TYPE;
+	}
+
+	return rc;
+}
+
+/*
+ * This function is used to set the info in the connection data structure
+ * return
+ * 0: success
+ * otherwise: error
+ */
+static int iscsi_connection_login_set_info(iscsi_connection *conn, iscsi_pdu *login_response_pdu, const uint8_t *init_port_name, const int type, const uint cid)
+{
+	conn->flags          &= ~ISCSI_CONNECT_FLAGS_AUTH;
+	conn->auth_chap.phase = ISCSI_AUTH_CHAP_PHASE_WAIT_A;
+	conn->cid             = (uint16_t) cid;
+
+	if ( conn->session == NULL ) {
+		iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+		iscsi_target_node *target = conn->target;
+		const uint64_t isid = iscsi_connection_get_isid( &login_response_pkt->isid );
+		iscsi_port *init_port = iscsi_port_create( init_port_name, isid, 0U );
+
+		if ( init_port == NULL ) {
+			login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
+			login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+		}
+
+		conn->session = iscsi_session_create( conn, target, type );
+
+		if ( conn->session == NULL ) {
+			iscsi_port_destroy( init_port );
+
+			login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
+			login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
+
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+		}
+
+		conn->session->initiator_port = init_port;
+		conn->stat_sn                 = iscsi_get_be32(login_response_pkt->stat_sn);
+		conn->session->isid           = isid;
+
+		const int rc = iscsi_port_transport_id_set( conn->session->initiator_port, conn->init_name, isid );
+
+		if ( rc < 0 ) {
+			iscsi_session_destroy( conn->session );
+			conn->session = NULL;
+
+			iscsi_port_destroy( init_port );
+
+			return rc;
+		}
+
+		conn->session->queue_depth = (target != NULL) ? target->queue_depth : 1UL;
+		conn->session->exp_cmd_sn  = login_response_pdu->cmd_sn;
+		conn->session->max_cmd_sn  = login_response_pdu->cmd_sn + conn->session->queue_depth - 1;
+	}
+
+	conn->init_port = conn->session->initiator_port;
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Sets iSCSI session target info key and value pairs.
+ *
+ * This function also sets the login response PDU
+ * key and value pairs.
+ *
+ * @param[in] conn Pointer to iSCSI connection of which
+ * the target info should be set, may NOT be NULL,
+ * so take caution.
+ * @param[in] login_response_pdu Pointer to login response PDU and
+ * NULL is not allowed here, so be careful.
+ * @param[in] type iSCSI session type.
+ * @return 0 on successfully setting target info, a
+ * negative error code otherwise.
+ */
+static int iscsi_connection_login_set_target_info(iscsi_connection *conn, iscsi_pdu *login_response_pdu, const int type)
+{
+	iscsi_target_node *target = conn->target;
+	int rc;
+
+	if ( target != NULL ) {
+		rc = iscsi_add_key_value_pair( conn->session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ALIAS, ((target->alias != NULL) ? target->alias : (uint8_t *) "") );
+
+		if ( rc < 0 )
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER;
+	}
+
+	uint8_t *tmp_buf = iscsi_sprintf_alloc( "%s:%s,%d", conn->portal_host, conn->portal_port, conn->pg_tag );
+
+	if ( tmp_buf == NULL )
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+	rc = iscsi_add_key_value_pair( conn->session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ADDRESS, tmp_buf );
+
+	free( tmp_buf );
+
+	if ( rc < 0 )
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER;
+
+	rc = iscsi_add_int_key_value_pair( conn->session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_PORTAL_GROUP_TAG, conn->pg_tag );
+
+	if ( rc < 0 )
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER;
+
+	if ( target != NULL ) {
+		rc = iscsi_get_key_value_pair( conn->session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ALIAS, &tmp_buf );
+
+		if ( (rc == 0) && (strlen( (char *) tmp_buf ) != 0) ) {
+			rc = iscsi_add_key_value_pair( login_response_pdu->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ALIAS, tmp_buf );
+
+			if ( rc < 0 )
+				return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+		}
+
+		if ( type == ISCSI_SESSION_TYPE_DISCOVERY ) {
+			rc = iscsi_get_key_value_pair( conn->session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ADDRESS, &tmp_buf );
+
+			if ( (rc == 0) && (strlen( (char *) tmp_buf ) != 0) ) {
+				rc = iscsi_add_key_value_pair( login_response_pdu->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ADDRESS, tmp_buf );
+
+				if ( rc < 0 )
+					return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+			}
+		}
+
+		rc = iscsi_get_key_value_pair( conn->session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_PORTAL_GROUP_TAG, &tmp_buf );
+
+		if ( rc == 0 ) {
+			rc = iscsi_add_key_value_pair( login_response_pdu->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_PORTAL_GROUP_TAG, tmp_buf );
+
+			if ( rc < 0 )
+				return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+		}
+	}
+
+	return ISCSI_CONNECT_PDU_READ_OK;
+}
+
+/**
+ * @brief Handles iSCSI connection login phase none.
+ *
+ * This function negotiates the login phase
+ * without a session.
+ *
+ * @param[in] conn Pointer to iSCSI connection,
+ * may NOT be NULL, so be careful.
+ * @param[in] login_response_pdu Pointer to login response PDU.
+ * NULL is not allowed here, so take caution.
+ * @param[in] key_value_pairs Pointer to key and value pairs.
+ * which may NOT be NULL, so take caution.
+ * @param[in] cid Connection ID (CID).
+ * @return 0 on success, a negative error code otherwise.
+ */
+static int iscsi_connection_handle_login_phase_none(iscsi_connection *conn, iscsi_pdu *login_response_pdu, iscsi_hashmap *key_value_pairs, uint cid)
+{
+	uint8_t *init_port_name;
+	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
+
+	conn->device = NULL;
+	conn->target = NULL;
+
+	int rc = iscsi_connection_login_init_port( conn, login_response_pdu, key_value_pairs, &init_port_name );
+
+	if ( rc < 0 )
+		return rc;
+
+	int type;
+
+	rc = iscsi_connection_login_session_type( login_response_pdu, key_value_pairs, &type );
+
+	if ( rc < 0 )
+		return rc;
+
+	if ( type == ISCSI_SESSION_TYPE_NORMAL ) {
+		rc = iscsi_connection_login_session_normal( conn, login_response_pdu, key_value_pairs, init_port_name, cid );
+	} else if ( type == ISCSI_SESSION_TYPE_DISCOVERY ) {
+		login_response_pkt->tsih = 0U;
+
+		rc = iscsi_connection_login_session_chap_discovery( conn );
+	} else {
+		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
+		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISSING_PARAMETER;
+
+		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
+	}
+
+	if ( rc < 0 )
+		return rc;
+
+	rc = iscsi_connection_login_set_info( conn, login_response_pdu, init_port_name, type, cid );
+
+	if ( rc < 0 )
+		return rc;
+
+	if ( type == ISCSI_SESSION_TYPE_DISCOVERY ) {
+		conn->session->max_conns = 1;
+
+		rc = iscsi_add_int_key_value_pair( conn->session->key_value_pairs, (uint8_t *) ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_CONNECTIONS, conn->session->max_conns );
+
+		if ( rc < 0 )
+			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER;
+	}
+
+	return iscsi_connection_login_set_target_info( conn, login_response_pdu, type );
+}
+
+/**
+ * @brief Handles iSCSI connection login response.
+ *
+ * This function negotiates the login parameters
+ * and determines the authentication method.
+ *
+ * @param[in] conn Pointer to iSCSI connection,
+ * may NOT be NULL, so be careful.
+ * @param[in] login_response_pdu Pointer to login response PDU.
+ * NULL is not allowed here, so take caution.
+ * @param[in] key_value_pairs Pointer to key and value pairs.
+ * which may NOT be NULL, so take caution.
+ * @return 0 on success, a negative error code otherwise.
+ */
+static int iscsi_connecction_handle_login_response(iscsi_connection *conn, iscsi_pdu *login_response_pdu, iscsi_hashmap *key_value_pairs)
+{
+	// TODO: Implement function.
+
+	return 0L;
+}
+
+/**
+ * @brief Handles an incoming iSCSI payload data login request PDU.
+ *
+ * This function handles login request payload
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_data_handle_login_req(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	iscsi_pdu *login_response_pdu = (iscsi_pdu *) conn->login_response_pdu;
+
+	if ( login_response_pdu == NULL )
+		return 0L;
+
+	iscsi_hashmap *key_value_pairs = iscsi_hashmap_create( 32UL );
+
+	if ( key_value_pairs == NULL )
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+	iscsi_login_req_packet *login_req_pkt = (iscsi_login_req_packet *) pdu->bhs_pkt;
+	uint cid = iscsi_get_be16(login_req_pkt->cid);
+	int rc = iscsi_connection_save_incoming_key_value_pairs( conn, key_value_pairs, login_response_pdu, pdu );
+
+	if ( rc < 0 ) {
+		iscsi_connection_pdu_login_response( conn, login_response_pdu, NULL, iscsi_connection_pdu_login_err_complete );
+
+		return 0L;
+	}
+
+	if ( conn->state == ISCSI_CONNECT_STATE_INVALID ) {
+		rc = iscsi_connection_handle_login_phase_none( conn, login_response_pdu, key_value_pairs, cid );
+
+		if ( (rc == ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE) || (rc == ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER) ) {
+			iscsi_connection_pdu_login_response( conn, login_response_pdu, key_value_pairs, iscsi_connection_pdu_login_err_complete );
+
+			return 0L;
+		}
+	}
+
+	rc = iscsi_connecction_handle_login_response( conn, login_response_pdu, key_value_pairs );
+
+	if ( rc == ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE ) {
+		iscsi_connection_pdu_login_response( conn, login_response_pdu, key_value_pairs, iscsi_connection_pdu_login_err_complete );
+
+		return 0L;
+	}
+
+	conn->state = ISCSI_CONNECT_STATE_RUNNING;
+
+	iscsi_connection_pdu_login_response( conn, login_response_pdu, key_value_pairs, iscsi_connection_pdu_login_ok_complete );
+
+	return 0L;
+}
+
+/**
+ * @brief Handles an incoming iSCSI payload data text request PDU.
+ *
+ * This function handles text request payload
+ * data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_data_handle_text_req(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0L;
+}
+
+/**
+ * @brief Handles an incoming iSCSI payload data SCSI data out request PDU.
+ *
+ * This function handles SCSI data out request
+ * payload data sent by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_data_handle_scsi_data_out(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement opcode.
+
+	return 0L;
+}
+
+/**
+ * @brief Handles an incoming iSCSI payload data PDU.
+ *
+ * This function handles all payload data sent
+ * by the client.\n
+ * If a response needs to be sent, this will
+ * be done as well.
+ *
+ * @param[in] conn iSCSI connection to handle. May
+ * NOT be NULL, so take caution.
+ * @param[in] pdu iSCSI client request PDU to handle.
+ * May be NULL in which case an error is returned.
+ * @return 0 on success. A negative value indicates
+ * an error. A positive value a warning.
+ */
+static int iscsi_connection_pdu_data_handle(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	int rc = 0;
+
+	const uint8_t opcode = ISCSI_GET_OPCODE(pdu->bhs_pkt->opcode);
+
+	switch ( opcode ) {
+		case ISCSI_CLIENT_NOP_OUT : {
+			rc = iscsi_connection_pdu_data_handle_nop_out( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_SCSI_CMD : {
+			rc = iscsi_connection_pdu_data_handle_scsi_cmd( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_LOGIN_REQ : {
+			rc = iscsi_connection_pdu_data_handle_login_req( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_TEXT_REQ : {
+			rc = iscsi_connection_pdu_data_handle_text_req( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_SCSI_DATA_OUT : {
+			rc = iscsi_connection_pdu_data_handle_scsi_data_out( conn, pdu );
+
+			break;
+		}
+		case ISCSI_CLIENT_TASK_FUNC_REQ :
+		case ISCSI_CLIENT_LOGOUT_REQ :
+		case ISCSI_CLIENT_SNACK_REQ : {
+			break;
+		}
+		default : {
+			return iscsi_connection_handle_reject( conn, pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
+
+			break;
+		}
+	}
+
+	return rc;
+}
+
+/**
+ * @brief Retrieves and merges splitted iSCSI PDU data read from TCP/IP socket.
+ *
+ * This function handles partial reads of data
+ * packet.\n
+ * Since iSCSI data can span multiple packets, not
+ * only by TCP/IP itself, but also by iSCSI protocol
+ * specifications, multiple calls are needed in order
+ * to be sure that all data packets have been
+ * received.
+ *
+ * @param[in] conn iSCSI connection to read TCP/IP data from.
+ * @param[in] pdu iSCSI PDU to read TCP/IP data into.
+ * @retval -1 Fatal error occured during processing the PDU.
+ * @retval 0 Read operation was successful and next read is ready.
+ * @retval 1 Read operation was successful and PDU was fully processed.
+ */
+int iscsi_connection_pdu_data_read(iscsi_connection *conn, iscsi_pdu *pdu)
+{
+	// TODO: Implement DS read.
+
+	return 0;
+}
+
+/**
+ * @brief Retrieves and merges splitted iSCSI PDU data read from TCP/IP socket.
+ *
+ * This function handles partial reads of BHS, AHS
+ * and DS packet data.\n
+ * Since iSCSI data can span multiple packets, not
+ * only by TCP/IP itself, but also by iSCSI protocol
+ * specifications, multiple calls are needed in order
+ * to be sure that all data packets have been
+ * received.
+ *
+ * @param[in] conn iSCSI connection to read TCP/IP data from.
+ * @retval -1 Fatal error occured during processing the PDU.
+ * @retval 0 Read operation was successful and next read is ready.
+ * @retval 1 Read operation was successful and PDU was fully processed.
+ */
+static int iscsi_connection_pdu_read(iscsi_connection *conn)
+{
+	int prev_recv_state;
+
+	do {
+		iscsi_pdu *pdu = conn->pdu_processing;
+
+		prev_recv_state = conn->pdu_recv_state;
+
+		switch ( conn->pdu_recv_state ) {
+			case ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_READY : {
+				conn->pdu_processing = iscsi_connection_pdu_create( conn );
+
+				if ( conn->pdu_processing == NULL )
+					return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+				conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_HDR;
+
+				break;
+			}
+			case ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_HDR : {
+				if ( pdu->bhs_read_len < sizeof(struct iscsi_bhs_packet) ) {
+					const int len = iscsi_connection_read( conn, (((uint8_t *) pdu->bhs_pkt) + pdu->bhs_read_len), (sizeof(struct iscsi_bhs_packet) - pdu->bhs_read_len) );
+
+					if ( len < 0 ) {
+						conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_ERR;
+
+						break;
+					}
+
+					pdu->bhs_read_len += len;
+
+					if ( pdu->bhs_read_len < sizeof(struct iscsi_bhs_packet) )
+						return ISCSI_CONNECT_PDU_READ_OK;
+				}
+
+				if ( (conn->flags & ISCSI_CONNECT_FLAGS_LOGGED_OUT) != 0 ) {
+					conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_ERR;
+
+					break;
+				}
+
+				pdu->ds_len  = iscsi_align(pdu->ds_len, ISCSI_ALIGN_SIZE);
+				pdu->buf_len = pdu->ds_len;
+
+				const uint ahs_len = (uint) pdu->bhs_pkt->total_ahs_len << 2UL;
+
+				if ( pdu->ahs_read_len < ahs_len ) {
+					if ( pdu->ahs_pkt == NULL ) {
+						pdu->ahs_pkt = (iscsi_ahs_packet *) iscsi_append_ahs_packet( pdu->bhs_pkt, (uint32_t) ahs_len );
+
+						if ( pdu->ahs_pkt == NULL )
+							return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+						pdu->ahs_pkt = (iscsi_ahs_packet *) (((iscsi_bhs_packet *) pdu->bhs_pkt) + 1);
+					}
+
+					const int len = iscsi_connection_read( conn, (((uint8_t *) pdu->ahs_pkt) + pdu->ahs_read_len), (ahs_len - pdu->ahs_read_len) );
+
+					if ( len < 0 ) {
+						conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_ERR;
+
+						break;
+					}
+
+					pdu->ahs_read_len += len;
+
+					if ( pdu->ahs_read_len < ahs_len )
+						return ISCSI_CONNECT_PDU_READ_OK;
+				}
+
+				if ( conn->header_digest != 0 ) {
+					if ( pdu->header_digest == NULL ) {
+						pdu->header_digest = (iscsi_header_digest *) iscsi_append_header_digest_packet( pdu->bhs_pkt, ISCSI_DIGEST_SIZE );
+
+						if ( pdu->header_digest == NULL )
+							return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+						pdu->header_digest = (iscsi_header_digest *) (((uint8_t *) pdu->bhs_pkt) + sizeof(struct iscsi_bhs_packet) + ahs_len);
+					}
+
+					if ( pdu->header_digest_read_len < (uint) conn->header_digest ) {
+						const int len = iscsi_connection_read( conn, (((uint8_t *) pdu->header_digest) + pdu->header_digest_read_len), (conn->header_digest - pdu->header_digest_read_len) );
+
+						if ( len < 0 ) {
+							conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_ERR;
+
+							break;
+						}
+
+						pdu->header_digest_read_len += len;
+
+						if ( pdu->header_digest_read_len < (uint) conn->header_digest )
+							return ISCSI_CONNECT_PDU_READ_OK;
+					}
+
+					if  ( iscsi_validate_header_digest( pdu->bhs_pkt ) == 0 ) {
+						conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_ERR;
+
+						break;
+					}
+				}
+
+				conn->pdu_recv_state = (iscsi_connection_pdu_header_handle( conn, pdu ) < 0L) ? ISCSI_CONNECT_PDU_RECV_STATE_ERR : ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_DATA;
+
+				break;
+			}
+			case ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_DATA : {
+				if ( pdu->ds_len != 0 ) {
+					const int len = iscsi_connection_pdu_data_read( conn, pdu );
+
+					if ( len < 0 ) {
+						conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_ERR;
+
+						break;
+					} else if ( len > 0 ) {
+						return ISCSI_CONNECT_PDU_READ_OK;
+					}
+				}
+
+				int rc;
+
+				if ( (conn->flags & ISCSI_CONNECT_FLAGS_REJECTED) != 0 )
+					rc = 0;
+				else
+					rc = iscsi_connection_pdu_data_handle( conn, pdu );
+
+				if ( rc == 0 ) {
+					iscsi_connection_pdu_destroy( pdu );
+
+					conn->pdu_processing = NULL;
+					conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_READY;
+
+					return ISCSI_CONNECT_PDU_READ_PROCESSED;
+				} else {
+					conn->pdu_recv_state = ISCSI_CONNECT_PDU_RECV_STATE_ERR;
+				}
+
+				break;
+			}
+			case ISCSI_CONNECT_PDU_RECV_STATE_ERR : {
+				return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+
+				break;
+			}
+			default : {
+				logadd( LOG_ERROR, "iscsi_connection_pdu_read: Fatal error reading, unknown packet status. Should NEVER happen! Please report this bug to the developer" );
+
+				break;
+			}
+		}
+	} while ( prev_recv_state != conn->pdu_recv_state );
+
+	return 0;
+}
+
+#define ISCSI_PDU_HANDLE_COUNT 16
+
+/**
+ * @brief Handle incoming PDU data, read up to 16 fragments at once.
+ *
+ * Until iSCSI processing has been stopped or a
+ * complete iSCSI packet has been read, this
+ * function will read, parse and process
+ * incoming iSCSI protocol data.
+ *
+ * @param[in] iSCSI connection to handle.
+ * @return Number of proccessed fragments or return
+ * code of iscsi_connection_pdu_read in case of a
+ * fatal error.
+ */
+int iscsi_connection_pdu_handle(iscsi_connection *conn)
+{
+	uint i;
+
+	for ( i = 0; i < ISCSI_PDU_HANDLE_COUNT; i++ ) {
+		int rc = iscsi_connection_pdu_read(conn);
+
+		if ( rc == 0 )
+			break;
+		else if ( rc < 0 )
+			return rc;
+
+		if ( (conn->flags & ISCSI_CONNECT_FLAGS_STOPPED) != 0 )
+			break;
+	}
+
+	return i;
 }
