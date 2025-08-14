@@ -141,6 +141,12 @@ uint8_t *iscsi_sprintf_alloc(const char *format, ... ); // Allocates a buffer an
 /// Key data size must be multiple of 8 bytes by now.
 #define ISCSI_HASHMAP_KEY_ALIGN (1UL << (ISCSI_HASHMAP_KEY_ALIGN_SHIFT))
 
+/// Value data shift value for alignment enforcement.
+#define ISCSI_HASHMAP_VALUE_ALIGN_SHIFT 4UL
+
+/// Value data size is a multiple of 16 bytes for key and value pairs, which allows us to change their integer values without reallocation of memory.
+#define ISCSI_HASHMAP_VALUE_ALIGN (1UL << (ISCSI_HASHMAP_VALUE_ALIGN_SHIFT))
+
 
 /// Initial hash code.
 #define ISCSI_HASHMAP_HASH_INITIAL 0x811C9DC5UL
@@ -253,8 +259,20 @@ int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, u
 /* iSCSI protocol stuff (all WORD/DWORD/QWORD values are big endian by default
    unless specified otherwise). */
 
-/// iSCSI Basic Header Segment size.
+/// iSCSI Basic Header Segment (BHS) size.
 #define ISCSI_BHS_SIZE 48UL
+
+/// iSCSI Advanced Header Segment (AHS) maximum allowed size.
+#define ISCSI_MAX_AHS_SIZE (255UL << 2UL)
+
+/// iSCSI DataSegment maximum allowed size.
+#define ISCSI_MAX_DS_SIZE 16777215UL
+
+/// iSCSI packet data alignment (BHS, AHS and DataSegment).
+#define ISCSI_ALIGN_SIZE 4UL
+
+/// iSCSI header and data digest size (CRC32C).
+#define ISCSI_DIGEST_SIZE 4UL
 
 
 /// iSCSI Default receive DataSegment (DS) size in bytes.
@@ -265,13 +283,6 @@ int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, u
 
 /// iSCSI default maximum DataSegment receive length in bytes
 #define ISCSI_DEFAULT_MAX_DATA_OUT_PER_CONNECTION 16UL
-
-
-/// iSCSI header and data digest size (CRC32C).
-#define ISCSI_DIGEST_SIZE 4UL
-
-/// iSCSI packet data alignment (BHS, AHS and DataSegment).
-#define ISCSI_ALIGN_SIZE 4UL
 
 
 /// Current minimum iSCSI protocol version supported by this implementation.
@@ -380,6 +391,7 @@ int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, u
 
 /// Macro which extracts iSCSI packet data opcode out of opcode byte
 #define ISCSI_GET_OPCODE(x) ((x) & ISCSI_OPCODE_MASK)
+
 
 /**
  * @brief iSCSI Basic Header Segment packet data.
@@ -4317,7 +4329,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * this also indicates that the initiator is ready for the Login
  * Final-Response.
  */
-#define ISCSI_LOGIN_REQ_FLAGS_TRANSMIT (1 << 7)
+#define ISCSI_LOGIN_REQ_FLAGS_TRANSIT  (1 << 7)
 
 
 /**
@@ -4487,7 +4499,7 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
 #define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK ((1 << (ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT)) | (1 << (ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_SECOND_BIT)))
 
 /// Login response flags: Extracts the Next Stage (NSG) bits.
-#define ISCSI_LOGIN_RESPONSES_FLAGS_GET_NEXT_STAGE(x) (((x) & ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK) >> ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT)
+#define ISCSI_LOGIN_RESPONSE_FLAGS_GET_NEXT_STAGE(x) (((x) & ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK) >> ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT)
 
 
 
@@ -4527,7 +4539,7 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
 #define ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK ((1 << (ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT)) | (1 << (ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_SECOND_BIT)))
 
 /// Login request flags: Extracts the Current Stage (CSG) bits.
-#define ISCSI_LOGIN_RESPONSES_FLAGS_GET_CURRENT_STAGE(x) (((x) & ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK) >> ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT)
+#define ISCSI_LOGIN_RESPONSE_FLAGS_GET_CURRENT_STAGE(x) (((x) & ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK) >> ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT)
 
 
 /**
@@ -4554,7 +4566,7 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
  * If the Status-Class is 0, the T bit MUST NOT be set to 1 if the T bit
  * in the request was set to 0.
  */
-#define ISCSI_LOGIN_RESPONSE_FLAGS_TRANSMIT      (1 << 7)
+#define ISCSI_LOGIN_RESPONSE_FLAGS_TRANSIT       (1 << 7)
 
 
 /**
@@ -5688,6 +5700,7 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 /// Maximum length of value for a normal key.
 #define ISCSI_TEXT_VALUE_MAX_LEN        8192UL
 
+
 /// iSCSI text key=value pair type: Invalid.
 #define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_INVALID         -1L
 
@@ -5716,6 +5729,55 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
 #define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_BOOL_AND         7L
 
 
+/// iSCSI key value pair flags: Discovery ignored.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_DISCOVERY_IGNORE    (1 << 0L)
+
+/// iSCSI key value pair flags: Multi negotiation.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_MULTI_NEGOTIATION   (1 << 1L)
+
+/// iSCSI key value pair flags: Target declarative.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_TARGET_DECLARATIVE  (1 << 2L)
+
+/// iSCSI key value pair flags: CHAP type.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_CHAP_TYPE           (1 << 3L)
+
+/// iSCSI key value pair flags: Requires special handling.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_SPECIAL_HANDLING    (1 << 4L)
+
+/// iSCSI key value pair flags: Use previous default value.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_PREVIOUS_VALUE  (1 << 5L)
+
+/// iSCSI key value pair flags: Override with default value.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_OVERRIDE_DEFAULT    (1 << 6L)
+
+/// iSCSI key value pair flags: Uses maximum value depending on secondary key.
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_OTHER_MAX_VALUE (1 << 7L)
+
+
+/**
+ * @brief iSCSI connection and session lookup table entry, used for allowed key values and determining key type.
+ *
+ * This structure is shared by the iSCSI session
+ * and the iSCSI connection lookup table.
+ */
+typedef struct iscsi_key_value_pair_lut_entry {
+    /// Name of key.
+    uint8_t *key;
+
+    /// Default value of the key, always in string representation.
+    uint8_t *value;
+
+    /// NUL separated list of allowed string values. If key type is numeric: NUL separated minimum and maximum integer range. End is marked with another NUL.
+    uint8_t *list_range;
+
+    /// Type of key and value pair.
+    const int type;
+
+    /// Flags indicating special key attributes.
+    const int flags;
+} iscsi_key_value_pair_lut_entry;
+
+
 /**
  * @brief iSCSI Text / Login extracted key=value pair.
  *
@@ -5724,14 +5786,20 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
  * Text or Login packet data.
  */
 typedef struct iscsi_key_value_pair {
-    /// Type of key and value pair.
-	int type;
-
-    /// State index.
-	int state_index;
-
     /// Value of the key which is stored in the hash map.
 	uint8_t *value;
+
+    /// NUL separated list of allowed string values. If key type is numeric: NUL separated minimum and maximum integer range. End is marked with another NUL.
+    uint8_t *list_range;
+
+    /// Type of key and value pair.
+    int type;
+
+    /// Flags indicating special key attributes.
+    int flags;
+
+    /// State bit mask.
+	uint state_mask;
 } iscsi_key_value_pair;
 
 /**
@@ -5741,16 +5809,23 @@ typedef struct iscsi_key_value_pair {
  * pairs for sending as DataSegment packet data to the client.
  */
 typedef struct iscsi_key_value_pair_packet {
+    /// Associated iSCSI connection.
+    struct iscsi_connection *conn;
+
     /// Current text buffer containing multiple key=value + NUL terminator pairs.
     uint8_t *buf;
 
+    /// Position of output buffer for next write.
+    uint pos;
+
     /// Current length of buffer including final NUL terminator without iSCSI zero padding.
     uint len;
+
+    /// Discovery mode.
+    int discovery;
 } iscsi_key_value_pair_packet;
 
 int iscsi_parse_key_value_pairs(iscsi_hashmap *pairs, const uint8_t *packet_data, uint len, int c_bit, uint8_t **partial_pairs); // Extracts all text key / value pairs out of an iSCSI packet into a hash map
-int iscsi_create_key_value_pair_packet_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Creates a single partial iSCSI packet stream out of a single text key and value pair
-iscsi_key_value_pair_packet *iscsi_create_key_value_pairs_packet(iscsi_hashmap *key_value_pairs); // Creates a properly aligned iSCSI packet DataSegment out of a hash map containing text key and value pairs
 
 
 /// iSCSI main global data flags: Allow duplicate ISIDs.
@@ -5785,8 +5860,14 @@ typedef struct iscsi_globals {
     /// Hash map containing all iSCSI sessions.
     iscsi_hashmap *sessions;
 
+    /// Hash map containing session key and value pair types and allowed values or ranges.
+    iscsi_hashmap *session_key_value_pairs;
+
     /// Hash map containing connections not associated with an iSCSI sessions.
     iscsi_hashmap *connections;
+
+    /// Hash map containing connection key and value pair types and allowed values or ranges.
+    iscsi_hashmap *connection_key_value_pairs;
 
     /// Global flags.
     int flags;
@@ -5799,9 +5880,13 @@ typedef struct iscsi_globals {
 } iscsi_globals;
 
 
-/// iSCSI vector for global access.
+/// iSCSI global vector. MUST be initialized with iscsi_create before any iSCSI functions are used.
 iscsi_globals *iscsi_globvec = NULL;
 
+
+int iscsi_create(); // Allocates and initializes the iSCSI global vector structure
+int iscsi_global_key_value_pair_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI global key and value pair destructor callback for hash map
+void iscsi_destroy(); // Deallocates all resources acquired by iscsi_create
 
 /**
  * @brief iSCSI portal group: Private portal group if set, public otherwise.
@@ -6179,44 +6264,50 @@ typedef struct iscsi_session {
 
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Packet parsed successfully.
-#define ISCSI_CONNECT_PDU_READ_OK                   0L
+#define ISCSI_CONNECT_PDU_READ_OK                                 0L
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Packet processed successfully.
-#define ISCSI_CONNECT_PDU_READ_PROCESSED            1L
+#define ISCSI_CONNECT_PDU_READ_PROCESSED                          1L
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Fatail error during packet parsing.
-#define ISCSI_CONNECT_PDU_READ_ERR_FATAL           -1L
+#define ISCSI_CONNECT_PDU_READ_ERR_FATAL                         -1L
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Login error response.
-#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE  -2L
+#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE                -2L
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Login parameter error.
-#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER -3L
+#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER               -3L
+
+/// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Login parameter not exchanged once error.
+#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER_XCHG_NOT_ONCE -4L
 
 
 /// iSCSI connection flags: Stopped.
-#define ISCSI_CONNECT_FLAGS_STOPPED      (1 << 0L)
+#define ISCSI_CONNECT_FLAGS_STOPPED         (1 << 0L)
 
 /// iSCSI connection flags: Rejected.
-#define ISCSI_CONNECT_FLAGS_REJECTED     (1 << 1L)
+#define ISCSI_CONNECT_FLAGS_REJECTED        (1 << 1L)
 
 /// iSCSI connection flags: Logged out.
-#define ISCSI_CONNECT_FLAGS_LOGGED_OUT   (1 << 2L)
+#define ISCSI_CONNECT_FLAGS_LOGGED_OUT      (1 << 2L)
 
 /// iSCSI connection flags: Full feature.
-#define ISCSI_CONNECT_FLAGS_FULL_FEATURE (1 << 3L)
+#define ISCSI_CONNECT_FLAGS_FULL_FEATURE    (1 << 3L)
 
 /// iSCSI connection flags: CHAP authentication is disabled.
-#define ISCSI_CONNECT_FLAGS_CHAP_DISABLE (1 << 4L)
+#define ISCSI_CONNECT_FLAGS_CHAP_DISABLE    (1 << 4L)
 
 /// iSCSI connection flags: CHAP authentication is required.
-#define ISCSI_CONNECT_FLAGS_CHAP_REQUIRE (1 << 5L)
+#define ISCSI_CONNECT_FLAGS_CHAP_REQUIRE    (1 << 5L)
 
 /// iSCSI connection flags: CHAP authentication is mutual.
-#define ISCSI_CONNECT_FLAGS_CHAP_MUTUAL  (1 << 6L)
+#define ISCSI_CONNECT_FLAGS_CHAP_MUTUAL     (1 << 6L)
 
 /// iSCSI connection flags: Authenticated.
-#define ISCSI_CONNECT_FLAGS_AUTH         (1 << 7L)
+#define ISCSI_CONNECT_FLAGS_AUTH            (1 << 7L)
+
+/// iSCSI connection flags: Oustanding NOP.
+#define ISCSI_CONNECT_FLAGS_NOP_OUTSTANDING (1 << 8L)
 
 
 /// Ready to wait for PDU.
@@ -6302,6 +6393,9 @@ typedef struct iscsi_connection {
     /// Login response PDU.
     struct iscsi_pdu *login_response_pdu;
 
+    /// Internal connection identifier (key of iSCSI global vector hash map).
+    int id;
+
     /// Connected TCP/IP socket.
     int sock;
 
@@ -6313,6 +6407,9 @@ typedef struct iscsi_connection {
 
     /// iSCSI connection state.
     int state;
+
+    /// iSCSI connection login phase.
+    int login_phase;
 
     /// Maximum receive DataSegment length in bytes.
     uint max_recv_ds_len;
@@ -6328,6 +6425,12 @@ typedef struct iscsi_connection {
 
     /// Connection ID (CID).
     uint16_t cid;
+
+    /// Bit mask for connection state key negotiation.
+    uint16_t state_negotiated;
+
+    /// Bit mask for session state key negotiation.
+    uint32_t session_state_negotiated;
 
     /// Initiator Task Tag (ITT).
     uint32_t init_task_tag;
@@ -6403,10 +6506,10 @@ typedef struct iscsi_pdu {
     /// DataSegmentLength.
     uint ds_len;
 
-    /// Remaining bytes of DataSegment buffer to read.
-    uint buf_len;
+    /// Position of DataSegment buffer for next read.
+    uint pos;
 
-    /// Associated connection.
+    /// Associated iSCSI connection.
     iscsi_connection *conn;
 
     /// CmdSN.
@@ -6423,6 +6526,8 @@ int iscsi_target_node_access(iscsi_connection *conn, iscsi_target_node *target, 
 iscsi_session *iscsi_session_create(iscsi_connection *conn, iscsi_target_node *target, const int type); // Creates and initializes an iSCSI session
 void iscsi_session_destroy(iscsi_session *session); // Deallocates all resources acquired by iscsi_session_create
 
+int iscsi_session_init_key_value_pairs(iscsi_hashmap *key_value_pairs); // Initializes a key and value pair hash table with default values
+
 iscsi_connection *iscsi_connection_create(iscsi_portal *portal, const int sock); // Creates data structure for an iSCSI connection from iSCSI portal and TCP/IP socket
 int iscsi_connection_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI connection destructor callback for hash map
 void iscsi_connection_destroy(iscsi_connection *conn); // Deallocates all resources acquired by iscsi_connection_create
@@ -6433,6 +6538,8 @@ void iscsi_connection_schedule(iscsi_connection *conn); // Schedules an iSCSI co
 int iscsi_connection_read(const iscsi_connection *conn, uint8_t *buf, const uint len); // Reads data for the specified iSCSI connection from its TCP socket
 int iscsi_connection_write(const iscsi_connection *conn, uint8_t *buf, const uint len); // Writes data for the specified iSCSI connection to its TCP socket
 
+int iscsi_connection_init_key_value_pairs(iscsi_hashmap *key_value_pairs); // Initializes a key and value pair hash table with default values for an iSCSI connection
+int iscsi_negotiate_key_value_pairs(iscsi_connection *conn, iscsi_hashmap *key_value_pairs, uint8_t *buf, const uint pos, const uint len); // Negotiates all key and value pairs required for session authentication
 int iscsi_connection_copy_key_value_pairs(iscsi_connection *conn); // Copies retrieved key and value pairs into SCSI connection and session structures
 int iscsi_connection_save_incoming_key_value_pairs(iscsi_connection *conn, iscsi_hashmap *key_value_pairs, iscsi_pdu *login_response_pdu, const iscsi_pdu *pdu); // Saves incoming key / value pairs from the client of a login request PDU
 
