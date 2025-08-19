@@ -20,6 +20,7 @@
 
 #include "helper.h"
 #include "image.h"
+#include "iscsi.h"
 #include "uplink.h"
 #include "locks.h"
 #include "rpc.h"
@@ -178,6 +179,7 @@ void* net_handleNewConnection(void *clientPtr)
 				// Close enough...
 				rpc_sendStatsJson( client->sock, &client->host, &request, ret );
 			} else {
+				iscsi_connection_handle( client, &request, ret );
 				logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
 			}
 			goto fail_preadd;

@@ -32,7 +32,40 @@
 #ifndef DNBD3_ISCSI_H_
 #define DNBD3_ISCSI_H_
 
-#include <inttypes.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <limits.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <dnbd3/types.h>
+#include <pthread.h>
+
+#include "globals.h"
+#include "image.h"
+
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+     // GCC-compatible compiler, targeting x86/x86-64
+     #include <x86intrin.h>
+#elif defined(__GNUC__) && defined(__ARM_NEON__)
+     // GCC-compatible compiler, targeting ARM with NEON
+     #include <arm_neon.h>
+#elif defined(__GNUC__) && defined(__IWMMXT__)
+     // GCC-compatible compiler, targeting ARM with WMMX
+     #include <mmintrin.h>
+#elif (defined(__GNUC__) || defined(__xlC__)) && (defined(__VEC__) || defined(__ALTIVEC__))
+     // XLC or GCC-compatible compiler, targeting PowerPC with VMX/VSX
+     #include <altivec.h>
+#elif defined(__GNUC__) && defined(__SPE__)
+     // GCC-compatible compiler, targeting PowerPC with SPE
+     #include <spe.h>
+#elif defined(_MSC_VER)
+     // Microsoft C/C++-compatible compiler
+     #include <intrin.h>
+#endif
 
 #if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__BIG_ENDIAN) && __BYTE_ORDER == __BIG_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 #define iscsi_get_be16(x) (x)
@@ -40,25 +73,74 @@
 #define iscsi_get_be32(x) (x)
 #define iscsi_get_be64(x) (x)
 
-static inline void iscsi_put_be16(uint8_t *data, const uint16_t val)
+static inline void iscsi_put_be16(uint8_t *data, const uint16_t value)
 {
-	(*(uint16_t *) data) = val;
+	(*(uint16_t *) data) = value;
 }
 
-static inline void iscsi_put_be24(uint8_t *data, const uint32_t val)
+static inline void iscsi_put_be24(uint8_t *data, const uint32_t value)
 {
-	(*(uint16_t *) data) = (uint16_t) (val >> 8U);
-	data[2] = (uint8_t) val;
+	data--;
+
+	(*(uint32_t *) data) = (((uint32_t ) *data << 24UL) | (value & 0xFFFFFFUL));
 }
 
-static inline void iscsi_put_be32(uint8_t *data, const uint32_t val)
+static inline void iscsi_put_be32(uint8_t *data, const uint32_t value)
 {
-	(*(uint32_t *) *data) = val;
+	(*(uint32_t *) data) = value;
 }
 
-static inline void iscsi_put_be64(uint8_t *data, const uint64_t val)
+static inline void iscsi_put_be64(uint8_t *data, const uint64_t value)
 {
-	(*(uint64_t *) data) = val;
+	(*(uint64_t *) data) = value;
+}
+
+#if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
+// GCC or CLang
+#define iscsi_get_le16(x) (__builtin_bswap16(x))
+#define iscsi_get_le24(x) (iscsi_get_le32((*(uint32_t *) ((uint8_t *) x - 1))) & 0xFFFFFFUL)
+#define iscsi_get_le32(x) (__builtin_bswap32(x))
+#define iscsi_get_le64(x) (__builtin_bswap64(x))
+#elif defined(_MSC_VER)
+// MSVC
+#define iscsi_get_le16(x) (_byteswap_ushort(x))
+#define iscsi_get_le24(x) (iscsi_get_le32((*(uint32_t *) ((uint8_t *) x - 1))) & 0xFFFFFFUL)
+#define iscsi_get_le32(x) (_byteswap_ulong(x))
+#define iscsi_get_le64(x) (_byteswap_uint64(x))
+#elif defined(__INTEL_COMPILER) || defined(__ECC)
+// Intel Compiler
+#define iscsi_get_le16(x) (_bswap16(x))
+#define iscsi_get_le24(x) (iscsi_get_le32((*(uint32_t *) ((uint8_t *) x - 1))) & 0xFFFFFFUL)
+#define iscsi_get_le32(x) (_bswap(x))
+#define iscsi_get_le64(x) (_bswap64(x))
+#else
+// Other compilers (use slow conversion method with bit rotation, bit shift and logcal AND)
+#define iscsi_get_le16(x) ((((uint16_t) (x)) << 8U) | (((uint16_t) (x)) >> 8U))
+#define iscsi_get_le24(x) (iscsi_get_le32((*(uint32_t *) ((uint8_t *) x - 1))) & 0xFFFFFFUL)
+#define iscsi_get_le32(x) ((((uint32_t) (x) & 0xFFUL) << 24UL) | (((uint32_t) (x) & 0xFF00UL) << 8UL) | (((uint32_t) (x) & 0xFF0000UL) >> 8UL) | (((uint32_t) (x) >> 24UL)))
+#define iscsi_get_le64(x) ((uint64_t)((((x) & 0xFFULL) << 56ULL) | (((x) & 0xFF00ULL) << 40ULL) | (((x) & 0xFF0000ull) << 24ULL) | (((x) & 0xFF000000ULL) << 8ULL) | (((x) & 0xFF00000000ULL) >> 8ULL) | (((x) & 0xFF0000000000ULL) >> 24ULL) | (((x) & 0xFF000000000000ULL) >> 40ULL) | (((x) & 0xFF00000000000000ULL) >> 56ULL)))
+#endif
+
+static inline void iscsi_put_le16(uint8_t *data, const uint16_t value)
+{
+	(*(uint16_t *) data) = iscsi_get_le16(value);
+}
+
+static inline void iscsi_put_le24(uint8_t *data, const uint32_t value)
+{
+	data--;
+
+	(*(uint32_t *) data) = ((uint32_t ) *data | (iscsi_get_le32(value) & 0xFFFFFF00UL));
+}
+
+static inline void iscsi_put_le32(uint8_t *data, const uint32_t value)
+{
+	(*(uint32_t *) data) = iscsi_get_le32(value);
+}
+
+static inline void iscsi_put_le64(uint8_t *data, const uint64_t value)
+{
+	(*(uint64_t *) data) = iscsi_get_le64(value);
 }
 #elif defined(__LITTLE_ENDIAN__) || (defined(__BYTE_ORDER) && defined(__LITTLE_ENDIAN) && __BYTE_ORDER == __LITTLE_ENDIAN) || (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(__i386__) || defined(__i386) || defined(__x86_64)
 #if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__)
@@ -68,12 +150,17 @@ static inline void iscsi_put_be64(uint8_t *data, const uint64_t val)
 #define iscsi_get_be32(x) (__builtin_bswap32(x))
 #define iscsi_get_be64(x) (__builtin_bswap64(x))
 #elif defined(_MSC_VER)
-#include <intrin.h>
-// MVSC
+// MSVC
 #define iscsi_get_be16(x) (_byteswap_ushort(x))
 #define iscsi_get_be24(x) (iscsi_get_be32((*(uint32_t *) ((uint8_t *) x - 1))) & 0xFFFFFFUL)
 #define iscsi_get_be32(x) (_byteswap_ulong(x))
 #define iscsi_get_be64(x) (_byteswap_uint64(x))
+#elif defined(__INTEL_COMPILER) || defined(__ECC)
+// Intel Compiler
+#define iscsi_get_be16(x) (_bswap16(x))
+#define iscsi_get_be24(x) (iscsi_get_be32((*(uint32_t *) ((uint8_t *) x - 1))) & 0xFFFFFFUL)
+#define iscsi_get_be32(x) (_bswap(x))
+#define iscsi_get_be64(x) (_bswap64(x))
 #else
 // Other compilers (use slow conversion method with bit rotation, bit shift and logcal AND)
 #define iscsi_get_be16(x) ((((uint16_t) (x)) << 8U) | (((uint16_t) (x)) >> 8U))
@@ -81,49 +168,211 @@ static inline void iscsi_put_be64(uint8_t *data, const uint64_t val)
 #define iscsi_get_be32(x) ((((uint32_t) (x) & 0xFFUL) << 24UL) | (((uint32_t) (x) & 0xFF00UL) << 8UL) | (((uint32_t) (x) & 0xFF0000UL) >> 8UL) | (((uint32_t) (x) >> 24UL)))
 #define iscsi_get_be64(x) ((uint64_t)((((x) & 0xFFULL) << 56ULL) | (((x) & 0xFF00ULL) << 40ULL) | (((x) & 0xFF0000ull) << 24ULL) | (((x) & 0xFF000000ULL) << 8ULL) | (((x) & 0xFF00000000ULL) >> 8ULL) | (((x) & 0xFF0000000000ULL) >> 24ULL) | (((x) & 0xFF000000000000ULL) >> 40ULL) | (((x) & 0xFF00000000000000ULL) >> 56ULL)))
 #endif
-static inline void iscsi_put_be16(uint8_t *data, const uint16_t val)
+
+static inline void iscsi_put_be16(uint8_t *data, const uint16_t value)
 {
-	data[0] = (uint8_t) (val >> 8U);
-	data[1] = (uint8_t) val;
+	(*(uint16_t *) data) = iscsi_get_be16(value);
 }
 
-static inline void iscsi_put_be24(uint8_t *data, const uint32_t val)
+static inline void iscsi_put_be24(uint8_t *data, const uint32_t value)
 {
-	data[0] = (uint8_t) (val >> 16UL);
-	data[1] = (uint8_t) (val >> 8UL);
-	data[2] = (uint8_t) val;
+	data--;
+
+	(*(uint32_t *) data) = ((uint32_t ) *data | (iscsi_get_be32(value) & 0xFFFFFF00UL));
 }
 
-static inline void iscsi_put_be32(uint8_t *data, const uint32_t val)
+static inline void iscsi_put_be32(uint8_t *data, const uint32_t value)
 {
-	data[0] = (uint8_t) (val >> 24UL);
-	data[1] = (uint8_t) (val >> 16UL);
-	data[2] = (uint8_t) (val >> 8UL);
-	data[3] = (uint8_t) val;
+	(*(uint32_t *) data) = iscsi_get_be32(value);
 }
 
-static inline void iscsi_put_be64(uint8_t *data, const uint64_t val)
+static inline void iscsi_put_be64(uint8_t *data, const uint64_t value)
 {
-	data[0] = (uint8_t) (val >> 56ULL);
-	data[1] = (uint8_t) (val >> 48ULL);
-	data[2] = (uint8_t) (val >> 40ULL);
-	data[3] = (uint8_t) (val >> 32ULL);
-	data[4] = (uint8_t) (val >> 24ULL);
-	data[5] = (uint8_t) (val >> 16ULL);
-	data[6] = (uint8_t) (val >> 8ULL);
-	data[7] = (uint8_t) val;
+	(*(uint64_t *) data) = iscsi_get_be64(value);
+}
+
+#define iscsi_get_le16(x) (x)
+#define iscsi_get_le24(x) (iscsi_get_le32((*(uint32_t *) ((uint8_t *) x - 1))) & 0xFFFFFFUL)
+#define iscsi_get_le32(x) (x)
+#define iscsi_get_le64(x) (x)
+
+static inline void iscsi_put_le16(uint8_t *data, const uint16_t value)
+{
+	(*(uint16_t *) data) = value;
+}
+
+static inline void iscsi_put_le24(uint8_t *data, const uint32_t value)
+{
+	data--;
+
+	(*(uint32_t *) data) = (((uint32_t ) *data << 24UL) | (value & 0xFFFFFFUL));
+}
+
+static inline void iscsi_put_le32(uint8_t *data, const uint32_t value)
+{
+	(*(uint32_t *) data) = value;
+}
+
+static inline void iscsi_put_le64(uint8_t *data, const uint64_t value)
+{
+	(*(uint64_t *) data) = value;
 }
 #else
 #error "Unknown CPU endianness"
 #endif
 
+
+/**
+ * @brief Checks whether a specified 32-bit integer value is a power of two.
+ *
+ * This function is used to determine
+ * if shift operations can be used for
+ * calculating instead of very slow
+ * multiplication, division and modulo
+ * operations.
+ *
+ * @param[in] value Value to check for a power of two.
+ * @retval true Value is a power of two.
+ * @retval false Value is NOT a power of two,
+ * hence slow division is required.
+ */
+static inline bool iscsi_is_pow2(const uint32_t value)
+{
+	return ((value & (value - 1UL)) == 0UL);
+}
+
+/**
+ * @brief Rounds up a positive 32-bit integer value to the nearest power of two.
+ *
+ * This function is used to ensure that
+ * a value is always a power of two by
+ * rounding up.\n
+ * An input value of zero is NOT
+ * handled correctly.
+ *
+ * @param[in] value Positive value to round up to
+ * the nearest power of two.
+ * @return Rounded up nearest power of two.
+ */
+static inline uint32_t iscsi_align_pow2_ceil(const uint32_t value)
+{
+    uint32_t num_value = (value - 1UL); // 1UL << (lg(value - 1UL) + 1UL)
+
+    num_value |= (num_value >>  1UL);
+    num_value |= (num_value >>  2UL);
+    num_value |= (num_value >>  4UL);
+    num_value |= (num_value >>  8UL);
+    num_value |= (num_value >> 16UL);
+
+    return ++num_value;
+}
+
+/**
+ * @brief Calculates the shift factor for a power of two value.
+ *
+ * This function is used to determine
+ * the shift factor to use instead of
+ * using very slow multiplication,
+ * division and modulo operations.
+ *
+ * @param[in] value Value to retrieve the
+ * the shift factor for. May NOT be
+ * zero in which case the result is
+ * undefined.
+ * @return The shift count to use as a
+ * replacement for multiplication
+ * and division.
+ */
+static inline uint32_t iscsi_get_log2_of_pow2(const uint32_t value)
+{
+#if defined(__clang__) || defined(__GNUC__) || defined(__GNUG__) || defined(__INTEL_COMPILER) || defined(__ECC)
+// GCC, CLang or Intel Compiler
+	return (((sizeof(uint32_t) * CHAR_BIT) - 1UL) - (uint32_t) __builtin_clz( value ));
+#elif defined(_MSC_VER)
+// MSVC
+	uint32_t shift;
+
+	_BitScanReverse( &shift, value );
+
+	return (((sizeof(uint32_t) * CHAR_BIT) - 1UL) - shift);
+#else
+// Other compilers (use slow parallel calculation method with logical OR, bit shift, logcal AND)
+	uint32_t shift = ((value & 0xAAAAAAAAUL) != 0UL);
+
+	shift |= ((value & 0xCCCCCCCCUL) != 0UL) << 1UL;
+	shift |= ((value & 0xF0F0F0F0UL) != 0UL) << 2UL;
+	shift |= ((value & 0xFF00FF00UL) != 0UL) << 3UL;
+	shift |= ((value & 0xFFFF0000UL) != 0UL) << 4UL;
+
+	return shift;
+#endif
+}
+
+
+/// Determines the container of member b in struct a of type x.
+#define ISCSI_CONTAINER(x, a, b) ((x *) (((uint8_t *) (a)) - offsetof(x, b)))
+
+/// Determines the next offset after member b of struct a.
+#define ISCSI_NEXT_OFFSET(a, b) (offsetof(struct a, b) + sizeof(((struct a *) 0)->b))
+
+
+/// Bit sequence manipulation double word (32 bits) mask bits: Gets mask for filtering out a bit range between a and b, b may NOT exceed 30 bits range.
+#define ISCSI_BITS_GET_MASK(a, b) (((1U << (a)) - 1U) ^ ((1U << ((b) + 1U)) - 1U))
+
+/// Bit sequence manipulation double word (32 bits) test bits: Tests value x in of a bit range between a and b, b may NOT exceed 30 bits range.
+#define ISCSI_BITS_TST(x, a, b) ((x) & ISCSI_BITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation double word (32 bits) clear bits: Clears all bits in range between a and b out of x, b may NOT exceed 30 bits range.
+#define ISCSI_BITS_CLR(x, a, b) ((x) & ~ISCSI_BITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation double word (32 bits) set bits: Sets all bits in range between a and b of x, b may NOT exceed 30 bits range.
+#define ISCSI_BITS_SET(x, a, b) ((x) | ISCSI_BITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation double word (32 bits) change bits: Flips all bits in range between a and b of x, b may NOT exceed 30 bits range.
+#define ISCSI_BITS_CHG(x, a, b) ((x) ^ ISCSI_BITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation double word (32 bits) get bits: Extracts a value x out of a bit range between a and b, b may NOT exceed 30 bits range.
+#define ISCSI_BITS_GET(x, a, b) (ISCSI_BITS_TST(x, a, b) >> (a))
+
+/// Bit sequence manipulation double word (32 bits) get bits: Puts a value x into a bit range between a and b, b may NOT exceed 30 bits range.
+#define ISCSI_BITS_PUT(x, a, b) (((x) << (a)) & ISCSI_BITS_GET_MASK(a, b))
+
+
+/// Bit sequence manipulation quad word (64 bits) mask bits: Gets mask for filtering out a bit range between a and b, b may NOT exceed 62 bits range.
+#define ISCSI_QBITS_GET_MASK(a, b) (((1ULL << (a)) - 1ULL) ^ ((1ULL << ((b) + 1ULL)) - 1ULL))
+
+/// Bit sequence manipulation quad word (64 bits) test bits: Tests value x in of a bit range between a and b, b may NOT exceed 62 bits range.
+#define ISCSI_QBITS_TST(x, a, b) ((x) & ISCSI_QBITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation quad word (64 bits) clear bits: Clears bits in range between a and b out of x, b may NOT exceed 62 bits range.
+#define ISCSI_QBITS_CLR(x, a, b) ((x) & ~ISCSI_QBITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation quad word (64 bits) set bits: Sets all bits in range between a and b of x, b may NOT exceed 62 bits range.
+#define ISCSI_QBITS_SET(x, a, b) ((x) | ISCSI_QBITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation quad word (64 bits) change bits: Flips all bits in range between a and b of x, b may NOT exceed 62 bits range.
+#define ISCSI_QBITS_CHG(x, a, b) ((x) ^ ISCSI_QBITS_GET_MASK(a, b))
+
+/// Bit sequence manipulation quad word (64 bits) get bits: Extracts a value x out of a bit range between a and b, b may NOT exceed 62 bits range.
+#define ISCSI_QBITS_GET(x, a, b) (ISCSI_QBITS_TST(x, a, b) >> (a))
+
+/// Bit sequence manipulation quad word (64 bits) get bits: Puts a value x into a bit range between a and b, b may NOT exceed 62 bits range.
+#define ISCSI_QBITS_PUT(x, a, b) (((x) << (a)) & ISCSI_QBITS_GET_MASK(a, b))
+
+
 /// Aligns value x by rounding up, so it's evenly divisable by n.
-#define iscsi_align(x, n) (((x) + (n) - 1) & ~((n) - 1))
+#define ISCSI_ALIGN(x, n) (((x) + (n) - 1) & ~((n) - 1))
+
+
+/// Determines the length of a zero terminated string at compile time.
+#define ISCSI_STRLEN(x) ((sizeof(x) / sizeof(uint8_t)) - sizeof(uint8_t))
+
 
 uint8_t *iscsi_vsprintf_append_realloc(char *buf, const char *format, va_list args); // Allocates and appends a buffer and sprintf's it
 uint8_t *iscsi_sprintf_append_realloc(char *buf, const char *format, ...); // Allocates and appends a buffer and sprintf's it
 uint8_t *iscsi_vsprintf_alloc(const char *format, va_list args); // Allocates a buffer and sprintf's it
 uint8_t *iscsi_sprintf_alloc(const char *format, ... ); // Allocates a buffer and sprintf's it
+void iscsi_strcpy_pad(char *dst, const char *src, const size_t size, const int pad); // Copies a string with additional padding character to fill in a specified size
 
 
 /// Shift factor for default capacity.
@@ -138,14 +387,8 @@ uint8_t *iscsi_sprintf_alloc(const char *format, ... ); // Allocates a buffer an
 /// Key data shift value for alignment enforcement.
 #define ISCSI_HASHMAP_KEY_ALIGN_SHIFT 3UL
 
-/// Key data size must be multiple of 8 bytes by now.
+/// Key data size MUST be multiple of 8 bytes by now.
 #define ISCSI_HASHMAP_KEY_ALIGN (1UL << (ISCSI_HASHMAP_KEY_ALIGN_SHIFT))
-
-/// Value data shift value for alignment enforcement.
-#define ISCSI_HASHMAP_VALUE_ALIGN_SHIFT 4UL
-
-/// Value data size is a multiple of 16 bytes for key and value pairs, which allows us to change their integer values without reallocation of memory.
-#define ISCSI_HASHMAP_VALUE_ALIGN (1UL << (ISCSI_HASHMAP_VALUE_ALIGN_SHIFT))
 
 
 /// Initial hash code.
@@ -155,6 +398,303 @@ uint8_t *iscsi_sprintf_alloc(const char *format, ... ); // Allocates a buffer an
 #define ISCSI_HASHMAP_HASH_MUL     0xBF58476D1CE4E5B9ULL
 
 
+typedef struct iscsi_node iscsi_node;
+
+
+/**
+ * @brief Doubly linked list node structure.
+ *
+ * This structure is used by the iSCSI doubly linked list
+ * implementation in order to maintain the elements.
+ */
+typedef struct iscsi_node {
+    /// Successor node in node list. Must be first element.
+    iscsi_node *succ;
+
+    /// Predecessor node in node list. Must be second element.
+    iscsi_node *pred;
+} iscsi_node;
+
+
+/**
+ * @brief Doubly linked list structure.
+ *
+ * This structure is used by the iSCSI doubly linked list
+ * implementation in order to maintain the elements.
+ */
+typedef struct iscsi_list {
+    /// Head of linked list. Must be first element.
+    iscsi_node *head;
+
+    /// Tail of linked list. Must be second element and always be NULL.
+    iscsi_node *tail;
+
+    /// Tail predecessor of linked list. Must be third element.
+    iscsi_node *pred;
+} iscsi_list;
+
+
+/// foreach( ( list => entry ) usage style forward iterator over all nodes in a doubly linked list.
+#define iscsi_list_foreach(list, entry) for ( (entry) = (list)->head; (entry)->succ != NULL; (entry) = (entry)->succ )
+
+/// foreach( ( list => (typeof(entry)) as field ) usage style forward iterator over all nodes in a doubly linked list embedded into another structure with default node field name.
+#define iscsi_list_foreach_field(list, entry, field) for ( (entry) = (__typeof__(entry)) (list)->head; (__typeof__(entry)) (entry)->field.succ != NULL; (entry) = (__typeof__(entry)) (entry)->field.succ )
+
+/// foreach( ( list => (typeof(entry)) entry->node.succ ) usage style forward iterator over all nodes in a doubly linked list embedded into another structure with default node field name.
+#define iscsi_list_foreach_node(list, entry) iscsi_list_foreach_field(list, entry, node)
+
+/// foreach( ( list => entry ) usage style forward iterator over all nodes in a doubly linked list.
+#define iscsi_list_foreach_safe(list, entry, tmp) for ( (entry) = (list)->head; ((entry)->succ != NULL) && ((tmp) = (entry)->succ, true); (entry) = (tmp) )
+
+/// foreach( ( list => (typeof(entry)) as field ) usage style forward iterator over all nodes in a doubly linked list embedded into another structure with default node field name.
+#define iscsi_list_foreach_safe_field(list, entry, field, tmp) for ( (entry) = (__typeof__(entry)) (list)->head; ((entry)->field.succ != NULL) && ((tmp) = (__typeof__(entry)) (entry)->field.succ, true); (entry) = (tmp) )
+
+/// foreach( ( list => (typeof(entry)) entry->node.succ ) usage style forward iterator over all nodes in a doubly linked list embedded into another structure with default node field name.
+#define iscsi_list_foreach_safe_node(list, entry, tmp) iscsi_list_foreach_safe_field(list, entry, node, tmp)
+
+
+/**
+ * @brief Initializes a doubly linked list for usage.
+ *
+ * This function sets the head of the list to
+ * the pointer of the list's tail, the tail
+ * itself to NULL and the predecessor to the
+ * pointer of the list's head.
+ *
+ * @param[in] list Pointer to idoubly linked list to
+ * initialize. May NOT be NULL, so be careful.
+ * */
+static inline void iscsi_list_create(iscsi_list *list)
+{
+	list->head = (iscsi_node *) &list->tail;
+	list->tail = NULL;
+	list->pred = (iscsi_node *) &list->head;
+}
+
+/**
+ * @brief Clears an already initialized doubly linked list.
+ *
+ * This function sets the head of the list to
+ * the pointer of the list's tail and the
+ * predecessor to the pointer of the list's
+ * head.
+ *
+ * @param[in] list Pointer to idoubly linked list to
+ * initialize. May NOT be NULL, so be careful.
+ * */
+static inline void iscsi_list_clear(iscsi_list *list)
+{
+	list->head = (iscsi_node *) &list->tail;
+	list->pred = (iscsi_node *) &list->head;
+}
+
+/**
+ * @brief Adds a node at the head of a doubly linked list.
+ *
+ * This function sets the head of the list to
+ * the node and adjusts the list and node
+ * pointers accordingly.
+ *
+ * @param[in] list Pointer to doubly linked list to add to
+ * the head. May NOT be NULL, so be careful.
+ * @param[in] node Pointer to node to add to the head of
+ * the list. NULL is NOT allowed here, take
+ * caution.
+ */
+static inline void iscsi_list_push(iscsi_list *list, iscsi_node *node)
+{
+	iscsi_node *head = list->head;
+
+	list->head = node;
+	head->pred = node;
+
+	node->succ = head;
+	node->pred = (iscsi_node *) &list->head;
+}
+
+/**
+ * @brief Adds a node at the tail of a doubly linked list.
+ *
+ * This function sets the tail of the list to
+ * the node and adjusts the list and node
+ * pointers accordingly.
+ *
+ * @param[in] list Pointer to doubly linked list to add to
+ * the tail. May NOT be NULL, so be careful.
+ * @param[in] node Pointer to node to add to the tail of
+ * the list. NULL is NOT allowed here, take
+ * caution.
+ */
+static inline void iscsi_list_enqueue(iscsi_list *list, iscsi_node *node)
+{
+	iscsi_node *tail = list->pred;
+
+	list->pred = node;
+	tail->succ = node;
+
+	node->succ = (iscsi_node *) &list->tail;
+	node->pred = tail;
+}
+
+/**
+ * @brief Inserts a node into a doubly linked list before an already existing node.
+ *
+ * This function sets the successor of the
+ * new node to the successor of the
+ * existing predecessor node and the
+ * predecessor of the new node to the
+ * the existing predecessor node itself
+ * and adjusts the list pointers
+ * accordingly.
+ *
+ * @param[in] list Pointer to doubly linked list to insert the
+ * node into. May NOT be NULL, so be careful.
+ * @param[in] node Pointer to node to be inserted into the
+ * list. NULL is NOT allowed here, take
+ * caution.
+ * @param[in] pred Pointer to node which should be the
+ * previous node of the new inserted node.
+ * May be NULL in which case the new node
+ * is inserted at the head of the list.
+ */
+static inline void iscsi_list_insert(iscsi_list *list, iscsi_node *node, iscsi_node *pred)
+{
+	if ( pred == NULL ) {
+		iscsi_node *head = list->head;
+
+		list->head = node;
+		head->pred = node;
+
+		node->succ = head;
+		node->pred = (iscsi_node *) &list->head;
+
+		return;
+	}
+
+	iscsi_node *tail = pred->succ;
+
+	if ( tail == NULL ) {
+		tail       = pred->pred;
+
+		node->succ = pred;
+		node->pred = tail;
+
+		pred->pred = node;
+		tail->succ = node;
+
+		return;
+	}
+
+	node->succ = tail;
+	node->pred = pred;
+
+	tail->pred = node;
+	pred->succ = node;
+}
+
+/**
+ * @brief Removes the node from the head of a doubly linked list.
+ *
+ * This function sets the head of the list to
+ * its successor and adjusts the list and
+ * node pointers accordingly.
+ *
+ * @param[in] list Pointer to doubly linked list to remove the
+ * head from. May NOT be NULL, so be careful.
+ */
+static inline void iscsi_list_pop(iscsi_list *list)
+{
+	iscsi_node *head = list->head;
+	iscsi_node *node = head->succ;
+
+	if ( node == NULL )
+		return;
+
+	list->head = node;
+
+	node->pred = (iscsi_node *) &list->head;
+}
+
+/**
+ * @brief Removes the node from the tail of a doubly linked list.
+ *
+ * This function sets the tail of the list to
+ * its predecessor and adjusts the list and
+ * node pointers accordingly.
+ *
+ * @param[in] list Pointer to doubly linked list to remove the
+ * tail from. May NOT be NULL, so be careful.
+ */
+static inline void iscsi_list_dequeue(iscsi_list *list)
+{
+	iscsi_node *tail = list->pred;
+	iscsi_node *node = tail->pred;
+
+	if ( node == NULL )
+		return;
+
+	list->pred = node;
+
+	node->succ = (iscsi_node *) &list->tail;
+}
+
+/**
+ * @brief Removes a specified node from a doubly linked list.
+ *
+ * This function sets the successor of the
+ * node's predecessor and the predecessor
+ * of the node's successor by adjusting
+ * the list and node pointers accordingly.
+ *
+ * @param[in] node Pointer to node to be removed from
+ * the list. May NOT be NULL, so
+ * be careful.
+ */
+static inline void iscsi_list_remove(iscsi_node *node)
+{
+	iscsi_node *succ = node->succ;
+	iscsi_node *pred = node->pred;
+
+	pred->succ = succ;
+	succ->pred = pred;
+}
+
+/**
+ * @brief Checks whether a doubly linked list is empty.
+ *
+ * Whenever this function returns false,
+ * iscsi_list_peek will return a pointer
+ * to the first node in the list.
+ *
+ * @param[in] list Pointer to doubly linked list to check if
+ * empty. May NOT be NULL, so be careful.
+ * @retval true The doubly linked list is empty.
+ * @retval false The doubly linked list contains nodes.
+ */
+static inline bool iscsi_list_empty(const iscsi_list *list)
+{
+	return (list->head->succ == NULL);
+}
+
+/**
+ * @brief Gets the node from the head of a doubly linked list.
+ *
+ * This function returns NULL if the list is
+ * empty.
+ *
+ * @param[in] list Pointer to doubly linked list to get the
+ * head from. May NOT be NULL, so be careful.
+ * @return Pointer to doubly linked list node of the
+ * head or NULL if the list is empty.
+ */
+static inline iscsi_node *iscsi_list_peek(const iscsi_list *list)
+{
+	iscsi_node *head = list->head;
+
+	return (head->succ != NULL) ? head : NULL;
+}
+
+
 /**
  * @brief Hash map bucket containing key, value and hash code.
  *
@@ -162,13 +702,13 @@ uint8_t *iscsi_sprintf_alloc(const char *format, ... ); // Allocates a buffer an
  * in order to maintain the elements.
  */
 typedef struct iscsi_hashmap_bucket {
-    /// Next bucket, must be first element.
-	struct iscsi_hashmap_bucket *next;
+    /// Next bucket, MUST be first element.
+	iscsi_node node;
 
-    /// Data used as key, must be aligned to 8 bytes and zero padded.
+    /// Data used as key, MUST be aligned to 8 bytes and zero padded.
 	uint8_t *key;
 
-    /// Size of key, must be a multiple of 8 bytes.
+    /// Size of key.
 	size_t key_size;
 
     /// Hash code for the key.
@@ -183,34 +723,30 @@ typedef struct iscsi_hashmap_bucket {
  *
  * This structure is used by the ultra performant hash map
  * implementation. It uses a linked list allowing fast
- * insertions. Elements can be removed and are marked for
- * deletion until a resize operation is necessary.
+ * insertions. Elements can be removed.
  */
 typedef struct iscsi_hashmap {
     /// Linked list containing the hash map buckets.
 	iscsi_hashmap_bucket *buckets;
 
+    /// Doubly linked list for fast insertion.
+    iscsi_list list;
+
+    /// Last inserted unique identifier (primary key).
+	uint64_t last_insert_id;
+
     /// Current bucket capacity, MUST be a power of two.
     uint capacity;
 
     /// Current capacity threshold triggering resize operation.
-	uint cap_load; // Capacity load threshold before next resize
+	uint cap_load;
 
-	/// Current count of buckets including ones marked for removal.
+	/// Current count of buckets.
 	uint count;
-
-    /// Number of buckets marked for removal.
-    uint removed_count;
-
-    /// First linked list bucket for fast insertion.
-    iscsi_hashmap_bucket *first;
-
-    /// Last linked list bucket for faster traversion.
-	iscsi_hashmap_bucket *last;
 } iscsi_hashmap;
 
 /**
- * @brief A Callback for iterating over map, freeing and removing entries. user_data is free for personal use.
+ * @brief Callback for iterating over map, freeing and removing entries. user_data is free for personal use.
  *
  * Callback function. This is a pointer to a
  * function for various purposes like iterating
@@ -239,22 +775,25 @@ void iscsi_hashmap_destroy(iscsi_hashmap *map); // Deallocates the hash map obje
                                                 // Use iscsi_hashmap_iterate to deallocate the elements themselves
 
 uint8_t *iscsi_hashmap_key_create(const uint8_t *data, const size_t len); // Creates a key suitable for hashmap usage (ensures 8-byte boundary and zero padding)
+void iscsi_hashmap_key_create_id(iscsi_hashmap *map, uint64_t *key); // Creates an unique key identifier suitable for hashmap usage (ensures 8-byte boundary and zero padding)
 void iscsi_hashmap_key_destroy(uint8_t *key); // Deallocates all resources acquired by iscsi_hashmap_create_key
-int iscsi_hashmap_key_destroy_value_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Deallocates all key / value pairs in a hash map by calling free (default destructor)
+int iscsi_hashmap_key_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Deallocates a key in a hash map
+int iscsi_hashmap_destroy_value_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Deallocates a value in a hash map
+int iscsi_hashmap_key_destroy_value_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Deallocates a key / value pair in a hash map by calling free (default destructor)
 
-int iscsi_hashmap_put(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t *value); // Assigns key / value pair to hash map without making copies
-int iscsi_hashmap_get_put(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t **out_in_value); // Assigns key / value pair to hash map without making copies
-int iscsi_hashmap_put_free(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t *value, iscsi_hashmap_callback callback, uint8_t *user_data); // Assigns key / value pair to hash map without making copies
-                                                                                                                                                                // with callback function in case the key already exists
-int iscsi_hashmap_contains(iscsi_hashmap *map, const uint8_t *key, const size_t key_size); // Checks whether a specified key exists
+int iscsi_hashmap_put(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t *value); // Assigns key / value pair to hash map at the tail of doubly linked list without making copies
+int iscsi_hashmap_get_put(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t **out_in_value); // Assigns key / value pair to hash map at the tail of doubly linked list without making copies
+int iscsi_hashmap_put_free(iscsi_hashmap *map, uint8_t *key, const size_t key_size, uint8_t *value, iscsi_hashmap_callback callback, uint8_t *user_data); // Assigns key / value pair to hash map without making copies with callback function in case the key already exists
+bool iscsi_hashmap_contains(iscsi_hashmap *map, const uint8_t *key, const size_t key_size); // Checks whether a specified key exists
 int iscsi_hashmap_get(iscsi_hashmap *map, const uint8_t *key, const size_t key_size, uint8_t **out_value); // Retrieves the value of a specified key
 
-void iscsi_hashmap_remove(iscsi_hashmap *map, const uint8_t *key, const size_t key_size); // Marks an element for removal by setting key and value both to NULL
-void iscsi_hashmap_remove_free(iscsi_hashmap *map, const uint8_t *key, const size_t key_size, iscsi_hashmap_callback callback, uint8_t *user_data); // Marks an element for removal by setting key and value both to NULL,
-                                                                                                                                                    // but invokes a callback function before actual marking for removal.
-uint iscsi_hashmap_size(const iscsi_hashmap *map); // Retrieves the number of elements of the hash map, ignoring elements marked for removal
+void iscsi_hashmap_remove(iscsi_hashmap *map, const uint8_t *key, const size_t key_size); // Removes an element both from the doubly linked list and by setting the key to NULL
+void iscsi_hashmap_remove_free(iscsi_hashmap *map, const uint8_t *key, const size_t key_size, iscsi_hashmap_callback callback, uint8_t *user_data); // Removes an element both from the doubly linked list and by setting the key to NULL and invokes a callback function before actual removal
 
-int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, uint8_t *user_data); // Iterator with callback function invoked on each element which has not been removed
+uint iscsi_hashmap_size(const iscsi_hashmap *map); // Retrieves the number of elements of the hash map
+
+int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, uint8_t *user_data); // Iterator with callback function invoked on each element
+
 
 /* iSCSI protocol stuff (all WORD/DWORD/QWORD values are big endian by default
    unless specified otherwise). */
@@ -278,10 +817,17 @@ int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, u
 /// iSCSI Default receive DataSegment (DS) size in bytes.
 #define ISCSI_DEFAULT_RECV_DS_LEN 8192UL
 
-/// iSCSI default maximum DataSegment receive length in bytes
+/// iSCSI default maximum DataSegment receive length in bytes.
 #define ISCSI_DEFAULT_MAX_RECV_DS_LEN 65536UL
 
-/// iSCSI default maximum DataSegment receive length in bytes
+
+/// iSCSI default maximum Ready To Transfer (R2T) active tasks.
+#define ISCSI_DEFAULT_MAX_R2T_PER_CONNECTION 4UL
+
+/// iSCSI default maximum DataSegment receive length in bytes.
+#define ISCSI_DEFAULT_MAX_DATA_IN_PER_CONNECTION 64UL
+
+/// iSCSI default maximum DataSegment send length in bytes.
 #define ISCSI_DEFAULT_MAX_DATA_OUT_PER_CONNECTION 16UL
 
 
@@ -300,97 +846,100 @@ int iscsi_hashmap_iterate(iscsi_hashmap *map, iscsi_hashmap_callback callback, u
 
 
 /// iSCSI initiator (client) command opcode: NOP-Out.
-#define ISCSI_CLIENT_NOP_OUT        0x00
+#define ISCSI_OPCODE_CLIENT_NOP_OUT        0x00
 
 /// iSCSI initiator (client) command opcode: SCSI Command (encapsulates a SCSI Command Descriptor Block).
-#define ISCSI_CLIENT_SCSI_CMD       0x01
+#define ISCSI_OPCODE_CLIENT_SCSI_CMD       0x01
 
 /// iSCSI initiator (client) command opcode: SCSI Task Management Function Request.
-#define ISCSI_CLIENT_TASK_FUNC_REQ  0x02
+#define ISCSI_OPCODE_CLIENT_TASK_FUNC_REQ  0x02
 
 /// iSCSI initiator (client) command opcode: Login Request.
-#define ISCSI_CLIENT_LOGIN_REQ      0x03
+#define ISCSI_OPCODE_CLIENT_LOGIN_REQ      0x03
 
 /// iSCSI initiator (client) command opcode: Text Request.
-#define ISCSI_CLIENT_TEXT_REQ       0x04
+#define ISCSI_OPCODE_CLIENT_TEXT_REQ       0x04
 
 /// iSCSI initiator (client) command opcode: SCSI Data-Out (for write operations).
-#define ISCSI_CLIENT_SCSI_DATA_OUT  0x05
+#define ISCSI_OPCODE_CLIENT_SCSI_DATA_OUT  0x05
 
 /// iSCSI initiator (client) command opcode: Logout Request.
-#define ISCSI_CLIENT_LOGOUT_REQ     0x06
+#define ISCSI_OPCODE_CLIENT_LOGOUT_REQ     0x06
 
 /// iSCSI initiator (client) command opcode: Selective Negative / Sequence Number Acknowledgment (SNACK) Request.
-#define ISCSI_CLIENT_SNACK_REQ      0x10
+#define ISCSI_OPCODE_CLIENT_SNACK_REQ      0x10
 
 /// iSCSI initiator (client) command opcode: Vendor-specific code #1.
-#define ISCSI_CLIENT_VENDOR_CODE1   0x1C
+#define ISCSI_OPCODE_CLIENT_VENDOR_CODE1   0x1C
 
 /// iSCSI initiator (client) command opcode: Vendor-specific code #2.
-#define ISCSI_CLIENT_VENDOR_CODE2   0x1D
+#define ISCSI_OPCODE_CLIENT_VENDOR_CODE2   0x1D
 
 /// iSCSI initiator (client) command opcode: Vendor-specific code #3.
-#define ISCSI_CLIENT_VENDOR_CODE3   0x1E
+#define ISCSI_OPCODE_CLIENT_VENDOR_CODE3   0x1E
 
 /// First iSCSI initiator (client) command opcode.
-#define ISCSI_CLIENT_FIRST_OPCODE   0x00
+#define ISCSI_OPCODE_CLIENT_FIRST          0x00
 
 /// Last iSCSI initiator (client) command opcode.
-#define ISCSI_CLIENT_LAST_OPCODE    0x1F
+#define ISCSI_OPCODE_CLIENT_LAST           0x1F
 
 
 /// iSCSI target (server) command opcode: NOP-In.
-#define ISCSI_SERVER_NOP_IN         0x20
+#define ISCSI_OPCODE_SERVER_NOP_IN         0x20
 
 /// iSCSI target (server) command opcode: SCSI Response - contains SCSI status and possibly sense information or other response information.
-#define ISCSI_SERVER_SCSI_RESPONSE  0x21
+#define ISCSI_OPCODE_SERVER_SCSI_RESPONSE  0x21
 
 /// iSCSI target (server) command opcode: SCSI Task Management Function Response.
-#define ISCSI_SERVER_TASK_FUNC_RES  0x22
+#define ISCSI_OPCODE_SERVER_TASK_FUNC_RES  0x22
 
 /// iSCSI target (server) command opcode: Login Response.
-#define ISCSI_SERVER_LOGIN_RES      0x23
+#define ISCSI_OPCODE_SERVER_LOGIN_RES      0x23
 
 /// iSCSI target (server) command opcode: Text Response.
-#define ISCSI_SERVER_TEXT_RES       0x24
+#define ISCSI_OPCODE_SERVER_TEXT_RES       0x24
 
 /// iSCSI target (server) command opcode: SCSI Data-In (for read operations).
-#define ISCSI_SERVER_SCSI_DATA_IN   0x25
+#define ISCSI_OPCODE_SERVER_SCSI_DATA_IN   0x25
 
 /// iSCSI target (server) command opcode: Logout Response.
-#define ISCSI_SERVER_LOGOUT_RES     0x26
+#define ISCSI_OPCODE_SERVER_LOGOUT_RES     0x26
 
 /// iSCSI target (server) command opcode: Ready To Transfer (R2T) - sent by target when it is ready to receive data.
-#define ISCSI_SERVER_READY_XFER     0x31
+#define ISCSI_OPCODE_SERVER_READY_XFER     0x31
 
 /// iSCSI target (server) command opcode: Asynchronous Message - sent by target to indicate certain special conditions.
-#define ISCSI_SERVER_ASYNC_MSG      0x32
+#define ISCSI_OPCODE_SERVER_ASYNC_MSG      0x32
 
 /// iSCSI target (server) command opcode: Vendor-specific code #1.
-#define ISCSI_SERVER_VENDOR_CODE1   0x3C
+#define ISCSI_OPCODE_SERVER_VENDOR_CODE1   0x3C
 
 /// iSCSI target (server) command opcode: Vendor-specific code #2.
-#define ISCSI_SERVER_VENDOR_CODE2   0x3D
+#define ISCSI_OPCODE_SERVER_VENDOR_CODE2   0x3D
 
 /// iSCSI target (server) command opcode: Vendor-specific code #3.
-#define ISCSI_SERVER_VENDOR_CODE3   0x3E
+#define ISCSI_OPCODE_SERVER_VENDOR_CODE3   0x3E
 
 /// iSCSI target (server) command opcode: Reject.
-#define ISCSI_SERVER_REJECT         0x3F
+#define ISCSI_OPCODE_SERVER_REJECT         0x3F
 
 
 /// First iSCSI target (server) command opcode.
-#define ISCSI_SERVER_FIRST_OPCODE   0x20
+#define ISCSI_OPCODE_SERVER_FIRST          0x20
 
 /// Last iSCSI target (server) command opcode.
-#define ISCSI_SERVER_LAST_OPCODE    0x3F
+#define ISCSI_OPCODE_SERVER_LAST           0x3F
 
 
 /// iSCSI opcode bit mask (bits 0-5 used).
 #define ISCSI_OPCODE_MASK           0x3F
 
-/// Macro which extracts iSCSI packet data opcode out of opcode byte
+/// Macro which extracts iSCSI packet data opcode out of opcode byte.
 #define ISCSI_GET_OPCODE(x) ((x) & ISCSI_OPCODE_MASK)
+
+/// iSCSI opcode flags (I) Immediate bit: For Request PDUs, the I bit set to 1 is an immediate delivery marker.
+#define ISCSI_OPCODE_FLAGS_IMMEDIATE (1 << 6L)
 
 
 /**
@@ -459,16 +1008,6 @@ typedef struct __attribute__((packed)) iscsi_ahs_packet {
     uint8_t data[0];
 } iscsi_ahs_packet;
 
-/**
- * @brief iSCSI CDB packet data structure.
- *
- * There are 16 bytes in the CDB field to accommodate the commonly used
- * CDBs. Whenever the CDB is larger than 16 bytes, an Extended CDB AHS
- * MUST be used to contain the CDB spillover.
- */
-typedef struct __attribute__((packed)) iscsi_cdb {
-    uint8_t data[16];
-} iscsi_cdb;
 
 /**
  * @brief iSCSI Extended CDB AHS packet data structure.
@@ -497,10 +1036,10 @@ typedef struct __attribute__((packed)) iscsi_ext_cdb_ahs_packet {
  * expected data transfer length.
  */
 typedef struct __attribute__((packed)) iscsi_bidi_read_exp_xfer_ahs_packet {
-    /// AHSLength: Always 5 according to ISCSI specifications for now.
+    /// AHSLength: Always 5 according to iSCSI specifications for now.
     uint16_t len;
 
-    /// AHSType: Always 2 according to ISCSI specifications for now.
+    /// AHSType: Always 2 according to iSCSI specifications for now.
     uint8_t type; // Identifier (always 0x02 according to specs)
 
     /// Reserved for future usage, always MUST be 0.
@@ -629,8 +1168,1027 @@ typedef struct __attribute__((packed)) iscsi_data_digest {
     uint32_t crc32c;
 } iscsi_data_digest;
 
+
 /**
- * @brief iSCSI DataSegment Command packet structure.
+ * @brief iSCSI SCSI CDB packet data structure.
+ *
+ * There are 16 bytes in the CDB field to accommodate the commonly used
+ * CDBs. Whenever the CDB is larger than 16 bytes, an Extended CDB AHS
+ * MUST be used to contain the CDB spillover.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb {
+    /// SCSI opcode.
+    uint8_t opcode;
+
+    /// Additional op-code specific data.
+    uint8_t data[0];
+} iscsi_scsi_cdb;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for INQUIRY command flags: Enable Vital Product Data (EVPD).
+#define ISCSI_SCSI_CDB_INQUIRY_FLAGS_EVPD  (1 << 0)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for INQUIRY command flags: Command Support Data (CMDDT).
+#define ISCSI_SCSI_CDB_INQUIRY_FLAGS_CMDDT (1 << 1)
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI INQUIRY command.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_inquiry {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Logical Unit Number (LUN), CMMDT and EVPD.
+    uint8_t lun_flags;
+
+    /// Page code.
+    uint8_t page_code;
+
+    /// Allocation length in bytes.
+    uint16_t alloc_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_inquiry;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI READ(6) and WRITE(6) commands.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_6 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Logical Block Address (LBA).
+    uint8_t lba[3];
+
+    /// Transfer length in bytes.
+    uint8_t xfer_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_read_write_6;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI READ(10) and WRITE(10) commands.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_10 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint32_t lba;
+
+    /// Group number.
+    int8_t group_num;
+
+    /// Transfer length in bytes.
+    uint16_t xfer_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_read_write_10;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI READ(12) and WRITE(12) commands.
+ *
+ * There are 12 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_12 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint32_t lba;
+
+    /// Transfer length in bytes.
+    uint32_t xfer_len;
+
+    /// Restricted for MMC-6 and group number.
+    int8_t restrict_group_num;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_read_write_12;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI READ(16) and WRITE(16) commands.
+ *
+ * There are 16 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_16 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint64_t lba;
+
+    /// Transfer length in bytes.
+    uint32_t xfer_len;
+
+    /// Restricted for MMC-6 and group number.
+    int8_t restrict_group_num;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_read_write_16;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for REPORT LUNS command select report: Logical unit with addressing method.
+#define ISCSI_SCSI_CDB_REPORT_LUNS_SELECT_REPORT_LU_ADDR_METHOD 0x00
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for REPORT LUNS command select report: Well known logical unit.
+#define ISCSI_SCSI_CDB_REPORT_LUNS_SELECT_REPORT_LU_KNOWN       0x01
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for REPORT LUNS command select report: Logical unit.
+#define ISCSI_SCSI_CDB_REPORT_LUNS_SELECT_REPORT_LU_ALL         0x02
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for REPORT LUNS command.
+ *
+ * There are 12 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_report_luns {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Select report.
+    uint8_t select_report;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved2;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved3;
+
+    /// Allocation length in bytes.
+    uint32_t alloc_len;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved4;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_report_luns;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for COMPARE AND WRITE command flags: Force Unit Access (FUA).
+#define ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_FUA                  (1 << 3L)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for COMPARE AND WRITE command flags: Disable Page Out (DPO).
+#define ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_DPO                  (1 << 4L)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for COMPARE AND WRITE command write protect flags: First bit of the three bits.
+#define ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_FIRST_BIT  5
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for COMPARE AND WRITE command write protect flags: Last bit of the three bits.
+#define ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_LAST_BIT   ((ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for COMPARE AND WRITE command write protect flags: Bit mask.
+#define ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_MASK       (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_FIRST_BIT, ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for COMPARE AND WRITE command write protect flags: Extracts the write protect bits.
+#define ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_GET_WRPROTECT(x)     (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_FIRST_BIT, ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for COMPARE AND WRITE command write protect flags: Stores into the write protect bits.
+#define ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_PUT_WRPROTECT(x)     (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_FIRST_BIT, ISCSI_SCSI_CDB_CMP_WRITE_FLAGS_WRPROTECT_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI COMPARE AND WRITE command.
+ *
+ * There are 16 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_cmp_write {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint64_t lba;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+
+    /// Number of blocks in bytes.
+    uint8_t num_blocks;
+
+    /// Restricted for MMC-6 and group number.
+    int8_t restrict_group_num;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_cmp_write;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for SERVICE ACTION IN(16) command service action: READ CAPACITY(16).
+#define ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_READ_CAPACITY_16 0x10
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for SERVICE ACTION IN(16) command service action: READ LONG(16).
+#define ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_READ_LONG_16     0x11
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for SERVICE ACTION IN(16) command service action: First bit of the five bits.
+#define ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_FIRST_BIT        0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for SERVICE ACTION IN(16) command service action: Last bit of the five bits.
+#define ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_LAST_BIT         ((ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_FIRST_BIT) + 5 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for SERVICE ACTION IN(16) command service action: Bit mask.
+#define ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_MASK             (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for SERVICE ACTION IN(16) command service action: Extracts the service action bits.
+#define ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_GET_ACTION(x)           (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for SERVICE ACTION IN(16) command service action: Stores into the service action bits.
+#define ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_PUT_ACTION(x)           (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI SERVICE IN ACTION(16) command.
+ *
+ * There are 16 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_service_action_in_16 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Service action.
+    uint8_t action;
+
+    /// Logical Block Address (LBA), obselete by now.
+    uint64_t lba;
+
+    /// Allocation length in bytes.
+    uint32_t alloc_len;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_service_action_in_16;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI SYNCHRONIZE CACHE(10) command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_sync_cache_10 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint32_t lba;
+
+    /// Group number.
+    int8_t group_num;
+
+    /// Transfer length in bytes.
+    uint16_t xfer_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_sync_cache_10;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI SYNCHRONIZE CACHE(16) command.
+ *
+ * There are 16 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_sync_cache_16 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint64_t lba;
+
+    /// Transfer length in bytes.
+    uint32_t xfer_len;
+
+    /// Group number.
+    int8_t group_num;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_sync_cache_16;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI WRITE SAME(10) command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_write_same_10 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint32_t lba;
+
+    /// Group number.
+    int8_t group_num;
+
+    /// Transfer length in bytes.
+    uint16_t xfer_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_write_same_10;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI WRITE SAME(16) command.
+ *
+ * There are 16 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_write_same_16 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Logical Block Address (LBA).
+    uint64_t lba;
+
+    /// Transfer length in bytes.
+    uint32_t xfer_len;
+
+    /// Group number.
+    int8_t group_num;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_write_same_16;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SELECT(6) command flags: Save Pages (SP).
+#define ISCSI_SCSI_CDB_MODE_SELECT_6_FLAGS_SP  (1 << 0)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SELECT(6) command flags: Revert To Defaults (RTD).
+#define ISCSI_SCSI_CDB_MODE_SELECT_6_FLAGS_RTD (1 << 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SELECT(6) command flags: Page Format (PF).
+#define ISCSI_SCSI_CDB_MODE_SELECT_6_FLAGS_PF  (1 << 4)
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI MODE SELECT(6) command.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_select_6 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Parameter list length in bytes.
+    uint8_t param_list_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_mode_select_6;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SELECT(10) command flags: Save Pages (SP).
+#define ISCSI_SCSI_CDB_MODE_SELECT_10_FLAGS_SP  (1 << 0)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SELECT(10) command flags: Page Format (PF).
+#define ISCSI_SCSI_CDB_MODE_SELECT_10_FLAGS_PF  (1 << 4)
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI MODE SELECT(10) command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_select_10 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint32_t reserved;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+
+    /// Parameter list length in bytes.
+    uint16_t param_list_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_mode_select_10;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command flags: Disable Block Descriptors (DBD).
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_FLAGS_DBD (1 << 3)
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page code: First bit of the six bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_FIRST_BIT         0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page code: Last bit of the six bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_LAST_BIT          ((ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page code: Bit mask.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_MASK              (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page code: Extracts the page code bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_GET_PAGE_CODE(x)            (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page code: Stores into the page code bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PUT_PAGE_CODE(x)            (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Current values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_CURRENT_VALUES 0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Changeable values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_CHG_VALUES     0x1
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Default values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_DEFAULT_VALUES 0x2
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Saved values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_SAVED_VALUES   0x3
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: First bit of the two bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_FIRST_BIT      6
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Last bit of the two bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_LAST_BIT       ((ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_FIRST_BIT) + 2 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Bit mask.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_MASK           (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Extracts the page control bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_GET_PAGE_CONTROL(x)         (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(6) command page control: Stores into the page control bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_6_PUT_PAGE_CONTROL(x)         (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI MODE SENSE(6) command.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_sense_6 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Page code and page control.
+    uint8_t page_code_control;
+
+    /// Sub page code.
+    uint8_t sub_page_code;
+
+    /// Allocation length in bytes.
+    uint8_t alloc_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_mode_sense_6;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command flags: Disable Block Descriptors (DBD).
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_FLAGS_DBD   (1 << 3)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command flags: Long LBA Accepted (LLBAA).
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_FLAGS_LLBAA (1 << 4)
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page code: First bit of the six bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_FIRST_BIT         0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page code: Last bit of the six bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_LAST_BIT          ((ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page code: Bit mask.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_MASK              (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page code: Extracts the page code bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_GET_PAGE_CODE(x)            (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page code: Stores into the page code bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PUT_PAGE_CODE(x)            (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Current values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_CURRENT_VALUES 0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Changeable values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_CHG_VALUES     0x1
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Default values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_DEFAULT_VALUES 0x2
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Saved values.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_SAVED_VALUES   0x3
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: First bit of the two bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_FIRST_BIT      6
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Last bit of the two bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_LAST_BIT       ((ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_FIRST_BIT) + 2 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Bit mask.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_MASK           (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Extracts the page control bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_GET_PAGE_CONTROL(x)         (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for MODE SENSE(10) command page control: Stores into the page control bits.
+#define ISCSI_SCSI_CDB_MODE_SENSE_10_PUT_PAGE_CONTROL(x)         (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_FIRST_BIT, ISCSI_SCSI_CDB_MODE_SENSE_10_PAGE_CONTROL_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI MODE SENSE(10) command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_sense_10 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Page code and page control.
+    uint8_t page_code_control;
+
+    /// Sub page code.
+    uint8_t sub_page_code;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+
+    /// Allocation length in bytes.
+    uint16_t alloc_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_mode_sense_10;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for REQUEST SENSE command flags: Descriptor Format (DESC).
+#define ISCSI_SCSI_CDB_REQ_SENSE_FLAGS_DESC (1 << 0)
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI REQUEST SENSE command.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_req_sense {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Allocation length in bytes.
+    uint8_t alloc_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_req_sense;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags: Reply immediately after CDB check (IMMED).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_EXEC_FLAGS_IMMED (1 << 0)
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Process the START and LOEJ bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_PROC_START_LOEJ_BITS 0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Cause the logical unit to transition to the active power condition (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_ACTIVE               0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Cause the logical unit to transition to the idle_a power condition (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_IDLE_A               0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Cause the logical unit to transition to the idle_b power condition (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_IDLE_B               0x1
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Cause the logical unit to transition to the idle_c power condition (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_IDLE_C               0x2
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Cause the logical unit to transition to the standby_z power condition (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_STANDBY_Z            0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Cause the logical unit to transition to the standby_b power condition (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_STANDBY_Y            0x1
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Initialize and start all of the idle and standby condition timers that are enabled (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_LU_CONTROL           0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Force the idle_a condition timer to be set to zero (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FORCE_IDLE_A_0       0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Force the idle_b condition timer to be set to zero (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FORCE_IDLE_B_0       0x1
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Force the idle_c condition timer to be set to zero (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FORCE_IDLE_C_0       0x2
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Force the standby_z condition timer to be set to zero (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FORCE_STANDBY_Z_0    0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Force the standby_y condition timer to be set to zero (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FORCE_STANDBY_Y_0    0x1
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: First bit of the four bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FIRST_BIT            0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Last bit of the four bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_LAST_BIT             ((ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Bit mask.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_MASK                 (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FIRST_BIT, ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Extracts the power condition modifier bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_GET_POWER_COND_MOD(x)               (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FIRST_BIT, ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution power condition modifier: Stores into the power condition modifier bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_PUT_POWER_COND_MOD(x)               (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_FIRST_BIT, ISCSI_SCSI_CDB_START_STOP_UNIT_POWER_COND_MOD_LAST_BIT))
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags: START.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_START                      (1 << 0)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags: LOad EJect (LOEJ).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_LOEJ                       (1 << 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags: Do not flush caches until a power condition that prevents accessing the medium is entered (NO_FLUSH).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_NO_FLUSH                   (1 << 2)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Process the START and LOEJ bits (START_VALID).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_START_VALID     0x0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Cause the logical unit to transition to the active power condition (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_ACTIVE          0x1
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Cause the logical unit to transition to the idle_a to idle_c power conditions (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_IDLE            0x2
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Cause the logical unit to transition to the standby_z and standby_y power conditions (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_STANDBY         0x3
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Obselete.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_OBSELETE        0x5
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Initialize and start all of the idle and standby condition timers that are enabled (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_LU_CONTROL      0x7
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Force the idle_a to idle_c condition timers to be set to zero (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_FORCE_IDLE_0    0xA
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Force the standby_z and standby_y condition timers to be set to zero (see SPC5).
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_FORCE_STANDBY_0 0xB
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: First bit of the four bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_FIRST_BIT       4
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Last bit of the four bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_LAST_BIT        ((ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_FIRST_BIT) + 8 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Bit mask.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_MASK            (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_FIRST_BIT, ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Extracts the power condition bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_GET_POWER_COND(x)          (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_FIRST_BIT, ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for START STOP UNIT command execution flags power condition: Stores into the power condition bits.
+#define ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_PUT_POWER_COND(x)          (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_FIRST_BIT, ISCSI_SCSI_CDB_START_STOP_UNIT_FLAGS_POWER_COND_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI START STOP UNIT command.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_start_stop_unit {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Execution flags.
+    int8_t exec_flags;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Power condition modifier.
+    uint8_t power_cond_mod;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_start_stop_unit;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Register - Register a reservation key without making a reservation.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_REGISTER                  0x00
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Reserve - Create a persistent reservation of the specified scope and type.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_RESERVE                   0x01
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Release - Releases the selected reservation for the requesting initiator.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_RELEASE                   0x02
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Clear – Clears all reservations keys and all persistent reservations.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_CLEAR                     0x03
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Preempt – Preempt reservations from another initiator.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_PREEMPT                   0x04
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Preempt reservations from another initiator and abort all tasks for all initiators with the specified reservation key.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_PREEMPT_ABORT             0x05
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Register and Ignore Existing Key – Register a new reservation key and discard existing reservation key.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_REGISTER_IGNORE_EXIST_KEY 0x06
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Register and Move Registers - Registers a reservation key for another I_T nexus and moves the persistent reservation to that I-T nexus.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_REGISTER_MOVE_REGS        0x07
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: First bit of the five bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_FIRST_BIT                 0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Last bit of the five bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_LAST_BIT                  ((ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_FIRST_BIT) + 5 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Bit mask.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_MASK                      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Extracts the service action bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_GET_ACTION(x)                    (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE OUT command service action: Stores into the service action bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_OUT_PUT_ACTION(x)                    (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_PR_RESERVE_OUT_ACTION_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI PERSISTENT RESERVE OUT command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_pr_reserve_out {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Service action.
+    uint8_t action;
+
+    /// Scope and reservation type.
+    uint8_t scope_type;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Parameter list length in bytes.
+    uint32_t param_list_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_pr_reserve_out;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Read keys - Reads all registered reservation keys (i.e. registrations) as described in SPC5.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_READ_KEYS                0x00
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Read reservations - Reads the current persistent reservations as described in SPC5.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_READ_RESERVATIONS        0x01
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Report capabilities - Returns capability information.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_READ_REPORT_CAPABILITIES 0x02
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Read full status – Reads complete information about all registrations and the persistent reservations, if any.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_READ_FULL_STATUS         0x03
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: First bit of the five bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_FIRST_BIT                0
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Last bit of the five bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_LAST_BIT                 ((ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_FIRST_BIT) + 5 - 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Bit mask.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_MASK                     (ISCSI_BITS_GET_MASK(ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Extracts the service action bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_GET_ACTION(x)                   (ISCSI_BITS_GET((x), ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_LAST_BIT))
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for PERSISTENT RESERVE IN command service action: Stores into the service action bits.
+#define ISCSI_SCSI_CDB_PR_RESERVE_IN_PUT_ACTION(x)                   (ISCSI_BITS_PUT((x), ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_FIRST_BIT, ISCSI_SCSI_CDB_PR_RESERVE_IN_ACTION_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI PERSISTENT RESERVE IN command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_pr_reserve_in {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Service action.
+    uint8_t action;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint32_t reserved;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+
+    /// Parameter list length in bytes.
+    uint16_t param_list_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_pr_reserve_in;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI RESERVE(6) command.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_pr_reserve_6 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved_obselete;
+
+    /// Obselete byte.
+    uint8_t obselete;
+
+    /// Obselete word.
+    uint16_t obselete2;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_pr_reserve_6;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for RESERVE(10) command flags: Long identifier larger than 255 (LONGID).
+#define ISCSI_SCSI_CDB_RESERVE_10_FLAGS_LONGID (1 << 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for RESERVE(10) command flags: Third-party reservation (3RDPTY).
+#define ISCSI_SCSI_CDB_RESERVE_10_FLAGS_3RDPTY (1 << 4)
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI RESERVE(10) command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_pr_reserve_10 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Obselete.
+    uint8_t obselete;
+
+    /// Third-party device identifier.
+    uint8_t third_party_dev_id;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+
+    /// Parameter list length in bytes.
+    uint16_t param_list_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_pr_reserve_10;
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI RELEASE(6) command.
+ *
+ * There are 6 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_pr_release_6 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved_obselete;
+
+    /// Obselete byte.
+    uint8_t obselete;
+
+    /// Obselete word.
+    uint16_t obselete2;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_pr_release_6;
+
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for RELEASE(10) command flags: Long identifier larger than 255 (LONGID).
+#define ISCSI_SCSI_CDB_RELEASE_10_FLAGS_LONGID (1 << 1)
+
+/// iSCSI SCSI Command Descriptor Block (CDB) for RELEASE(10) command flags: Third-party reservation (3RDPTY).
+#define ISCSI_SCSI_CDB_RELEASE_10_FLAGS_3RDPTY (1 << 4)
+
+
+/**
+ * @brief iSCSI SCSI CDB packet data structure for SCSI RELEASE(10) command.
+ *
+ * There are 10 bytes in the CDB field for this command.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_cdb_pr_release_10 {
+    /// SCSI opcode.
+    iscsi_scsi_cdb cdb;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Obselete.
+    uint8_t obselete;
+
+    /// Third-party device identifier.
+    uint8_t third_party_dev_id;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+
+    /// Parameter list length in bytes.
+    uint16_t param_list_len;
+
+    /// Control.
+    uint8_t control;
+} iscsi_scsi_cdb_pr_release_10;
+
+
+/**
+ * @brief iSCSI SCSI DataSegment Command packet structure.
  *
  * iSCSI targets MUST support and enable Autosense. If Status is CHECK
  * CONDITION (0x02), then the data segment MUST contain sense data for
@@ -640,7 +2198,7 @@ typedef struct __attribute__((packed)) iscsi_data_digest {
  * response-related information (e.g., for a target failure, it may
  * contain a vendor-specific detailed description of the failure).
  */
-typedef struct __attribute__((packed)) iscsi_ds_cmd_data {
+typedef struct __attribute__((packed)) iscsi_scsi_ds_cmd_data {
     /// SenseLength: This field indicates the length of Sense Data.
     uint16_t len;
 
@@ -649,13 +2207,2539 @@ typedef struct __attribute__((packed)) iscsi_ds_cmd_data {
 
     /// Response Data.
     uint8_t res_data[0];
-} iscsi_ds_cmd_data;
+} iscsi_scsi_ds_cmd_data;
+
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Direct access device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_DIRECT    0x00
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Sequential access device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_SEQ       0x01
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Printer device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_PRINTER   0x02
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Processor device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_PROCESSOR 0x03
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Write once device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_WORM      0x04
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Read only direct access (e.g. CD-ROM) device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_RO_DIRECT 0x05
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Scanner device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_SCANNER   0x06
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Optical memory device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_OPTICAL   0x07
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Medium changer device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_CHANGER   0x08
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Communications device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_COMM      0x09
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Unknown or no device.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_UNKNOWN   0x1F
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: First bit of the five bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT 0
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Last bit of the five bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT  ((ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT) + 5 - 1)
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Bit mask.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Extracts the peripheral device type bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_GET_PERIPHERAL_TYPE(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type: Stores into the peripheral device type bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_PERIPHERAL_TYPE(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: The specified peripheral device type is currently connected to this logical unit, or connection state could not be determined.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_POSSIBLE    0x0
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: The target is capable of supporting the specified peripheral device type on this logical unit, but not connected.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_SUPPORTED   0x1
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: The target is not capable of supporting a physical device on this logical unit.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_NEVER       0x3
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: Vendor specific.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_VENDOR_UNIQ 0x4
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: First bit of the three bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT   5
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: Last bit of the three bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT    ((ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: Bit mask.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_MASK        (ISCSI_BITS_GET_MASK(ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: Extracts the peripheral device identifier bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_GET_PERIPHERAL_ID(x)      (ISCSI_BITS_GET((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: Stores into the peripheral device identifier bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_PERIPHERAL_ID(x)      (ISCSI_BITS_PUT((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type modifier: First bit of the seven bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_FIRST_BIT             0
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type modifier: Last bit of the seven bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_LAST_BIT              ((ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_FIRST_BIT) + 7 - 1)
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type modifier: Bit mask.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_MASK                  (ISCSI_BITS_GET_MASK(ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: Extracts the peripheral type modifier bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_GET_PERIPHERAL_TYPE_MOD(x)                (ISCSI_BITS_GET((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral identifier: Stores into the peripheral type modifier bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_PERIPHERAL_TYPE_MOD(x)                (ISCSI_BITS_PUT((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data peripheral type modifier: Removable media.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_MOD_FLAGS_REMOVABLE_MEDIA (1 << 7)
+
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: None.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_NONE       0x0
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: SPC.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_SPC        0x3
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: SPC2.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_SPC2       0x4
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: SPC3.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_SPC3       0x5
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: SPC4.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_SPC4       0x6
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: SPC5.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_SPC5       0x7
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: First bit of the three bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_FIRST_BIT  0
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: Last bit of the three bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_LAST_BIT   ((ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: Bit mask.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_MASK       (ISCSI_BITS_GET_MASK(ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: Extracts the ANSI version bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_GET_VERSION_ANSI(x)     (ISCSI_BITS_GET((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ANSI version: Stores into the ANSI version bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_VERSION_ANSI(x)     (ISCSI_BITS_PUT((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ANSI_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ECMA version: First bit of the three bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_FIRST_BIT  3
+
+/// iSCSI SCSI Basic Inquiry Data ECMA version: Last bit of the three bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_LAST_BIT   ((ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI Basic Inquiry Data ECMA version: Bit mask.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_MASK       (ISCSI_BITS_GET_MASK(ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ECMA version: Extracts the ECMA version bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_GET_VERSION_ECMA(x)     (ISCSI_BITS_GET((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ECMA version: Stores into the ECMA version bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_VERSION_ECMA(x)     (ISCSI_BITS_PUT((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ECMA_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ISO version: First bit of the two bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_FIRST_BIT   6
+
+/// iSCSI SCSI Basic Inquiry Data ISO version: Last bit of the two bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_LAST_BIT   ((ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_FIRST_BIT) + 2 - 1)
+
+/// iSCSI SCSI Basic Inquiry Data ISO version: Bit mask.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_MASK        (ISCSI_BITS_GET_MASK(ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ISO version: Extracts the ISO version bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_GET_VERSION_ISO(x)      (ISCSI_BITS_GET((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data ISO version: Stores into the ISO version bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_VERSION_ISO(x)      (ISCSI_BITS_PUT((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_VERSION_ISO_LAST_BIT))
+
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: This structure complies with SCSI-1 specifications.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_LEVEL_0                0x00
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: This structure complies with CCS pseudo specifications.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_CCS                    0x01
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: This structure complies with SCSI-2/3 specifications.
+#define	ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_SCSI_2                 0x02
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: First bit of the four bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_FIRST_BIT              0
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: Last bit of the four bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_LAST_BIT              ((ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: Bit mask.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_MASK                  (ISCSI_BITS_GET_MASK(ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: Extracts the response data format flags bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_GET_RESPONSE_DATA_FMT_FLAGS(x)                (ISCSI_BITS_GET((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: Stores into the response data format flags bits.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_RESPONSE_DATA_FMT_FLAGS(x)                (ISCSI_BITS_PUT((x), ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_FIRST_BIT, ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_LAST_BIT))
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: Hierarchical Support.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_HISUP                 (1 << 4)
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: Normal ACA Supported.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_NORMACA               (1 << 5)
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: TERMINATE I/O PROCESS message device support.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_TERMINATE_IO_PROC_MSG (1 << 6)
+
+/// iSCSI SCSI Basic Inquiry Data response data format flags: Asynchronous Event Notification device support.
+#define ISCSI_SCSI_BASIC_INQUIRY_DATA_RESPONSE_DATA_FMT_FLAGS_ASYNC_EVENT_NOTIFY    (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI basic inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * cleared.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_basic_inquiry_data_packet {
+    /// Peripheral device type and qualifier.
+    uint8_t peripheral_type_id;
+
+    /// Peripheral device type modifier and removable media bit.
+    int8_t peripheral_type_mod_flags;
+
+    /// ANSI-Approved, ECMA and ISO version.
+    uint8_t version;
+
+    /// Response data format, HISUP, NORMACA, AENC and TrmIOP flags.
+    int8_t response_data_fmt_flags;
+
+    /// Additional length in bytes.
+    uint8_t add_len;
+} iscsi_scsi_basic_inquiry_data_packet;
+
+
+/// iSCSI SCSI Standard Inquiry Data vendor identifier for disk.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_DISK_VENDOR_ID "UNI FRBG"
+
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: Protect.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_PROTECT        (1 << 0)
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: Third-Party Copy (3PC).
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_3PC            (1 << 3)
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: First bit of the two bits.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_FIRST_BIT 4
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: Last bit of the two bits.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_LAST_BIT  ((ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_FIRST_BIT) + 2 - 1)
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: Bit mask.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_FIRST_BIT, ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_LAST_BIT))
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: Extracts the Target Port Group Support (TPGS) bits.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_GET_TPGS(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_FIRST_BIT, ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_LAST_BIT))
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: Stores into the Target Port Group Support (TPGS) bits.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_PUT_TPGS(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_FIRST_BIT, ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_TPGS_LAST_BIT))
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: Access Controls Coordinator (ACC).
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_ACC            (1 << 6)
+
+/// iSCSI SCSI Standard Inquiry Data TPGS flags: SCC Supported (SCCS).
+#define ISCSI_SCSI_STD_INQUIRY_DATA_TPGS_FLAGS_SCCS           (1 << 7)
+
+
+/// iSCSI SCSI Standard Inquiry Data services flags: Multi Port (MULTIP).
+#define ISCSI_SCSI_STD_INQUIRY_DATA_SERVICES_FLAGS_MULTIP  (1 << 4)
+
+/// iSCSI SCSI Standard Inquiry Data services flags: VS.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_SERVICES_FLAGS_VS      (1 << 5)
+
+/// iSCSI SCSI Standard Inquiry Data services flags: Enclosure Services (ENCSERV).
+#define ISCSI_SCSI_STD_INQUIRY_DATA_SERVICES_FLAGS_ENCSERV (1 << 6)
+
+
+/// iSCSI SCSI Standard Inquiry Data flags: Device responds with soft reset instead of hard reset to reset condition.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_FLAGS_SOFT_RESET    (1 << 0)
+
+/// iSCSI SCSI Standard Inquiry Data flags: Device supports tagged command queueing.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_FLAGS_COMMAND_QUEUE (1 << 1)
+
+/// iSCSI SCSI Standard Inquiry Data flags: Device supports linked commands for this logical unit.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_FLAGS_LINKED_CMDS   (1 << 3)
+
+/// iSCSI SCSI Standard Inquiry Data flags: Device supports synchronous data transfers.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_FLAGS_SYNC          (1 << 4)
+
+/// iSCSI SCSI Standard Inquiry Data flags: Device supports 16-bit wide data transfers.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_FLAGS_WIDE_16_BIT   (1 << 5)
+
+/// iSCSI SCSI Standard Inquiry Data flags: Device supports 32-bit wide data transfers.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_FLAGS_WIDE_32_BIT   (1 << 6)
+
+/// iSCSI SCSI Standard Inquiry Data flags: Device supports relative addressing mode of this logical unit.
+#define ISCSI_SCSI_STD_INQUIRY_DATA_FLAGS_REL_ADDR      (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI standard inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * cleared.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_std_inquiry_data_packet {
+    /// iSCSI SCSI basic inquiry data packet.
+    iscsi_scsi_basic_inquiry_data_packet basic_inquiry;
+
+    /// PROTECT, 3PC, TPGS, ACC and SCCS.
+    uint8_t tpgs_flags;
+
+    /// MULTIP, VS and ENCSERV.
+    int8_t services_flags;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Vendor identification.
+    uint8_t vendor_id[8];
+
+    /// Product identification.
+    uint8_t product_id[16];
+
+    /// Product revision level.
+    uint8_t product_rev_level[4];
+} iscsi_scsi_std_inquiry_data_packet;
+
+
+/// iSCSI SCSI Extended Inquiry Data vendor specific.
+#define ISCSI_SCSI_EXT_INQUIRY_DATA_VENDOR_SPEC_ID "UNI FREIBURG DNBD3"
+
+
+/// iSCSI SCSI Extended Inquiry Data version descriptor: iSCSI (no version claimed).
+#define ISCSI_SCSI_EXT_INQUIRY_DATA_VERSION_DESC_ISCSI_NO_VERSION 0x0960
+
+/// iSCSI SCSI Extended Inquiry Data version descriptor: SPC3 (no version claimed).
+#define ISCSI_SCSI_EXT_INQUIRY_DATA_VERSION_DESC_SPC3_NO_VERSION  0x0300
+
+/// iSCSI SCSI Extended Inquiry Data version descriptor: SBC2 (no version claimed).
+#define ISCSI_SCSI_EXT_INQUIRY_DATA_VERSION_DESC_SBC2_NO_VERSION  0x0320
+
+/// iSCSI SCSI Extended Inquiry Data version descriptor: SAM2 (no version claimed).
+#define ISCSI_SCSI_EXT_INQUIRY_DATA_VERSION_DESC_SAM2_NO_VERSION  0x0040
+
+
+/**
+ * @brief iSCSI SCSI extended inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * cleared.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_ext_inquiry_data_packet {
+    /// iSCSI SCSI standard inquiry data packet.
+    iscsi_scsi_std_inquiry_data_packet std_inquiry;
+
+    /// Vendor specific.
+    uint8_t vendor_spec[20];
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved;
+
+    /// Version descriptors.
+    uint16_t version_desc[8];
+
+    /// Reserved for future usage (always MUST be 0).
+    uint64_t reserved2[2];
+
+    /// Reserved for future usage (always MUST be 0).
+    uint32_t reserved3;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved4;
+} iscsi_scsi_ext_inquiry_data_packet;
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Direct access device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_DIRECT    0x00
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Sequential access device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_SEQ       0x01
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Printer device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_PRINTER   0x02
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Processor device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_PROCESSOR 0x03
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Write once device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_WORM      0x04
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Read only direct access (e.g. CD-ROM) device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_RO_DIRECT 0x05
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Scanner device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_SCANNER   0x06
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Optical memory device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_OPTICAL   0x07
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Medium changer device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_CHANGER   0x08
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Communications device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_COMM      0x09
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Unknown or no device.
+#define	ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_UNKNOWN   0x1F
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: First bit of the five bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT 0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Last bit of the five bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT  ((ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT) + 5 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Extracts the peripheral device type bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_GET_PERIPHERAL_TYPE(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral type: Stores into the peripheral device type bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PUT_PERIPHERAL_TYPE(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: The specified peripheral device type is currently connected to this logical unit, or connection state could not be determined.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_POSSIBLE    0x0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: The target is capable of supporting the specified peripheral device type on this logical unit, but not connected.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_SUPPORTED   0x1
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: The target is not capable of supporting a physical device on this logical unit.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_NEVER       0x3
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: Vendor specific.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_VENDOR_UNIQ 0x4
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: First bit of the three bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT   5
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: Last bit of the three bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT    ((ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_MASK        (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: Extracts the peripheral device identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_GET_PERIPHERAL_ID(x)      (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data peripheral identifier: Stores into the peripheral device identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PUT_PERIPHERAL_ID(x)      (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Supported VPD pages.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_SUPPORTED_VPD_PAGES      0x00
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Unit serial number.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_UNIT_SERIAL_NUMBER       0x80
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Device identification.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_DEVICE_ID                0x83
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Software interface identification.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_SOFTWARE_IFACE_ID        0x84
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Management network addresses.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_MANAGEMENT_NETWORK_ADDRS 0x85
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Extended inquiry data.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_EXTENDED_INQUIRY_DATA    0x86
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Mode page policy.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_MODE_PAGE_POLICY         0x87
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: SCSI ports.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_SCSI_PORTS               0x88
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Block limits.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_BLOCK_LIMITS             0xB0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Block device characteristics.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_BLOCK_DEV_CHARS          0xB1
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Thin provisioning.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_THIN_PROVISION           0xB2
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Inquiry Data page code: Maximum serial string length in bytes.
+#define ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_MAX_SERIAL_STRING        32
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_inquiry_data_packet {
+    /// Peripheral device type and qualifier.
+    uint8_t peripheral_type_id;
+
+    /// Page code.
+    uint8_t page_code;
+
+    /// Allocation length in bytes.
+    uint16_t alloc_len;
+
+    /// Parameters.
+    uint8_t params[0];
+} iscsi_scsi_vpd_page_inquiry_data_packet;
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: iSCSI.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_ISCSI     0x05
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: First bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT 0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: Last bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT  ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: Extracts the protocol identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_GET_PROTOCOL_ID(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: Stores into the protocol identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: Binary encoding.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_BINARY       0x01
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: ASCII encoding.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_ASCII        0x02
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: UTF-8 encoding.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_UTF8         0x03
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: First bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT    4
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: Last bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT     ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT) + 8 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_MASK         (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: Extracts the protocol identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_GET_CODE_SET(x)       (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: Stores into the protocol identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(x)       (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT))
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Vendor specific.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_VENDOR_SPEC        0x00
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: T10 vendor identifier.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_T10_VENDOR_ID      0x01
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: EUI64.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_EUI64              0x02
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: NAA.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_NAA                0x03
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Relative target port.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_REL_TARGET_PORT    0x04
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Target port group.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_TARGET_PORT_GROUP  0x05
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Logical unit group.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LOGICAL_UNIT_GROUP 0x06
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: MD5 logical unit.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_MD5_LOGICAL_UNIT   0x07
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: SCSI name.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_SCSI_NAME          0x08
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: First bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT          0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Last bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT           ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_MASK               (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Extracts the type bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_GET_TYPE(x)             (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags type: Stores into the type bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(x)             (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: Logical unit.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LOGICAL_UNIT      0x0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: Target port.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_PORT       0x1
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: Target device.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_DEVICE     0x2
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: First bit of the two bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT         4
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: Last bit of the two bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT          ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_MASK              (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: Extracts the association bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_GET_ASSOC(x)            (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags association: Stores into the association bits.
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(x)            (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data flags: Protocol Identifier Valid (PIV).
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV                     (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_inquiry_data_packet {
+    /// Protocol identifier and code set.
+    uint8_t protocol_id_code_set;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved;
+
+    /// Length in bytes.
+    uint8_t len;
+
+    /// Designation descriptor.
+    uint8_t desc[0];
+} iscsi_scsi_vpd_page_design_desc_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor IEEE NAA Extended Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_ieee_naa_ext_inquiry_data_packet {
+    /// IEEE NAA Extended.
+    uint64_t ieee_naa_ext;
+} iscsi_scsi_vpd_page_design_desc_ieee_naa_ext_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor T10 Vendor ID Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_t10_vendor_id_inquiry_data_packet {
+    /// Vendor identification.
+    uint8_t vendor_id[8];
+
+    /// Product identification.
+    uint8_t product_id[16];
+
+    /// Unit serial number.
+    uint8_t unit_serial_num[32];
+} iscsi_scsi_vpd_page_design_desc_t10_vendor_id_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Relative Target Port Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_rel_target_port_inquiry_data_packet {
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved;
+
+    /// Port index.
+    uint16_t index;
+} iscsi_scsi_vpd_page_design_desc_rel_target_port_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Target Port Group Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_target_port_group_inquiry_data_packet {
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved;
+
+    /// Port group index.
+    uint16_t index;
+} iscsi_scsi_vpd_page_design_desc_target_port_group_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Logical Unit Group Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_logical_unit_group_inquiry_data_packet {
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved;
+
+    /// Logical unit identifier.
+    uint16_t id;
+} iscsi_scsi_vpd_page_design_desc_logical_unit_group_inquiry_data_packet;
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Direct access device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_DIRECT    0x00
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Sequential access device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_SEQ       0x01
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Printer device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_PRINTER   0x02
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Processor device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_PROCESSOR 0x03
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Write once device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_WORM      0x04
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Read only direct access (e.g. CD-ROM) device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_RO_DIRECT 0x05
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Scanner device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_SCANNER   0x06
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Optical memory device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_OPTICAL   0x07
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Medium changer device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_CHANGER   0x08
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Communications device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_COMM      0x09
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Unknown or no device.
+#define	ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_UNKNOWN   0x1F
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: First bit of the five bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT 0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Last bit of the five bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT  ((ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT) + 5 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Extracts the peripheral device type bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_GET_PERIPHERAL_TYPE(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral type: Stores into the peripheral device type bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PUT_PERIPHERAL_TYPE(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: The specified peripheral device type is currently connected to this logical unit, or connection state could not be determined.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_POSSIBLE    0x0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: The target is capable of supporting the specified peripheral device type on this logical unit, but not connected.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_SUPPORTED   0x1
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: The target is not capable of supporting a physical device on this logical unit.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_NEVER       0x3
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: Vendor specific.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_VENDOR_UNIQ 0x4
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: First bit of the three bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT   5
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: Last bit of the three bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT    ((ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_MASK        (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: Extracts the peripheral device identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_GET_PERIPHERAL_ID(x)      (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data peripheral identifier: Stores into the peripheral device identifier bits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PUT_PERIPHERAL_ID(x)      (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PERIPHERAL_ID_LAST_BIT))
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Supported VPD pages.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_SUPPORTED_VPD_PAGES      0x00
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Unit serial number.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_UNIT_SERIAL_NUMBER       0x80
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Device identification.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_DEVICE_ID                0x83
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Software interface identification.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_SOFTWARE_IFACE_ID        0x84
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Management network addresses.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_MANAGEMENT_NETWORK_ADDRS 0x85
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Extended inquiry data.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_EXTENDED_INQUIRY_DATA    0x86
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Mode page policy.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_MODE_PAGE_POLICY         0x87
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: SCSI ports.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_SCSI_PORTS               0x88
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Block limits.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_BLOCK_LIMITS             0xB0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Block device characteristics.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_BLOCK_DEV_CHARS          0xB1
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data page code: Thin provisioning.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_PAGE_CODE_THIN_PROVISION           0xB2
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data check flags: RFTG check.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_CHECK_FLAGS_RFTG_CHK (1 << 0)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data check flags: APTG check.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_CHECK_FLAGS_APTG_CHK (1 << 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data check flags: GRD check.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_CHECK_FLAGS_GRD_CHK  (1 << 2)
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data support flags: SIMP support.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_SUPPORT_FLAGS_SIMPSUP   (1 << 0)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data support flags: ORD support.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_SUPPORT_FLAGS_ORDSUP    (1 << 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data support flags: HEAD support.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_SUPPORT_FLAGS_HEADSUP   (1 << 2)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data support flags: PRIOR support.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_SUPPORT_FLAGS_PRIOR_SUP (1 << 3)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Extended Inquiry Data support flags: GROUP support.
+#define ISCSI_SCSI_VPD_PAGE_EXT_INQUIRY_DATA_SUPPORT_FLAGS_GROUP_SUP (1 << 4)
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Extended Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_ext_inquiry_data_packet {
+    /// Peripheral device type and qualifier.
+    uint8_t peripheral_type_id;
+
+    /// Page code.
+    uint8_t page_code;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved;
+
+    /// Page length in bytes.
+    uint8_t page_len;
+
+    /// Check flags.
+    int8_t check_flags;
+
+    /// Support flags.
+    int8_t support_flags;
+
+    /// More support flags.
+    int8_t support_flags_2;
+
+    /// LUICLR.
+    uint8_t luiclr;
+
+    /// CBCS.
+    uint8_t cbcs;
+
+    /// Micro DL.
+    uint8_t micro_dl;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint64_t reserved2[6];
+
+    /// Reserved for future usage (always MUST be 0).
+    uint32_t reserved3;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved4;
+} iscsi_scsi_vpd_page_ext_inquiry_data_packet;
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data policy page code: First bit of the six bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_FIRST_BIT 0
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data policy page code: Last bit of the six bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_LAST_BIT  ((ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data policy page code: Bit mask.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data policy page code: Extracts the policy page code bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_GET_POLICY_PAGE_CODE(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data policy page code: Stores into the policy page code bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_PUT_POLICY_PAGE_CODE(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_POLICY_PAGE_CODE_LAST_BIT))
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data flags mode page policy: First bit of the two bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_FIRST_BIT 0
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data flags mode page policy: Last bit of the two bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_LAST_BIT  ((ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_FIRST_BIT) + 2 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data flags mode page policy: Bit mask.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_FIRST_BIT, ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data flags mode page policy: Extracts the mode page policy bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_GET_MODE_PAGE_POLICY(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_FIRST_BIT, ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data flags mode page policy: Stores into the mode page policy bits.
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_PUT_MODE_PAGE_POLICY(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_FIRST_BIT, ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MODE_PAGE_POLICY_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry Data flag: Multiple Logical Units Share (MLUS).
+#define ISCSI_SCSI_VPD_MODE_PAGE_POLICY_DESC_INQUIRY_DATA_FLAGS_MLUS                        (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Mode Page Policy Descriptor Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_mode_page_policy_desc_inquiry_data_packet {
+    /// Policy page code.
+    uint8_t page_code;
+
+    /// Policy sub page code.
+    uint8_t sub_page_code;
+
+    /// Policy flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved;
+} iscsi_scsi_vpd_mode_page_policy_desc_inquiry_data_packet;
+
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data protocol identifier: iSCSI.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_ISCSI     0x05
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data protocol identifier: First bit of the four bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT 0
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data protocol identifier: Last bit of the four bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT  ((ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data protocol identifier: Bit mask.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data protocol identifier: Extracts the protocol identifier bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_GET_PROTOCOL_ID(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data protocol identifier: Stores into the protocol identifier bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: Binary encoding.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_BINARY       0x01
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: ASCII encoding.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_ASCII        0x02
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: UTF-8 encoding.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_UTF8         0x03
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: First bit of the four bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT    4
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: Last bit of the four bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT     ((ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT) + 8 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: Bit mask.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_MASK         (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: Extracts the protocol identifier bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_GET_CODE_SET(x)       (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data code set: Stores into the protocol identifier bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(x)       (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT))
+
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Vendor specific.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_VENDOR_SPEC        0x00
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: T10 vendor identifier.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_T10_VENDOR_ID      0x01
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: EUI64.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_EUI64              0x02
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: NAA.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_NAA                0x03
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Relative target port.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_REL_TARGET_PORT    0x04
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Target port group.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_TARGET_PORT_GROUP  0x05
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Logical unit group.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LOGICAL_UNIT_GROUP 0x06
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: MD5 logical unit.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_MD5_LOGICAL_UNIT   0x07
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: SCSI name.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_SCSI_NAME          0x08
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: First bit of the four bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT          0
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Last bit of the four bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT           ((ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Bit mask.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_MASK               (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Extracts the type bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_GET_TYPE(x)             (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags type: Stores into the type bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(x)             (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: Logical unit.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LOGICAL_UNIT      0x0
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: Target port.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_PORT       0x1
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: Target device.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_DEVICE     0x2
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: First bit of the two bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT         4
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: Last bit of the two bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT          ((ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: Bit mask.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_MASK              (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: Extracts the association bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_GET_ASSOC(x)            (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags association: Stores into the association bits.
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(x)            (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_FIRST_BIT, ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data flags: Protocol Identifier Valid (PIV).
+#define ISCSI_SCSI_VPD_SCSI_TARGET_PORT_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV                     (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) SCSI Target Port Designation Descriptor Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_scsi_target_port_design_dec_inquiry_data_packet {
+    /// Protocol identifier and code set.
+    uint8_t protocol_id_code_set;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved;
+
+    /// Length in bytes.
+    uint8_t len;
+
+    /// Designator.
+    uint8_t design[0];
+} iscsi_scsi_vpd_scsi_target_port_design_dec_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) SCSI Port Designation Descriptor Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_scsi_port_design_dec_inquiry_data_packet {
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved;
+
+    /// Relative port identifier.
+    uint16_t rel_port_id;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved2;
+
+    /// Initiator port length in bytes.
+    uint16_t init_port_len;
+
+    /// Initiator port identifier.
+    uint16_t init_port_id[0];
+
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved3;
+
+    /// SCSI Target Port Designation Descriptor length in bytes.
+    uint16_t target_desc_len;
+
+    /// SCSI Target Port Designation Descriptor.
+    iscsi_scsi_vpd_scsi_target_port_design_dec_inquiry_data_packet target_desc[0];
+} iscsi_scsi_vpd_scsi_port_design_dec_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command INQUIRY Vital Product Data (VPD) SCSI Port Designation Descriptor entry fill.
+ *
+ * This structure is used by iterating through
+ * all iSCSI device ports in order to fill in
+ * the INQUIRY Vital Product Data (VPD) SCSI
+ * Port Designation Descriptor structure.
+ */
+typedef struct iscsi_scsi_emu_primary_inquiry_ports_fill {
+    /// Pointer to current Vital Product Data (VPD) SCSI Port Designation Descriptor entry packet data.
+    iscsi_scsi_vpd_scsi_port_design_dec_inquiry_data_packet *port_entry;
+
+    /// Total length of Vital Product Data (VPD) SCSI Port Designation Descriptor entry packet data in bytes.
+    uint alloc_len;
+
+    /// Total remaining allocation length for packet data in bytes.
+    uint len;
+} iscsi_scsi_emu_primary_inquiry_ports_fill;
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Limits Inquiry data UNMAP Granularity Alignment: First bit of the thirty one bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_FIRST_BIT 0L
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Limits Inquiry data UNMAP Granularity Alignment: Last bit of the thirty one bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_LAST_BIT  ((ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_FIRST_BIT) + 31L - 1L)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Limits Inquiry data UNMAP Granularity Alignment: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Limits Inquiry data UNMAP Granularity Alignment: Extracts the UNMAP granularity alignment bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_GET_UNMAP_GRANULARITY_ALIGN(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Limits Inquiry data UNMAP Granularity Alignment: Stores into the UNMAP granularity alignment bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_PUT_UNMAP_GRANULARITY_ALIGN(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Limits Inquiry data UNMAP Granularity Alignment: UNMAP Granularity Alignment Valid (UGVALID).
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_LIMITS_INQUIRY_DATA_UNMAP_GRANULARITY_ALIGN_UGAVALID  (1L << 31L)
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Block Limits Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_block_limits_inquiry_data_packet {
+    /// Flags.
+    int8_t flags;
+
+    /// Maximum COMPARE AND WRITE length in logical blocks.
+    uint8_t max_cmp_write_len;
+
+    /// Optimal transfer length granularity in logical blocks.
+    uint16_t optimal_granularity_xfer_len;
+
+    /// Maximum transfer length in logical blocks.
+    uint32_t max_xfer_len;
+
+    /// Optimal transfer length in logical blocks.
+    uint32_t optimal_xfer_len;
+
+    /// Maximum prefetch length in logical blocks.
+    uint32_t max_prefetch_len;
+
+    /// Maximum UNMAP LBA count in LBAs.
+    uint32_t max_unmap_lba_cnt;
+
+    /// Maximum UNMAP block descriptor count in block descriptors.
+    uint32_t max_unmap_block_desc_cnt;
+
+    /// Optimal UNMAP granularity in logical blocks.
+    uint32_t optimal_unmap_granularity;
+
+    /// UNMAP granularity alignment (first LBA) and UGAVALID bit.
+    uint32_t unmap_granularity_align_ugavalid;
+
+    /// Maximum WRITE SAME length in logical blocks.
+    uint64_t max_write_same_len;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint64_t reserved[2];
+
+    /// Reserved for future usage (always MUST be 0).
+    uint32_t reserved2;
+} iscsi_scsi_vpd_page_block_limits_inquiry_data_packet;
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data medium rotation rate: Medium rotation rate is not reported.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_MEDIUM_ROTATION_RATE_NOT_REPORTED 0x0000
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data medium rotation rate: Non-rotating medium (e.g., solid state).
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_MEDIUM_ROTATION_RATE_NONE         0x0001
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data product type: Not indicated.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_PRODUCT_TYPE_NOT_INDICATED       0x00
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data product type: Not specified first value.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_PRODUCT_TYPE_NOT_SPECIFIED_FIRST 0xF0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data product type: Not specified last value.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_PRODUCT_TYPE_NOT_SPECIFIED_LAST  0xFF
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: Nominal form factor is not reported.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_NOT_REPORTED 0x0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: 5.25 inch.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_525_INCH     0x1
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: 3.5 inch.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_35_INCH      0x2
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: 2.5 inch.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_25_INCH      0x3
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: 1.8 inch.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_18_INCH      0x4
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: Less than 1.8 inch.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_LT_18_INCH   0x5
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: First bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_FIRST_BIT    0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: Last bit of the four bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_LAST_BIT     ((ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_MASK         (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: Extracts the nominal form factor bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_GET_NOMINAL_FORM_FACTOR(x)       (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags nominal form factor: Stores into the nominal form factor bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_PUT_NOMINAL_FORM_FACTOR(x)       (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Cryptographic Erase REQuired (WACEREQ): First bit of the two bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_FIRST_BIT                4
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Cryptographic Erase REQuired (WACEREQ): Last bit of the two bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_LAST_BIT                 ((ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Cryptographic Erase REQuired (WACEREQ): Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_MASK                     (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Cryptographic Erase REQuired (WACEREQ): Extracts the Write After Block Erase REQuired (WACEREQ) bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_GET_WACEREQ(x)                   (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Cryptographic Erase REQuired (WACEREQ): Stores into the Write After Block Erase REQuired (WACEREQ) bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_PUT_WACEREQ(x)                   (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WACEREQ_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Block Erase REQuired (WABEREQ): First bit of the two bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_FIRST_BIT                6
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Block Erase REQuired (WABEREQ): Last bit of the two bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_LAST_BIT                 ((ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_FIRST_BIT) + 8 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Block Erase REQuired (WABEREQ): Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_MASK                     (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Block Erase REQuired (WABEREQ): Extracts the Write After Block Erase REQuired (WABEREQ) bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_GET_WABEREQ(x)                   (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data flags Write After Block Erase REQuired (WABEREQ): Stores into the Write After Block Erase REQuired (WABEREQ) bits.
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_PUT_WABEREQ(x)                   (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_WABEREQ_LAST_BIT))
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data support flags: Verify Byte Check Unmapped LBA Supported (VBULS).
+#define ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_SUPPORT_FLAGS_VBULS (1 << 0)
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Block Device Characteristics Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet {
+    /// Medium rotation rate.
+    uint16_t medium_rotation_rate;
+
+    /// Product type.
+    uint8_t product_type;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Support flags.
+    uint8_t support_flags;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint64_t reserved[6];
+
+    /// Reserved for future usage (always MUST be 0).
+    uint32_t reserved2;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint16_t reserved3;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved4;
+} iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet;
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data flags: Descriptor Present (DP).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_FLAGS_DP      (1 << 0)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data flags: Anchor Supported (ANC_SUP).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_FLAGS_ANC_SUP (1 << 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data flags: Logical Block Provisioning Read Zeros (LBPRZ).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_FLAGS_LBPRZ   (1 << 2)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data flags: Logical Block Provisioning WRITE SAME(10) (LBPWS10).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_FLAGS_LBPWS10 (1 << 5)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data flags: Logical Block Provisioning WRITE SAME (LBPWS).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_FLAGS_LBPWS   (1 << 6)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data flags: Logical Block Provisioning UNMAP (LBPU).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_FLAGS_LBPU    (1 << 7)
+
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: The device server does NOT report a provisioning type.
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_PROVISIONING_NOT_REPORTED 0x0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: The logical unit is resource provisioned (see SBC3).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_RESOURCE_PROVISIONING     0x1
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: The logical unit is thin provisioned (see SBC3).
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_THIN_PROVISIONING         0x2
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: First bit of the three bits.
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_FIRST_BIT                 0
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: Last bit of the three bits.
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_LAST_BIT                  ((ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: Bit mask.
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_MASK                      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: Extracts the provision type bits.
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_GET_PROVISION_TYPE(x)                    (ISCSI_BITS_GET((x), ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_LAST_BIT))
+
+/// iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data provision type: Stores into the provision type bits.
+#define ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PUT_PROVISION_TYPE(x)                    (ISCSI_BITS_PUT((x), ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_THIN_PROVISION_INQUIRY_DATA_PROVISION_TYPE_LAST_BIT))
+
+
+/**
+ * @brief iSCSI SCSI Vital Product Data (VPD) Page Thin Provision Inquiry data packet.
+ *
+ * This structure is used by the SCSI INQUIRY command
+ * in order to fill in the result if the EVPD bit is
+ * set.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_thin_provision_inquiry_data_packet {
+    /// Threshold exponent.
+    uint8_t threshold_exponent;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Provision type.
+    uint8_t provision_type;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved;
+
+    /// Provision group descriptors.
+    uint8_t provision_group_desc[0];
+} iscsi_scsi_vpd_page_thin_provision_inquiry_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI Sense Event data packet.
+ *
+ * For a SCSI event, this data accompanies the report in the data
+ * segment and identifies the condition.
+ *
+ * For an iSCSI event, additional vendor-unique data MAY accompany the
+ * Async event. Initiators MAY ignore the data when not understood,
+ * while processing the rest of the PDU.
+ *
+ * If the DataSegmentLength is not 0, the format of the DataSegment is
+ * as follows:
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_sense_event_data_packet {
+    /**
+     * @brief SenseLength.
+     *
+     * This is the length of Sense Data. When the Sense Data field is empty
+     * (e.g., the event is not a SCSI event), SenseLength is 0.
+     */
+    uint16_t sense_len;
+
+    /// Sense Data.
+    uint16_t sense_data[0];
+
+    /// iSCSI Event Data.
+    uint16_t event_data[0];
+} iscsi_scsi_sense_event_data_packet;
+
+
+/// iSCSI SCSI sense data response code: Current format.
+#define ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_CURRENT_FMT  0x70
+
+/// iSCSI SCSI sense data response code: Deferred format.
+#define ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_DEFERRED_FMT 0x71
+
+/// iSCSI SCSI sense data response code: First bit of the seven bits.
+#define ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_FIRST_BIT    0
+
+/// iSCSI SCSI sense data response code: Last bit of the seven bits.
+#define ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_LAST_BIT     ((ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_FIRST_BIT) + 7 - 1)
+
+/// iSCSI SCSI sense data response code: Bit mask.
+#define ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_MASK         (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_LAST_BIT))
+
+/// iSCSI SCSI sense data response code: Extracts the response code bits.
+#define ISCSI_SCSI_SENSE_DATA_GET_RESPONSE_CODE(x)       (ISCSI_BITS_GET((x), ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_LAST_BIT))
+
+/// iSCSI SCSI sense data response code: Stores into the response code bits.
+#define ISCSI_SCSI_SENSE_DATA_PUT_RESPONSE_CODE(x)       (ISCSI_BITS_PUT((x), ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_LAST_BIT))
+
+/// iSCSI SCSI sense data response code: Valid.
+#define ISCSI_SCSI_SENSE_DATA_RESPONSE_CODE_VALID        (1 << 7)
+
+
+/// iSCSI SCSI sense data sense key: First bit of the four bits.
+#define ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FIRST_BIT   0
+
+/// iSCSI SCSI sense data sense key: Last bit of the four bits.
+#define ISCSI_SCSI_SENSE_DATA_SENSE_KEY_LAST_BIT   ((ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI sense data sense key: Bit mask.
+#define ISCSI_SCSI_SENSE_DATA_SENSE_KEY_MASK (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_SENSE_KEY_LAST_BIT))
+
+/// iSCSI SCSI sense data sense key: Extracts the Sense Key (SK) bits.
+#define ISCSI_SCSI_SENSE_DATA_GET_SENSE_KEY(x) (ISCSI_BITS_GET((x), ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_SENSE_KEY_LAST_BIT))
+
+/// iSCSI SCSI sense data sense key: Stores into the Sense Key (SK) bits.
+#define ISCSI_SCSI_SENSE_DATA_PUT_SENSE_KEY(x) (ISCSI_BITS_PUT((x), ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_SENSE_KEY_LAST_BIT))
+
+// iSCSI SCSI sense data sense key flags: ILI.
+#define ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FLAGS_ILI      (1 << 5)
+
+// iSCSI SCSI sense data sense key flags: EOM.
+#define ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FLAGS_EOM      (1 << 6)
+
+// iSCSI SCSI sense data sense key flags: FILEMARK.
+#define ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FLAGS_FILEMARK (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI basic sense data packet data.
+ *
+ * This is the basic SCSI sense data shared by
+ * all SCSI sense data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_sense_data_packet {
+    /// Response code.
+    int8_t response_code;
+
+    /// Reserved for future usage (always MUST be 0).
+    uint8_t reserved;
+
+    /// Sense key and flags.
+    int8_t sense_key_flags;
+
+    /// Information.
+    uint32_t info;
+
+    /// Additional sense length in bytes.
+    uint8_t add_len;
+} iscsi_scsi_sense_data_packet;
+
+/// iSCSI SCSI maximum sense data length.
+#define ISCSI_SCSI_MAX_SENSE_DATA_LEN (sizeof(struct iscsi_scsi_sense_data_packet) + 255U)
+
+
+/// iSCSI SCSI sense data check condition sense key specific: First bit of the six bits.
+#define ISCSI_SCSI_SENSE_DATA_CHECK_COND_SENSE_KEY_SPEC_FIRST_BIT   0
+
+/// iSCSI SCSI sense data check condition sense key specific: Last bit of the six bits.
+#define ISCSI_SCSI_SENSE_DATA_CHECK_COND_SENSE_KEY_SPEC_LAST_BIT   ((ISCSI_SCSI_SENSE_DATA_CHECK_COND_SENSE_KEY_SPEC_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI sense data check condition sense key specific: Bit mask.
+#define ISCSI_SCSI_SENSE_DATA_CHECK_COND_SENSE_KEY_SPEC_MASK       (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SENSE_DATA_CHECK_COND_SENSE_KEY_SPEC_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_CHECK_COND_SENSE_KEY_SPEC_LAST_BIT))
+
+/// iSCSI SCSI sense data check condition sense key specific: Extracts the sense key specific bits.
+#define ISCSI_SCSI_SENSE_DATA_CHECK_COND_GET_SENSE_KEY_SPEC(x)     (ISCSI_BITS_GET((x), ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_SENSE_KEY_LAST_BIT))
+
+/// iSCSI SCSI sense data check condition sense key specific: Stores into the sense key specific bits.
+#define ISCSI_SCSI_SENSE_DATA_CHECK_COND_PUT_SENSE_KEY_SPEC(x)     (ISCSI_BITS_PUT((x), ISCSI_SCSI_SENSE_DATA_SENSE_KEY_FIRST_BIT, ISCSI_SCSI_SENSE_DATA_SENSE_KEY_LAST_BIT))
+
+// iSCSI SCSI sense data check condition sense key specific flags: SKSV.
+#define ISCSI_SCSI_SENSE_DATA_CHECK_COND_SENSE_KEY_SPEC_FLAGS_SKSV (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI sense data check condition packet data.
+ *
+ * This is the additional SCSI sense data used by
+ * the check condition status code.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_sense_data_check_cond_packet {
+    /// Basic SCSI sense data packet.
+    iscsi_scsi_sense_data_packet sense_data;
+
+    /// Information.
+    uint32_t cmd_spec_info;
+
+    /// Additional Sense Code (ASC).
+    uint8_t asc;
+
+    /// Additional Sense Code Qualifier (ASCQ).
+    uint8_t ascq;
+
+    /// Field replaceable unit code.
+    uint8_t field_rep_unit_code;
+
+    /// Sense key specific.
+    uint8_t sense_key_spec_flags;
+
+    /// Sense key specific.
+    uint16_t sense_key_spec;
+} iscsi_scsi_sense_data_check_cond_packet;
+
+
+/**
+ * @brief iSCSI SCSI command READ CAPACITY(10) parameter data packet data.
+ *
+ * This returns the Logical Block Address (LBA)
+ * and block length in bytes.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_read_capacity_10_parameter_data_packet {
+    /// Last valid Logical Block Address (LBA).
+    uint32_t lba;
+
+    /// Block length in bytes.
+    uint32_t block_len;
+} iscsi_scsi_read_capacity_10_parameter_data_packet;
+
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data flags: Protection enabled (PROT_EN).
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROT_EN                 (1 << 0)
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection type flags: First bit of the three bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_FIRST_BIT  1
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection type flags: Last bit of the three bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_LAST_BIT   ((ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_FIRST_BIT) + 3 - 1)
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection type flags: Bit mask.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_MASK       (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection type flags: Extracts the protection type bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_GET_PROTECT_TYPE(x)     (ISCSI_BITS_GET((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection type flags: Stores into the protection type bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PUT_PROTECT_TYPE(x)     (ISCSI_BITS_PUT((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PROTECT_TYPE_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data RC basis flags: First bit of the two bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_FIRST_BIT      4
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data RC basis flags: Last bit of the two bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_LAST_BIT       ((ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_FIRST_BIT) + 2 - 1)
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data RC basis flags: Bit mask.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_MASK           (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data RC basis flags: Extracts the RC basis bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_GET_RC_BASIS(x)         (ISCSI_BITS_GET((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data RC basis flags: Stores into the RC basis bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_PUT_RC_BASIS(x)         (ISCSI_BITS_PUT((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_FLAGS_RC_BASIS_LAST_BIT))
+
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data logical blocks per physical block exponent: First bit of the four bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_FIRST_BIT 0
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data logical blocks per physical block exponent: Last bit of the four bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_LAST_BIT ((ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data logical blocks per physical block exponent: Bit mask.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_MASK     (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data logical blocks per physical block exponent: Extracts the logical blocks per physical block bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_GET_LBPPB_EXPONENT(x)   (ISCSI_BITS_GET((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data logical blocks per physical block exponent: Stores into the logical blocks per physical block bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_PUT_LBPPB_EXPONENT(x)   (ISCSI_BITS_PUT((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPPB_EXPONENT_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection information intervals exponent: First bit of the four bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_FIRST_BIT  4
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection information intervals exponent: Last bit of the four bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_LAST_BIT   ((ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection information intervals exponent: Bit mask.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_MASK       (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection information intervals exponent: Extracts the protection information intervals bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_GET_P_I_EXPONENT(x)     (ISCSI_BITS_GET((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter data protection information intervals exponent: Stores into the protection information intervals bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_PUT_P_I_EXPONENT(x)     (ISCSI_BITS_PUT((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_P_I_EXPONENT_LAST_BIT))
+
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter logical block provisioning Lowest Aligned Logical Block Address (LALBA): First bit of the fourteen bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_FIRST_BIT 0
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter logical block provisioning Lowest Aligned Logical Block Address (LALBA): Last bit of the fourteen bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_LAST_BIT  ((ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_FIRST_BIT) + 14 - 1)
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter logical block provisioning Lowest Aligned Logical Block Address (LALBA): Bit mask.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter logical block provisioning Lowest Aligned Logical Block Address (LALBA): Extracts the Lowest Aligned Logical Block Address (LALBA) bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_GET_LABLA(x)    (ISCSI_BITS_GET((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter logical block provisioning Lowest Aligned Logical Block Address (LALBA): Stores into the Lowest Aligned Logical Block Address (LALBA) bits.
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_PUT_LABLA(x)    (ISCSI_BITS_PUT((x), ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_FIRST_BIT, ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LALBA_LAST_BIT))
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter logical block provisioning: Logical Block Provisioning Read Zeros (LBPRZ).
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPRZ           (1 << 14)
+
+/// iSCSI SCSI command SERVICE ACTION IN(16) parameter logical block provisioning: Logical Block Provisioning Management Enabled (LBPME).
+#define ISCSI_SCSI_SERVICE_ACTION_IN_16_PARAM_DATA_LBPME           (1 << 15)
+
+
+/**
+ * @brief iSCSI SCSI command SERVICE ACTION IN(16) parameter data packet data.
+ *
+ * This returns the Logical Block Address (LBA),
+ * block length in bytes and LBP information.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_service_action_in_16_parameter_data_packet {
+    /// Last valid Logical Block Address (LBA).
+    uint64_t lba;
+
+    /// Block length in bytes.
+    uint32_t block_len;
+
+    /// Flags: RC_BASIS, P_TYPE and PROT_EN.
+    int8_t flags;
+
+    /// P_I_EXPONENT and logical blocks per physical block exponent.
+    uint8_t exponents;
+
+    /// Logical Block Provisioning Management Enabled (LBPME), Logical Block Provisioning Read Zeros (LBPRZ) and Lowest Aligned Logical Block Address (LALBA).
+    uint16_t lbp_lalba;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint64_t reserved[2];
+} iscsi_scsi_service_action_in_16_parameter_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command REPORT LUNS parameter data LUN list packet data.
+ *
+ * This returns the number of entries in the
+ * LUN list in bytes.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_report_luns_parameter_data_lun_list_packet {
+    /// Number of LUN's following this packet in bytes.
+    uint32_t lun_list_len;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint32_t reserved;
+} iscsi_scsi_report_luns_parameter_data_lun_list_packet;
+
+
+/**
+ * @brief iSCSI SCSI command REPORT LUNS parameter data LUN entry packet data.
+ *
+ * This returns a single LUN entry of the
+ * LUN list.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_report_luns_parameter_data_lun_entry_packet {
+    /// Logical Unit Number (LUN).
+    uint64_t lun;
+} iscsi_scsi_report_luns_parameter_data_lun_entry_packet;
+
+
+/**
+ * @brief iSCSI SCSI command REPORT LUNS parameter data LUN entry fill.
+ *
+ * This structure is used by iterating through
+ * all iSCSI LUNs in order to fill in the
+ * REPORT LUNS parameter data structure.
+ */
+typedef struct iscsi_scsi_emu_primary_report_luns_fill {
+    /// Pointer to LUN list packet data.
+    iscsi_scsi_report_luns_parameter_data_lun_list_packet *lun_list;
+
+    /// Pointer to current LUN entry packet data.
+    iscsi_scsi_report_luns_parameter_data_lun_entry_packet *lun_entry;
+
+    /// Total length of LUN entry packet data in bytes.
+    uint32_t len;
+
+    /// Total remaining allocation length for packet data in bytes.
+    uint alloc_len;
+
+    /// Select report.
+    uint select_report;
+} iscsi_scsi_emu_primary_report_luns_fill;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SELECT(6) parameter list packet data.
+ *
+ * This returns 32-bit vendor specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_select_6_parameter_list_packet {
+    /// Vendor specific data.
+    uint32_t vendor_data;
+} iscsi_scsi_mode_select_6_parameter_list_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SELECT(10) parameter list packet data.
+ *
+ * This returns 64-bit vendor specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_select_10_parameter_list_packet {
+    /// Vendor specific data.
+    uint64_t vendor_data;
+} iscsi_scsi_mode_select_10_parameter_list_packet;
+
+
+/// iSCSI SCSI command MODE SENSE(6) parameter header data flags: DPO and FUA support (DPOFUA).
+#define ISCSI_SCSI_MODE_SENSE_6_PARAM_HDR_DATA_FLAGS_DPOFUA (1 << 4)
+
+/// iSCSI SCSI command MODE SENSE(6) parameter header data flags: Write Protect (WP).
+#define ISCSI_SCSI_MODE_SENSE_6_PARAM_HDR_DATA_FLAGS_WP     (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) parameter header packet data.
+ *
+ * This returns the mode parameter header
+ * data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_6_parameter_header_data_packet {
+    /// Mode data length in bytes.
+    uint8_t mode_data_len;
+
+    /// Medium type.
+    uint8_t medium_type;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Block descriptor length in bytes.
+    uint8_t block_desc_len;
+} iscsi_scsi_mode_sense_6_parameter_header_data_packet;
+
+
+/// iSCSI SCSI command MODE SENSE(10) parameter header data flags: DPO and FUA support (DPOFUA).
+#define ISCSI_SCSI_MODE_SENSE_10_PARAM_HDR_DATA_FLAGS_DPOFUA (1 << 4)
+
+/// iSCSI SCSI command MODE SENSE(10) parameter header data flags: Write Protect (WP).
+#define ISCSI_SCSI_MODE_SENSE_10_PARAM_HDR_DATA_FLAGS_WP     (1 << 7)
+
+
+/// iSCSI SCSI command MODE SENSE(10) parameter header data Long Logical Block Address (LONGLBA).
+#define ISCSI_SCSI_MODE_SENSE_10_PARAM_HDR_DATA_LONGLBA (1 << 0)
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(10) parameter header packet data.
+ *
+ * This returns the mode parameter header
+ * data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_10_parameter_header_data_packet {
+    /// Mode data length in bytes.
+    uint16_t mode_data_len;
+
+    /// Medium type.
+    uint8_t medium_type;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Long Logical Block Address (LONGLBA).
+    uint8_t long_lba;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Block descriptor length in bytes.
+    uint16_t block_desc_len;
+} iscsi_scsi_mode_sense_10_parameter_header_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) short LBA mode parameter block descriptor packet data.
+ *
+ * This returns the short Logical Block
+ * Address (LBA) mode parameter block
+ * descriptor data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet {
+    /// Number of blocks in logical blocks.
+    uint32_t num_blocks;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Logical blcok length in bytes.
+    uint8_t block_len[3];
+} iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(10) long LBA mode parameter block descriptor packet data.
+ *
+ * This returns the long Logical Block
+ * Address (LBA) mode parameter block
+ * descriptor data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet {
+    /// Number of blocks in logical blocks.
+    uint64_t num_blocks;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint32_t reserved;
+
+    /// Logical blcok length in bytes.
+    uint32_t block_len;
+} iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet;
+
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC                   0x00
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Read/Write error recovery.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_READ_WRITE_ERR_RECOVERY       0x01
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Disconnect / Reconnect.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_DISCONNECT_RECONNECT          0x02
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Format device.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_FORMAT_DEVICE                 0x03
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Rigid disk geometry.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RIGID_DISK_GEOMETRY           0x04
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Rigid disk geometry.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RIGID_DISK_GEOMETRY_2         0x05
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED                      0x06
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Verify error recovery.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VERIFY_ERR_RECOVERY           0x07
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Caching.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_CACHING                       0x08
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Obselete.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_OBSELETE                      0x09
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Control.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_CONTROL                       0x0A
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Medium types supported.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_MEDIUM_TYPES_SUPPORTED        0x0B
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Notch and partition.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_NOTCH_AND_PARTITION           0x0C
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Obselete.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_OBSELETE_2                    0x0D
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_2                    0x0E
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_3                    0x0F
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: XOR control.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_XOR_CONTROL                   0x10
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_4                    0x11
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_5                    0x12
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_6                    0x13
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Enclosure services management.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_ENCLOSURE_SERVICES_MGMT       0x14
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_7                    0x15
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_8                    0x16
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_9                    0x17
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Protocol specific LUN.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_PROTOCOL_SPEC_LUN             0x18
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Protocol specific Port.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_PROTOCOL_SPEC_PORT            0x19
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Power condition.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_POWER_COND                    0x1A
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_10                   0x1B
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Informational exceptions control.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_INFO_EXCEPTIOS_CONTROL        0x1C
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_11                   0x1D
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_12                   0x1E
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Reserved.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_RESERVED_13                   0x1F
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_2                 0x20
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_3                 0x21
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_4                 0x22
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_5                 0x23
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_6                 0x24
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_7                 0x25
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_8                 0x26
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_9                 0x27
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_10                0x28
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_11                0x29
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_12                0x2A
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_13                0x2B
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_14                0x2C
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_15                0x2D
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_16                0x2E
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_17                0x2F
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_18                0x30
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_19                0x31
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_20                0x32
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_21                0x33
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_22                0x34
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_23                0x35
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_24                0x36
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_25                0x37
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_26                0x38
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_27                0x39
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_28                0x3A
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_29                0x3B
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_30                0x3C
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_31                0x3D
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Vendor specific.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC_32                0x3E
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Report all mode pages.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES         0x3F
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode sub page code: Control.
+#define ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL                   0x00
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode sub page code: Control extension.
+#define ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL_EXT               0x01
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode sub page code: All sub pages.
+#define ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL_ALL               0xFF
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode sub page code: Report all mode pages.
+#define ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_PAGES     0x00
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode sub page code: Report all mode pages and sub pages.
+#define ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_SUB_PAGES 0xFF
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: First bit of the six bits.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_FIRST_BIT                     0
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Last bit of the six bits.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_LAST_BIT                      ((ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_FIRST_BIT) + 6 - 1)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Bit mask.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_MASK                          (ISCSI_BITS_GET_MASK(ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Extracts the page code bits.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_GET_PAGE_CODE(x)                   (ISCSI_BITS_GET((x), ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page code: Stores into the page code bits.
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_PUT_PAGE_CODE(x)                   (ISCSI_BITS_PUT((x), ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_FIRST_BIT, ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_LAST_BIT))
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page flags: Sub Page Format (SPF).
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_FLAGS_SPF                          (1 << 6)
+
+/// iSCSI SCSI command MODE SENSE(10) parameter header data flags: Parameters Saveable (PS).
+#define ISCSI_SCSI_MODE_SENSE_MODE_PAGE_FLAGS_PS                           (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_page_data_packet {
+    /// Page code and flags.
+    int8_t page_code_flags;
+
+    /// Page length in bytes.
+    uint8_t page_len;
+
+    /// Mode parameters.
+    uint8_t params[0];
+} iscsi_scsi_mode_sense_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) mode sub page packet data.
+ *
+ * This returns mode sub page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_sub_page_data_packet {
+    /// Page code and flags.
+    int8_t page_code_flags;
+
+    /// Sub page code.
+    uint8_t sub_page_code;
+
+    /// Page length in bytes.
+    uint16_t page_len;
+
+    /// Mode parameters.
+    uint8_t params[0];
+} iscsi_scsi_mode_sense_mode_sub_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) read/write error recovery mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_read_write_err_recovery_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Read retry count.
+    uint8_t read_retry_cnt;
+
+    /// Obselete.
+    uint8_t obselete[3];
+
+    /// Restricted for MMC-6.
+    uint8_t restrict_mmc_6;
+
+    /// Write_retry count.
+    uint8_t write_retry_cnt;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Recovery time limit.
+    uint16_t recovery_time_limit;
+} iscsi_scsi_mode_sense_read_write_err_recovery_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) disconnect / reconnect mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_disconnect_reconnect_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved;
+
+    /// Bus inactivity time limit.
+    uint16_t bus_inactivity_time_limit;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved2;
+
+    /// Maximum connect time limit.
+    uint16_t max_connect_time_limit;
+
+    /// Maximum burst size.
+    uint16_t max_burst_size;
+
+    /// Restricted.
+    uint8_t restricted;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved3;
+
+    /// First burst size.
+    uint16_t first_burst_size;
+} iscsi_scsi_mode_sense_disconnect_reconnect_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) verify error recovery mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_verify_err_recovery_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Verify retry count.
+    uint8_t verify_retry_cnt;
+
+    /// Obselete.
+    uint8_t obselete;
+
+    /// Head offset count.
+    uint8_t head_offset_cnt;
+
+    /// Data strobe offset count.
+    uint8_t data_strobe_offset_cnt;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Write retry count.
+    uint8_t write_retry_cnt;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+
+    /// Verify_recovery time limit.
+    uint16_t verify_recovery_time_limit;
+} iscsi_scsi_mode_sense_verify_err_recovery_mode_page_data_packet;
+
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: READ Cache Disable (RCD).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_RCD  (1 << 0)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: Multiplication factor (MF).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_MF   (1 << 1)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: Write Cache Enable (WCE).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_WCE  (1 << 2)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: Size Enable (SIZE).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_SIZE (1 << 3)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: Discontinuity (DISC).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_DISC (1 << 4)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: Caching Analysis Permitted (CAP).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_CAP  (1 << 5)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: Abort Prefetch (ABPF).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_ABPF (1 << 6)
+
+/// iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page flags: Initiator Control (IC).
+#define ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_IC   (1 << 7)
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) caching mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_caching_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Retention priority.
+    uint8_t retention_pri;
+
+    /// Disable prefetch transfer length.
+    uint16_t disable_prefetch_xfer_len;
+
+    /// Minimum prefetch.
+    uint16_t min_prefetch;
+
+    /// Maximum prefetch.
+    uint16_t max_prefetch;
+
+    /// Maximum prefetch ceiling.
+    uint16_t max_prefetch_ceil;
+
+    /// Cache flags.
+    int8_t cache_flags;
+
+    /// Number of cache segments.
+    uint8_t num_cache_segs;
+
+    /// Cache segment size.
+    uint16_t cache_seg_size;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Obselete.
+    uint8_t obselete[3];
+} iscsi_scsi_mode_sense_caching_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) control mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Queue flags.
+    int8_t queue_flags;
+
+    /// Control flags.
+    int8_t control_flags;
+
+    /// Application task flags.
+    int8_t app_task_flags;
+
+    /// Ready AER holdoff period.
+    uint16_t ready_aer_holdoff_period;
+
+    /// Busy timeout period.
+    uint16_t busy_timeout_period;
+
+    /// Extended self-test completition time.
+    uint16_t ext_self_test_complete_time;
+} iscsi_scsi_mode_sense_control_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) control extension mode sub page packet data.
+ *
+ * This returns mode sub page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_ext_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_sub_page_data_packet mode_sub_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Initial command priority.
+    uint8_t init_cmd_pri;
+
+    /// Maximum sense data length in bytes.
+    uint8_t max_sense_data_len;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint64_t reserved[3];
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved2;
+} iscsi_scsi_mode_sense_control_ext_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) XOR extension mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_xor_ext_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Maximum XOR write size in logical blocks.
+    uint32_t max_xor_write_size;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint32_t reserved2;
+
+    /// Maximum regenerate size in logical blocks.
+    uint32_t max_regenerate_size;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint32_t reserved3;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved4;
+
+    /// Rebuild delay.
+    uint16_t rebuild_delay;
+} iscsi_scsi_mode_sense_xor_ext_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) power condition mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_power_cond_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Idle and standby flags.
+    int8_t idle_standby_flags;
+
+    /// idle_a condition timer.
+    uint32_t idle_a_cond_timer;
+
+    /// standby_z condition timer.
+    uint32_t standby_z_cond_timer;
+
+    /// idle_b condition timer.
+    uint32_t idle_b_cond_timer;
+
+    /// idle_c condition timer.
+    uint32_t idle_c_cond_timer;
+
+    /// standby_y condition timer.
+    uint32_t standby_y_cond_timer;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint64_t reserved;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint32_t reserved2;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint16_t reserved3;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved4;
+
+    /// Check Condition From (CCF) flags.
+    int8_t ccf_flags;
+} iscsi_scsi_mode_sense_power_cond_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command MODE SENSE(6) and MODE SENSE(10) informational exceptions control mode page packet data.
+ *
+ * This returns mode page specific data.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_info_exceptions_control_mode_page_data_packet {
+    /// Mode page.
+    iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Method Of Reporting Informational Exceptions (MRIE) flags.
+    uint8_t mrie;
+
+    /// Interval timer.
+    uint32_t interval_timer;
+
+    /// Report count.
+    uint32_t report_cnt;
+} iscsi_scsi_mode_sense_info_exceptions_control_mode_page_data_packet;
+
+
+/**
+ * @brief iSCSI SCSI command PERSISTENT RESERVE OUT parameter list packet data.
+ *
+ * This returns persistent storage specific data
+ * like the reservation and service action keys.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_pr_reserve_out_parameter_list_packet {
+    /// Reservation key.
+    uint64_t r_key;
+
+    /// Service action reservation key.
+    uint64_t sa_key;
+
+    /// Obselete.
+    uint32_t obselete;
+
+    /// Flags.
+    int8_t flags;
+
+    /// Reserved for future usage (always MUST be 0 for now).
+    uint8_t reserved;
+
+    /// Obselete.
+    uint16_t obselete2;
+
+} iscsi_scsi_pr_reserve_out_parameter_list_packet;
+
+
+/**
+ * @brief iSCSI SCSI command PERSISTENT RESERVE IN parameter data packet data.
+ *
+ * This returns persistent storage specific data
+ * like the reservation and service action keys.
+ */
+typedef struct __attribute__((packed)) iscsi_scsi_pr_reserve_in_parameter_data_packet {
+    /// Persistent Reservations (PR) Generation.
+    uint32_t pr_gen;
+
+    /// Additional length in bytes.
+    uint32_t add_len;
+} iscsi_scsi_pr_reserve_in_parameter_data_packet;
+
 
 /// SCSI command opcode (embedded in iSCSI protocol): TEST UNIT READY.
 #define ISCSI_SCSI_OPCODE_TESTUNITREADY          0x00
 
+/// SCSI command opcode (embedded in iSCSI protocol): REQUEST SENSE.
+#define ISCSI_SCSI_OPCODE_REQUESTSENSE           0x03
+
 /// SCSI command opcode (embedded in iSCSI protocol): READ(6).
 #define ISCSI_SCSI_OPCODE_READ6                  0x08
+
+/// SCSI command opcode (embedded in iSCSI protocol): WRITE(6).
+#define ISCSI_SCSI_OPCODE_WRITE6                 0x0A
 
 /// SCSI command opcode (embedded in iSCSI protocol): INQUIRY.
 #define ISCSI_SCSI_OPCODE_INQUIRY                0x12
@@ -714,8 +4798,20 @@ typedef struct __attribute__((packed)) iscsi_ds_cmd_data {
 /// SCSI command opcode (embedded in iSCSI protocol): SANITIZE.
 #define ISCSI_SCSI_OPCODE_SANITIZE               0x48
 
+/// SCSI command opcode (embedded in iSCSI protocol): LOG SELECT.
+#define ISCSI_SCSI_OPCODE_LOGSELECT              0x4C
+
+/// SCSI command opcode (embedded in iSCSI protocol): LOG SENSE.
+#define ISCSI_SCSI_OPCODE_LOGSENSE               0x4D
+
 /// SCSI command opcode (embedded in iSCSI protocol): MODE SELECT(10).
 #define ISCSI_SCSI_OPCODE_MODESELECT10           0x55
+
+/// SCSI command opcode (embedded in iSCSI protocol): RESERVE(10).
+#define ISCSI_SCSI_OPCODE_RESERVE10              0x56
+
+/// SCSI command opcode (embedded in iSCSI protocol): RELEASE(10).
+#define ISCSI_SCSI_OPCODE_RELEASE10              0x57
 
 /// SCSI command opcode (embedded in iSCSI protocol): MODE SENSE(10).
 #define ISCSI_SCSI_OPCODE_MODESENSE10            0x5A
@@ -763,7 +4859,7 @@ typedef struct __attribute__((packed)) iscsi_ds_cmd_data {
 #define ISCSI_SCSI_OPCODE_WRITE_ATOMIC16         0x9C
 
 /// SCSI command opcode (embedded in iSCSI protocol): SERVICE ACTION IN(16).
-#define ISCSI_SCSI_OPCODE_SERVICE_ACTION_IN      0x9E
+#define ISCSI_SCSI_OPCODE_SERVICE_ACTION_IN_16   0x9E
 
 /// SCSI command opcode (embedded in iSCSI protocol): REPORT LUNS.
 #define ISCSI_SCSI_OPCODE_REPORTLUNS             0xA0
@@ -797,6 +4893,10 @@ typedef struct __attribute__((packed)) iscsi_ds_cmd_data {
  * through R2T.
  */
 #define ISCSI_SCSI_CMD_FLAGS_TASK_NO_UNSOLICITED_DATA   (1 << 7)
+
+
+/// SCSI SCSI command flags: Final.
+#define ISCSI_SCSI_CMD_FLAGS_FINAL                      (1 << 7)
 
 /**
  * @brief iSCSI SCSI command flags: Expected input data.
@@ -921,7 +5021,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cmd_packet {
      * CDBs. Whenever the CDB is larger than 16 bytes, an Extended CDB AHS
      * MUST be used to contain the CDB spillover.
      */
-    iscsi_cdb scsi_cdb;
+    iscsi_scsi_cdb scsi_cdb;
 
     /// Optional AHS packet data.
     iscsi_ahs_packet ahs;
@@ -930,7 +5030,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cmd_packet {
     iscsi_header_digest hdr_digest;
 
     /// Optional data segment, command data.
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
@@ -1112,6 +5212,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cmd_packet {
  */
 #define ISCSI_SCSI_RESPONSE_STATUS_TASK_ABORTED  0x40
 
+
 /// SCSI response code: Command Completed at Target.
 #define ISCSI_SCSI_RESPONSE_CODE_OK              0x00
 
@@ -1256,7 +5357,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_response_packet {
     iscsi_header_digest hdr_digest;
 
     /// Optional data segment, command data.
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
@@ -1433,7 +5534,7 @@ typedef struct __attribute__((packed)) iscsi_task_mgmt_func_response_packet {
     /// Always 0x22 according to specification.
     uint8_t opcode;
 
-    /// Reserved for future usage (must be always 0x80 for now).
+    /// Reserved for future usage (always MUST be 0x80 for now).
     int8_t flags;
 
     /**
@@ -1617,7 +5718,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_data_out_req_packet {
     iscsi_header_digest hdr_digest;
 
     /// Data segment.
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
@@ -1829,7 +5930,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_data_in_response_packet {
     iscsi_header_digest hdr_digest;
 
     /// Data segment.
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
@@ -1894,7 +5995,7 @@ typedef struct __attribute__((packed)) iscsi_r2t_packet {
     /// Always 0x31 according to iSCSI specification.
     uint8_t opcode;
 
-    /// Reserved for future usage (must be always 0x80 for now).
+    /// Reserved for future usage (always MUST be 0x80 for now).
     int8_t flags;
 
     /// Reserved for future usage, always MUST be 0 for now.
@@ -2087,7 +6188,7 @@ typedef struct __attribute__((packed)) iscsi_async_msg_packet {
     /// Always 0x32 according to iSCSI specification.
     uint8_t opcode;
 
-    /// Reserved for future usage (must be always 0x80 for now).
+    /// Reserved for future usage (always MUST be 0x80 for now).
     int8_t flags;
 
     /// Reserved for future usage, always MUST be 0.
@@ -2144,41 +6245,11 @@ typedef struct __attribute__((packed)) iscsi_async_msg_packet {
     iscsi_header_digest hdr_digest;
 
     /// Data segment.
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
 } iscsi_async_msg_packet;
-
-
-/**
- * @brief iSCSI Sense Event data packet.
- *
- * For a SCSI event, this data accompanies the report in the data
- * segment and identifies the condition.
- *
- * For an iSCSI event, additional vendor-unique data MAY accompany the
- * Async event. Initiators MAY ignore the data when not understood,
- * while processing the rest of the PDU.
- *
- * If the DataSegmentLength is not 0, the format of the DataSegment is
- * as follows:
- */
-typedef struct __attribute__((packed)) iscsi_sense_event_data_packet {
-    /**
-     * @brief SenseLength.
-     *
-     * This is the length of Sense Data. When the Sense Data field is empty
-     * (e.g., the event is not a SCSI event), SenseLength is 0.
-     */
-    uint16_t sense_len;
-
-    /// Sense Data.
-    uint16_t sense_data[0];
-
-    /// iSCSI Event Data.
-    uint16_t event_data[0];
-} iscsi_sense_event_data_packet;
 
 
 /**
@@ -2312,7 +6383,7 @@ typedef struct __attribute__((packed)) iscsi_text_req_packet {
      * Text operations are usually meant for parameter setting/negotiations
      * but can also be used to perform some long-lasting operations.
      */
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
@@ -2434,41 +6505,55 @@ typedef struct __attribute__((packed)) iscsi_text_response_packet {
      * key=value pairs of its own as part of a sequence and not only in
      * response to the initiator.
      */
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
 } iscsi_text_response_packet;
 
-/// Initiator Session ID (ISID) type: Two bits - The T field identifies the format and usage of A, B, C, and D.
-#define ISCSI_ISID_TYPE_BITS (1 << 6)
 
 /**
- * @brief Initiator Session ID (ISID) type: OUI-Format.
+ * @brief iSCSI Initiator Session ID (ISID) type: OUI-Format.
  *
  * A and B: 22-bit OUI
  * (the I/G and U/L bits are omitted)
  * C and D: 24-bit Qualifier.
  */
-#define ISCSI_ISID_TYPE_FORMAT_OUI    0x0
+#define ISCSI_ISID_TYPE_FORMAT_OUI       0x0
 
 /**
- * @brief Initiator Session ID (ISID) type: EN: Format (IANA Enterprise Number).
+ * @brief iSCSI Initiator Session ID (ISID) type: EN: Format (IANA Enterprise Number).
  *
  * A: Reserved
  * B and C: EN (IANA Enterprise Number)
  * D: Qualifier
  */
-#define ISCSI_ISID_TYPE_FORMAT_EN     0x1
+#define ISCSI_ISID_TYPE_FORMAT_EN        0x1
 
 /**
- * @brief Initiator Session ID (ISID) type: Random.
+ * @brief iSCSI Initiator Session ID (ISID) type: Random.
  *
  * A: Reserved
  * B and C: Random
  * D: Qualifier
  */
-#define ISCSI_ISID_TYPE_FORMAT_RANDOM 0x2
+#define ISCSI_ISID_TYPE_FORMAT_RANDOM    0x2
+
+/// iSCSI Initiator Session ID (ISID) type format: First bit of the two bits.
+#define ISCSI_ISID_TYPE_FORMAT_FIRST_BIT 6
+
+/// iSCSI Initiator Session ID (ISID) type format: Last bit of the two bits.
+#define ISCSI_ISID_TYPE_FORMAT_LAST_BIT  ((ISCSI_ISID_TYPE_FORMAT_FIRST_BIT) + 2 - 1)
+
+/// iSCSI Initiator Session ID (ISID) type format: Bit mask.
+#define ISCSI_ISID_TYPE_FORMAT_MASK      (ISCSI_BITS_GET_MASK(ISCSI_ISID_TYPE_FORMAT_FIRST_BIT, ISCSI_ISID_TYPE_FORMAT_LAST_BIT))
+
+/// iSCSI Initiator Session ID (ISID) type format: Extracts the type format.
+#define ISCSI_ISID_GET_TYPE_FORMAT(x)    (ISCSI_BITS_GET((x), ISCSI_ISID_TYPE_FORMAT_FIRST_BIT, ISCSI_ISID_TYPE_FORMAT_LAST_BIT))
+
+/// iSCSI Initiator Session ID (ISID) type format: Stores into the type format.
+#define ISCSI_ISID_PUT_TYPE_FORMAT(x)    (ISCSI_BITS_PUT((x), ISCSI_ISID_TYPE_FORMAT_FIRST_BIT, ISCSI_ISID_TYPE_FORMAT_LAST_BIT))
+
 
 /**
  * @brief iSCSI Initiator Session ID (ISID) packet data.
@@ -2538,7 +6623,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * SessionType key is thus going to be offered as "Discovery", it SHOULD
  * be offered in the initial Login Request by the initiator.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_SESSION_TYPE            "SessionType"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_SESSION_TYPE            ((const uint8_t *) "SessionType\0\0\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Initiator name.
@@ -2559,7 +6644,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * itself to the remote endpoint.\n
  * The InitiatorName MUST NOT be redeclared within the Login Phase.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_INITIATOR_NAME          "InitiatorName"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_INITIATOR_NAME          ((const uint8_t *) "InitiatorName\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Target name.
@@ -2583,7 +6668,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * Request (which is its only use when issued by a target).\n
  * The TargetName MUST NOT be redeclared within the Login Phase.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_NAME             "TargetName"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_NAME             ((const uint8_t *) "TargetName\0\0\0\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Target address.
@@ -2613,7 +6698,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * The formats for the port and portal-group-tag are the same as the one
  * specified in TargetPortalGroupTag.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ADDRESS          "TargetAddress"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ADDRESS          ((const uint8_t *) "TargetAddress\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Initiator alias.
@@ -2636,7 +6721,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * the target's user interface in a list of initiators to which it is
  * connected.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_INITIATOR_ALIAS         "InitiatorAlias"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_INITIATOR_ALIAS         ((const uint8_t *) "InitiatorAlias\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Target alias.
@@ -2658,7 +6743,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * authorization decisions. It can be displayed by the initiator's user
  * interface in a list of targets to which it is connected.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ALIAS            "TargetAlias"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_ALIAS            ((const uint8_t *) "TargetAlias\0\0\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Target portal group tag.
@@ -2683,7 +6768,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * legal value for the TPGT. This discrepancy currently stands
  * corrected in SAM4.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_PORTAL_GROUP_TAG "TargetPortalGroupTag"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_TARGET_PORTAL_GROUP_TAG ((const uint8_t *) "TargetPortalGroupTag\0\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Authentication method.
@@ -2745,7 +6830,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * Support for public or private extension authentication methods is
  * OPTIONAL.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD             "AuthMethod"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD             ((const uint8_t *) "AuthMethod\0\0\0\0\0")
 
 
 /**
@@ -2777,7 +6862,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * encoded form) MUST NOT exceed 65536 bytes. Hex or Base64 encoding
  * may be used for KRB_AP_REQ and KRB_AP_REP.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_KRB_AP_REQ "KRB_AP_REQ"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_KRB_AP_REQ ((const uint8_t *) "KRB_AP_REQ\0\0\0\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Kerberos V5 (KRB5): KRB_AP_REP.
@@ -2808,7 +6893,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * encoded form) MUST NOT exceed 65536 bytes. Hex or Base64 encoding
  * may be used for KRB_AP_REQ and KRB_AP_REP.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_KRB_AP_REP "KRB_AP_REP"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_KRB_AP_REP ((const uint8_t *) "KRB_AP_REP\0\0\0\0\0")
 
 
 /**
@@ -2862,7 +6947,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * supported by initiators and targets. To guarantee interoperability,
  * targets MUST always offer "SRP-1536" as one of the proposed groups.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_U     "SRP_U"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_U     ((const uint8_t *) "SRP_U\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Secure Remote Password (SRP): SRP_GROUP.
@@ -2915,7 +7000,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * supported by initiators and targets. To guarantee interoperability,
  * targets MUST always offer "SRP-1536" as one of the proposed groups.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_GROUP "SRP_GROUP"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_GROUP ((const uint8_t *) "SRP_GROUP\0\0\0\0\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Secure Remote Password (SRP): SRP_A.
@@ -2968,7 +7053,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * supported by initiators and targets. To guarantee interoperability,
  * targets MUST always offer "SRP-1536" as one of the proposed groups.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_A     "SRP_A"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_A     ((const uint8_t *) "SRP_A\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Secure Remote Password (SRP): SRP_B.
@@ -3021,7 +7106,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * supported by initiators and targets. To guarantee interoperability,
  * targets MUST always offer "SRP-1536" as one of the proposed groups.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_B     "SRP_B"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_B     ((const uint8_t *) "SRP_B\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Secure Remote Password (SRP): SRP_M.
@@ -3074,7 +7159,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * supported by initiators and targets. To guarantee interoperability,
  * targets MUST always offer "SRP-1536" as one of the proposed groups.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_M     "SRP_M"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_M     ((const uint8_t *) "SRP_M\0\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Secure Remote Password (SRP): SRP_HM.
@@ -3127,7 +7212,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * supported by initiators and targets. To guarantee interoperability,
  * targets MUST always offer "SRP-1536" as one of the proposed groups.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_HM    "SRP_HM"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_SRP_SRP_HM    ((const uint8_t *) "SRP_HM\0")
 
 
 /**
@@ -3184,7 +7269,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * To guarantee interoperability, initiators MUST always offer it as one
  * of the proposed algorithms.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_A "CHAP_A"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_A ((const uint8_t *) "CHAP_A\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Challenge Handshake Authentication Protocol (CHAP): CHAP_I.
@@ -3240,7 +7325,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * To guarantee interoperability, initiators MUST always offer it as one
  * of the proposed algorithms.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_I "CHAP_I"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_I ((const uint8_t *) "CHAP_I\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Challenge Handshake Authentication Protocol (CHAP): CHAP_C.
@@ -3296,7 +7381,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * To guarantee interoperability, initiators MUST always offer it as one
  * of the proposed algorithms.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_C "CHAP_C"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_C ((const uint8_t *) "CHAP_C\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Challenge Handshake Authentication Protocol (CHAP): CHAP_N.
@@ -3352,7 +7437,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * To guarantee interoperability, initiators MUST always offer it as one
  * of the proposed algorithms.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_N "CHAP_N"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_N ((const uint8_t *) "CHAP_N\0")
 
 /**
  * @brief Key used during SecurityNegotiation stage of Login Phase: Challenge Handshake Authentication Protocol (CHAP): CHAP_R.
@@ -3408,7 +7493,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * To guarantee interoperability, initiators MUST always offer it as one
  * of the proposed algorithms.
  */
-#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_R "CHAP_R"
+#define ISCSI_LOGIN_AUTH_SECURITY_TEXT_KEY_AUTH_METHOD_CHAP_CHAP_R ((const uint8_t *) "CHAP_R\0")
 
 /* Login/Text Operational Text Keys
 
@@ -3526,7 +7611,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * standard-label specified.\n
  * Support for public or private extension digests is OPTIONAL.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_HEADER_DIGEST "HeaderDigest"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_HEADER_DIGEST ((const uint8_t *) "HeaderDigest\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Data digest.
@@ -3608,7 +7693,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * standard-label specified.\n
  * Support for public or private extension digests is OPTIONAL.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_DIGEST   "DataDigest"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_DIGEST   ((const uint8_t *) "DataDigest\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: New connections.
@@ -3625,7 +7710,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * The initiator and target negotiate the maximum number of connections
  * requested/acceptable.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_CONNECTIONS "MaxConnections"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_CONNECTIONS ((const uint8_t *) "MaxConnections\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Send targets.
@@ -3789,7 +7874,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * multiple connections per session; it is communicated via the
  * MaxConnections text key upon login to the target.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_SEND_TARGETS "SendTargets"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_SEND_TARGETS ((const uint8_t *) "SendTargets\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Initial Ready To Transfer.
@@ -3818,7 +7903,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * Only the first outgoing data burst (immediate data and/or separate
  * PDUs) can be sent unsolicited (i.e., not requiring an explicit R2T).
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_INITIAL_R2T "InitialR2T"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_INITIAL_R2T ((const uint8_t *) "InitialR2T\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Immediate data.
@@ -3832,7 +7917,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * Default is Yes.
  * @endverbatim
  * Result function is AND.\n
- * The initiator and target negotiate support for immediate dataTo
+ * The initiator and target negotiate support for immediate data. To
  * turn immediate data off, the initiator or target must state its
  * desire to do soImmediateData can be turned on if both the
  * initiator and target have ImmediateData=Yes.\n
@@ -3855,7 +7940,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * | Yes      | No            | No                        | No          |
  * | Yes      | Yes           | No                        | Yes         |
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IMMEDIATE_DATA "ImmediateData"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IMMEDIATE_DATA ((const uint8_t *) "ImmediateData\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Maximum receive DataSegmentLength.
@@ -3878,7 +7963,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * unsolicited PDUs exceeding FirstBurstLength (or FirstBurstLength-
  * Immediate Data Length if immediate data were sent).
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_RECV_DS_LEN "MaxRecvDataSegmentLength"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_RECV_DS_LEN ((const uint8_t *) "MaxRecvDataSegmentLength\0\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Maximum burst length.
@@ -3897,7 +7982,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * sequence consists of one or more consecutive Data-In or Data-Out PDUs
  * that end with a Data-In or Data-Out PDU with the F bit set to 1.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_BURST_LEN "MaxBurstLength"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_BURST_LEN ((const uint8_t *) "MaxBurstLength\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: First burst length.
@@ -3919,7 +8004,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * follow the command.\n
  * FirstBurstLength MUST NOT exceed MaxBurstLength.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_FIRST_BURST_LEN "FirstBurstLength"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_FIRST_BURST_LEN ((const uint8_t *) "FirstBurstLength\0\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Default time to wait.
@@ -3939,7 +8024,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * A value of 0 indicates that logout or active task reassignment can be
  * attempted immediately.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DEFAULT_TIME_WAIT "DefaultTime2Wait"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DEFAULT_TIME_WAIT ((const uint8_t *) "DefaultTime2Wait\0\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Default time to retain.
@@ -3961,7 +8046,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * A value of 0 indicates that connection/task state is immediately
  * discarded by the target.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DEFAULT_TIME_RETAIN "DefaultTime2Retain"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DEFAULT_TIME_RETAIN ((const uint8_t *) "DefaultTime2Retain\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Maximum outstanding Ready To Transfer.
@@ -3981,7 +8066,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * PDU (with the F bit set to 1) is transferred or a sequence reception
  * timeout is encountered for that data sequence.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_OUTSTANDING_R2T "MaxOutstandingR2T"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_MAX_OUTSTANDING_R2T ((const uint8_t *) "MaxOutstandingR2T\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Data Protocol Data Unit (PDU) in order.
@@ -4000,7 +8085,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * sequences have to be at continuously increasing addresses and
  * overlays are forbidden.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_PDU_IN_ORDER "DataPDUInOrder"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_PDU_IN_ORDER ((const uint8_t *) "DataPDUInOrder\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Data sequence in order.
@@ -4030,7 +8115,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * not 0 and DataSequenceInOrder is set to Yes, then MaxOutstandingR2T
  * MUST be set to 1.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_SEQ_IN_ORDER "DataSequenceInOrder"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_DATA_SEQ_IN_ORDER ((const uint8_t *) "DataSequenceInOrder\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Error recovery level.
@@ -4050,7 +8135,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * In the description of recovery mechanisms, certain recovery classes
  * are specified.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_ERR_RECOVERY_LEVEL "ErrorRecoveryLevel"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_ERR_RECOVERY_LEVEL ((const uint8_t *) "ErrorRecoveryLevel\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: X reversed vendor.
@@ -4073,7 +8158,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * Vendor-specific keys MUST ONLY be used in Normal sessions.\n
  * Support for public or private extension keys is OPTIONAL.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_PRIV_EXT_KEY_FMT "X-reversed.vendor"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_PRIV_EXT_KEY_FMT ((const uint8_t *) "X-reversed.vendor\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: Task reporting.
@@ -4101,7 +8186,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * When TaskReporting is not negotiated to FastAbort, the
  * standard multi-task abort semantics MUST be used.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_TASK_REPORTING "TaskReporting"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_TASK_REPORTING ((const uint8_t *) "TaskReporting\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: X Node architecture.
@@ -4150,7 +8235,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * silent (the node does not transmit any key value and simply discards
  * any key values it receives without issuing a NotUnderstood response).
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_X_NODE_ARCH "X#NodeArchitecture"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_X_NODE_ARCH ((const uint8_t *) "X#NodeArchitecture\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: IFMarker (obseleted).
@@ -4169,7 +8254,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * implementation MUST NOT respond with a "NotUnderstood" value for
  * either of these keys.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IF_MARKER   "IFMarker"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IF_MARKER   ((const uint8_t *) "IFMarker\0\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: OFMarker (obseleted).
@@ -4188,7 +8273,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * implementation MUST NOT respond with a "NotUnderstood" value for
  * either of these keys.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_OF_MARKER   "OFMarker"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_OF_MARKER   ((const uint8_t *) "OFMarker\0\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: OFMarkInt (obseleted).
@@ -4207,7 +8292,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * implementation MUST NOT respond with a "NotUnderstood" value for
  * either of these keys.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_OF_MARK_INT "OFMarkInt"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_OF_MARK_INT ((const uint8_t *) "OFMarkInt\0\0\0\0\0\0")
 
 /**
  * @brief Login/Text Operational Session Text Key: IFMarkInt (obseleted).
@@ -4226,7 +8311,7 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * implementation MUST NOT respond with a "NotUnderstood" value for
  * either of these keys.
  */
-#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IF_MARK_INT "IFMarkInt"
+#define ISCSI_LOGIN_AUTH_SESSION_TEXT_KEY_IF_MARK_INT ((const uint8_t *) "IFMarkInt\0\0\0\0\0\0")
 
 
 /// Login request Next Stage (NSG) flags: SecurityNegotiation.
@@ -4250,10 +8335,10 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * next stage to which they want to move. The Next Stage value is only
  * valid when the T bit is 1; otherwise, it is reserved.
  */
-#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT 0
+#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT                     0
 
 /**
- * @brief Login request flags: Next Stage (NSG): Second bit of the two bits.
+ * @brief Login request flags: Next Stage (NSG): Last bit of the two bits.
  *
  * The Login negotiation requests and responses are associated
  * with a specific stage in the session (SecurityNegotiation,\n
@@ -4261,13 +8346,16 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * next stage to which they want to move. The Next Stage value is only
  * valid when the T bit is 1; otherwise, it is reserved.
  */
-#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_SECOND_BIT ((ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT) + 1)
+#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LAST_BIT                      ((ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT) + 2 - 1)
 
 /// Login request flags: Next Stage (NSG): Bit mask.
-#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_MASK ((1 << (ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT)) | (1 << (ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_SECOND_BIT)))
+#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_MASK                          (ISCSI_BITS_GET_MASK(ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LAST_BIT))
 
 /// Login request flags: Extracts the Next Stage (NSG) bits.
-#define ISCSI_LOGIN_REQ_FLAGS_GET_NEXT_STAGE(x) (((x) & ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_MASK) >> ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT)
+#define ISCSI_LOGIN_REQ_FLAGS_GET_NEXT_STAGE(x)                        (ISCSI_BITS_GET((x), ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LAST_BIT))
+
+/// Login request flags: Stores into the Next Stage (NSG) bits.
+#define ISCSI_LOGIN_REQ_FLAGS_PUT_NEXT_STAGE(x)                        (ISCSI_BITS_PUT((x), ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LAST_BIT))
 
 
 /// Login request Current Stage (CSG) flags: SecurityNegotiation.
@@ -4290,23 +8378,26 @@ typedef struct __attribute__((packed)) iscsi_isid {
  * LoginOperationalNegotiation, FullFeaturePhase) and may indicate the
  * next stage to which they want to move.
  */
-#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT 2
+#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT                     2
 
 /**
- * @brief Login request flags: Current Stage (CSG): Second bit of the two bits.
+ * @brief Login request flags: Current Stage (CSG): Last bit of the two bits.
  *
  * The Login negotiation requests and responses are associated
  * with aspecific stage in the session (SecurityNegotiation,
  * LoginOperationalNegotiation, FullFeaturePhase) and may indicate the
  * next stage to which they want to move.
  */
-#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_SECOND_BIT ((ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT) + 1)
+#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LAST_BIT                      ((ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT) + 2 - 1)
 
 /// Login request flags: Current Stage (CSG): Bit mask.
-#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_MASK ((1 << (ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT)) | (1 << (ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_SECOND_BIT)))
+#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_MASK                          (ISCSI_BITS_GET_MASK(ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LAST_BIT))
 
 /// Login request flags: Extracts the Current Stage (CSG) bits.
-#define ISCSI_LOGIN_REQ_FLAGS_GET_CURRENT_STAGE(x) (((x) & ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_MASK) >> ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT)
+#define ISCSI_LOGIN_REQ_FLAGS_GET_CURRENT_STAGE(x)                        (ISCSI_BITS_GET((x), ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LAST_BIT))
+
+/// Login request flags: Stores into the Current Stage (CSG) bits.
+#define ISCSI_LOGIN_REQ_FLAGS_PUT_CURRENT_STAGE(x)                        (ISCSI_BITS_PUT((x), ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LAST_BIT))
 
 
 /**
@@ -4457,7 +8548,7 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
      * to enable the target to determine if the initiator may use
      * the target's resources and the initial text parameters for the security exchange
      */
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_login_req_packet;
 
 
@@ -4482,10 +8573,10 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
  * next stage to which they want to move The Next Stage value is only
  * valid when the T bit is 1; otherwise, it is reserved.
  */
-#define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT 0
+#define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT                     0
 
 /**
- * @brief Login response flags: Next Stage (NSG): First bit of the two bits.
+ * @brief Login response flags: Next Stage (NSG): Last bit of the two bits.
  *
  * The Login negotiation requests and responses are associated
  * with a specific stage in the session (SecurityNegotiation,
@@ -4493,14 +8584,16 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
  * next stage to which they want to move The Next Stage value is only
  * valid when the T bit is 1; otherwise, it is reserved.
  */
-#define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_SECOND_BIT ((ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT) + 1)
+#define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_LAST_BIT                      ((ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT) + 2 - 1)
 
 /// Login response flags: Next Stage (NSG): Bit mask.
-#define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK ((1 << (ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT)) | (1 << (ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_SECOND_BIT)))
+#define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK                          (ISCSI_BITS_GET_MASK(ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_LAST_BIT))
 
 /// Login response flags: Extracts the Next Stage (NSG) bits.
-#define ISCSI_LOGIN_RESPONSE_FLAGS_GET_NEXT_STAGE(x) (((x) & ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_MASK) >> ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT)
+#define ISCSI_LOGIN_RESPONSE_FLAGS_GET_NEXT_STAGE(x)                        (ISCSI_BITS_GET((x), ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_LAST_BIT))
 
+/// Login response flags: Stores into the Next Stage (NSG) bits.
+#define ISCSI_LOGIN_RESPONSE_FLAGS_PUT_NEXT_STAGE(x)                        (ISCSI_BITS_PUT((x), ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_LAST_BIT))
 
 
 /// Login response Current Stage (CSG) flags: SecurityNegotiation.
@@ -4523,7 +8616,7 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
  * LoginOperationalNegotiation, FullFeaturePhase) and may indicate the
  * next stage to which they want to move.
  */
-#define ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT 2
+#define ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT                     2
 
 /**
  * @brief Login response flags: Current Stage (CSG): First bit of the two bits.
@@ -4533,13 +8626,16 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
  * LoginOperationalNegotiation, FullFeaturePhase) and may indicate the
  * next stage to which they want to move.
  */
-#define ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_SECOND_BIT ((ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT) + 1)
+#define ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_LAST_BIT                      ((ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT) + 2 - 1)
 
 /// Login request flags: Current Stage (CSG): Bit mask.
-#define ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK ((1 << (ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT)) | (1 << (ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_SECOND_BIT)))
+#define ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK                          (ISCSI_BITS_GET_MASK(ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_LAST_BIT))
 
 /// Login request flags: Extracts the Current Stage (CSG) bits.
-#define ISCSI_LOGIN_RESPONSE_FLAGS_GET_CURRENT_STAGE(x) (((x) & ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_MASK) >> ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT)
+#define ISCSI_LOGIN_RESPONSE_FLAGS_GET_CURRENT_STAGE(x)                        (ISCSI_BITS_GET((x), ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_LAST_BIT))
+
+/// Login request flags: Stores into the Current Stage (CSG) bits.
+#define ISCSI_LOGIN_RESPONSE_FLAGS_PUT_CURRENT_STAGE(x)                        (ISCSI_BITS_PUT((x), ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_RESPONSE_FLAGS_CURRENT_STAGE_LAST_BIT))
 
 
 /**
@@ -4799,7 +8895,7 @@ typedef struct __attribute__((packed)) iscsi_login_response_packet {
      * All the rules specified for Text Responses also hold for Login
      * Responses.
      */
-    iscsi_ds_cmd_data ds_cmd_data;
+    iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_login_response_packet;
 
 
@@ -5012,7 +9108,7 @@ typedef struct __attribute__((packed)) iscsi_logout_response_packet {
     /// Always 0x26 according to iSCSI specification.
     uint8_t opcode;
 
-    /// Reserved for future usage (must be always 0x80 for now).
+    /// Reserved for future usage (always MUST be 0x80 for now).
     int8_t flags;
 
     /// Response.
@@ -5344,7 +9440,7 @@ typedef struct __attribute__((packed)) iscsi_reject_packet {
     /// Always 0x3F according to iSCSI specification.
     uint8_t opcode;
 
-    /// Reserved for future usage (must be always 0x80 for now).
+    /// Reserved for future usage (always MUST be 0x80 for now).
     int8_t flags;
 
     /**
@@ -5414,10 +9510,10 @@ typedef struct __attribute__((packed)) iscsi_reject_packet {
      * next Data/R2T sequence number that the target would send for the
      * task, if any.
      */
-    uint32_t data_r2tsn_sn;
+    uint32_t data_r2t_sn;
 
     /// Reserved for future usage, always MUST be 0.
-    uint32_t reserved4[2];
+    uint64_t reserved4;
 
     /// Optional header digest.
     iscsi_header_digest hdr_digest;
@@ -5462,7 +9558,7 @@ typedef struct __attribute__((packed)) iscsi_nop_out_packet {
     /// Always 0x00 according to iSCSI specification.
     uint8_t opcode;
 
-    /// Reserved for future usage (must be always 0x80 for now).
+    /// Reserved for future usage (always MUST be 0x80 for now).
     int8_t flags;
 
     /// Reserved for future usage, always MUST be 0.
@@ -5525,7 +9621,7 @@ typedef struct __attribute__((packed)) iscsi_nop_out_packet {
      * ping data is indicated by the DataSegmentLength. 0 is a valid value
      * for the DataSegmentLength and indicates the absence of ping data.
      */
-    iscsi_ds_cmd_data ds_ping_data;
+    iscsi_scsi_ds_cmd_data ds_ping_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
@@ -5560,7 +9656,7 @@ typedef struct __attribute__((packed)) iscsi_nop_in_packet {
     /// Always 0x20 according to iSCSI specification.
     uint8_t opcode;
 
-    /// Reserved for future usage (must be always 0x80 for now).
+    /// Reserved for future usage (always MUST be 0x80 for now).
     int8_t flags;
 
     /// Reserved for future usage, always MUST be 0.
@@ -5602,32 +9698,71 @@ typedef struct __attribute__((packed)) iscsi_nop_in_packet {
     uint32_t stat_sn;
 
     /// ExpCmdSN.
-    uint32_t exp_cmd_sn; // ExpCmdSN
+    uint32_t exp_cmd_sn;
 
     /// MaxCmdSN.
     uint32_t max_cmd_sn;
 
     /// Reserved for future usage, always MUST be 0.
-    uint32_t reserved2[3];
+    uint32_t reserved2;
+
+    /// Reserved for future usage, always MUST be 0.
+    uint64_t reserved3;
 
     /// Optional header digest.
     iscsi_header_digest hdr_digest;
 
     /// DataSegment - Return Ping Data.
-    iscsi_ds_cmd_data ds_ping_data;
+    iscsi_scsi_ds_cmd_data ds_ping_data;
 
     /// Optional data digest.
     iscsi_data_digest data_digest;
 } iscsi_nop_in_packet;
 
 
-/// iSCSI SCSI transport ID protocol identifier.
-#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_ISCSI 0x05
+/// iSCSI SCSI transport ID protocol identifier: iSCSI.
+#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_ISCSI     0x05
+
+/// iSCSI SCSI transport ID protocol identifier: First bit of the four bits.
+#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT 0
+
+/// iSCSI SCSI transport ID protocol identifier: Last bit of the four bits.
+#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT  ((ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT) + 4 - 1)
+
+/// iSCSI SCSI transport ID protocol identifier: Bit mask.
+#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_MASK      (ISCSI_BITS_GET_MASK(ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT, ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI transport ID protocol identifier: Extracts the protocol identifier bits.
+#define ISCSI_TRANSPORT_ID_GET_PROTOCOL_ID(x)    (ISCSI_BITS_GET((x), ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT, ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT))
+
+/// iSCSI SCSI transport ID protocol identifier: Stores into the protocol identifier bits.
+#define ISCSI_TRANSPORT_ID_PUT_PROTOCOL_ID(x)    (ISCSI_BITS_PUT((x), ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT, ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT))
 
 /// iSCSI SCSI transport ID format.
-#define ISCSI_TRANSPORT_ID_FORMAT 0x01
+#define ISCSI_TRANSPORT_ID_FORMAT                0x01
+
+/// iSCSI SCSI transport ID format: First bit of the two bits.
+#define ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT      6
+
+/// iSCSI SCSI transport ID format: Last bit of the two bits.
+#define ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT       ((ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT) + 2 - 1)
+
+/// iSCSI SCSI transport ID format: Bit mask.
+#define ISCSI_TRANSPORT_ID_FORMAT_MASK           (ISCSI_BITS_GET_MASK(ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT, ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT))
+
+/// iSCSI SCSI transport ID format: Extracts the format bits.
+#define ISCSI_TRANSPORT_ID_GET_FORMAT(x)         (ISCSI_BITS_GET((x), ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT, ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT))
+
+/// iSCSI SCSI transport ID format: Stores into the format bits.
+#define ISCSI_TRANSPORT_ID_PUT_FORMAT(x)         (ISCSI_BITS_PUT((x), ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT, ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT))
 
 
+/**
+ * @brief iSCSI SCSI Transport ID structure.
+ *
+ * This structure handles the iSCSI SCSI transport
+ * identifier data.
+ */
 typedef struct __attribute__((packed)) iscsi_transport_id {
     /// First 4 bits are protocol ID and last 2 bits are format.
     uint8_t id;
@@ -5643,115 +9778,73 @@ typedef struct __attribute__((packed)) iscsi_transport_id {
 } iscsi_transport_id;
 
 
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation successful -> iSCSI packet recognized and compliance to protocol specification.
-#define ISCSI_VALIDATE_PACKET_RESULT_OK                         0L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> No packet data specified.
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_NO_DATA             -1L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> Packet size smaller than smallest possible iSCSI packet.
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_SIZE_TOO_SMALL      -2L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> Packet size doesn't match calculated lengths from BHS.
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_SIZE_MISMATCH       -3L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> iSCSI protocol version not supported yet.
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_UNSUPPORTED_VERSION -4L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> Valid opcode but violates iSCSI protocol specification.
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_PROTOCOL_SPECS      -5L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> Invalid opcode according to iSCSI protocol specification.
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_INVALID_OPCODE      -6L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> CRC32C check failed for header (BHS and/or AHS).
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_CRC32C_HDR_DIGEST   -7L
-
-/// iSCSI packet validation return code from iscsi_validate_packet function: Validation failed -> CRC32C check failed for data segment.
-#define ISCSI_VALIDATE_PACKET_RESULT_ERROR_CRC32C_DATA_DIGEST  -8L
-
-
-iscsi_bhs_packet *iscsi_create_packet(); // Allocate and initialize an iSCSI BHS packet
-void iscsi_destroy_packet(iscsi_bhs_packet *packet_data); // Free resources allocated by iscsi_create_packet
-
-iscsi_bhs_packet *iscsi_append_ahs_packet(iscsi_bhs_packet *packet_data, const uint32_t ahs_len); // Allocate and initialize an iSCSI AHS packet and append to existing data stream
-int iscsi_get_ahs_packets(const iscsi_bhs_packet *packet_data); // Counts number of AHS packets in an iSCSI data packet stream
-iscsi_ahs_packet *iscsi_get_ahs_packet(const iscsi_bhs_packet *packet_data, const int index); // Retrieves the pointer to an specific AHS packet by index
-
-iscsi_bhs_packet *iscsi_append_header_digest_packet(iscsi_bhs_packet *packet_data, const int header_digest_size); // Allocate and initialize an iSCSI header digest (CRC32C) and appends it to existing data stream
-
-iscsi_bhs_packet *iscsi_append_ds_packet(iscsi_bhs_packet *packet_data, const int header_digest_size, const uint32_t ds_len, const int data_digest_size); // Allocate and initialize an iSCSI DS packet and append to existing data stream
-
-void iscsi_calc_header_digest(const iscsi_bhs_packet *packet_data); // Calculate and store iSCSI header digest (CRC32C)
-int iscsi_validate_header_digest(const iscsi_bhs_packet *packet_data); // Validates a stored iSCSI header digest (CRC32C) with actual header data
-
-void iscsi_calc_data_digest(const iscsi_bhs_packet *packet_data, const int header_digest_size); // Calculate iSCSI data digest (CRC32C)
-int iscsi_validate_data_digest(const iscsi_bhs_packet *packet_data, const int header_digest_size); // Validates a stored iSCSI data digest (CRC32C) with actual DataSegment
-
-int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint32_t len, const int header_digest_size, const int data_digest_size); // Check if valid iSCSI packet and validate if necessarily
-
-
 /// Maximum length of a key according to iSCSI specifications.
-#define ISCSI_TEXT_KEY_MAX_LEN 63UL
+#define ISCSI_TEXT_KEY_MAX_LEN          63U
 
 /// Maximum length of value for a simple key type.
-#define ISCSI_TEXT_VALUE_MAX_SIMPLE_LEN 255UL
+#define ISCSI_TEXT_VALUE_MAX_SIMPLE_LEN 255U
 
 /// Maximum length of value for a normal key.
-#define ISCSI_TEXT_VALUE_MAX_LEN        8192UL
+#define ISCSI_TEXT_VALUE_MAX_LEN        8192U
+
+/// Value data shift value for key value alignment enforcement.
+#define ISCSI_TEXT_VALUE_ALIGN_SHIFT    4UL
+
+/// Value alignment size is a multiple of 16 bytes for a key value for having work space when changing string representation of integer values.
+#define ISCSI_TEXT_VALUE_ALIGN          (1UL << (ISCSI_TEXT_VALUE_ALIGN_SHIFT))
 
 
 /// iSCSI text key=value pair type: Invalid.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_INVALID         -1L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_INVALID         -1
 
 /// iSCSI text key=value pair type: Unspecified type.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_UNSPECIFIED      0L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_UNSPECIFIED      0
 
 /// iSCSI text key=value pair type: List.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_LIST             1L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_LIST             1
 
 /// iSCSI text key=value pair type: Numerical minimum.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_MIN          2L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_MIN          2
 
 /// iSCSI text key=value pair type: Numerical maximum.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_MAX          3L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_MAX          3
 
 /// iSCSI text key=value pair type: Numerical declarative.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_DECLARATIVE  4L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_DECLARATIVE  4
 
 /// iSCSI text key=value pair type: Declarative.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_DECLARATIVE      5L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_DECLARATIVE      5
 
 /// iSCSI text key=value pair type: Boolean OR.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_BOOL_OR          6L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_BOOL_OR          6
 
 /// iSCSI text key=value pair type: Boolean AND.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_BOOL_AND         7L
+#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_BOOL_AND         7
 
 
 /// iSCSI key value pair flags: Discovery ignored.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_DISCOVERY_IGNORE    (1 << 0L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_DISCOVERY_IGNORE    (1 << 0)
 
 /// iSCSI key value pair flags: Multi negotiation.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_MULTI_NEGOTIATION   (1 << 1L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_MULTI_NEGOTIATION   (1 << 1)
 
 /// iSCSI key value pair flags: Target declarative.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_TARGET_DECLARATIVE  (1 << 2L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_TARGET_DECLARATIVE  (1 << 2)
 
 /// iSCSI key value pair flags: CHAP type.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_CHAP_TYPE           (1 << 3L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_CHAP_TYPE           (1 << 3)
 
 /// iSCSI key value pair flags: Requires special handling.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_SPECIAL_HANDLING    (1 << 4L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_SPECIAL_HANDLING    (1 << 4)
 
 /// iSCSI key value pair flags: Use previous default value.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_PREVIOUS_VALUE  (1 << 5L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_PREVIOUS_VALUE  (1 << 5)
 
 /// iSCSI key value pair flags: Override with default value.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_OVERRIDE_DEFAULT    (1 << 6L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_OVERRIDE_DEFAULT    (1 << 6)
 
 /// iSCSI key value pair flags: Uses maximum value depending on secondary key.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_OTHER_MAX_VALUE (1 << 7L)
+#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_OTHER_MAX_VALUE (1 << 7)
 
 
 /**
@@ -5762,7 +9855,7 @@ int iscsi_validate_packet(const struct iscsi_bhs_packet *packet_data, const uint
  */
 typedef struct iscsi_key_value_pair_lut_entry {
     /// Name of key.
-    uint8_t *key;
+    const uint8_t *key;
 
     /// Default value of the key, always in string representation.
     uint8_t *value;
@@ -5802,6 +9895,8 @@ typedef struct iscsi_key_value_pair {
 	uint state_mask;
 } iscsi_key_value_pair;
 
+typedef struct iscsi_connection iscsi_connection;
+
 /**
  * @brief iSCSI Text / Login key=value packet data construction helper.
  *
@@ -5810,35 +9905,333 @@ typedef struct iscsi_key_value_pair {
  */
 typedef struct iscsi_key_value_pair_packet {
     /// Associated iSCSI connection.
-    struct iscsi_connection *conn;
+    iscsi_connection *conn;
 
     /// Current text buffer containing multiple key=value + NUL terminator pairs.
     uint8_t *buf;
 
     /// Position of output buffer for next write.
-    uint pos;
+    uint32_t pos;
 
     /// Current length of buffer including final NUL terminator without iSCSI zero padding.
-    uint len;
+    uint32_t len;
 
     /// Discovery mode.
     int discovery;
 } iscsi_key_value_pair_packet;
 
-int iscsi_parse_key_value_pairs(iscsi_hashmap *pairs, const uint8_t *packet_data, uint len, int c_bit, uint8_t **partial_pairs); // Extracts all text key / value pairs out of an iSCSI packet into a hash map
+int iscsi_parse_key_value_pairs(iscsi_hashmap *key_value_pairs, const uint8_t *packet_data, uint len, int c_bit, uint8_t **partial_pairs); // Extracts all text key / value pairs out of an iSCSI packet into a hash map
+
+
+/// iSCSI main global data: INI configuration filename.
+#define ISCSI_GLOBALS_CONFIG_FILENAME "iscsi.conf"
+
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI section identifier string.
+#define ISCSI_GLOBALS_SECTION_ISCSI              "iscsi"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI               "scsi"
+
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI section target name check key identifier string.
+#define ISCSI_GLOBALS_SECTION_ISCSI_KEY_TARGET_NAME_CHECK        "TargetNameCheck"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI section maximum number of sessions allowed key identifier string.
+#define ISCSI_GLOBALS_SECTION_ISCSI_KEY_MAX_SESSIONS             "MaxSessions"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI section maximum number of connections per session allowed key identifier string.
+#define ISCSI_GLOBALS_SECTION_ISCSI_MAX_CONNECTIONS_PER_SESSIONS "MaxConnectionsPerSession"
+
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section device type key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_DEVICE_TYPE         "DeviceType"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section physical block size key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_PHYSICAL_BLOCK_SIZE "PhysicalBlockSize"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section logical block size key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_LOGICAL_BLOCK_SIZE  "LogicalBlockSize"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section removable device key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_REMOVABLE           "Removable"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section UNMAP support device key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_UNMAP               "UNMAP"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section no rotation device key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_NO_ROTATION         "NoRotation"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section physical read only device key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_PHYSICAL_READ_ONLY  "PhysicalReadOnly"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section write protected device key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_WRITE_PROTECT       "WriteProtect"
+
+/// iSCSI main global data: iSCSI INI configuration iSCSI SCSI section write cache supported device key identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_KEY_WRITE_CACHE         "WriteCache"
+
+
+/// iSCSI main global data: iSCSI SCSI device specific INI configuration section prefix identifier string.
+#define ISCSI_GLOBALS_SECTION_SCSI_DEVICE_PREFIX "scsi-device-"
+
+
+/// iSCSI main global data config type: iHeader digest (CRC32), always MUST be 0 or 4 for now.
+#define ISCSI_GLOBALS_CONFIG_TYPE_HEADER_DIGEST                     0
+
+/// iSCSI main global data config type: Data digest (CRC32), always MUST be 0 or 4 for now.
+#define ISCSI_GLOBALS_CONFIG_TYPE_DATA_DIGEST                       1
+
+/// iSCSI main global data config type: Maximum receive DataSegment length in bytes.
+#define ISCSI_GLOBALS_CONFIG_TYPE_MAX_RECV_DS_LEN                   2
+
+/// iSCSI main global data config type: Maximum number of connections per session.
+#define ISCSI_GLOBALS_CONFIG_TYPE_MAX_SESSION_CONNS                 3
+
+/// iSCSI main global data config type: Ready to transfer maximum outstanding value.
+#define ISCSI_GLOBALS_CONFIG_TYPE_MAX_OUTSTANDING_R2T               4
+
+/// iSCSI main global data config type: Default time to wait.
+#define ISCSI_GLOBALS_CONFIG_TYPE_DEFAULT_TIME_TO_WAIT              5
+
+/// iSCSI main global data config type: Default time to retain.
+#define ISCSI_GLOBALS_CONFIG_TYPE_DEFAULT_TIME_TO_RETAIN            6
+
+/// iSCSI main global data config type: First burst length.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FIRST_BURST_LEN                   7
+
+/// iSCSI main global data config type: Maximum burst length.
+#define ISCSI_GLOBALS_CONFIG_TYPE_MAX_BURST_LEN                     8
+
+/// iSCSI main global data config type: Error recovery level.
+#define ISCSI_GLOBALS_CONFIG_TYPE_ERR_RECOVERY_LEVEL                9
+
+/// iSCSI main global data config type: SCSI emulation for device type.
+#define ISCSI_GLOBALS_CONFIG_TYPE_SCSI_DEVICE_TYPE                 10
+
+/// iSCSI main global data config type: SCSI emulation for physical block size.
+#define ISCSI_GLOBALS_CONFIG_TYPE_SCSI_PHYSICAL_BLOCK_SIZE         11
+
+/// iSCSI main global data config type: SCSI emulation for physical block size shift count.
+#define ISCSI_GLOBALS_CONFIG_TYPE_SCSI_PHYSICAL_BLOCK_SIZE_SHIFT   12
+
+/// iSCSI main global data config type: SCSI emulation for logical block size.
+#define ISCSI_GLOBALS_CONFIG_TYPE_SCSI_LOGICAL_BLOCK_SIZE          13
+
+/// iSCSI main global data config type: SCSI emulation for logical block size shift count.
+#define ISCSI_GLOBALS_CONFIG_TYPE_SCSI_LOGICAL_BLOCK_SIZE_SHIFT    14
+
+/// iSCSI main global data config type: Initial ready to transfer.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_INIT_R2T                   15
+
+/// iSCSI main global data config type: Immediate data.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_IMMEDIATE_DATA             16
+
+/// iSCSI main global data config type: Data PDU in order.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_DATA_PDU_IN_ORDER          17
+
+/// iSCSI main global data config type: Data sequence in order.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_DATA_SEQ_IN_ORDER          18
+
+/// iSCSI main global data config type: SCSI emulation for I/O removable device.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_SCSI_IO_REMOVABLE          19
+
+/// iSCSI main global data config type: SCSI emulation for I/O UNMAP supporting device.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_SCSI_IO_UNMAP              20
+
+/// iSCSI main global data config type: SCSI emulation for I/O non-rotating device.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_SCSI_IO_NO_ROTATION        21
+
+/// iSCSI main global data config type: SCSI emulation for I/O physical read only device.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_SCSI_IO_PHYSICAL_READ_ONLY 22
+
+/// iSCSI main global data config type: SCSI emulation for I/O write protected device.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_SCSI_IO_WRITE_PROTECT      23
+
+/// iSCSI main global data config type: SCSI emulation for I/O write cache device.
+#define ISCSI_GLOBALS_CONFIG_TYPE_FLAGS_SCSI_IO_WRITE_CACHE        24
+
+
+/// iSCSI main global data SCSI device configuration flags: Initial ready to transfer.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_INIT_R2T                   (1 << 0)
+
+/// iSCSI main global data SCSI device configuration flags: Immediate data.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_IMMEDIATE_DATA             (1 << 1)
+
+/// iSCSI main global data SCSI device configuration flags: Data PDU in order.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_DATA_PDU_IN_ORDER          (1 << 2)
+
+/// iSCSI main global data SCSI device configuration flags: Data sequence in order.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_DATA_SEQ_IN_ORDER          (1 << 3)
+
+/// iSCSI main global data SCSI device configuration flags: SCSI emulation for I/O removable device.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_SCSI_IO_REMOVABLE          (1 << 4)
+
+/// iSCSI main global data SCSI device configuration flags: SCSI emulation for I/O UNMAP supporting device.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_SCSI_IO_UNMAP              (1 << 5)
+
+/// iSCSI main global data SCSI device configuration flags: SCSI emulation for I/O non-rotating device.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_SCSI_IO_NO_ROTATION        (1 << 6)
+
+/// iSCSI main global data SCSI device configuration flags: SCSI emulation for I/O physical read only device.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_SCSI_IO_PHYSICAL_READ_ONLY (1 << 7)
+
+/// iSCSI main global data SCSI device configuration flags: SCSI emulation for I/O write protected device.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_SCSI_IO_WRITE_PROTECT      (1 << 8)
+
+/// iSCSI main global data SCSI device configuration flags: SCSI emulation for I/O write cache device.
+#define ISCSI_GLOBALS_SCSI_DEVICE_CONFIG_FLAGS_SCSI_IO_WRITE_CACHE        (1 << 9)
+
+
+/**
+ * @brief iSCSI main global data SCSI device configuration.
+ *
+ * This structure is used for specific SCSI device
+ * configuration which are matched using wildcard
+ * patterns which are stored in the hash map key.
+ */
+typedef struct iscsi_scsi_device_config {
+    /// SCSI device configuration flags.
+    int flags;
+
+    /// iHeader digest (CRC32), always MUST be 0 or 4 for now.
+	int header_digest;
+
+    /// Data digest (CRC32), always MUST be 0 or 4 for now.
+	int data_digest;
+
+    /// SCSI emulation: Device type.
+    uint scsi_device_type;
+
+    /// Maximum receive DataSegment length in bytes.
+    uint32_t max_recv_ds_len;
+
+    /// Maximum number of connections per session.
+    uint32_t max_session_conns;
+
+    /// Ready to transfer maximum outstanding value.
+    uint32_t max_outstanding_r2t;
+
+    /// Default time to wait.
+    uint32_t default_time_to_wait;
+
+    /// Default time to retain.
+    uint32_t default_time_to_retain;
+
+    /// First burst length.
+    uint32_t first_burst_len;
+
+    /// Maximum burst length.
+    uint32_t max_burst_len;
+
+    /// Error recovery level.
+    uint32_t err_recovery_level;
+
+    /// SCSI emulation: Physical block size.
+    uint32_t scsi_physical_block_size;
+
+    /// SCSI emulation: Physical block size shift count.
+    uint32_t scsi_physical_block_size_shift;
+
+    /// SCSI emulation: Logical block size.
+    uint32_t scsi_logical_block_size;
+
+    /// SCSI emulation: Logical block size shift count.
+    uint32_t scsi_logical_block_size_shift;
+} iscsi_scsi_device_config;
+
+
+/**
+ * @brief iSCSI SCSI device configuration search by name.
+ *
+ * This structure is used by iterating through
+ * all iSCSI SCSI device configurations and
+ * uses wildcard matching in order to retrieve
+ * the correct SCSI configuration for a
+ * specified device name.
+ */
+typedef struct iscsi_scsi_device_config_find {
+    /// Found iSCSI SCSI device configuration is stored here, should be initialized to NULL.
+    iscsi_scsi_device_config *scsi_device_config;
+
+    /// The name to be searched for is stored here.
+    uint8_t *name;
+} iscsi_scsi_device_config_find;
 
 
 /// iSCSI main global data flags: Allow duplicate ISIDs.
-#define ISCSI_GLOBALS_FLAGS_ISID_ALLOW_DUPLICATES (1 << 0L)
+#define ISCSI_GLOBALS_FLAGS_ISID_ALLOW_DUPLICATES      (1 << 0)
 
 /// iSCSI main global data flags: CHAP authentication is disabled.
-#define ISCSI_GLOBALS_FLAGS_CHAP_DISABLE          (1 << 1L)
+#define ISCSI_GLOBALS_FLAGS_CHAP_DISABLE               (1 << 1)
 
 /// iSCSI main global data flags: CHAP authentication is required.
-#define ISCSI_GLOBALS_FLAGS_CHAP_REQUIRE          (1 << 2L)
+#define ISCSI_GLOBALS_FLAGS_CHAP_REQUIRE               (1 << 2)
 
 /// iSCSI main global data flags: CHAP authentication is mutual.
-#define ISCSI_GLOBALS_FLAGS_CHAP_MUTUAL           (1 << 3L)
+#define ISCSI_GLOBALS_FLAGS_CHAP_MUTUAL                (1 << 3)
+
+/// iSCSI main global data flags: Initial ready to transfer.
+#define ISCSI_GLOBALS_FLAGS_INIT_R2T                   (1 << 4)
+
+/// iSCSI main global data flags: Immediate data.
+#define ISCSI_GLOBALS_FLAGS_IMMEDIATE_DATA             (1 << 5)
+
+/// iSCSI main global data flags: Data PDU in order.
+#define ISCSI_GLOBALS_FLAGS_DATA_PDU_IN_ORDER          (1 << 6)
+
+/// iSCSI main global data flags: Data sequence in order.
+#define ISCSI_GLOBALS_FLAGS_DATA_SEQ_IN_ORDER          (1 << 7)
+
+/// iSCSI main global data flags: SCSI emulation for I/O removable device.
+#define ISCSI_GLOBALS_FLAGS_SCSI_IO_REMOVABLE          (1 << 8)
+
+/// iSCSI main global data flags: SCSI emulation for I/O UNMAP supporting device.
+#define ISCSI_GLOBALS_FLAGS_SCSI_IO_UNMAP              (1 << 9)
+
+/// iSCSI main global data flags: SCSI emulation for I/O non-rotating device.
+#define ISCSI_GLOBALS_FLAGS_SCSI_IO_NO_ROTATION        (1 << 10)
+
+/// iSCSI main global data flags: SCSI emulation for I/O physical read only device.
+#define ISCSI_GLOBALS_FLAGS_SCSI_IO_PHYSICAL_READ_ONLY (1 << 11)
+
+/// iSCSI main global data flags: SCSI emulation for I/O write protected device.
+#define ISCSI_GLOBALS_FLAGS_SCSI_IO_WRITE_PROTECT      (1 << 12)
+
+/// iSCSI main global data flags: SCSI emulation for I/O write cache device.
+#define ISCSI_GLOBALS_FLAGS_SCSI_IO_WRITE_CACHE        (1 << 13)
+
+
+/// iSCSI main global data target name validation check level: None, allow everything.
+#define ISCSI_GLOBALS_TARGET_NAME_CHECK_NONE    0
+
+/// iSCSI main global data target name validation check level: Relaxed, check for maximum target name length and if target name starts with 'iqn.', 'naa.' or 'eui.' also check if target name only contains allowed characters.
+#define ISCSI_GLOBALS_TARGET_NAME_CHECK_RELAXED 1
+
+/// iSCSI main global data target name validation check level: Full, check for maximum target name length and always check target name only contains allowed characters.
+#define ISCSI_GLOBALS_TARGET_NAME_CHECK_FULL    2
+
+
+/// iSCSI main global data: Default maximum number of connections.
+#define ISCSI_GLOBALS_DEFAULT_MAX_CONNECTIONS     1UL
+
+/// iSCSI main global data: Default maximum number of outstanding ready to transfers.
+#define ISCSI_GLOBALS_DEFAULT_MAX_OUTSTANDING_R2T 1UL
+
+/// iSCSI main global data: Default time to wait in seconds.
+#define ISCSI_GLOBALS_DEFAULT_TIME_TO_WAIT        2UL
+
+/// iSCSI main global data: Default time to retain in seconds.
+#define ISCSI_GLOBALS_DEFAULT_TIME_TO_RETAIN      20UL
+
+/// iSCSI main global data: First burst length in bytes.
+#define ISCSI_GLOBALS_DEFAULT_FIRST_BURST_LEN     ISCSI_DEFAULT_RECV_DS_LEN
+
+/// iSCSI main global data: Maximum burst length in bytes.
+#define ISCSI_GLOBALS_DEFAULT_MAX_BURST_LEN       (ISCSI_DEFAULT_MAX_RECV_DS_LEN * ISCSI_DEFAULT_MAX_DATA_OUT_PER_CONNECTION)
+
+/// iSCSI main global data: Default error recovery level.
+#define ISCSI_GLOBALS_DEFAULT_ERR_RECOVERY_LEVEL  0UL
 
 
 /**
@@ -5851,42 +10244,112 @@ typedef struct iscsi_globals {
     /// Hash map containing all iSCSI devices.
     iscsi_hashmap *devices;
 
+    /// Read/write lock for hash map containing all iSCSI devices. MUST be initialized with iscsi_create before any iSCSI functions are used.
+    pthread_rwlock_t devices_rwlock;
+
     /// Hash map containing all registered iSCSI portal groups.
     iscsi_hashmap *portal_groups;
+
+    /// Read/write lock for hash map containing all iSCSI portal_groups. MUST be initialized with iscsi_create before any iSCSI functions are used.
+    pthread_rwlock_t portal_groups_rwlock;
 
     /// iSCSI target nodes.
     iscsi_hashmap *target_nodes;
 
+    /// Read/write lock for hash map containing all iSCSI target nodes. MUST be initialized with iscsi_create before any iSCSI functions are used.
+    pthread_rwlock_t target_nodes_rwlock;
+
     /// Hash map containing all iSCSI sessions.
     iscsi_hashmap *sessions;
+
+    /// Read/write lock for hash map containing all iSCSI sessions. MUST be initialized with iscsi_create before any iSCSI functions are used.
+    pthread_rwlock_t sessions_rwlock;
 
     /// Hash map containing session key and value pair types and allowed values or ranges.
     iscsi_hashmap *session_key_value_pairs;
 
-    /// Hash map containing connections not associated with an iSCSI sessions.
-    iscsi_hashmap *connections;
-
     /// Hash map containing connection key and value pair types and allowed values or ranges.
     iscsi_hashmap *connection_key_value_pairs;
+
+    /// Hash map containing iSCSI SCSI device specific configuration.
+    iscsi_hashmap *scsi_device_config;
+
+    /// Mutex for hash map containing iSCSI SCSI device specific configuration.
+    pthread_mutex_t scsi_device_config_mutex;
 
     /// Global flags.
     int flags;
 
+    /// Target name validation check level.
+    int target_name_check;
+
     /// Maximum number of allowed sessions.
     uint max_sessions;
 
+    /// iHeader digest (CRC32), always MUST be 0 or 4 for now.
+	int header_digest;
+
+    /// Data digest (CRC32), always MUST be 0 or 4 for now.
+	int data_digest;
+
+    /// SCSI emulation: Device type.
+    uint scsi_device_type;
+
+    /// Maximum receive DataSegment length in bytes.
+    uint32_t max_recv_ds_len;
+
+    /// Maximum number of connections per session.
+    uint32_t max_session_conns;
+
+    /// Ready to transfer maximum outstanding value.
+    uint32_t max_outstanding_r2t;
+
+    /// Default time to wait.
+    uint32_t default_time_to_wait;
+
+    /// Default time to retain.
+    uint32_t default_time_to_retain;
+
+    /// First burst length.
+    uint32_t first_burst_len;
+
+    /// Maximum burst length.
+    uint32_t max_burst_len;
+
+    /// Error recovery level.
+    uint32_t err_recovery_level;
+
     /// CHAP group id.
     int32_t chap_group;
+
+    /// SCSI emulation: Physical block size.
+    uint32_t scsi_physical_block_size;
+
+    /// SCSI emulation: Physical block size shift count.
+    uint32_t scsi_physical_block_size_shift;
+
+    /// SCSI emulation: Logical block size.
+    uint32_t scsi_logical_block_size;
+
+    /// SCSI emulation: Logical block size shift count.
+    uint32_t scsi_logical_block_size_shift;
 } iscsi_globals;
 
 
-/// iSCSI global vector. MUST be initialized with iscsi_create before any iSCSI functions are used.
-iscsi_globals *iscsi_globvec = NULL;
+/// Reference to iSCSI global vector. MUST be initialized with iscsi_create before any iSCSI functions are used.
+extern iscsi_globals *iscsi_globvec;
+
+/// Read/write lock for iSCSI global vector. MUST be initialized with iscsi_create before any iSCSI functions are used.
+extern pthread_rwlock_t iscsi_globvec_rwlock;
 
 
 int iscsi_create(); // Allocates and initializes the iSCSI global vector structure
-int iscsi_global_key_value_pair_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI global key and value pair destructor callback for hash map
 void iscsi_destroy(); // Deallocates all resources acquired by iscsi_create
+
+int iscsi_config_load(iscsi_globals *globvec); // Loads iSCSI server configuration from INI file
+int iscsi_config_get_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Finds an iSCSI SCSI device configuration by name using pattern matching
+int32_t iscsi_config_get(uint8_t *name, const int type); // Retrieves a configuration value either from the iSCSI global vector or for a specified SCSI device name
+
 
 /**
  * @brief iSCSI portal group: Private portal group if set, public otherwise.
@@ -5899,16 +10362,16 @@ void iscsi_destroy(); // Deallocates all resources acquired by iscsi_create
  * Private portal groups instead do not return their portals during
  * the discovery session.
  */
-#define ISCSI_PORTAL_GROUP_PRIVATE      (1 << 0L)
+#define ISCSI_PORTAL_GROUP_PRIVATE      (1 << 0)
 
 /// iSCSI portal group: CHAP authentication is disabled.
-#define ISCSI_PORTAL_GROUP_CHAP_DISABLE (1 << 1L)
+#define ISCSI_PORTAL_GROUP_CHAP_DISABLE (1 << 1)
 
 /// iSCSI portal group: CHAP authentication is required.
-#define ISCSI_PORTAL_GROUP_CHAP_REQUIRE (1 << 2L)
+#define ISCSI_PORTAL_GROUP_CHAP_REQUIRE (1 << 2)
 
 /// iSCSI portal group: CHAP authentication is mutual.
-#define ISCSI_PORTAL_GROUP_CHAP_MUTUAL  (1 << 3L)
+#define ISCSI_PORTAL_GROUP_CHAP_MUTUAL  (1 << 3)
 
 
 /**
@@ -5921,11 +10384,11 @@ typedef struct iscsi_portal_group {
     /// Hash map containing all portals associated with this iSCSI group.
     iscsi_hashmap *portals;
 
-    /// Reference count.
-    int	ref_count;
-
     /// Tag value for this portal group.
-    int	tag;
+    uint64_t tag;
+
+    /// Reference count.
+    int ref_count;
 
     /// Portal group flags.
     int flags;
@@ -5956,16 +10419,536 @@ typedef struct iscsi_portal {
 } iscsi_portal;
 
 
-iscsi_portal_group *iscsi_portal_group_create(const int tag, const int flags); // Creates and initializes an iSCSI portal group
+iscsi_portal_group *iscsi_portal_group_create(const uint64_t tag, const int flags); // Creates and initializes an iSCSI portal group
+int iscsi_portal_group_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI portal group destructor callback for hash map
 void iscsi_portal_group_destroy(iscsi_portal_group *portal_group); // Deallocates resources acquired by iscsi_portal_group_create
 int iscsi_portal_group_add_portal(iscsi_portal_group *portal_group, iscsi_portal *portal); // Adds an iSCSI portal to the iSCSI portal group hash map
+void iscsi_portal_group_del_portal(iscsi_portal_group *portal_group, iscsi_portal *portal); // Removes an iSCSI portal from the iSCSI portal group hash map
 
 iscsi_portal *iscsi_portal_create(const uint8_t *host, const uint8_t *port); // Allocates and initializes an iSCSI portal structure
+int iscsi_portal_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI portal destructor callback for hash map
 void iscsi_portal_destroy(iscsi_portal *portal);
 
 
-/// ISCSI port flags: In use.
-#define ISCSI_PORT_FLAGS_IN_USE (1 << 0L)
+/// iSCSI SCSI status code: Good.
+#define ISCSI_SCSI_STATUS_GOOD                  0x00
+
+/// iSCSI SCSI status code: Check condition.
+#define ISCSI_SCSI_STATUS_CHECK_COND            0x02
+
+/// iSCSI SCSI status code: Condition met.
+#define ISCSI_SCSI_STATUS_COND_MET              0x04
+
+/// iSCSI SCSI status code: Busy.
+#define ISCSI_SCSI_STATUS_BUSY                  0x08
+
+/// iSCSI SCSI status code: Intermediate.
+#define ISCSI_SCSI_STATUS_INTERMEDIATE          0x10
+
+/// iSCSI SCSI status code: Intermediate condition met.
+#define ISCSI_SCSI_STATUS_INTERMEDIATE_COND_MET 0x14
+
+/// iSCSI SCSI status code: Reservation conflict.
+#define ISCSI_SCSI_STATUS_RESERVATION_CONFLICT  0x18
+
+/// iSCSI SCSI status code: Obselete.
+#define ISCSI_SCSI_STATUS_OBSELETE              0x22
+
+/// iSCSI SCSI status code: Task set full.
+#define ISCSI_SCSI_STATUS_TASK_SET_FULL         0x28
+
+/// iSCSI SCSI status code: ACA active.
+#define ISCSI_SCSI_STATUS_ACA_ACTIVE            0x30
+
+/// iSCSI SCSI status code: Task aborted.
+#define ISCSI_SCSI_STATUS_TASK_ABORTED          0x40
+
+
+/// iSCSI SCSI sense key: No sense.
+#define ISCSI_SCSI_SENSE_KEY_NO_SENSE        0x00
+
+/// iSCSI SCSI sense key: Recovered error.
+#define ISCSI_SCSI_SENSE_KEY_RECOVERED_ERR   0x01
+
+/// iSCSI SCSI sense key: Not ready.
+#define ISCSI_SCSI_SENSE_KEY_NOT_READY       0x02
+
+/// iSCSI SCSI sense key: Medium error.
+#define ISCSI_SCSI_SENSE_KEY_MEDIUM_ERR      0x03
+
+/// iSCSI SCSI sense key: Hardware error.
+#define ISCSI_SCSI_SENSE_KEY_HARDWARE_ERR    0x04
+
+/// iSCSI SCSI sense key: Illegal request.
+#define ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ     0x05
+
+/// iSCSI SCSI sense key: Unit attention.
+#define ISCSI_SCSI_SENSE_KEY_UNIT_ATTENTION  0x06
+
+/// iSCSI SCSI sense key: Data protect.
+#define ISCSI_SCSI_SENSE_KEY_DATA_PROTECT    0x07
+
+/// iSCSI SCSI sense key: Blank check.
+#define ISCSI_SCSI_SENSE_KEY_BLANK_CHECK     0x08
+
+/// iSCSI SCSI sense key: Vendor specific.
+#define ISCSI_SCSI_SENSE_KEY_VENDOR_SPECIFIC 0x09
+
+/// iSCSI SCSI sense key: Copy aborted.
+#define ISCSI_SCSI_SENSE_KEY_COPY_ABORTED    0x0A
+
+/// iSCSI SCSI sense key: Aborted command.
+#define ISCSI_SCSI_SENSE_KEY_ABORTED_COMMAND 0x0B
+
+/// iSCSI SCSI sense key: Volume overflow.
+#define ISCSI_SCSI_SENSE_KEY_VOLUME_OVERFLOW 0x0D
+
+/// iSCSI SCSI sense key: Miscompare.
+#define ISCSI_SCSI_SENSE_KEY_MISCOMPARE      0x0E
+
+
+/// iSCSI SCSI Additional Sense Code (ASC): No additional sense.
+#define ISCSI_SCSI_ASC_NO_ADDITIONAL_SENSE                0x00
+
+/// iSCSI SCSI Additional Sense Code (ASC): Peripheral device write fault.
+#define ISCSI_SCSI_ASC_PERIPHERAL_DEVICE_WRITE_FAULT      0x03
+
+/// iSCSI SCSI Additional Sense Code (ASC): Logical unit not ready.
+#define ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY             0x04
+
+/// iSCSI SCSI Additional Sense Code (ASC): Warning.
+#define ISCSI_SCSI_ASC_WARNING                            0x0B
+
+/// iSCSI SCSI Additional Sense Code (ASC): Write error.
+#define ISCSI_SCSI_ASC_WRITE_ERR                          0x0C
+
+/// iSCSI SCSI Additional Sense Code (ASC): Block guard check failed.
+#define ISCSI_SCSI_ASC_LOGICAL_BLOCK_GUARD_CHECK_FAIL     0x10
+
+/// iSCSI SCSI Additional Sense Code (ASC): Block application tag checdk failed.
+#define ISCSI_SCSI_ASC_LOGICAL_BLOCK_APP_TAG_CHECK_FAIL   0x10
+
+/// iSCSI SCSI Additional Sense Code (ASC): Block reference tag check failed.
+#define ISCSI_SCSI_ASC_LOGICAL_BLOCK_REF_TAG_CHECK_FAIL   0x10
+
+/// iSCSI SCSI Additional Sense Code (ASC): Unrecovered read error.
+#define ISCSI_SCSI_ASC_UNRECOVERED_READ_ERR               0x11
+
+/// iSCSI SCSI Additional Sense Code (ASC): Miscompare during verify operation.
+#define ISCSI_SCSI_ASC_MISCOMPARE_DURING_VERIFY_OPERATION 0x1D
+
+/// iSCSI SCSI Additional Sense Code (ASC): Invalid command operation code.
+#define ISCSI_SCSI_ASC_INVALID_COMMAND_OPERATION_CODE     0x20
+
+/// iSCSI SCSI Additional Sense Code (ASC): Access denied.
+#define ISCSI_SCSI_ASC_ACCESS_DENIED                      0x20
+
+/// iSCSI SCSI Additional Sense Code (ASC): Logical block address out of range.
+#define ISCSI_SCSI_ASC_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE 0x21
+
+/// iSCSI SCSI Additional Sense Code (ASC): Invalid field in CDB.
+#define ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB               0x24
+
+/// iSCSI SCSI Additional Sense Code (ASC): Logical unit not supported.
+#define ISCSI_SCSI_ASC_LU_NOT_SUPPORTED                   0x25
+
+/// iSCSI SCSI Additional Sense Code (ASC): Write protected.
+#define ISCSI_SCSI_ASC_WRITE_PROTECTED                    0x27
+
+/// iSCSI SCSI Additional Sense Code (ASC): Data has changed.
+#define ISCSI_SCSI_ASC_CAPACITY_DATA_HAS_CHANGED          0x2A
+
+/// iSCSI SCSI Additional Sense Code (ASC): Format command failed.
+#define ISCSI_SCSI_ASC_FORMAT_COMMAND_FAIL                0x31
+
+/// iSCSI SCSI Additional Sense Code (ASC): Saving parameters not supported.
+#define ISCSI_SCSI_ASC_SAVING_PARAMETERS_NOT_SUPPORTED    0x39
+
+/// iSCSI SCSI Additional Sense Code (ASC): Internal target failure.
+#define ISCSI_SCSI_ASC_INTERNAL_TARGET_FAIL               0x44
+
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Cause not reportable.
+#define ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE             0x00
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Becoming ready.
+#define ISCSI_SCSI_ASCQ_BECOMING_READY                   0x01
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Format command failed.
+#define ISCSI_SCSI_ASCQ_FORMAT_COMMAND_FAIL              0x01
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Block guard check failed.
+#define ISCSI_SCSI_ASCQ_LOGICAL_BLOCK_GUARD_CHECK_FAIL   0x01
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Block application tag check failed.
+#define ISCSI_SCSI_ASCQ_LOGICAL_BLOCK_APP_TAG_CHECK_FAIL 0x02
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): No access rights.
+#define ISCSI_SCSI_ASCQ_NO_ACCESS_RIGHTS                 0x02
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Manual intervention required.
+#define ISCSI_SCSI_ASCQ_MANUAL_INTERVENTION_REQUIRED     0x03
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Block reference tag check failed.
+#define ISCSI_SCSI_ASCQ_LOGICAL_BLOCK_REF_TAG_CHECK_FAIL 0x03
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Power loss expected.
+#define ISCSI_SCSI_ASCQ_POWER_LOSS_EXPECTED              0x08
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Invalid logical unit identifier.
+#define ISCSI_SCSI_ASCQ_INVALID_LU_IDENTIFIER            0x09
+
+/// iSCSI SCSI Additional Sense Code Qualifier (ASCQ): Capacity data has changed.
+#define ISCSI_SCSI_ASCQ_CAPACITY_DATA_HAS_CHANGED        0x09
+
+
+typedef struct iscsi_port iscsi_port;
+
+
+/**
+ * @brief iSCSI SCSI Persistent Reservation (PR) registrant with I_T nexus.
+ *
+ * I_T nexus is a nexus which exists between an initiator and a
+ * target.
+ */
+typedef struct iscsi_scsi_pr_registrant {
+    /// Target iSCSI port.
+    iscsi_port *target_port;
+
+    /// Target iSCSI port name.
+    uint8_t *target_name;
+
+    /// Initiator iSCSI port.
+    iscsi_port *init_port;
+
+    /// Initiator iSCSI port name.
+    uint8_t *init_name;
+
+    /// Transport ID.
+    iscsi_transport_id *transport_id;
+
+    /// Reservation key.
+    uint64_t r_key;
+
+    /// Relative target port identifier.
+    uint16_t rel_target_port_id;
+
+    /// Transport ID length.
+    uint16_t transport_id_len;
+} iscsi_scsi_pr_registrant;
+
+
+/// iSCSI SCSI Persistent Reservation (PR) reservation type: Write exclusive.
+#define ISCSI_SCSI_PR_RESERVATION_TYPE_WRITE_EXCLUSIVE            0x01
+
+/// iSCSI SCSI Persistent Reservation (PR) reservation type: Exclusive access.
+#define ISCSI_SCSI_PR_RESERVATION_TYPE_EXCLUSIVE_ACCESS           0x03
+
+/// iSCSI SCSI Persistent Reservation (PR) reservation type: Write exclusive - registrants only.
+#define ISCSI_SCSI_PR_RESERVATION_TYPE_WRITE_EXCLUSIVE_REGS_ONLY  0x05
+
+/// iSCSI SCSI Persistent Reservation (PR) reservation type: Exclusive access - registrants only.
+#define ISCSI_SCSI_PR_RESERVATION_TYPE_EXCLUSIVE_ACCESS_REGS_ONLY 0x06
+
+/// iSCSI SCSI Persistent Reservation (PR) reservation type: Write exclusive - all registrants.
+#define ISCSI_SCSI_PR_RESERVATION_TYPE_WRITE_EXCLUSIVE_ALL_REGS   0x07
+
+/// iSCSI SCSI Persistent Reservation (PR) reservation type: Exclusive access - all registrants.
+#define ISCSI_SCSI_PR_RESERVATION_TYPE_EXCLUSIVE_ACCESS_ALL_REGS  0x08
+
+
+/// iSCSI SCSI Persistent Reservation (PR) reservation flags: SPC2 reserve.
+#define ISCSI_SCSI_PR_RESERVATION_FLAGS_SPC2_RESERVE (1L << 0L)
+
+
+/**
+ * @brief iSCSI SCSI Persistent Reservation (PR) reservation with LU_SCOPE.
+ *
+ * LU_SCOPE means that Persistent Reservation (PR) scope
+ * applies to the full logical unit.
+ */
+typedef struct iscsi_scsi_pr_reservation {
+    /// Registrant for this reservation.
+    iscsi_scsi_pr_registrant *holder;
+
+    /// Current reservation key.
+    uint64_t cr_key;
+
+    /// Reservation type.
+    int type;
+
+    /// Reservation flags.
+    int32_t flags;
+} iscsi_scsi_pr_reservation;
+
+
+/**
+ * @brief iSCSI SCSI Persistent Reservation (PR) registrant search by target and initiator port.
+ *
+ * This structure is used by iterating through
+ * all iSCSI LUN Persistent Reservation (PR)
+ * registrant's finding by target and initiator
+ * port.
+ */
+typedef struct iscsi_scsi_pr_registrant_get_reg {
+    /// Found iSCSI SCSI Persistent Reservation (PR) registrant is stored here, should be initialized to NULL.
+    iscsi_scsi_pr_registrant *reg;
+
+    /// The target port to be searched for is stored here.
+    iscsi_port *target_port;
+
+    /// The initiator port to be searched for is stored here.
+    iscsi_port *init_port;
+} iscsi_scsi_pr_registrant_get_reg;
+
+
+/// iSCSI SCSI task run: Unknown.
+#define ISCSI_SCSI_TASK_RUN_UNKNOWN  -1
+
+/// iSCSI SCSI task run: Completed.
+#define ISCSI_SCSI_TASK_RUN_COMPLETE  0
+
+/// iSCSI SCSI task run: Pending.
+#define ISCSI_SCSI_TASK_RUN_PENDING   1
+
+
+typedef struct iscsi_scsi_task iscsi_scsi_task;
+typedef struct iscsi_scsi_lun iscsi_scsi_lun;
+
+
+/**
+ * @brief Callback when iSCSI SCSI transfer task completed.
+ *
+ * This function is invoked when an iSCSI task
+ * finished a transfer.
+ *
+ * @param[in] scsi_task Pointer to iSCSI SCSI task which
+ * completed the transfer and may NOT be NULL,
+ * so be careful.
+ */
+typedef void (*iscsi_scsi_task_xfer_complete_callback)(iscsi_scsi_task *scsi_task);
+
+/**
+ * @brief Callback when iSCSI SCSI transfer task destruction.
+ *
+ * This function is invoked when an iSCSI task
+ * needs to be destroyed.
+ *
+ * @param[in] scsi_task Pointer to iSCSI SCSI task which
+ * is about to be destroyed and may NOT be
+ * NULL, so be careful.
+ */
+typedef void (*iscsi_scsi_task_destroy_callback)(iscsi_scsi_task *scsi_task);
+
+/**
+ * @brief Callback for I/O operation completion.
+ *
+ * This function is invoked when an I/O operation
+ * has been completed.
+ *
+ * @param[in] image Pointer to DNBD3 image which completed the
+ * I/O operation.
+ * @param[in] user_data Pointer to user data.
+ * @param[in] success true if I/O completed successfully or false
+ * if it failed instead.
+ * @return Pointer to passed user data.
+ */
+typedef uint8_t *(*iscsi_scsi_emu_io_complete_callback)(dnbd3_image_t *image, uint8_t *user_data, const bool success);
+
+/**
+ * @brief Callback for I/O wait operation.
+ *
+ * This function is invoked when an I/O
+ * operation needs waiting.
+ *
+ * @param[in] user_data Pointer to user data.
+ * @return Pointer to passed user data.
+ */
+typedef uint8_t *(*iscsi_scsi_emu_io_wait_callback)(uint8_t *user_data);
+
+
+typedef struct iscsi_scsi_emu_io_wait {
+    /// I/O task wait callback associated DNBD3 image.
+    dnbd3_image_t *image;
+
+    /// I/O task wait callback function.
+    iscsi_scsi_emu_io_wait_callback callback;
+
+    /// I/O task wait callback user data.
+    uint8_t *user_data;
+} iscsi_scsi_emu_io_wait;
+
+
+/// iSCSI SCSI task flags: Read.
+#define ISCSI_SCSI_TASK_FLAGS_XFER_READ  (1 << 0)
+
+/// iSCSI SCSI task flags: Write.
+#define ISCSI_SCSI_TASK_FLAGS_XFER_WRITE (1 << 1)
+
+
+/**
+ * @brief iSCSI SCSI Task.
+ *
+ * This structure is used for the iSCSI SCSI
+ * layer task management.
+ */
+typedef struct iscsi_scsi_task {
+    /// Doubly linked list node, MUST be first element.
+    iscsi_node node;
+
+    /// SCSI LUN associated with this task.
+    iscsi_scsi_lun *lun;
+
+    /// Target iSCSI port.
+    iscsi_port *target_port;
+
+    /// Initiator iSCSI port.
+    iscsi_port *init_port;
+
+    /// SCSI Command Descriptor Block (CDB).
+    iscsi_scsi_cdb *cdb;
+
+    /// SCSI sense data.
+    iscsi_scsi_sense_data_packet *sense_data;
+
+    /// Transfer complete callback function.
+    iscsi_scsi_task_xfer_complete_callback xfer_complete_callback;
+
+    /// Task destruction callback function.
+    iscsi_scsi_task_destroy_callback destroy_callback;
+
+    /// I/O task complete callback function.
+    iscsi_scsi_emu_io_complete_callback io_complete_callback;
+
+    /// I/O task wait.
+    iscsi_scsi_emu_io_wait io_wait;
+
+    /// Output buffer.
+    uint8_t *buf;
+
+    /// Position of buffer in bytes.
+    uint32_t pos;
+
+    /// Length of buffer in bytes.
+    uint32_t len;
+
+    /// Unique identifier for this task.
+    uint64_t id;
+
+    /// Flags.
+    int flags;
+
+    /// Reference counter.
+    uint32_t ref;
+
+    /// Transfer position in bytes.
+    uint32_t xfer_pos;
+
+    /// Transfer length in bytes.
+    uint32_t xfer_len;
+
+    /// Sense data length.
+    uint8_t sense_data_len;
+
+    /// iSCSI SCSI status code.
+    uint8_t status;
+
+    /// Task management function.
+    uint8_t task_mgmt_func;
+
+    /// Task management response code.
+    uint8_t task_mgmt_response;
+} iscsi_scsi_task;
+
+
+/// iSCSI SCSI emulation physical block size in bytes.
+#define ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE 4096UL
+
+/// iSCSI SCSI emulation logical block size in bytes.
+#define ISCSI_SCSI_EMU_BLOCK_SIZE          512UL
+
+
+/// iSCSI SCSI emulation maximum tansfer length in logical blocks.
+#define ISCSI_SCSI_EMU_MAX_XFER_LEN        (ISCSI_DEFAULT_MAX_RECV_DS_LEN * ISCSI_DEFAULT_MAX_DATA_OUT_PER_CONNECTION)
+
+/// iSCSI SCSI emulation maximum UNMAP LBA count in LBAs.
+#define ISCSI_SCSI_EMU_MAX_UNMAP_LBA_COUNT (ISCSI_DEFAULT_MAX_RECV_DS_LEN * ISCSI_DEFAULT_MAX_DATA_IN_PER_CONNECTION)
+
+/// iSCSI SCSI emulation maximum UNMAP block descriptor count in block descriptors.
+#define ISCSI_SCSI_EMU_MAX_UNMAP_BLOCK_DESC_COUNT 256UL
+
+
+/// iSCSI SCSI emulation I/O type: Removable.
+#define ISCSI_SCSI_EMU_IO_TYPE_REMOVABLE          (1 << 0)
+
+/// iSCSI SCSI emulation I/O type: Unmap.
+#define ISCSI_SCSI_EMU_IO_TYPE_UNMAP              (1 << 1)
+
+/// iSCSI SCSI emulation I/O type: Non-rotating medium (e.g., solid state).
+#define ISCSI_SCSI_EMU_IO_TYPE_NO_ROTATION        (1 << 2)
+
+/// iSCSI SCSI emulation I/O type: Physical read only device.
+#define ISCSI_SCSI_EMU_IO_TYPE_PHYSICAL_READ_ONLY (1 << 3)
+
+/// iSCSI SCSI emulation I/O type: Device is (temporarily) write protected.
+#define ISCSI_SCSI_EMU_IO_TYPE_WRITE_PROTECT      (1 << 4)
+
+/// iSCSI SCSI emulation I/O type: Write cache available.
+#define ISCSI_SCSI_EMU_IO_TYPE_WRITE_CACHE        (1 << 5)
+
+
+/// iSCSI SCSI emulation block flags: Write operation.
+#define ISCSI_SCSI_EMU_BLOCK_FLAGS_WRITE  (1 << 0)
+
+/// iSCSI SCSI emulation block flags: Verify operation.
+#define ISCSI_SCSI_EMU_BLOCK_FLAGS_VERIFY (1 << 1)
+
+
+void iscsi_scsi_task_create(iscsi_scsi_task *scsi_task, iscsi_scsi_task_xfer_complete_callback xfer_complete_callback, iscsi_scsi_task_destroy_callback destroy_callback); // Allocates and initializes a SCSI task
+void iscsi_scsi_task_destroy(iscsi_scsi_task *scsi_task); // Deallocates all resources acquired iscsi_scsi_task_create
+
+void iscsi_scsi_task_xfer_complete(iscsi_scsi_task *scsi_task); // Callback function when an iSCSI SCSI task completed the data transfer
+
+void iscsi_scsi_task_sense_data_check_cond_build(iscsi_scsi_task *scsi_task, const uint8_t sense_key, const uint8_t asc, const uint8_t ascq); // Allocates, if necessary and initializes SCSI sense data for check condition status code
+int iscsi_scsi_task_status_copy(iscsi_scsi_task *dst_scsi_task, const iscsi_scsi_task *src_scsi_task); // Copies iSCSI SCSI task sense data and status code
+void iscsi_scsi_task_lun_process_none(iscsi_scsi_task *scsi_task); // Processes a iSCSI SCSI task with no LUN identifier
+void iscsi_scsi_task_lun_process_abort(iscsi_scsi_task *scsi_task); // Processes a iSCSI SCSI aborted task
+
+iscsi_scsi_lun *iscsi_scsi_lun_create(const int lun_id); // Allocates and initializes an iSCSI LUN structure for linkage with a DNBD3 image
+int iscsi_scsi_lun_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI SCSI LUN destructor callback for hash map
+void iscsi_scsi_lun_destroy(iscsi_scsi_lun *lun); // Deallocates all resources acquired by iscsi_scsi_lun_create
+
+uint64_t iscsi_scsi_lun_get_from_scsi(const int lun_id); // Converts an internal representation of a LUN identifier to an iSCSI LUN required for packet data
+int iscsi_scsi_lun_get_from_iscsi(const uint64_t lun); // Converts an iSCSI LUN from packet data to internal SCSI LUN identifier
+
+void iscsi_scsi_lun_task_append(iscsi_scsi_lun *lun, iscsi_scsi_task *scsi_task); // Appends an iSCSI SCSI task to a iSCSI SCSI LUN pending tasks doubly linked list
+void iscsi_scsi_lun_tasks_exec(iscsi_scsi_lun *lun); // Executes all iSCSI SCSI pending tasks assigned to a iSCSI SCSI LUN
+void iscsi_scsi_lun_task_run(iscsi_scsi_lun *lun, iscsi_scsi_task *scsi_task); // Runs an iSCSI SCSI task for a specified iSCSI SCSI LUN
+void iscsi_scsi_lun_task_complete(iscsi_scsi_lun *lun, iscsi_scsi_task *scsi_task); // Handles iSCSI SCSI task completition
+void iscsi_scsi_lun_task_exec(iscsi_scsi_lun *lun, iscsi_scsi_task *scsi_task); // Appends iSCSI SCSI task to pending tasks doubly linked list and / or runs it directly
+
+int iscsi_scsi_pr_check_scsi2(iscsi_scsi_task *scsi_task); // Checks the iSCSI SCSI Persistent Reservation (PR) SCSI-2 reserve of an iSCSI SCSI task
+int iscsi_scsi_pr_registrant_get_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Finds an iSCSI SCSI Persistent Reservation (PR) registrant by target and initiator port
+int iscsi_scsi_pr_check(iscsi_scsi_task *scsi_task); // Checks the iSCSI SCSI Persistent Reservation (PR) of an iSCSI SCSI task
+int iscsi_scsi_pr_out(iscsi_scsi_task *scsi_task, iscsi_scsi_pr_reserve_out_parameter_list_packet *pr_reserve_out_parameter_list, const iscsi_scsi_cdb_pr_reserve_out *cdb_pr_reserve_out, const uint len); // Constructs an iSCSI SCSI Persistent Reservation (PR) out parameter list of an iSCSI SCSI task
+int iscsi_scsi_pr_in(iscsi_scsi_task *scsi_task, iscsi_scsi_pr_reserve_in_parameter_data_packet *pr_reserve_in_parameter_data, const iscsi_scsi_cdb_pr_reserve_in *cdb_pr_reserve_in, const uint len); // Constructs iSCSI SCSI Persistent Reservation (PR) in parameter data of an iSCSI SCSI task
+int iscsi_scsi_pr_reserve_scsi2(iscsi_scsi_task *scsi_task, const iscsi_scsi_cdb_pr_reserve_6 *cdb_pr_reserve_6); // Reserves an iSCSI SCSI Persistent Reservation (PR) of an iSCSI SCSI task
+int iscsi_scsi_pr_release_scsi2(iscsi_scsi_task *scsi_task); // Releases an iSCSI SCSI Persistent Reservation (PR) of an iSCSI SCSI task
+
+int iscsi_scsi_emu_io_block_read(iscsi_scsi_task *scsi_task, uint8_t *buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Reads a number of blocks from a block offset of a DNBD3 image to a specified buffer
+uint8_t *iscsi_scsi_emu_block_read_complete_callback(dnbd3_image_t *image, uint8_t *user_data, const bool success); // Completes an iSCSI SCSI task after a finished I/O read operation
+int iscsi_scsi_emu_io_block_cmp_write(iscsi_scsi_task *scsi_task, uint8_t *buf, uint8_t *cmp_buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Compares and writes a number of blocks starting from a block offset in a DNBD3 image with specified buffers
+uint8_t *iscsi_scsi_emu_block_write_complete_callback(dnbd3_image_t *image, uint8_t *user_data, const bool success); // Completes an iSCSI SCSI task after a finished I/O write operation
+int iscsi_scsi_emu_io_block_write(iscsi_scsi_task *scsi_task, uint8_t *buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Writes a number of blocks from a block offset to a DNBD3 image of a specified buffer
+int iscsi_scsi_emu_io_queue(iscsi_scsi_emu_io_wait *io_wait); // Enqueues an I/O wait in the thread pool to execute
+uint8_t *iscsi_scsi_emu_block_resubmit_process_callback(uint8_t *user_data); // Resubmits an iSCSI SCSI task for execution
+
+int iscsi_scsi_emu_primary_inquiry_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Fills in a single Vital Product Data (VPD) SCSI Port Designation Descriptor entry of an INQUIRY operation
+int iscsi_scsi_emu_exec(iscsi_scsi_task *scsi_task); // Executes the iSCSI SCSI emulation for an iSCSI SCSI task
+
+
+/// iSCSI port flags: In use.
+#define ISCSI_PORT_FLAGS_IN_USE (1 << 0)
 
 
 /**
@@ -5997,17 +10980,87 @@ typedef struct iscsi_port {
 
 
 iscsi_port *iscsi_port_create(const uint8_t *name, const uint64_t id, const uint16_t index); // Allocates and initializes an iSCSI port
+int iscsi_port_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI port destructor callback for hash map
 void iscsi_port_destroy(iscsi_port *port); // Deallocates all resource acquired iscsi_port_create
 
 uint8_t *iscsi_port_get_name(const iscsi_port *port); // Retrieves the name of an iSCSI port
 
 int iscsi_port_transport_id_set(iscsi_port *port, const uint8_t *name, const uint64_t isid); // Sets the SCSI transport ID of the iSCSI port
 
+
+/// iSCSI SCSI LUN flags: Removed.
+#define ISCSI_SCSI_LUN_FLAGS_REMOVED  (1 << 0)
+
+/// iSCSI SCSI LUN flags: Resizing.
+#define ISCSI_SCSI_LUN_FLAGS_RESIZING (1 << 1)
+
+
+typedef struct iscsi_device iscsi_device;
+
+
+/**
+ * @brief iSCSI SCSI LUN.
+ *
+ * This structure managesw the SCSI
+ * LUNs attached to an iSCSI device
+ * and associates a disk image file.
+ */
+typedef struct iscsi_scsi_lun {
+    /// Doubly linked list containing associated tasks with this LUN.
+    iscsi_list tasks;
+
+    /// Mutex for accessing the associated tasks through multiple threads.
+    pthread_mutex_t tasks_mutex;
+
+    /// Doubly linked list containing associated pending tasks with this LUN.
+    iscsi_list tasks_pending;
+
+    /// Mutex for accessing the associated pending tasks through multiple threads.
+    pthread_mutex_t tasks_pending_mutex;
+
+    /// Doubly linked list containing associated management tasks with this LUN.
+    iscsi_list tasks_mgmt;
+
+    /// Mutex for accessing the associated management tasks through multiple threads.
+    pthread_mutex_t tasks_mgmt_mutex;
+
+    /// Doubly linked list containing associated management pending tasks with this LUN.
+    iscsi_list tasks_mgmt_pending;
+
+    /// Mutex for accessing the associated management pending tasks through multiple threads.
+    pthread_mutex_t tasks_mgmt_pending_mutex;
+
+    /// Doubly linked list containg Persistent Reservation (PR) registrant for I_T nexus.
+    iscsi_hashmap *pr_regs;
+
+    /// Persistent Reservation (PR) for the LUN.
+    iscsi_scsi_pr_reservation pr_reservation;
+
+    /// Persistent Reservation (PR) holder for SPC2 RESERVE(6) and RESERVE(10).
+    iscsi_scsi_pr_registrant pr_scsi2_holder;
+
+    /// iSCSI device which belongs to this LUN.
+    iscsi_device *device;
+
+    /// Assocated DNBD3 image for this LUN.
+    dnbd3_image_t *image;
+
+    /// LUN identifier (always MUST be between 0 and 7).
+    int id;
+
+    /// Flags.
+    int flags;
+
+    /// Persistent Reservation (PR) generation.
+    uint32_t pr_gen;
+} iscsi_scsi_lun;
+
+
 /// iSCSI device flags: Allocated.
-#define ISCSI_DEVICE_FLAGS_ALLOCATED (1 << 0L)
+#define ISCSI_DEVICE_FLAGS_ALLOCATED (1 << 0)
 
 /// iSCSI device flags: Removed.
-#define ISCSI_DEVICE_FLAGS_REMOVED   (1 << 1L)
+#define ISCSI_DEVICE_FLAGS_REMOVED   (1 << 1)
 
 
 /**
@@ -6024,6 +11077,9 @@ typedef struct iscsi_device {
     /// LUNs associated with this device.
     iscsi_hashmap *luns;
 
+    /// Read/write lock for hash map containing all LUNs associated with this device. MUST be initialized with iscsi_create before any iSCSI functions are used.
+    pthread_rwlock_t luns_rwlock;
+
     /// Ports associated with this device.
     iscsi_hashmap *ports;
 
@@ -6033,31 +11089,43 @@ typedef struct iscsi_device {
     /// Flags.
     int flags;
 
-    /// Number of ports.
-    int num_ports;
+    /// Number of active connections for this device.
+	uint32_t active_conns;
 
-    /// Portocol identifier.
+    /// Protocol identifier.
     uint8_t protocol_id;
 } iscsi_device;
 
 
-/// iSCSI target node flags: Header digest.
-#define ISCSI_TARGET_NODE_FLAGS_DIGEST_HEADER (1 << 0L)
+/// iSCSI target node maximum length.
+#define ISCSI_TARGET_NODE_MAX_NAME_LEN 223U
 
-/// iSCSI target node flags: Data digest.
-#define ISCSI_TARGET_NODE_FLAGS_DIGEST_DATA   (1 << 1L)
+
+/// iSCSI target node IQN identifier prefix string.
+#define ISCSI_TARGET_NODE_NAME_IQN_PREFIX "iqn."
+
+/// iSCSI target node IEEE NAA identifier prefix string.
+#define ISCSI_TARGET_NODE_NAME_NAA_PREFIX "naa."
+
+/// iSCSI target node EUI identifier prefix string.
+#define ISCSI_TARGET_NODE_NAME_EUI_PREFIX "eui."
+
+
+/// iSCSI target node WWN identifier prefix string.
+#define ISCSI_TARGET_NODE_NAME_WWN_PREFIX "wwn-0x"
+
 
 /// iSCSI target node flags: CHAP authentication disabled.
-#define ISCSI_TARGET_NODE_FLAGS_CHAP_DISABLE  (1 << 2L)
+#define ISCSI_TARGET_NODE_FLAGS_CHAP_DISABLE  (1 << 0)
 
 /// iSCSI target node flags: CHAP authentication required.
-#define ISCSI_TARGET_NODE_FLAGS_CHAP_REQUIRE  (1 << 3L)
+#define ISCSI_TARGET_NODE_FLAGS_CHAP_REQUIRE  (1 << 1)
 
 /// iSCSI target node flags: CHAP authentication mutual.
-#define ISCSI_TARGET_NODE_FLAGS_CHAP_MUTUAL   (1 << 4L)
+#define ISCSI_TARGET_NODE_FLAGS_CHAP_MUTUAL   (1 << 2)
 
 /// iSCSI target node flags: Destroyed.
-#define ISCSI_TARGET_NODE_FLAGS_DESTROYED     (1 << 5L)
+#define ISCSI_TARGET_NODE_FLAGS_DESTROYED     (1 << 3)
 
 
 /**
@@ -6086,10 +11154,10 @@ typedef struct iscsi_target_node {
     /// Flags.
     int flags;
 
-    /// Header digest size (always must be 0 or 4 for now).
+    /// Header digest size (always MUST be 0 or 4 for now).
     int header_digest;
 
-    /// Data digest size (always must be 0 or 4 for now).
+    /// Data digest size (always MUST be 0 or 4 for now).
     int data_digest;
 
     /// CHAP group ID.
@@ -6116,16 +11184,16 @@ typedef struct iscsi_target_node_find_name {
 
 
 /// iSCSI authentication CHAP phase: None.
-#define ISCSI_AUTH_CHAP_PHASE_NONE    0L
+#define ISCSI_AUTH_CHAP_PHASE_NONE    0
 
 /// iSCSI authentication CHAP phase: Wait A.
-#define ISCSI_AUTH_CHAP_PHASE_WAIT_A  1L
+#define ISCSI_AUTH_CHAP_PHASE_WAIT_A  1
 
 /// iSCSI authentication CHAP phase: Wait NR.
-#define ISCSI_AUTH_CHAP_PHASE_WAIT_NR 2L
+#define ISCSI_AUTH_CHAP_PHASE_WAIT_NR 2
 
 /// iSCSI authentication CHAP phase: End.
-#define ISCSI_AUTH_CHAP_PHASE_END     3L
+#define ISCSI_AUTH_CHAP_PHASE_END     3
 
 
 /**
@@ -6140,48 +11208,27 @@ typedef struct iscsi_auth_chap {
 } iscsi_auth_chap;
 
 
-/// iSCSI session: Default maximum number of connections.
-#define ISCSI_SESSION_DEFAULT_MAX_CONNECTIONS     2UL
+/// iSCSI session flags: Initial ready to transfer.
+#define ISCSI_SESSION_FLAGS_INIT_R2T          (1 << 0)
 
-/// iSCSI session: Default maximum number of outstanding ready to transfers.
-#define ISCSI_SESSION_DEFAULT_MAX_OUTSTANDING_R2T 1UL
+/// iSCSI session flags: Immediate data.
+#define ISCSI_SESSION_FLAGS_IMMEDIATE_DATA    (1 << 1)
 
-/// iSCSI session: Default time to wait in seconds.
-#define ISCSI_SESSION_DEFAULT_TIME_TO_WAIT        2UL
+/// iSCSI session flags: Data PDU in order.
+#define ISCSI_SESSION_FLAGS_DATA_PDU_IN_ORDER (1 << 2)
 
-/// iSCSI session: Default time to retain in seconds.
-#define ISCSI_SESSION_DEFAULT_TIME_TO_RETAIN      20UL
-
-/// iSCSI session: First burst length in bytes.
-#define ISCSI_SESSION_DEFAULT_FIRST_BURST_LEN     ISCSI_DEFAULT_RECV_DS_LEN
-
-/// iSCSI session: Maximum burst length in bytes.
-#define ISCSI_SESSION_DEFAULT_MAX_BURST_LEN       (ISCSI_DEFAULT_MAX_RECV_DS_LEN * ISCSI_DEFAULT_MAX_DATA_OUT_PER_CONNECTION)
-
-/// iSCSI session: Default initial ready to transfer state.
-#define ISCSI_SESSION_DEFAULT_INIT_R2T            true
-
-/// iSCSI session: Default immediate data state.
-#define ISCSI_SESSION_DEFAULT_IMMEDIATE_DATA      true
-
-/// iSCSI session: Default data PDU in order state.
-#define ISCSI_SESSION_DEFAULT_DATA_PDU_IN_ORDER   true
-
-/// iSCSI session: Default data sequence in order state.
-#define ISCSI_SESSION_DEFAULT_DATA_SEQ_IN_ORDER   true
-
-/// iSCSI session: Default error recovery level.
-#define ISCSI_SESSION_DEFAULT_ERR_RECOVERY_LEVEL  0L
+/// iSCSI session flags: Data sequence in order.
+#define ISCSI_SESSION_FLAGS_DATA_SEQ_IN_ORDER (1 << 3)
 
 
 /// iSCSI session type: Invalid.
-#define ISCSI_SESSION_TYPE_INVALID   0L
+#define ISCSI_SESSION_TYPE_INVALID   0
 
 /// iSCSI session type: Normal.
-#define ISCSI_SESSION_TYPE_NORMAL    1L
+#define ISCSI_SESSION_TYPE_NORMAL    1
 
 /// iSCSI session type: Discovery.
-#define ISCSI_SESSION_TYPE_DISCOVERY 2L
+#define ISCSI_SESSION_TYPE_DISCOVERY 2
 
 
 /**
@@ -6192,26 +11239,29 @@ typedef struct iscsi_auth_chap {
  * login phase.
  */
 typedef struct iscsi_session {
-    /// TCP/IP Connections associated with this session.
-    iscsi_hashmap *connections;
+    /// List of iSCSI connections associated with this session.
+    iscsi_list conn_list;
 
     /// Initiator port.
-    iscsi_port *initiator_port;
+    iscsi_port *init_port;
 
-    /// Login key / value pairs negotiated with this session.
+    /// Hash map of login key / value pairs negotiated with this session.
     iscsi_hashmap *key_value_pairs;
 
+    /// iSCSI target node.
+    iscsi_target_node *target;
+
     /// Portal group tag.
-    int tag;
+    uint64_t tag;
 
     /// Initiator Session ID (ISID).
     uint64_t isid;
 
     /// Target Session Identifying Handle (TSIH).
-    uint16_t tsih;
+    uint64_t tsih;
 
-    /// iSCSI target node.
-    iscsi_target_node *target;
+    /// Flags (extracted from key and value pairs).
+    int flags;
 
     /// Queue depth.
     uint queue_depth;
@@ -6219,38 +11269,29 @@ typedef struct iscsi_session {
     /// iSCSI session type.
     int type;
 
+    /// Number of active connections linked to this session.
+    uint32_t conns;
+
     /// Maximum number of connections.
-    uint max_conns;
+    uint32_t max_conns;
 
     /// Ready to transfer maximum outstanding value.
-    uint max_outstanding_r2t;
+    uint32_t max_outstanding_r2t;
 
     /// Default time to wait.
-    uint default_time_to_wait;
+    uint32_t default_time_to_wait;
 
     /// Default time to retain.
-    uint default_time_to_retain;
+    uint32_t default_time_to_retain;
 
     /// First burst length.
-    uint first_burst_len;
+    uint32_t first_burst_len;
 
     /// Maximum burst length.
-    uint max_burst_len;
-
-    /// Initial ready to transfer bit.
-    int init_r2t;
-
-    /// Immediate data bit.
-    int immediate_data;
-
-    /// Data PDU in order bit.
-    int data_pdu_in_order;
-
-    /// Data sequence in order bit.
-    int data_seq_in_order;
+    uint32_t max_burst_len;
 
     /// Error recovery level.
-    uint err_recovery_level;
+    uint32_t err_recovery_level;
 
     /// ExpCmdSN.
     uint32_t exp_cmd_sn;
@@ -6263,77 +11304,84 @@ typedef struct iscsi_session {
 } iscsi_session;
 
 
+typedef struct iscsi_pdu iscsi_pdu;
+
+
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Packet parsed successfully.
-#define ISCSI_CONNECT_PDU_READ_OK                                 0L
+#define ISCSI_CONNECT_PDU_READ_OK                                 0
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Packet processed successfully.
-#define ISCSI_CONNECT_PDU_READ_PROCESSED                          1L
+#define ISCSI_CONNECT_PDU_READ_PROCESSED                          1
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Fatail error during packet parsing.
-#define ISCSI_CONNECT_PDU_READ_ERR_FATAL                         -1L
+#define ISCSI_CONNECT_PDU_READ_ERR_FATAL                         -1
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Login error response.
-#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE                -2L
+#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE                -2
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Login parameter error.
-#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER               -3L
+#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER               -3
 
 /// iSCSI connection read packet data return code from iscsi_connection_pdu_read function: Login parameter not exchanged once error.
-#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER_XCHG_NOT_ONCE -4L
+#define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER_XCHG_NOT_ONCE -4
 
 
 /// iSCSI connection flags: Stopped.
-#define ISCSI_CONNECT_FLAGS_STOPPED         (1 << 0L)
+#define ISCSI_CONNECT_FLAGS_STOPPED         (1 << 0)
 
 /// iSCSI connection flags: Rejected.
-#define ISCSI_CONNECT_FLAGS_REJECTED        (1 << 1L)
+#define ISCSI_CONNECT_FLAGS_REJECTED        (1 << 1)
 
 /// iSCSI connection flags: Logged out.
-#define ISCSI_CONNECT_FLAGS_LOGGED_OUT      (1 << 2L)
+#define ISCSI_CONNECT_FLAGS_LOGGED_OUT      (1 << 2)
 
 /// iSCSI connection flags: Full feature.
-#define ISCSI_CONNECT_FLAGS_FULL_FEATURE    (1 << 3L)
+#define ISCSI_CONNECT_FLAGS_FULL_FEATURE    (1 << 3)
 
 /// iSCSI connection flags: CHAP authentication is disabled.
-#define ISCSI_CONNECT_FLAGS_CHAP_DISABLE    (1 << 4L)
+#define ISCSI_CONNECT_FLAGS_CHAP_DISABLE    (1 << 4)
 
 /// iSCSI connection flags: CHAP authentication is required.
-#define ISCSI_CONNECT_FLAGS_CHAP_REQUIRE    (1 << 5L)
+#define ISCSI_CONNECT_FLAGS_CHAP_REQUIRE    (1 << 5)
 
 /// iSCSI connection flags: CHAP authentication is mutual.
-#define ISCSI_CONNECT_FLAGS_CHAP_MUTUAL     (1 << 6L)
+#define ISCSI_CONNECT_FLAGS_CHAP_MUTUAL     (1 << 6)
 
 /// iSCSI connection flags: Authenticated.
-#define ISCSI_CONNECT_FLAGS_AUTH            (1 << 7L)
+#define ISCSI_CONNECT_FLAGS_AUTH            (1 << 7)
 
 /// iSCSI connection flags: Oustanding NOP.
-#define ISCSI_CONNECT_FLAGS_NOP_OUTSTANDING (1 << 8L)
+#define ISCSI_CONNECT_FLAGS_NOP_OUTSTANDING (1 << 8)
 
 
 /// Ready to wait for PDU.
-#define ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_READY 0L
+#define ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_READY 0
 
 /// Active connection waiting for any PDU header.
-#define ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_HDR   1L
+#define ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_HDR   1
 
 /// Active connection waiting for data.
-#define ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_DATA  2L
+#define ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_DATA  2
 
 /// Active connection does not wait for data.
-#define ISCSI_CONNECT_PDU_RECV_STATE_ERR            3L
+#define ISCSI_CONNECT_PDU_RECV_STATE_ERR            3
 
 
 /// iSCSI connection state: Invalid.
-#define ISCSI_CONNECT_STATE_INVALID 0L
+#define ISCSI_CONNECT_STATE_INVALID 0
 
 /// iSCSI connection state: Running.
-#define ISCSI_CONNECT_STATE_RUNNING 1L
+#define ISCSI_CONNECT_STATE_RUNNING 1
 
 /// iSCSI connection state: Exiting.
-#define ISCSI_CONNECT_STATE_EXITING 2L
+#define ISCSI_CONNECT_STATE_EXITING 2
 
 /// iSCSI connection state: Invalid.
-#define ISCSI_CONNECT_STATE_EXITED  3L
+#define ISCSI_CONNECT_STATE_EXITED  3
+
+
+/// Number of attempts for writing to iSCSI connection socket.
+#define ISCSI_CONNECT_SOCKET_WRITE_RETRIES 3
 
 
 /**
@@ -6345,14 +11393,23 @@ typedef struct iscsi_session {
  * and iSCSI portals.
  */
 typedef struct iscsi_connection {
+    /// Doubly linked list node, MUST be first element.
+    iscsi_node node;
+
     /// iSCSI session associated with this connection.
     iscsi_session *session;
 
-    /// Hash map containing text key / value pairs associated to this connection.
+    /// Hash map containing login text key / value pairs associated to this connection.
     iscsi_hashmap *key_value_pairs;
 
-    /// Temporarily storage for partially received parameter.
+    /// Temporarily storage for partially received login parameter.
     uint8_t *partial_pairs;
+
+    /// Hash map containing text key / value pairs associated to this connection.
+    iscsi_hashmap *text_key_value_pairs;
+
+    /// Temporarily storage for partially received text parameter.
+    uint8_t *text_partial_pairs;
 
     /// iSCSI device.
     iscsi_device *device;
@@ -6381,17 +11438,47 @@ typedef struct iscsi_connection {
     /// iSCSI portal host port.
     uint8_t *portal_port;
 
+    /// Current PDU being processed.
+    iscsi_pdu *pdu_processing;
+
+    /// Login response PDU.
+    iscsi_pdu *login_response_pdu;
+
+    /// Doubly linked list containing enqueued SCSI Data In tasks.
+    iscsi_list scsi_data_in_queued_tasks;
+
+    /// Doubly linked list containing writing PDU's associated with this connection.
+    iscsi_list pdus_write;
+
+    /// Doubly linked list containing SNACK PDU's associated with this connection.
+    iscsi_list pdus_snack;
+
+    /// Doubly linked list containing active Ready To Transfer (R2T) tasks.
+    iscsi_list r2t_tasks_active;
+
+    /// Doubly linked list containing queued Ready To Transfer (R2T) tasks.
+    iscsi_list r2t_tasks_queue;
+
+    /// iSCSI SendTargets total number of bytes completed.
+    uint target_send_total_size;
+
+    /// iSCSI SCSI Data In count.
+    uint scsi_data_in_cnt;
+
+    /// iSCSI SCSI Data Out count.
+    uint scsi_data_out_cnt;
+
+    /// iSCSI tasks pending count.
+    uint task_cnt;
+
+    /// Pending Ready To Transfer (R2T) tasks.
+    uint r2t_pending;
+
     /// iSCSI connection contains a header digest (CRC32), always MUST be 0 or 4 for now.
     int header_digest;
 
     /// iSCSI connection contains a data digest (CRC32), always MUST be 0 or 4 for now.
     int data_digest;
-
-    /// Current PDU being processed.
-    struct iscsi_pdu *pdu_processing;
-
-    /// Login response PDU.
-    struct iscsi_pdu *login_response_pdu;
 
     /// Internal connection identifier (key of iSCSI global vector hash map).
     int id;
@@ -6412,10 +11499,10 @@ typedef struct iscsi_connection {
     int login_phase;
 
     /// Maximum receive DataSegment length in bytes.
-    uint max_recv_ds_len;
+    uint32_t max_recv_ds_len;
 
     /// Portal group tag.
-    int pg_tag;
+    uint64_t pg_tag;
 
     /// Initiator Session ID (ISID).
     iscsi_isid isid;
@@ -6435,6 +11522,9 @@ typedef struct iscsi_connection {
     /// Initiator Task Tag (ITT).
     uint32_t init_task_tag;
 
+    /// Targer Transfer Tag (TTT).
+    uint32_t target_xfer_tag;
+
     /// CHAP authentication.
     iscsi_auth_chap auth_chap;
 
@@ -6446,11 +11536,120 @@ typedef struct iscsi_connection {
 
     /// ExpStatSN.
     uint32_t exp_stat_sn;
+
+    /// Execution queue to run to invoke callback functions after asynchronous I/O has been finished.
+    iscsi_list exec_queue;
+
+    // TODO: Remove after test finish
+    iscsi_hashmap *stat_iscsi_opcodes;
+
+    // TODO: Remove after test finish
+    iscsi_hashmap *stat_scsi_opcodes;
 } iscsi_connection;
 
 
+/**
+ * @brief iSCSI transfer completed callback function.
+ *
+ * This function is invoked when the response PDU
+ * write to the TCP/IP socket has been completed.
+ *
+ * @param[in] user_data Pointer to user data.
+ */
+typedef void (*iscsi_connection_xfer_complete_callback)(uint8_t *user_data);
+
+
+/**
+ * @brief Callback for iSCSI connection write TCP/IP write operation completion.
+ *
+ * This function is invoked when the sending
+ * TCP/IP transfer has been finished.
+ *
+ * @param[in] user_data Pointer to user data.
+ * @param[in] err 0 if I/O completed successfully or an
+ * error code indicating the problem.
+ */
+typedef void (*iscsi_connection_write_complete_callback)(uint8_t *user_data, int err);
+
+
+/// iSCSI connection asynchronous execution queue: SCSI emulation I/O.
+#define ISCSI_CONNECT_EXEC_QUEUE_TYPE_SCSI_EMU_IO 0U
+
+/// iSCSI connection asynchronous execution queue: PDU write I/O.
+#define ISCSI_CONNECT_EXEC_QUEUE_TYPE_PDU_WRITE   1U
+
+
+/**
+ * @brief iSCSI connection execution queue.
+ *
+ * This structure is used for invoking the
+ * callback functions after processing has
+ * been completed.\n
+ * Currently, PDU writes and SCSI emulation
+ * invoke I/O callbacks after finishing
+ * their operations.
+ */
+typedef struct iscsi_connection_exec_queue {
+    /// Doubly linked list node, MUST be first element.
+    iscsi_node node;
+
+    /**
+     * @union data
+     * @brief Invokes callback functions with arguments based on the execution queue type.
+     *
+     * This union contains the arguments needed
+     * for their respective callback functions
+     * of the completion process.
+     */
+    union {
+        /**
+         * @brief PDU write completion callback and arguments.
+         *
+         * For PDU write completion type, two arguments
+         * are passed.
+         */
+        struct {
+            /// Callback function to invoke after PDU write completion process has been completed.
+            iscsi_connection_write_complete_callback callback;
+
+            /// User data to be passed to the PDU write completion process callback function.
+            uint8_t *user_data;
+
+            /// Error code to be passed to the PDU write completion process callback function.
+            int err;
+        } pdu_write;
+
+        /**
+         * @brief I/O completion callback and arguments.
+         *
+         * For I/O completion type, three arguments
+         * are passed.
+         */
+        struct {
+            /// Callback function to invoke after I/O process has been completed.
+            iscsi_scsi_emu_io_complete_callback callback;
+
+            /// DNBD3 image to be passed to the I/O completion process callback function.
+            dnbd3_image_t *image;
+
+            /// User data to be passed to the I/O completion process callback function.
+            uint8_t *user_data;
+
+            /// Successful state passed to the I/O completion process callback function.
+            bool success;
+        } io;
+    } data;
+
+    /// Type of completion callback.
+    uint type;
+} iscsi_connection_exec_queue;
+
+
+typedef struct iscsi_task iscsi_task;
+
+
 /// iSCSI PDU flags: Rejected.
-#define ISCSI_PDU_FLAGS_REJECTED (1 << 0L)
+#define ISCSI_PDU_FLAGS_REJECTED (1 << 0)
 
 
 /**
@@ -6461,6 +11660,9 @@ typedef struct iscsi_connection {
  * and filling the BHS, AHS and DS properly.
  */
 typedef struct iscsi_pdu {
+    /// Doubly linked list node, MUST be first element.
+    iscsi_node node;
+
     /// iSCSI Basic Header Segment (BHS) packet data.
     iscsi_bhs_packet *bhs_pkt;
 
@@ -6471,52 +11673,183 @@ typedef struct iscsi_pdu {
     iscsi_header_digest *header_digest;
 
     /// iSCSI DataSegment (DS) packet data for fast access and is straight after BHS, AHS and header digest packet in memory.
-    iscsi_ds_cmd_data *ds_cmd_data;
+    iscsi_scsi_ds_cmd_data *ds_cmd_data;
 
     /// Data digest (CRC32C) packet data for fast access and is straight after BHS, AHS, header digest and DataSegment packet in memory.
     iscsi_data_digest *data_digest;
 
-    /// Key and value pairs to send to client.
-    iscsi_hashmap *key_value_pairs;
+    /// iSCSI task handling this PDU.
+    iscsi_task *task;
+
+    /// Associated iSCSI connection.
+    iscsi_connection *conn;
+
+    /// Transfer complete callback function.
+    iscsi_connection_xfer_complete_callback xfer_complete_callback;
+
+    /// Transfer complete callback user data (arguments).
+    uint8_t *xfer_complete_user_data;
 
     /// Flags.
     int flags;
 
-    /// Header digest size (always 0 or 4 for now).
-    int header_digest_size;
-
-    /// Bytes of header digest (CRC32C) already read.
-    uint header_digest_read_len;
-
-    /// Data digest size (always 0 or 4 for now).
-    int data_digest_size;
-
-    /// Bytes of data digest (CRC32C) already read.
-    uint data_digest_read_len;
+    /// Reference counter.
+    uint32_t ref;
 
     /// Bytes of Basic Header Segment (BHS) already read.
-    uint bhs_read_len;
+    uint bhs_pos;
+
+    /// Bytes of Advanced Header Segment (AHS) already read.
+    uint ahs_pos;
 
     /// AHSLength.
     uint ahs_len;
 
-    /// Bytes of Advanced Header Segment (AHS) already read.
-    uint ahs_read_len;
+    /// Bytes of header digest (CRC32C) already read.
+    uint header_digest_pos;
+
+    /// Header digest size (always 0 or 4 for now).
+    int header_digest_size;
 
     /// DataSegmentLength.
-    uint ds_len;
+    uint32_t ds_len;
 
-    /// Position of DataSegment buffer for next read.
-    uint pos;
+    /// Position of DataSegment buffer for next operation.
+    uint32_t pos;
 
-    /// Associated iSCSI connection.
-    iscsi_connection *conn;
+    /// Allocated DataSegment buffer length.
+    uint32_t len;
+
+    /// Bytes of data digest (CRC32C) already read.
+    uint data_digest_pos;
+
+    /// Data digest size (always 0 or 4 for now).
+    int data_digest_size;
+
+    /// Tasks referenced by this PDU counter.
+    uint task_ref_cnt;
 
     /// CmdSN.
     uint32_t cmd_sn;
 } iscsi_pdu;
 
+
+/// iSCSI task flags: Ready To Transfer is active.
+#define ISCSI_TASK_FLAGS_R2T_ACTIVE (1 << 0)
+
+/// iSCSI task flags: Task is enqueued in SCSI layer.
+#define ISCSI_TASK_FLAGS_QUEUED     (1 << 1)
+
+
+/**
+ * @brief This structure is used for iSCSI task management.
+ *
+ * This structure maintains the iSCSI task handling
+ * including the underlying SCSI layer.
+ */
+typedef struct iscsi_task {
+    /// Doubly linked list node, MUST be first element.
+    iscsi_node node;
+
+    /// Underlying SCSI task structure.
+    iscsi_scsi_task scsi_task;
+
+    /// Parent iSCSI task.
+    iscsi_task *parent;
+
+    /// Sub tasks doubly linked list for splitted data transfers.
+    iscsi_list sub_tasks;
+
+    /// Associated iSCSI connection.
+    iscsi_connection *conn;
+
+    /// Associated iSCSI PDU.
+    iscsi_pdu *pdu;
+
+    /// Buffer position in bytes.
+    uint32_t pos;
+
+    /// Buffer length in bytes.
+    uint32_t len;
+
+    /// Unique identifier for this task.
+    uint64_t id;
+
+    /// Flags.
+    int flags;
+
+    /// LUN identifier associated with this task (always MUST be between 0 and 7), used for hot removal tracking.
+    int lun_id;
+
+    /// Initiator Task Tag (ITT).
+    uint32_t init_task_tag;
+
+    /// Target Transfer Tag (TTT).
+    uint32_t target_xfer_tag;
+
+    /// Desired number of bytes completed.
+    uint32_t des_data_xfer_pos;
+
+    /// Desired data transfer length.
+    uint32_t des_data_xfer_len;
+
+    /// SCSI Data In Data Sequence Number (DataSN).
+    uint32_t data_sn;
+
+    /// SCSI Data Out count.
+    uint32_t scsi_data_out_cnt;
+
+    /// Length in bytes of R2T, used for ensuring that R2T burst does not exceed MaxBurstLength.
+    uint32_t r2t_len;
+
+    /// Ready To Transfer Sequence Number (R2TSN).
+    uint32_t r2t_sn;
+
+    /// Next expected Ready To Transfer offset is used for receiving the Data-OUT PDU.
+    uint32_t r2t_next_exp_pos;
+
+    /// Ready To Transfer DataSN, used for next sequence of a R2TSN.
+    uint32_t r2t_data_sn;
+
+    /// Next R2TSN to be acknowledged.
+    uint32_t r2t_sn_ack;
+
+    /// Outstanding Ready To Transfer (R2T) count.
+    uint32_t r2t_outstanding;
+} iscsi_task;
+
+
+iscsi_task *iscsi_task_create(iscsi_connection *conn, iscsi_task *parent, iscsi_scsi_task_xfer_complete_callback callback); // Allocates and initializes an iSCSI task structure
+void iscsi_task_destroy_callback(iscsi_scsi_task *scsi_task); // Deallocates all resources of the iSCSI task of an iSCSI SCSI task
+void iscsi_task_destroy(iscsi_task *task); // Deallocates resources acquired by iscsi_task_create
+
+void iscsi_task_queue(iscsi_connection *conn, iscsi_task *task); // Enqueues an iSCSI task
+
+void iscsi_task_xfer_complete_process_read(iscsi_connection *conn, iscsi_task *task, iscsi_task *primary_task); // Processes an iSCSI SCSI task which completed a read data transfer
+bool iscsi_task_xfer_del(iscsi_connection *conn, const uint32_t target_xfer_tag); // Deletes an iSCSI task from the active Ready To Transfer (R2T) doubly linked list by Target Transfer Tag (TTT)
+void iscsi_task_xfer_complete_process_other(iscsi_connection *conn, iscsi_task *task, iscsi_task *primary_task); // Processes an iSCSI SCSI task which completed a non-read data transfer
+
+void iscsi_task_response(iscsi_connection *conn, iscsi_task *task); // Creates, initializes and sends an iSCSI task reponse PDU.
+
+iscsi_device *iscsi_device_create(const uint8_t *name, const int lun_id, const uint8_t protocol_id); // Creates and initializes an iSCSI device with a maximum number of LUNs
+int iscsi_device_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI device destructor callback for hash map
+void iscsi_device_destroy(iscsi_device *device); // Deallocates all resources acquired by iscsi_device_create
+
 iscsi_port *iscsi_device_find_port_by_portal_group_tag(const iscsi_device *device, const uint64_t id); // Gets an iSCSI device being in use by portal group identifier
+iscsi_scsi_lun *iscsi_device_find_lun(iscsi_device *device, const int lun_id); // Searches an iSCSI LUN by LUN identifier
+
+int iscsi_device_port_add(iscsi_device *device, const uint8_t *name, const uint64_t id); // Creates, initializes and adds an iSCSI target port to an iSCSI device
+
+void iscsi_device_scsi_task_queue(iscsi_device *device, iscsi_scsi_task *scsi_task); // Enqueues an iSCSI SCSI task to the first LUN of an iSCSI device
+
+int iscsi_target_node_create_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Creates, initializes and adds a portal group to an iSCSI target node
+iscsi_target_node *iscsi_target_node_create(uint8_t *name, const uint8_t *alias, const int index, const int lun_id, const uint queue_depth, const int flags, const int32_t chap_group, const int header_digest, const int data_digest); // Creates and initializes an iSCSI target node
+int iscsi_target_node_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI target node destructor callback for hash map
+void iscsi_target_node_destroy(iscsi_target_node *target); // Deallocates all resources acquired by iscsi_target_node_create
+
+int32_t iscsi_target_node_send(iscsi_connection *conn, const uint8_t *dst_iqn, const uint8_t *src_iqn, uint8_t *buf, const uint32_t pos, const uint32_t len); // Sends a buffer from a source iSCSI IQN to target iSCSI IQNs
+uint64_t iscsi_target_node_wwn_get(const uint8_t *name); // Calculates the WWN using 64-bit IEEE Extended NAA for a name
+dnbd3_image_t *iscsi_target_node_image_get(uint8_t *iqn); // Extracts the DNBD3 image out of an iSCSI IQN string and opens the DNBD3 image
 int iscsi_target_node_find_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // Finds an iSCSI target node by case insensitive name search
 iscsi_target_node *iscsi_target_node_find(uint8_t *target_name); // Searches an iSCSI target node by name using case insensitive search
 
@@ -6524,6 +11857,7 @@ uint8_t *iscsi_target_node_get_redirect(iscsi_connection *conn, iscsi_target_nod
 int iscsi_target_node_access(iscsi_connection *conn, iscsi_target_node *target, const uint8_t *iqn, const uint8_t *adr); // Checks if target node is accessible
 
 iscsi_session *iscsi_session_create(iscsi_connection *conn, iscsi_target_node *target, const int type); // Creates and initializes an iSCSI session
+int iscsi_session_destroy_callback(uint8_t *key, const size_t key_size, uint8_t *value, uint8_t *user_data); // iSCSI session destructor callback for hash map
 void iscsi_session_destroy(iscsi_session *session); // Deallocates all resources acquired by iscsi_session_create
 
 int iscsi_session_init_key_value_pairs(iscsi_hashmap *key_value_pairs); // Initializes a key and value pair hash table with default values
@@ -6535,21 +11869,42 @@ void iscsi_connection_destroy(iscsi_connection *conn); // Deallocates all resour
 int iscsi_connection_drop(iscsi_connection *conn, const uint8_t *conn_match, const int all); // Drops all connections based on matching pattern
 void iscsi_connection_schedule(iscsi_connection *conn); // Schedules an iSCSI connection
 
-int iscsi_connection_read(const iscsi_connection *conn, uint8_t *buf, const uint len); // Reads data for the specified iSCSI connection from its TCP socket
-int iscsi_connection_write(const iscsi_connection *conn, uint8_t *buf, const uint len); // Writes data for the specified iSCSI connection to its TCP socket
+int32_t iscsi_connection_read(const iscsi_connection *conn, uint8_t *buf, const uint32_t len); // Reads data for the specified iSCSI connection from its TCP socket
+int32_t iscsi_connection_write(const iscsi_connection *conn, uint8_t *buf, const uint32_t len); // Writes data for the specified iSCSI connection to its TCP socket
+int iscsi_connection_handle_scsi_data_in_queued_tasks(iscsi_connection *conn); // This function handles all queued iSCSI SCSI Data In tasks
 
 int iscsi_connection_init_key_value_pairs(iscsi_hashmap *key_value_pairs); // Initializes a key and value pair hash table with default values for an iSCSI connection
-int iscsi_negotiate_key_value_pairs(iscsi_connection *conn, iscsi_hashmap *key_value_pairs, uint8_t *buf, const uint pos, const uint len); // Negotiates all key and value pairs required for session authentication
+int32_t iscsi_negotiate_key_value_pairs(iscsi_connection *conn, iscsi_hashmap *key_value_pairs, uint8_t *buf, const uint32_t pos, const uint32_t len); // Negotiates all key and value pairs required for session authentication
 int iscsi_connection_copy_key_value_pairs(iscsi_connection *conn); // Copies retrieved key and value pairs into SCSI connection and session structures
 int iscsi_connection_save_incoming_key_value_pairs(iscsi_connection *conn, iscsi_hashmap *key_value_pairs, iscsi_pdu *login_response_pdu, const iscsi_pdu *pdu); // Saves incoming key / value pairs from the client of a login request PDU
-
-typedef void (*iscsi_connection_xfer_complete_callback)(uint8_t *user_data); // iSCSI transfer completed callback function.
-
-iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn); // Creates an iSCSI PDU structure used by connections
+void iscsi_connection_login_response_reject(iscsi_pdu *login_response_pdu, const iscsi_pdu *pdu); // Initializes a rejecting login response packet
+iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn, const uint ahs_len, const int header_digest_size, const uint32_t ds_len, const int data_sigest_size ); // Creates an iSCSI PDU structure used by connections
 void iscsi_connection_pdu_destroy(iscsi_pdu *pdu); // Destroys an iSCSI PDU structure used by connections
+void iscsi_connection_pdu_free(iscsi_connection *conn, iscsi_pdu *pdu); // Frees an iSCSI PDU structure used by using connection callback function
+
+iscsi_bhs_packet *iscsi_connection_pdu_append(iscsi_pdu *pdu, const uint ahs_len, const int header_digest_size, const uint32_t ds_len, const int data_digest_size); // Appends packet data to an iSCSI PDU structure used by connections
+iscsi_ahs_packet *iscsi_connection_pdu_ahs_packet_get(const iscsi_pdu *pdu, const int index); // Retrieves the pointer to an specific AHS packet from an iSCSI PDU by index
+int iscsi_connection_pdu_ahs_packet_count(const iscsi_pdu *pdu); // Counts number of AHS packets of an iSCSI PDU
+
+void iscsi_connection_pdu_digest_header_update(iscsi_header_digest *header_digest, const iscsi_bhs_packet *packet_data, const uint ahs_len); // Calculate and store iSCSI header digest (CRC32C)
+bool iscsi_connection_pdu_digest_header_verify(const iscsi_header_digest *header_digest, const iscsi_bhs_packet *packet_data, const uint ahs_len); // Validates a stored iSCSI header digest (CRC32C) with actual header data
+void iscsi_connection_pdu_digest_data_update(iscsi_data_digest *data_digest, const iscsi_scsi_ds_cmd_data *ds_cmd_data, const uint32_t ds_len); // Calculate iSCSI data digest (CRC32C)
+bool iscsi_connection_pdu_digest_data_verify(const iscsi_data_digest *data_digest, const iscsi_scsi_ds_cmd_data *ds_cmd_data, const uint32_t ds_len); // Validates a stored iSCSI data digest (CRC32C) with actual DataSegment
+
+void iscsi_connection_pdu_ack_remove(iscsi_connection *conn, const uint32_t exp_stat_sn); // Removes an acknowledged PDU from SNACK PDU doubly linked list by ExpStatSN
+
+iscsi_pdu *iscsi_r2t_find_pdu_bhs(iscsi_connection *conn, iscsi_pdu *pdu); // Searches an iSCSI PDU by Basic Header Segment (BHS) in the Ready To Transfer (R2T) active and queued task doubly linked list
+int iscsi_r2t_send(iscsi_connection *conn, iscsi_task *task, uint32_t *r2t_sn, const uint32_t pos, const uint32_t len, const uint32_t target_xfer_tag); // Sends an iSCSI Ready To Transfer Sequence Number (R2TSN) packet to the initiator
 
 int iscsi_connection_read_data(iscsi_connection *conn, int len, void *buf);
 int iscsi_connection_read_iov_data(iscsi_connection *conn, struct iovec *iov, int iov_count);
 void iscsi_connection_pdu_write(iscsi_connection *conn, iscsi_pdu *pdu, iscsi_connection_xfer_complete_callback callback, uint8_t *user_data);
+
+int iscsi_connection_pdu_handle(iscsi_connection *conn); // Handles incoming PDU data, read up to 16 fragments at once
+void iscsi_connection_handle(dnbd3_client_t *client, const dnbd3_request_t *request, const int len); // Handles an iSCSI connection until connection is closed
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* DNBD3_ISCSI_H_ */

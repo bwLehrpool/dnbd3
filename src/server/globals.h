@@ -142,6 +142,7 @@ struct _dnbd3_image
 	weakref ref_cacheMap;  // cache map telling which parts are locally cached, NULL if complete
 	uint64_t virtualFilesize;   // virtual size of image (real size rounded up to multiple of 4k)
 	uint64_t realFilesize;      // actual file size on disk
+	uint64_t wwn;               // WorldWideName
 	ticks atime;                // last access time
 	ticks nextCompletenessEstimate; // next time the completeness estimate should be updated
 	uint32_t *crc32;       // list of crc32 checksums for each 16MiB block in image
@@ -331,6 +332,12 @@ extern atomic_bool _pretendClient;
  * Only relevant in proxy mode.
  */
 extern atomic_int _autoFreeDiskSpaceDelay;
+
+/**
+ * Specifies if the iSCSI server should be initialized, enabled
+ * and used upon start of DNBD3 server.
+ */
+extern atomic_bool _iSCSIServer;
 
 /**
  * When handling a client request, this sets the maximum amount

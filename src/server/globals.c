@@ -32,6 +32,7 @@ atomic_bool _vmdkLegacyMode = false;
 atomic_bool _proxyPrivateOnly = false;
 atomic_bool _pretendClient = false;
 atomic_int _autoFreeDiskSpaceDelay = 3600 * 10;
+atomic_bool _iSCSIServer = true;
 // [limits]
 atomic_int _maxClients = SERVER_MAX_CLIENTS;
 atomic_int _maxImages = SERVER_MAX_IMAGES;
@@ -93,6 +94,7 @@ static int ini_handler(void *custom UNUSED, const char* section, const char* key
 	SAVE_TO_VAR_UINT( limits, minRequestSize );
 	SAVE_TO_VAR_BOOL( dnbd3, pretendClient );
 	SAVE_TO_VAR_INT( dnbd3, autoFreeDiskSpaceDelay );
+	SAVE_TO_VAR_BOOL( dnbd3, iSCSIServer );
 	if ( strcmp( section, "dnbd3" ) == 0 && strcmp( key, "backgroundReplication" ) == 0 ) {
 		if ( strcmp( value, "hashblock" ) == 0 ) {
 			_backgroundReplication = BGR_HASHBLOCK;
@@ -364,6 +366,7 @@ size_t globals_dumpConfig(char *buffer, size_t size)
 	PBOOL(proxyPrivateOnly);
 	PBOOL(pretendClient);
 	PINT(autoFreeDiskSpaceDelay);
+	PBOOL(iSCSIServer);
 	P_ARG("[limits]\n");
 	PINT(maxClients);
 	PINT(maxImages);

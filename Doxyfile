@@ -51,5 +51,6 @@ GENERATE_XML           = NO
 # Misc
 EXTRACT_ALL            = YES
 EXTRACT_PRIVATE        = NO
+EXTRACT_INLINE         = YES
 EXTRACT_STATIC         = YES
 QUIET                  = NO

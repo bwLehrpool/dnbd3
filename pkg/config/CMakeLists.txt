@@ -6,6 +6,7 @@ project(dnbd3-config
 
 # define all configuration files
 set(DNBD3_CONFIG_FILES ${CMAKE_CURRENT_SOURCE_DIR}/alt-servers
+                     ${CMAKE_CURRENT_SOURCE_DIR}/iscsi.conf
                      ${CMAKE_CURRENT_SOURCE_DIR}/rpc.acl
                      ${CMAKE_CURRENT_SOURCE_DIR}/server.conf)
 
