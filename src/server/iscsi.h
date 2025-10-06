@@ -10823,6 +10823,12 @@ typedef struct iscsi_scsi_task {
     /// I/O task wait.
     iscsi_scsi_emu_io_wait io_wait;
 
+    /// Uplink read mutex for synchronization.
+    pthread_mutex_t uplink_mutex;
+
+    /// Conditional to signal uplink read complete.
+    pthread_cond_t uplink_cond;
+
     /// Output buffer.
     uint8_t *buf;
 
@@ -10935,11 +10941,11 @@ int iscsi_scsi_pr_in(iscsi_scsi_task *scsi_task, iscsi_scsi_pr_reserve_in_parame
 int iscsi_scsi_pr_reserve_scsi2(iscsi_scsi_task *scsi_task, const iscsi_scsi_cdb_pr_reserve_6 *cdb_pr_reserve_6); // Reserves an iSCSI SCSI Persistent Reservation (PR) of an iSCSI SCSI task
 int iscsi_scsi_pr_release_scsi2(iscsi_scsi_task *scsi_task); // Releases an iSCSI SCSI Persistent Reservation (PR) of an iSCSI SCSI task
 
-int iscsi_scsi_emu_io_block_read(iscsi_scsi_task *scsi_task, uint8_t *buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Reads a number of blocks from a block offset of a DNBD3 image to a specified buffer
+int iscsi_scsi_emu_io_block_read(iscsi_scsi_task *scsi_task, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Reads a number of blocks from a block offset of a DNBD3 image to a specified buffer
 uint8_t *iscsi_scsi_emu_block_read_complete_callback(dnbd3_image_t *image, uint8_t *user_data, const bool success); // Completes an iSCSI SCSI task after a finished I/O read operation
-int iscsi_scsi_emu_io_block_cmp_write(iscsi_scsi_task *scsi_task, uint8_t *buf, uint8_t *cmp_buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Compares and writes a number of blocks starting from a block offset in a DNBD3 image with specified buffers
+int iscsi_scsi_emu_io_block_cmp_write(iscsi_scsi_task *scsi_task, uint8_t *cmp_buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Compares and writes a number of blocks starting from a block offset in a DNBD3 image with specified buffers
 uint8_t *iscsi_scsi_emu_block_write_complete_callback(dnbd3_image_t *image, uint8_t *user_data, const bool success); // Completes an iSCSI SCSI task after a finished I/O write operation
-int iscsi_scsi_emu_io_block_write(iscsi_scsi_task *scsi_task, uint8_t *buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Writes a number of blocks from a block offset to a DNBD3 image of a specified buffer
+int iscsi_scsi_emu_io_block_write(iscsi_scsi_task *scsi_task, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data); // Writes a number of blocks from a block offset to a DNBD3 image of a specified buffer
 int iscsi_scsi_emu_io_queue(iscsi_scsi_emu_io_wait *io_wait); // Enqueues an I/O wait in the thread pool to execute
 uint8_t *iscsi_scsi_emu_block_resubmit_process_callback(uint8_t *user_data); // Resubmits an iSCSI SCSI task for execution
 

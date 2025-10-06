@@ -67,6 +67,7 @@ apt-get install git \
                 linux-headers-generic \
                 libfuse-dev \
                 libjansson-dev \
+                libcurl4-openssl-dev \
                 rpm
 ```
 
@@ -82,6 +83,7 @@ apt-get install git \
                 linux-headers-generic \
                 libfuse-dev \
                 libjansson-dev \
+                libcurl4-openssl-dev \
                 afl \
                 rpm
 ```
@@ -455,3 +457,124 @@ if (clientA)
 if (clientB)
     unlock(clientB.lock);
 ```
+
+
+## iSCSI server
+DNBD3 partially supports the _Internet Small Computer Systems Interface (iSCSI)_ protocol based on [RFC 7143](https://www.rfc-editor.org/rfc/rfc7143) and the [Storage Performance Development Kit (SPDK)](https://spdk.io) implementation.
+
+The iSCSI server can be enabled in the configuration file _server.conf_ by:
+
+```ini
+[dnbd3]
+; Specifies whether the iSCSI server should be initialized, enabled and used upon start of DNBD3 server.
+iSCSIServer=true
+```
+
+
+The valid configuration options of _iscsi.conf_ (see below) can be used in _server.conf_ as well, but _iscsi.conf_ will override any present settings. It is recommended to use _server.conf_ for default settings and _iscsi.conf_ for specific settings.
+
+
+### Configuration file _iscsi.conf_
+The _iscsi.conf_ file is the main configuration file for the iSCSI implementation of _dnbd3-server_. The configuration in the file is specified the INI file format as shown in the following:
+
+```ini
+; Using this file is recommended for actual iSCSI and SCSI emulation settings. This file will be
+; parsed after server.conf and all values here will override the ones in server.conf.
+; Also it is strictly recommended to set SCSI device specific details here.
+; All SCSI device specific details start with a section scsi-device- following a pattern which
+; can either be the full image name or a matching pattern like debian*.iso, e.g.
+; [scsi-device-debian*.iso] will match all images starting with debian and end with the .iso
+; file extension.
+; scsi-device- sections will be processed in order, always inherit from the [iscsi] and [scsi]
+; sections and are matched case sensitive
+
+[iscsi]
+; Target name check level (warning) specifying invalid check levels will default to full
+; validation!). Default is Full
+; Full      Target name is checked for full standaard compliance (recommended)
+; Relaxed   All invalid characters according to standard will be allowed if not an IQN, NAA or EUI.
+; None      No checking at all (be careful)
+TargetNameCheck=Full
+
+...
+
+[scsi]
+; Valid devices types for emulated device (warning) specifying invalid types will default to direct
+; access device!). Default is Direct
+; Direct           Direct access device (e.g. hard drive)
+; Sequential       Sequential access device (e.g. tape)
+; WriteOnce        Write once device (WORM)
+; ReadOnlyDirect   Read only direct access device
+; OpticalMemory    Optical memory device (e.g. CD-ROM, DVD, BluRay)
+; MediaChanger     Media changer device
+DeviceType=Direct
+
+; Physical block size of emulated device, rounded up to nearest power of two). Default is 512 for
+; supporting ancient systems. Should be set to 2048 for CD-ROM, DVD and BluRay devices. Allowed
+; physical block sizes range from 256 to 32768 bytes (32 KiB). Default is 512 bytes
+PhysicalBlockSize=512
+
+; Logical block size of emulated device, rounded up to nearest power of two). Default is 4096 for
+; supporting modern systems. Should be set to 2048 for CD-ROM, DVD and BluRay devices. Allowed
+; logical block sizes range from 256 to 32768 bytes (32 KiB). Default is 4096 bytes (4 KiB)
+LogicalBlockSize=4096
+
+; Device is emulated as removable. Should be enabled for CD-ROM, DVD and BluRay and disabled for
+; hard drives. Default is true
+Removable=true
+
+...
+
+; SCSI device specific configuration for *.iso (case sensitive), i.e. all image files which
+; end with .iso extension. Block sizes are set to 2 KiB for CD-ROM, DVD and BluRay type devices
+; and the physical read only emulation flag is enabled
+[scsi-device-*.iso]
+; Physical block size of emulated device, rounded up to nearest power of two). Default is 512 for
+; supporting ancient systems. Should be set to 2048 for CD-ROM, DVD and BluRay devices. Allowed
+; physical block sizes range from 256 to 32768 bytes (32 KiB). Default is 512 bytes
+PhysicalBlockSize=2048
+
+; Logical block size of emulated device, rounded up to nearest power of two). Default is 4096 for
+; supporting modern systems. Should be set to 2048 for CD-ROM, DVD and BluRay devices. Allowed
+; logical block sizes range from 256 to 32768 bytes (32 KiB). Default is 4096 bytes (4 KiB)
+LogicalBlockSize=2048
+
+; Device is emulated as removable. Should be enabled for CD-ROM, DVD and BluRay and disabled for
+; hard drives. Default is true
+Removable=true
+
+; Device is emulated as physically read only. No possibility to enable writes in any case. Use
+; for CD-ROM, DVD and BluRay devices. Default is false
+PhysicalReadOnly=true
+
+; SCSI device specific configuration for *.ISO (case sensitive), i.e. all image files which
+; end with .ISO extension. Block sizes are set to 2 KiB for CD-ROM, DVD and BluRay type devices
+; and the physical read only emulation flag is enabled
+[scsi-device-*.ISO]
+; Physical block size of emulated device, rounded up to nearest power of two). Default is 512 for
+; supporting ancient systems. Should be set to 2048 for CD-ROM, DVD and BluRay devices. Allowed
+; physical block sizes range from 256 to 32768 bytes (32 KiB). Default is 512 bytes
+PhysicalBlockSize=2048
+
+; Logical block size of emulated device, rounded up to nearest power of two). Default is 4096 for
+; supporting modern systems. Should be set to 2048 for CD-ROM, DVD and BluRay devices. Allowed
+; logical block sizes range from 256 to 32768 bytes (32 KiB). Default is 4096 bytes (4 KiB)
+LogicalBlockSize=2048
+
+; Device is emulated as removable. Should be enabled for CD-ROM, DVD and BluRay and disabled for
+; hard drives. Default is true
+Removable=true
+
+; Device is emulated as physically read only. No possibility to enable writes in any case. Use
+; for CD-ROM, DVD and BluRay devices. Default is false
+PhysicalReadOnly=true
+
+```
+
+
+For a complete list of possible configuration options, look at the comments in the sample _iscsi.conf_ file, which describes the options in detail.
+
+
+### _World Wide Name (WWN)_ to DNBD3 image mapping for standard compliance.
+As the iSCSI target node name supports only a very restricted number of allowed characters, DNBD3 images also can be specified either using the _Network Address Authority (NAA) IEEE Extended_ name identifier, the _64-bit extended unique identifier (EUI-64)_ or _iSCSI Qualified Name (IQN)_ using the _wwn-0x_ prefix. The revision of the DNBD3 image is specified with a _:_ (colon) after the DNBD3 image name and also the _Logical Unit Number (LUN)_.
+

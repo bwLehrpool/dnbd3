@@ -46,7 +46,9 @@
 #include "ini.h"
 #include "iscsi.h"
 #include "locks.h"
+#include "uplink.h"
 #include "threadpool.h"
+#include "reference.h"
 
 /**
  * @file iscsi.c
@@ -3850,13 +3852,13 @@ void iscsi_scsi_task_create(iscsi_scsi_task *scsi_task, iscsi_scsi_task_xfer_com
 	scsi_task->target_port            = NULL;
 	scsi_task->init_port              = NULL;
 	scsi_task->cdb                    = NULL;
+	scsi_task->sense_data             = NULL;
 	scsi_task->xfer_complete_callback = xfer_complete_callback;
 	scsi_task->destroy_callback       = destroy_callback;
 	scsi_task->io_complete_callback   = NULL;
 	scsi_task->io_wait.image          = NULL;
 	scsi_task->io_wait.callback       = NULL;
 	scsi_task->io_wait.user_data      = NULL;
-	scsi_task->sense_data             = NULL;
 	scsi_task->buf                    = NULL;
 	scsi_task->pos                    = 0UL;
 	scsi_task->len                    = 0UL;
@@ -5240,6 +5242,32 @@ static int iscsi_scsi_emu_queue_io_wait(iscsi_scsi_task *scsi_task, iscsi_scsi_e
 }
 
 /**
+ * @brief Called when data requested via an uplink server has arrived.
+ *
+ * This function is used to retrieve
+ * block data which is NOT locally
+ * available.
+ *
+ * @param[in] data Pointer to related scsi_task. May NOT
+ * be NULL, so be careful.
+ * @param[in] handle Uplink handle.
+ * @param[in] start Start of range in bytes.
+ * @param[in] length Length of range in bytes, as passed to
+ * uplink_request().
+ * @param[in] buffer Data for requested range.
+ */
+static void iscsi_uplink_callback(void *data, uint64_t handle UNUSED, uint64_t start UNUSED, uint32_t length, const char *buffer)
+{
+	iscsi_scsi_task *scsi_task = (iscsi_scsi_task *) data;
+
+	memcpy( scsi_task->buf, buffer, length );
+
+	pthread_mutex_lock( &scsi_task->uplink_mutex );
+	pthread_cond_signal( &scsi_task->uplink_cond );
+	pthread_mutex_unlock( &scsi_task->uplink_mutex );
+}
+
+/**
  * @brief Converts offset and length specified by a block size to offset and length in bytes.
  *
  * This function uses bit shifting if
@@ -5279,9 +5307,6 @@ static uint64_t iscsi_scsi_emu_blocks_to_bytes(uint64_t *offset_bytes, const uin
  * @param[in] scsi_task Pointer to iSCSI SCSI task which
  * executes the I/O read operation, may
  * NOT be NULL, so be careful.
- * @param[in] buf Pointer to buffer where to store
- * the read data. NULL is NOT allowed
- * here, take caution.
  * @param[in] image Pointer to DNBD3 image to read
  * data from and may NOT be NULL, so
  * be careful.
@@ -5297,16 +5322,62 @@ static uint64_t iscsi_scsi_emu_blocks_to_bytes(uint64_t *offset_bytes, const uin
  * @return 0 on successful operation, a negative
  * error code otherwise.
  */
-int iscsi_scsi_emu_io_block_read(iscsi_scsi_task *scsi_task, uint8_t *buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data)
+int iscsi_scsi_emu_io_block_read(iscsi_scsi_task *scsi_task, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data)
 {
 	uint64_t offset_bytes;
-	const uint64_t num_bytes                = iscsi_scsi_emu_blocks_to_bytes( &offset_bytes, offset_blocks, num_blocks, block_size );
-	const int64_t len                       = pread( image->readFd, buf, (size_t) num_bytes, offset_bytes );
-	const bool success                      = ((uint64_t) len == num_bytes);
+	const uint64_t num_bytes = iscsi_scsi_emu_blocks_to_bytes( &offset_bytes, offset_blocks, num_blocks, block_size );
+	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
+	bool readFromFile;
+	bool success;
+
+	if ( cache == NULL ) {
+		readFromFile = true;
+	} else {
+		// This is a proxyed image, check if we need to relay the request...
+		const uint64_t start = (offset_bytes & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1));
+		const uint64_t end   = ((offset_bytes + num_bytes + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t) (DNBD3_BLOCK_SIZE - 1));
+
+		readFromFile = image_isRangeCachedUnsafe( cache, start, end );
+		ref_put( &cache->reference );
+
+		if ( !readFromFile ) {
+			// Not cached, request via uplink
+
+			if ( pthread_mutex_init( &scsi_task->uplink_mutex, NULL ) != 0 ) {
+				logadd( LOG_ERROR, "iscsi_scsi_emu_io_block_read: Error while initializing DNBD3 uplink mutex for iSCSI SCSI task" );
+
+				return -ENOMEM;
+			}
+
+			if ( pthread_cond_init( &scsi_task->uplink_cond, NULL ) != 0 ) {
+				logadd( LOG_ERROR, "iscsi_scsi_emu_io_block_read: Error while initializing DNBD3 uplink condition for iSCSI SCSI task" );
+
+				pthread_mutex_destroy( &scsi_task->uplink_mutex );
+
+				return -ENOMEM;
+			}
+
+			pthread_mutex_lock( &scsi_task->uplink_mutex );
+			success = uplink_request( image, (void *) scsi_task, iscsi_uplink_callback, 0ULL, offset_bytes, (uint32_t) num_bytes );
+
+			if ( success )
+				pthread_cond_wait( &scsi_task->uplink_cond, &scsi_task->uplink_mutex );
+
+			pthread_mutex_unlock( &scsi_task->uplink_mutex );
+			pthread_cond_destroy( &scsi_task->uplink_cond );
+			pthread_mutex_destroy( &scsi_task->uplink_mutex );
+		}
+	}
+
+	if ( readFromFile ) {
+		const int64_t len = pread( image->readFd, scsi_task->buf, (size_t) num_bytes, offset_bytes );
+		success           = ((uint64_t) len == num_bytes);
+	}
+
 	iscsi_connection_exec_queue *exec_queue = (iscsi_connection_exec_queue *) malloc( sizeof(struct iscsi_connection_exec_queue) );
 
 	if ( exec_queue == NULL ) {
-		logadd( LOG_ERROR, "iscsi_scsi_emu_io_block_read: Out of memory while allocating execution queue for async I/O" );
+		logadd( LOG_ERROR, "iscsi_scsi_emu_io_block_read: Out of memory while allocating execution queue for I/O read" );
 
 		return -ENOMEM;
 	}
@@ -5367,9 +5438,6 @@ uint8_t *iscsi_scsi_emu_block_read_complete_callback(dnbd3_image_t *image, uint8
  * executes the I/O compare and write
  * operation, may NOT be NULL, so be
  * careful.
- * @param[in] buf Pointer to buffer which contains
- * the data to be written. NULL is NOT
- * allowed here, take caution.
  * @param[in] cmp_buf Pointer to buffer which contains
  * the data to be compared and may NOT
  * be NULL, so be careful.
@@ -5388,7 +5456,7 @@ uint8_t *iscsi_scsi_emu_block_read_complete_callback(dnbd3_image_t *image, uint8
  * @return 0 on successful operation, a negative
  * error code otherwise.
  */
-int iscsi_scsi_emu_io_block_cmp_write(iscsi_scsi_task *scsi_task, uint8_t *buf, uint8_t *cmp_buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data)
+int iscsi_scsi_emu_io_block_cmp_write(iscsi_scsi_task *scsi_task, uint8_t *cmp_buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data)
 {
 	// TODO: Implement compare and write I/O.
 
@@ -5440,9 +5508,6 @@ uint8_t *iscsi_scsi_emu_block_write_complete_callback(dnbd3_image_t *image, uint
  * @param[in] scsi_task Pointer to iSCSI SCSI task which
  * executes the I/O write operation, may
  * NOT be NULL, so be careful.
- * @param[in] buf Pointer to buffer which contains
- * the data to be written. NULL is NOT
- * allowed here, take caution.
  * @param[in] image Pointer to DNBD3 image to write
  * data to and may NOT be NULL, so
  * be careful.
@@ -5458,16 +5523,16 @@ uint8_t *iscsi_scsi_emu_block_write_complete_callback(dnbd3_image_t *image, uint
  * @return 0 on successful operation, a negative
  * error code otherwise.
  */
-int iscsi_scsi_emu_io_block_write(iscsi_scsi_task *scsi_task, uint8_t *buf, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data)
+int iscsi_scsi_emu_io_block_write(iscsi_scsi_task *scsi_task, dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks, const uint32_t block_size, iscsi_scsi_emu_io_complete_callback callback, uint8_t *user_data)
 {
 	uint64_t offset_bytes;
 	const uint64_t num_bytes                = iscsi_scsi_emu_blocks_to_bytes( &offset_bytes, offset_blocks, num_blocks, block_size );
-	const int64_t len                       = pwrite( image->readFd, buf, (size_t) num_bytes, offset_bytes );
+	const int64_t len                       = pwrite( image->readFd, scsi_task->buf, (size_t) num_bytes, offset_bytes );
 	const bool success                      = ((uint64_t) len == num_bytes);
 	iscsi_connection_exec_queue *exec_queue = (iscsi_connection_exec_queue *) malloc( sizeof(struct iscsi_connection_exec_queue) );
 
 	if ( exec_queue == NULL ) {
-		logadd( LOG_ERROR, "iscsi_scsi_emu_io_block_read: Out of memory while allocating execution queue for async I/O" );
+		logadd( LOG_ERROR, "iscsi_scsi_emu_io_block_read: Out of memory while allocating execution queue for I/O write" );
 
 		return -ENOMEM;
 	}
@@ -5575,7 +5640,7 @@ static int iscsi_scsi_emu_block_read_write(dnbd3_image_t *image, iscsi_scsi_task
 			return ISCSI_SCSI_TASK_RUN_PENDING;
 		}
 
-		rc = iscsi_scsi_emu_io_block_read( scsi_task, scsi_task->buf, image, offset_blocks, num_blocks, block_size, iscsi_scsi_emu_block_read_complete_callback, (uint8_t *) scsi_task );
+		rc = iscsi_scsi_emu_io_block_read( scsi_task, image, offset_blocks, num_blocks, block_size, iscsi_scsi_emu_block_read_complete_callback, (uint8_t *) scsi_task );
 	} else if ( iscsi_scsi_emu_io_type_is_supported( image, ISCSI_SCSI_EMU_IO_TYPE_PHYSICAL_READ_ONLY ) || iscsi_scsi_emu_io_type_is_supported( image, ISCSI_SCSI_EMU_IO_TYPE_WRITE_PROTECT ) ) {
 		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_DATA_PROTECT, ISCSI_SCSI_ASC_WRITE_PROTECTED, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 
@@ -5589,9 +5654,9 @@ static int iscsi_scsi_emu_block_read_write(dnbd3_image_t *image, iscsi_scsi_task
 
 		uint8_t *cmp_buf = (scsi_task->buf + block_size);
 
-		rc = iscsi_scsi_emu_io_block_cmp_write( scsi_task, scsi_task->buf, cmp_buf, image, offset_blocks, 1ULL, block_size, iscsi_scsi_emu_block_write_complete_callback, (uint8_t *) scsi_task );
+		rc = iscsi_scsi_emu_io_block_cmp_write( scsi_task, cmp_buf, image, offset_blocks, 1ULL, block_size, iscsi_scsi_emu_block_write_complete_callback, (uint8_t *) scsi_task );
 	} else {
-		rc = iscsi_scsi_emu_io_block_write( scsi_task, scsi_task->buf, image, offset_blocks, num_blocks, block_size, iscsi_scsi_emu_block_write_complete_callback, (uint8_t *) scsi_task );
+		rc = iscsi_scsi_emu_io_block_write( scsi_task, image, offset_blocks, num_blocks, block_size, iscsi_scsi_emu_block_write_complete_callback, (uint8_t *) scsi_task );
 	}
 
 	if ( rc < 0 ) {
@@ -5726,7 +5791,7 @@ static int iscsi_scsi_emu_block_write_same(dnbd3_image_t *image, iscsi_scsi_task
  * @retval true The DNBD3 image has been initialized
  * successfully and is readable.
  * @retval false The DNBD3 image has NOT been
- * successfully and is read is not possible.
+ * successfully and reading is not possible.
  */
 static bool iscsi_scsi_emu_image_init(iscsi_scsi_task *scsi_task, const bool access)
 {
