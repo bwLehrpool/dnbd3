@@ -33,6 +33,7 @@
 #include <dnbd3/shared/serialize.h>
 
 #include <assert.h>
+#include <netinet/tcp.h>
 
 #ifdef __linux__
 #include <sys/sendfile.h>
@@ -152,14 +153,43 @@ void net_init()
 	mutex_init( &_clients_lock, LOCK_CLIENT_LIST );
 }
 
+void initClientStruct(dnbd3_client_t *client)
+{
+	mutex_init( &client->lock, LOCK_CLIENT );
+	mutex_init( &client->sendMutex, LOCK_CLIENT_SEND );
+
+	mutex_lock( &client->lock );
+	host_to_string( &client->host, client->hostName, HOSTNAMELEN );
+	client->hostName[HOSTNAMELEN-1] = '\0';
+	mutex_unlock( &client->lock );
+	client->bytesSent = 0;
+	client->relayedCount = 0;
+}
+
 void* net_handleNewConnection(void *clientPtr)
 {
 	dnbd3_client_t * const client = (dnbd3_client_t *)clientPtr;
 	dnbd3_request_t request;
+	dnbd3_cache_map_t *cache = NULL;
 	client->thread = pthread_self();
 
 	// Await data from client. Since this is a fresh connection, we expect data right away
 	sock_setTimeout( client->sock, _clientTimeout );
+	// NODELAY makes sense since we're sending a lot of data
+	int e2 = 1;
+	socklen_t optlen = sizeof(e2);
+	setsockopt( client->sock, IPPROTO_TCP, TCP_NODELAY, (void *)&e2, optlen );
+	// Also increase send buffer
+	if ( getsockopt( client->sock, SOL_SOCKET, SO_SNDBUF, (void *)&e2, &optlen ) == 0 ) {
+#ifdef __linux__
+		// Linux doubles the value to account for overhead, get "real" value
+		e2 /= 2;
+#endif
+		if ( e2 < SERVER_TCP_BUFFER_MIN_SIZE_PAYLOAD ) {
+			e2 = SERVER_TCP_BUFFER_MIN_SIZE_PAYLOAD;
+			setsockopt( client->sock, SOL_SOCKET, SO_SNDBUF, &e2, sizeof(e2) );
+		}
+	}
 	do {
 #ifdef DNBD3_SERVER_AFL
 		const int ret = (int)recv( 0, &request, sizeof(request), MSG_WAITALL );
@@ -178,8 +208,16 @@ void* net_handleNewConnection(void *clientPtr)
 			if ( ((char*)&request)[0] == 'G' || ((char*)&request)[0] == 'P' ) {
 				// Close enough...
 				rpc_sendStatsJson( client->sock, &client->host, &request, ret );
+			} else if ( true /* check opcode ... */ ) {
+				initClientStruct( client );
+				if ( !addToList( client ) ) {
+					freeClientStruct( client );
+					logadd( LOG_WARNING, "Could not add new iSCSI client to list when connecting" );
+				} else {
+					iscsi_connection_handle( client, &request, ret );
+					goto exit_client_cleanup;
+				}
 			} else {
-				iscsi_connection_handle( client, &request, ret );
 				logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
 			}
 			goto fail_preadd;
@@ -192,26 +230,17 @@ void* net_handleNewConnection(void *clientPtr)
 		}
 	} while (0);
 	// Fully init client struct
-	mutex_init( &client->lock, LOCK_CLIENT );
-	mutex_init( &client->sendMutex, LOCK_CLIENT_SEND );
-
-	mutex_lock( &client->lock );
-	host_to_string( &client->host, client->hostName, HOSTNAMELEN );
-	client->hostName[HOSTNAMELEN-1] = '\0';
-	mutex_unlock( &client->lock );
-	client->bytesSent = 0;
-	client->relayedCount = 0;
+	initClientStruct( client );
 
 	if ( !addToList( client ) ) {
 		freeClientStruct( client );
-		logadd( LOG_WARNING, "Could not add new client to list when connecting" );
-		return NULL;
+		logadd( LOG_WARNING, "Could not add new DNBD3 client to list when connecting" );
+		goto fail_preadd;
 	}
 
 	dnbd3_reply_t reply;
 
 	dnbd3_image_t *image = NULL;
-	dnbd3_cache_map_t *cache = NULL;
 	int image_file = -1;
 
 	int num;
@@ -518,11 +547,11 @@ exit_client_cleanup: ;
 	removeFromList( client );
 	totalBytesSent += client->bytesSent;
 	// Access time, but only if client didn't just probe
-	if ( image != NULL && client->bytesSent > DNBD3_BLOCK_SIZE * 10 ) {
-		mutex_lock( &image->lock );
-		timing_get( &image->atime );
-		image->accessed = true;
-		mutex_unlock( &image->lock );
+	if ( client->image != NULL && client->bytesSent > DNBD3_BLOCK_SIZE * 10 ) {
+		mutex_lock( &client->image->lock );
+		timing_get( &client->image->atime );
+		client->image->accessed = true;
+		mutex_unlock( &client->image->lock );
 	}
 	if ( cache != NULL ) {
 		ref_put( &cache->reference );
@@ -688,7 +717,7 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 		dnbd3_uplink_t *uplink = ref_get_uplink( &client->image->uplinkref );
 		if ( uplink != NULL ) {
 			if ( client->relayedCount != 0 ) {
-				uplink_removeEntry( uplink, client, &uplinkCallback );
+				uplink_removeEntry( uplink, client );
 			}
 			ref_put( &uplink->reference );
 		}

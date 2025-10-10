@@ -1361,7 +1361,7 @@ server_fail: ;
 		image_release( image );
 	}
 	// If everything worked out, this call should now actually return the image
-	image = image_get( name, acceptedRemoteRid, false );
+	image = image_get( name, revision == 0 ? acceptedRemoteRid : revision, false );
 	if ( image != NULL && uplinkSock != -1 ) {
 		// If so, init the uplink and pass it the socket
 		if ( !uplink_init( image, uplinkSock, &uplinkServer, remoteProtocolVersion ) ) {

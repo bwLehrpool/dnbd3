@@ -17,6 +17,8 @@
 #define UPLINK_MAX_CLIENTS_PER_REQUEST 32 // Maximum number of clients that can attach to one uplink request
 #define SERVER_UPLINK_QUEUELEN_THRES  900 // Threshold where we start dropping incoming clients
 #define SERVER_MAX_PENDING_ALT_CHECKS 500 // Length of queue for pending alt checks requested by uplinks
+#define SERVER_TCP_BUFFER_MIN_SIZE_PAYLOAD 1048576 // Tweak socket buffer for direction with payload (image data) to be at least this size (1MiB)
+#define SERVER_TCP_BUFFER_MIN_SIZE_REQUESTS 8192 // Tweak socket buffer for direction without payload (requests) to be at least this large (8KiB)
 
 // Wait a maximum of 5 minutes before saving cache map (if data was received at all)
 #define CACHE_MAP_MAX_SAVE_DELAY 300

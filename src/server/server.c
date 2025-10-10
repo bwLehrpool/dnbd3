@@ -27,7 +27,6 @@
 #include "net.h"
 #include "altservers.h"
 #include "integrity.h"
-#include "iscsi.h"
 #include "threadpool.h"
 #include "rpc.h"
 #include "fuse.h"
@@ -176,10 +175,6 @@ _Noreturn static void dnbd3_cleanup()
 	net_waitForAllDisconnected();
 
 	threadpool_waitEmpty();
-
-	// Destroy iSCSI global vector
-	iscsi_destroy();
-	pthread_rwlock_destroy( &iscsi_globvec_rwlock );
 
 	// Clean up images
 	retries = 5;
@@ -370,11 +365,6 @@ int main(int argc, char *argv[])
 	altservers_init();
 	integrity_init();
 	net_init();
-
-	if ( _iSCSIServer ) {
-		if ( (pthread_rwlock_init( &iscsi_globvec_rwlock, NULL ) != 0) || (iscsi_create() < 0) )
-			return EXIT_FAILURE;
-	}
 
 	uplink_globalsInit();
 	rpc_init();
