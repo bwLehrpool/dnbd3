@@ -438,3 +438,15 @@ ssize_t sock_recv(const int sock, void *buffer, const size_t len)
 	return done;
 }
 
+bool sock_sendPadding(const int fd, uint32_t bytes)
+{
+	static char nullbytes[512] = {0};
+
+	while ( bytes >= sizeof(nullbytes) ) {
+		ssize_t ret = sock_sendAll( fd, nullbytes, sizeof(nullbytes), 2 );
+		if ( ret <= 0 )
+			return false;
+		bytes -= (uint32_t)ret;
+	}
+	return sock_sendAll( fd, nullbytes, bytes, 2 ) == (ssize_t)bytes;
+}

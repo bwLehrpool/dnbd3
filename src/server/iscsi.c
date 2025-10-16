@@ -37,6 +37,7 @@
 #include <pthread.h>
 #include <unistd.h>
 
+#include "sendfile.h"
 #include "globals.h"
 #include "helper.h"
 #include "image.h"
@@ -107,7 +108,7 @@ static void iscsi_connection_destroy(iscsi_connection *conn); // Deallocates all
 static int32_t iscsi_connection_read(const iscsi_connection *conn, uint8_t *buf, const uint32_t len); // Reads data for the specified iSCSI connection from its TCP socket
 
 static void iscsi_connection_login_response_reject(iscsi_pdu *login_response_pdu, const iscsi_pdu *pdu); // Initializes a rejecting login response packet
-static iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn, const uint32_t ds_len);
+static iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn, const uint32_t ds_len, bool no_ds_alloc);
 static void iscsi_connection_pdu_destroy(iscsi_pdu *pdu); // Destroys an iSCSI PDU structure used by connections
 
 static iscsi_bhs_packet *iscsi_connection_pdu_resize(iscsi_pdu *pdu, const uint ahs_len,  const uint32_t ds_len); // Appends packet data to an iSCSI PDU structure used by connections
@@ -388,7 +389,7 @@ static void iscsi_task_destroy(iscsi_task *task)
  */
 static uint32_t iscsi_scsi_data_in_send(iscsi_connection *conn, iscsi_task *task, const uint32_t pos, const uint32_t len, const uint32_t res_cnt, const uint32_t data_sn, const int8_t flags, bool immediate)
 {
-	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, len );
+	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, len, true );
 
 	if ( response_pdu == NULL ) {
 		logadd( LOG_ERROR, "iscsi_scsi_data_in_send: Out of memory while allocating iSCSI SCSI Data In response PDU" );
@@ -433,12 +434,41 @@ static uint32_t iscsi_scsi_data_in_send(iscsi_connection *conn, iscsi_task *task
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->max_cmd_sn, conn->session->max_cmd_sn );
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->data_sn, data_sn );
 
-	const uint32_t offset = (task->scsi_task.pos + pos);
-	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->buf_offset, offset );
+	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->buf_offset, pos );
 
-	memcpy( response_pdu->ds_cmd_data, (task->scsi_task.buf + pos), len );
+	//memcpy( response_pdu->ds_cmd_data, (task->scsi_task.buf + pos), len );
 
 	iscsi_connection_pdu_write( conn, response_pdu );
+
+	if ( task->scsi_task.buf != NULL ) {
+		if ( !sock_sendAll( conn->client->sock, (task->scsi_task.buf + pos), len, ISCSI_CONNECT_SOCKET_WRITE_RETRIES ) ) {
+			// Set error
+			return data_sn;
+		}
+	} else {
+		const off_t off = task->scsi_task.file_offset + pos;
+		size_t padding = 0;
+		size_t realBytes = len;
+		if ( off >= conn->client->image->realFilesize ) {
+			padding = len;
+			realBytes = 0;
+		} else if ( off + len > conn->client->image->realFilesize ) {
+			padding = ( off + len ) - conn->client->image->realFilesize;
+			realBytes -= padding;
+		}
+		bool ret = sendfile_all( conn->client->image->readFd, conn->client->sock,
+			off, realBytes );
+		if ( !ret ) {
+			// Set error
+			return data_sn;
+		}
+		if ( padding > 0 ) {
+			if ( !sock_sendPadding( conn->client->sock, padding ) ) {
+				// Set error
+				return data_sn;
+			}
+		}
+	}
 
 	return (data_sn + 1UL);
 }
@@ -545,8 +575,10 @@ static void iscsi_task_response(iscsi_connection *conn, iscsi_task *task, iscsi_
 			return;
 	}
 
-	const uint32_t ds_len   = (task->scsi_task.sense_data_len != 0U) ? (task->scsi_task.sense_data_len + offsetof(struct iscsi_scsi_ds_cmd_data, sense_data)) : 0UL;
-	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, ds_len );
+	const uint32_t ds_len   = (task->scsi_task.sense_data_len != 0U)
+		? (task->scsi_task.sense_data_len + offsetof(struct iscsi_scsi_ds_cmd_data, sense_data))
+		: 0UL;
+	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, ds_len, false );
 
 	if ( response_pdu == NULL ) {
 		logadd( LOG_ERROR, "iscsi_task_response: Out of memory while allocating iSCSI SCSI response PDU" );
@@ -621,7 +653,6 @@ static void iscsi_scsi_task_create(iscsi_scsi_task *scsi_task)
 	scsi_task->cdb                    = NULL;
 	scsi_task->sense_data             = NULL;
 	scsi_task->buf                    = NULL;
-	scsi_task->pos                    = 0UL;
 	scsi_task->len                    = 0UL;
 	scsi_task->id                     = 0ULL;
 	scsi_task->flags                  = 0;
@@ -988,24 +1019,27 @@ static void iscsi_uplink_callback(void *data, uint64_t handle UNUSED, uint64_t s
  */
 static int iscsi_scsi_emu_io_blocks_read(iscsi_scsi_task *scsi_task,  dnbd3_image_t *image, const uint64_t offset_blocks, const uint64_t num_blocks)
 {
+	int rc = 0;
 	uint64_t offset_bytes;
 	const uint64_t num_bytes = iscsi_scsi_emu_blocks_to_bytes( &offset_bytes, offset_blocks, num_blocks );
+	scsi_task->file_offset = offset_bytes;
 
 	dnbd3_cache_map_t *cache = ref_get_cachemap( image );
-	bool readFromFile;
 
-	if ( cache == NULL ) {
-		readFromFile = true;
-	} else {
+	if ( cache != NULL ) {
 		// This is a proxyed image, check if we need to relay the request...
 		const uint64_t start = (offset_bytes & ~(uint64_t)(DNBD3_BLOCK_SIZE - 1));
 		const uint64_t end   = ((offset_bytes + num_bytes + DNBD3_BLOCK_SIZE - 1) & ~(uint64_t) (DNBD3_BLOCK_SIZE - 1));
+		bool readFromFile = image_isRangeCachedUnsafe( cache, start, end );
 
-		readFromFile = image_isRangeCachedUnsafe( cache, start, end );
 		ref_put( &cache->reference );
 
 		if ( !readFromFile ) {
 			// Not cached, request via uplink
+			scsi_task->buf = malloc( num_bytes );
+			if ( scsi_task->buf == NULL ) {
+				return -ENOMEM;
+			}
 			pthread_mutex_init( &scsi_task->uplink_mutex, NULL );
 			pthread_cond_init( &scsi_task->uplink_cond, NULL );
 			pthread_mutex_lock( &scsi_task->uplink_mutex );
@@ -1016,32 +1050,19 @@ static int iscsi_scsi_emu_io_blocks_read(iscsi_scsi_task *scsi_task,  dnbd3_imag
 				logadd( LOG_DEBUG1, "Could not relay uncached request to upstream proxy for image %s:%d",
 						image->name, image->rid );
 
-				return -EIO;
+				rc = -EIO;
+			} else {
+				// Wait sync (Maybe use pthread_cond_timedwait to detect unavailable uplink instead of hanging...)
+				pthread_cond_wait( &scsi_task->uplink_cond, &scsi_task->uplink_mutex );
+				pthread_mutex_unlock( &scsi_task->uplink_mutex );
+				scsi_task->file_offset = (size_t)-1;
 			}
-
-			// Wait sync (Maybe use pthread_cond_timedwait to detect unavailable uplink instead of hanging...)
-			pthread_cond_wait( &scsi_task->uplink_cond, &scsi_task->uplink_mutex );
-			pthread_mutex_unlock( &scsi_task->uplink_mutex );
 			pthread_cond_destroy( &scsi_task->uplink_cond );
 			pthread_mutex_destroy( &scsi_task->uplink_mutex );
 		}
 	}
 
-	bool success;
-
-	if ( readFromFile ) {
-		const int64_t len = pread( image->readFd, scsi_task->buf, (size_t) num_bytes, offset_bytes );
-		success           = ((uint64_t) len == num_bytes);
-	} else {
-		success = true;
-	}
-
-	if ( success )
-		scsi_task->status = ISCSI_SCSI_STATUS_GOOD;
-	else
-		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_MEDIUM_ERR, ISCSI_SCSI_ASC_UNRECOVERED_READ_ERR, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
-
-	return (success ? 0 : -1);
+	return rc;
 }
 
 /**
@@ -1108,7 +1129,7 @@ static int iscsi_scsi_emu_block_read_write(dnbd3_image_t *image, iscsi_scsi_task
 	uint64_t offset_blocks;
 	uint64_t num_blocks;
 
-	if ( iscsi_scsi_emu_bytes_to_blocks( &offset_blocks, &num_blocks, scsi_task->pos, scsi_task->len ) != 0ULL ) {
+	if ( iscsi_scsi_emu_bytes_to_blocks( &offset_blocks, &num_blocks, 0, scsi_task->len ) != 0ULL ) {
 		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NO_SENSE, ISCSI_SCSI_ASC_NO_ADDITIONAL_SENSE, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 
 		return ISCSI_SCSI_TASK_RUN_COMPLETE;
@@ -1116,18 +1137,7 @@ static int iscsi_scsi_emu_block_read_write(dnbd3_image_t *image, iscsi_scsi_task
 
 	offset_blocks += lba;
 
-	int rc;
-
-	scsi_task->buf = (uint8_t *) malloc( scsi_task->len );
-
-	if ( scsi_task->buf == NULL ) {
-		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_HARDWARE_ERR,
-			ISCSI_SCSI_ASC_INTERNAL_TARGET_FAIL, ISCSI_SCSI_ASC_NO_ADDITIONAL_SENSE );
-
-		return ISCSI_SCSI_TASK_RUN_COMPLETE;
-	}
-
-	rc = iscsi_scsi_emu_io_blocks_read( scsi_task, image, offset_blocks, num_blocks );
+	int rc = iscsi_scsi_emu_io_blocks_read( scsi_task, image, offset_blocks, num_blocks );
 
 	if ( rc < 0 ) {
 		if ( rc == -ENOMEM ) {
@@ -1237,7 +1247,7 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 						!= ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_READ_CAPACITY_16 ) {
 				return ISCSI_SCSI_TASK_RUN_UNKNOWN;
 			}
-			iscsi_scsi_service_action_in_16_parameter_data_packet *buf = (iscsi_scsi_service_action_in_16_parameter_data_packet *) malloc( sizeof(struct iscsi_scsi_service_action_in_16_parameter_data_packet) );
+			iscsi_scsi_service_action_in_16_parameter_data_packet *buf = malloc( sizeof(struct iscsi_scsi_service_action_in_16_parameter_data_packet) );
 
 			if ( buf == NULL ) {
 				iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NOT_READY, ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY, ISCSI_SCSI_ASCQ_BECOMING_READY );
@@ -2876,17 +2886,19 @@ static void iscsi_connection_login_response_reject(iscsi_pdu *login_response_pdu
  * linked later.
  * @param[in] ds_len Length of DataSegment packet data to be appended.
  * May not exceed 16MiB - 1 (16777215 bytes).
+ * @param no_ds_alloc Do not allocate buffer space for DS, only set
+ * value for header - for sending DS manually later
  * @return Pointer to allocated and zero filled PDU or NULL
  * in case of an error (usually memory exhaustion).
  */
-static iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn, const uint32_t ds_len)
+static iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn, const uint32_t ds_len, bool no_ds_alloc)
 {
 	if ( ds_len > ISCSI_MAX_DS_SIZE ) {
 		logadd( LOG_ERROR, "iscsi_pdu_create: Invalid  DS length" );
 		return NULL;
 	}
 
-	const uint32_t pkt_ds_len = ISCSI_ALIGN( ds_len, ISCSI_ALIGN_SIZE );
+	const uint32_t pkt_ds_len = no_ds_alloc ? 0 : ISCSI_ALIGN( ds_len, ISCSI_ALIGN_SIZE );
 	const uint32_t len        = (uint32_t) ( sizeof(struct iscsi_bhs_packet) + pkt_ds_len );
 
 	iscsi_pdu *pdu = malloc( sizeof(struct iscsi_pdu) );
@@ -2916,7 +2928,7 @@ static iscsi_pdu *iscsi_connection_pdu_create(iscsi_connection *conn, const uint
 	pdu->cmd_sn                  = 0UL;
 	pdu->recv_pos                = 0;
 
-	if ( pkt_ds_len != 0UL ) {
+	if ( pkt_ds_len > ds_len ) {
 		memset( (((uint8_t *) pdu->ds_cmd_data) + ds_len), 0, (pkt_ds_len - ds_len) );
 	}
 
@@ -2963,12 +2975,17 @@ static iscsi_bhs_packet *iscsi_connection_pdu_resize(iscsi_pdu *pdu, const uint 
 		logadd( LOG_ERROR, "iscsi_connection_pdu_resize: Invalid AHS or DataSegment packet size" );
 		return NULL;
 	}
+	if ( pdu->ds_len != 0 && pdu->ds_cmd_data == NULL ) {
+		// If you really ever need this, handle it properly below (old_len, no copying, etc.)
+		logadd( LOG_ERROR, "iscsi_connection_pdu_resize: Cannot resize PDU with virtual DS" );
+		return NULL;
+	}
 
 	if ( (ahs_len != pdu->ahs_len) || (ds_len != pdu->ds_len) ) {
 		iscsi_bhs_packet *bhs_pkt;
 		const uint32_t pkt_ds_len = ISCSI_ALIGN(ds_len, ISCSI_ALIGN_SIZE);
-		const uint32_t old_len    = (uint32_t) (sizeof(struct iscsi_bhs_packet) + (uint32_t) pdu->ahs_len + ISCSI_ALIGN(pdu->ds_len, ISCSI_ALIGN_SIZE));
-		const uint32_t new_len    = (uint32_t) (sizeof(struct iscsi_bhs_packet) + (uint32_t) ahs_len + pkt_ds_len);
+		const size_t old_len    = (sizeof(struct iscsi_bhs_packet) + (uint32_t) pdu->ahs_len + ISCSI_ALIGN(pdu->ds_len, ISCSI_ALIGN_SIZE));
+		const size_t new_len    = (sizeof(struct iscsi_bhs_packet) + (uint32_t) ahs_len + pkt_ds_len);
 
 		if ( new_len > old_len ) {
 			bhs_pkt = realloc( pdu->bhs_pkt, new_len );
@@ -3020,7 +3037,8 @@ static bool iscsi_connection_pdu_write(iscsi_connection *conn, iscsi_pdu *pdu)
 
 	// During allocation we already round up to ISCSI_ALIGN_SIZE, but store the requested size in the ds_len
 	// member, so it's safe to round up here before sending, the accessed memory will be valid and zeroed
-	const size_t len = (sizeof(struct iscsi_bhs_packet) + pdu->ahs_len + ISCSI_ALIGN(pdu->ds_len, ISCSI_ALIGN_SIZE));
+	const size_t len = (sizeof(struct iscsi_bhs_packet) + pdu->ahs_len
+		+ (pdu->ds_cmd_data == NULL ? 0 : ISCSI_ALIGN(pdu->ds_len, ISCSI_ALIGN_SIZE)));
 	const ssize_t rc = sock_sendAll( conn->client->sock, pdu->bhs_pkt, len, ISCSI_CONNECT_SOCKET_WRITE_RETRIES );
 
 	iscsi_connection_pdu_destroy( pdu );
@@ -3090,7 +3108,7 @@ static int iscsi_connection_handle_reject(iscsi_connection *conn, iscsi_pdu *pdu
 	pdu->flags |= ISCSI_PDU_FLAGS_REJECTED;
 
 	const uint32_t ds_len   = (uint32_t) sizeof(struct iscsi_bhs_packet) + ((uint32_t) pdu->bhs_pkt->total_ahs_len << 2UL);
-	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, ds_len );
+	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, ds_len, false );
 
 	if ( response_pdu == NULL ) {
 		logadd( LOG_ERROR, "iscsi_connection_handle_reject: Out of memory while allocating iSCSI reject response PDU" );
@@ -3206,7 +3224,7 @@ static int iscsi_connection_pdu_header_handle_login_req(iscsi_connection *conn, 
 	if ( pdu->ds_len > ISCSI_DEFAULT_RECV_DS_LEN )
 		return iscsi_connection_handle_reject( conn, pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
 
-	iscsi_pdu *login_response_pdu = iscsi_connection_pdu_create( conn, 8192 );
+	iscsi_pdu *login_response_pdu = iscsi_connection_pdu_create( conn, 8192, false );
 
 	if ( login_response_pdu == NULL )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
@@ -3383,7 +3401,7 @@ static int iscsi_connection_pdu_header_handle_logout_req(iscsi_connection *conn,
 	if ( (conn->session != NULL) && (conn->session->type == ISCSI_SESSION_TYPE_DISCOVERY) && (logout_req_pkt->reason_code != ISCSI_LOGOUT_REQ_REASON_CODE_CLOSE_SESSION) )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 
-	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, 0UL );
+	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, 0UL, false );
 
 	if ( response_pdu == NULL ) {
 		logadd( LOG_ERROR, "iscsi_connection_pdu_header_handle_logout_req: Out of memory while allocating iSCSI logout response PDU" );
@@ -3459,7 +3477,7 @@ static int iscsi_connection_pdu_header_handle(iscsi_connection *conn, iscsi_pdu 
 		return iscsi_connection_pdu_header_handle_login_req( conn, pdu );
 
 	if ( ((conn->flags & ISCSI_CONNECT_FLAGS_FULL_FEATURE) == 0) && (conn->state == ISCSI_CONNECT_STATE_RUNNING) ) {
-		iscsi_pdu *login_response_pdu = iscsi_connection_pdu_create( conn, 0UL );
+		iscsi_pdu *login_response_pdu = iscsi_connection_pdu_create( conn, 0UL, false );
 
 		if ( login_response_pdu == NULL )
 			return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
@@ -3540,7 +3558,7 @@ static int iscsi_connection_pdu_data_handle_nop_out(iscsi_connection *conn, iscs
 	if ( init_task_tag == 0xFFFFFFFFUL )
 		return ISCSI_CONNECT_PDU_READ_OK;
 
-	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, ds_len );
+	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, ds_len, false );
 
 	if ( response_pdu == NULL ) {
 		logadd( LOG_ERROR, "iscsi_connection_pdu_data_handle_nop_out: Out of memory while allocating iSCSI NOP-In response PDU" );
@@ -3607,7 +3625,6 @@ static int iscsi_connection_pdu_data_handle_scsi_cmd(iscsi_connection *conn, isc
 
 	if ( (task->scsi_task.flags & ISCSI_SCSI_TASK_FLAGS_XFER_READ) != 0 ) {
 		task->scsi_task.buf = NULL;
-		task->scsi_task.pos = 0UL;
 		task->scsi_task.len = task->scsi_task.xfer_len;
 	}
 	iscsi_scsi_lun_task_run( &task->scsi_task, pdu );
@@ -3909,7 +3926,7 @@ static int iscsi_connection_pdu_data_handle_text_req(iscsi_connection *conn, isc
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 	}
 
-	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, 8192 );
+	iscsi_pdu *response_pdu = iscsi_connection_pdu_create( conn, 8192, false );
 
 	if ( response_pdu == NULL ) {
 		logadd( LOG_ERROR, "iscsi_connection_pdu_data_handle_text_req: Out of memory while allocating iSCSI text response PDU" );
@@ -4087,7 +4104,7 @@ static int iscsi_connection_pdu_read(iscsi_connection *conn)
 		switch ( conn->pdu_recv_state ) {
 			case ISCSI_CONNECT_PDU_RECV_STATE_WAIT_PDU_READY : {
 				assert( conn->pdu_processing == NULL );
-				conn->pdu_processing = iscsi_connection_pdu_create( conn, 0UL );
+				conn->pdu_processing = iscsi_connection_pdu_create( conn, 0UL, false );
 
 				if ( conn->pdu_processing == NULL )
 					return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
@@ -4223,7 +4240,7 @@ void iscsi_connection_handle(dnbd3_client_t *client, const dnbd3_request_t *requ
 		return;
 	}
 
-	conn->pdu_processing = iscsi_connection_pdu_create( conn, 0UL );
+	conn->pdu_processing = iscsi_connection_pdu_create( conn, 0UL, false );
 
 	if ( conn->pdu_processing == NULL ) {
 		iscsi_connection_destroy( conn );

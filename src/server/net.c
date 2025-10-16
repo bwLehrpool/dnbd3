@@ -26,6 +26,7 @@
 #include "rpc.h"
 #include "altservers.h"
 #include "reference.h"
+#include "sendfile.h"
 
 #include <dnbd3/shared/sockhelper.h>
 #include <dnbd3/shared/timing.h>
@@ -35,14 +36,6 @@
 #include <assert.h>
 #include <netinet/tcp.h>
 
-#ifdef __linux__
-#include <sys/sendfile.h>
-#endif
-#ifdef __FreeBSD__
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/uio.h>
-#endif
 #include <jansson.h>
 #include <inttypes.h>
 #include <stdatomic.h>
@@ -51,8 +44,6 @@
 static dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 static int _num_clients = 0;
 static pthread_mutex_t _clients_lock;
-
-static char nullbytes[500];
 
 static atomic_uint_fast64_t totalBytesSent = 0;
 
@@ -131,21 +122,6 @@ static inline bool send_reply(int sock, dnbd3_reply_t *reply, const void *payloa
 		}
 	}
 	return true;
-}
-
-/**
- * Send given amount of null bytes. The caller has to acquire the sendMutex first.
- */
-static inline bool sendPadding( const int fd, uint32_t bytes )
-{
-	ssize_t ret;
-	while ( bytes >= sizeof(nullbytes) ) {
-		ret = sock_sendAll( fd, nullbytes, sizeof(nullbytes), 2 );
-		if ( ret <= 0 )
-			return false;
-		bytes -= (uint32_t)ret;
-	}
-	return sock_sendAll( fd, nullbytes, bytes, 2 ) == (ssize_t)bytes;
 }
 
 void net_init()
@@ -408,74 +384,33 @@ void* net_handleNewConnection(void *clientPtr)
 				if ( lock ) mutex_lock( &client->sendMutex );
 				// Send reply header
 				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
+					logadd( LOG_DEBUG1, "Sending CMD_GET_BLOCK reply header to %s failed (errno=%d)", client->hostName, errno );
 					if ( lock ) mutex_unlock( &client->sendMutex );
-					logadd( LOG_DEBUG1, "Sending CMD_GET_BLOCK reply header to %s failed", client->hostName );
 					goto exit_client_cleanup;
 				}
 
-				if ( request.size != 0 ) {
-					// Send payload if request length > 0
-					size_t done = 0;
-					off_t foffset = (off_t)offset;
-					size_t realBytes;
-					if ( offset + request.size <= image->realFilesize ) {
-						realBytes = request.size;
-					} else {
-						realBytes = (size_t)(image->realFilesize - offset);
+				const size_t realBytes = offset + request.size <= image->realFilesize
+					? request.size : (image->realFilesize - offset);
+				bool ret = sendfile_all( image_file, client->sock, offset, realBytes );
+				if ( !ret ) {
+					const int err = errno;
+
+					if ( lock ) mutex_unlock( &client->sendMutex );
+					if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
+							&& err != EAGAIN && err != EWOULDBLOCK ) {
+						logadd( LOG_DEBUG1, "sendfile to %s failed (%d bytes, errno=%d)",
+								client->hostName, (int)realBytes, err );
 					}
-					while ( done < realBytes ) {
-						// TODO: Should we consider EOPNOTSUPP on BSD for sendfile and fallback to read/write?
-						// Linux would set EINVAL or ENOSYS instead, which it unfortunately also does for a couple of other failures :/
-						// read/write would kill performance anyways so a fallback would probably be of little use either way.
-#ifdef DNBD3_SERVER_AFL
-						char buf[1000];
-						size_t cnt = realBytes - done;
-						if ( cnt > 1000 ) {
-							cnt = 1000;
-						}
-						const ssize_t sent = pread( image_file, buf, cnt, foffset );
-						if ( sent > 0 ) {
-							//write( client->sock, buf, sent ); // This is not verified in any way, so why even do it...
-						} else {
-							const int err = errno;
-#elif defined(__linux__)
-						const ssize_t sent = sendfile( client->sock, image_file, &foffset, realBytes - done );
-						if ( sent <= 0 ) {
-							const int err = errno;
-#elif defined(__FreeBSD__)
-						off_t sent;
-						const int ret = sendfile( image_file, client->sock, foffset, realBytes - done, NULL, &sent, 0 );
-						if ( ret == -1 || sent == 0 ) {
-							const int err = errno;
-							if ( ret == -1 ) {
-								if ( err == EAGAIN || err == EINTR ) { // EBUSY? manpage doesn't explicitly mention *sent here.. But then again we dont set the according flag anyways
-									done += sent;
-									continue;
-								}
-								sent = -1;
-							}
-#endif
-							if ( lock ) mutex_unlock( &client->sendMutex );
-							if ( sent == -1 ) {
-								if ( err != EPIPE && err != ECONNRESET && err != ESHUTDOWN
-										&& err != EAGAIN && err != EWOULDBLOCK ) {
-									logadd( LOG_DEBUG1, "sendfile to %s failed (image to net. sent %d/%d, errno=%d)",
-											client->hostName, (int)done, (int)realBytes, err );
-								}
-								if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
-									logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
-									image->problem.read = true;
-								}
-							}
-							goto exit_client_cleanup;
-						}
-						done += sent;
+					if ( err == EBADF || err == EFAULT || err == EINVAL || err == EIO ) {
+						logadd( LOG_INFO, "Disabling %s:%d", image->name, image->rid );
+						image->problem.read = true;
 					}
-					if ( request.size > (uint32_t)realBytes ) {
-						if ( !sendPadding( client->sock, request.size - (uint32_t)realBytes ) ) {
-							if ( lock ) mutex_unlock( &client->sendMutex );
-							goto exit_client_cleanup;
-						}
+					goto exit_client_cleanup;
+				}
+				if ( request.size > (uint32_t)realBytes ) {
+					if ( !sock_sendPadding( client->sock, request.size - (uint32_t)realBytes ) ) {
+						if ( lock ) mutex_unlock( &client->sendMutex );
+						goto exit_client_cleanup;
 					}
 				}
 				if ( lock ) mutex_unlock( &client->sendMutex );

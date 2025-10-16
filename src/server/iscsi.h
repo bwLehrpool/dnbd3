@@ -5897,8 +5897,8 @@ typedef struct iscsi_scsi_task {
 	/// Output buffer.
 	uint8_t *buf;
 
-	/// Position of buffer in bytes.
-	uint32_t pos;
+	/// Offset in bytes in image for DATA-in command.
+	size_t file_offset;
 
 	/// Length of buffer in bytes.
 	uint32_t len;

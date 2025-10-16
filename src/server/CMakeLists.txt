@@ -54,6 +54,7 @@ set(DNBD3_SERVER_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/net.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/reference.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/rpc.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/sendfile.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/server.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/threadpool.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/uplink.c
@@ -72,6 +73,7 @@ set(DNBD3_SERVER_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/reference.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/reftypes.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/sendfile.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/server.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/threadpool.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/uplink.h
