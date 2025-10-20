@@ -184,17 +184,21 @@ void* net_handleNewConnection(void *clientPtr)
 			if ( ((char*)&request)[0] == 'G' || ((char*)&request)[0] == 'P' ) {
 				// Close enough...
 				rpc_sendStatsJson( client->sock, &client->host, &request, ret );
-			} else if ( true /* check opcode ... */ ) {
-				initClientStruct( client );
-				if ( !addToList( client ) ) {
-					freeClientStruct( client );
-					logadd( LOG_WARNING, "Could not add new iSCSI client to list when connecting" );
+			} else if ( ((char*)&request)[0] == 0x43 ) { // Login opcode 0x03 + immediate bit (0x40) set
+				if ( !_iScsiServer ) {
+					logadd( LOG_INFO, "Received iSCSI login request from %s, but iSCSI server is not enabled", client->hostName );
 				} else {
-					iscsi_connection_handle( client, &request, ret );
-					goto exit_client_cleanup;
+					initClientStruct( client );
+					if ( !addToList( client ) ) {
+						freeClientStruct( client );
+						logadd( LOG_WARNING, "Could not add new iSCSI client to list when connecting" );
+					} else {
+						iscsi_connection_handle( client, &request, ret );
+						goto exit_client_cleanup;
+					}
 				}
 			} else {
-				logadd( LOG_DEBUG1, "Magic in client handshake incorrect" );
+				logadd( LOG_DEBUG1, "Magic in client handshake unknown" );
 			}
 			goto fail_preadd;
 		}

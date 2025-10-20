@@ -337,7 +337,7 @@ extern atomic_int _autoFreeDiskSpaceDelay;
  * Specifies if the iSCSI server should be initialized, enabled
  * and used upon start of DNBD3 server.
  */
-extern atomic_bool _iSCSIServer;
+extern atomic_bool _iScsiServer;
 
 /**
  * When handling a client request, this sets the maximum amount
