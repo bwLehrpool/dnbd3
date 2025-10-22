@@ -1470,10 +1470,10 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_inquiry_data_packet {
 #define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_ISCSI     0x05
 
 /// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: First bit of the four bits.
-#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT 0
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT 4
 
 /// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: Last bit of the four bits.
-#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT  ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT) + 4 - 1)
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT  ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT) + 8 - 1)
 
 /// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data protocol identifier: Bit mask.
 #define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_MASK      (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PROTOCOL_ID_LAST_BIT))
@@ -1494,10 +1494,10 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_inquiry_data_packet {
 #define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_UTF8         0x03
 
 /// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: First bit of the four bits.
-#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT    4
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT    0
 
 /// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: Last bit of the four bits.
-#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT     ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT) + 8 - 1)
+#define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT     ((ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT) + 4 - 1)
 
 /// iSCSI SCSI Vital Product Data (VPD) Page Designation Descriptor Inquiry data code set: Bit mask.
 #define ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_MASK         (ISCSI_BITS_GET_MASK(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_FIRST_BIT, ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_LAST_BIT))
@@ -5897,6 +5897,9 @@ typedef struct iscsi_scsi_task {
 	/// Output buffer.
 	uint8_t *buf;
 
+	/// Whether output buffer os owned by this struct and must be freed on destroy
+	bool must_free;
+
 	/// Offset in bytes in image for DATA-in command.
 	size_t file_offset;
 
@@ -6140,9 +6143,6 @@ typedef struct iscsi_pdu iscsi_pdu;
 
 /// iSCSI connection state: Exiting.
 #define ISCSI_CONNECT_STATE_EXITING 2
-
-/// iSCSI connection state: Invalid.
-#define ISCSI_CONNECT_STATE_EXITED  3
 
 
 /// Number of attempts for writing to iSCSI connection socket.

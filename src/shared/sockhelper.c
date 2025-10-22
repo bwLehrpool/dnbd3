@@ -435,7 +435,7 @@ ssize_t sock_recv(const int sock, void *buffer, const size_t len)
 		done += ret;
 	}
 	if ( done == 0 ) return ret;
-	return done;
+	return (ssize_t)done;
 }
 
 bool sock_sendPadding(const int fd, uint32_t bytes)
