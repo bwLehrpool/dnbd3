@@ -104,22 +104,34 @@ static inline bool recv_request_payload(int sock, uint32_t size, serialized_buff
 }
 
 /**
- * Send reply with optional payload. payload can be null. The caller has to
- * acquire the sendMutex first.
+ * Send reply with optional payload. payload can be null.
  */
-static inline bool send_reply(int sock, dnbd3_reply_t *reply, const void *payload)
+static bool send_reply(dnbd3_client_t *client, dnbd3_reply_t *reply, const void *payload, const bool lock)
 {
-	const uint32_t size = reply->size;
+	const uint32_t size = reply->size; // Copy because of fixup_reply()
+
 	fixup_reply( *reply );
-	if ( sock_sendAll( sock, reply, sizeof(dnbd3_reply_t), 1 ) != sizeof(dnbd3_reply_t) ) {
+	if ( lock ) {
+		mutex_lock( &client->sendMutex );
+	}
+	if ( sock_sendAll( client->sock, reply, sizeof(dnbd3_reply_t), 1 ) != sizeof(dnbd3_reply_t) ) {
+		if ( lock ) {
+			mutex_unlock( &client->sendMutex );
+		}
 		logadd( LOG_DEBUG1, "Sending reply header to client failed" );
 		return false;
 	}
 	if ( size != 0 && payload != NULL ) {
-		if ( sock_sendAll( sock, payload, size, 1 ) != (ssize_t)size ) {
+		if ( sock_sendAll( client->sock, payload, size, 1 ) != (ssize_t)size ) {
+			if ( lock ) {
+				mutex_unlock( &client->sendMutex );
+			}
 			logadd( LOG_DEBUG1, "Sending payload of %"PRIu32" bytes to client failed", size );
 			return false;
 		}
+	}
+	if ( lock ) {
+		mutex_unlock( &client->sendMutex );
 	}
 	return true;
 }
@@ -311,7 +323,7 @@ void* net_handleNewConnection(void *clientPtr)
 					serializer_put_uint64( &payload, image->virtualFilesize );
 					reply.cmd = CMD_SELECT_IMAGE;
 					reply.size = serializer_get_written_length( &payload );
-					if ( !send_reply( client->sock, &reply, &payload ) ) {
+					if ( !send_reply( client, &reply, &payload, false ) ) {
 						bOk = false;
 					}
 				}
@@ -330,7 +342,8 @@ void* net_handleNewConnection(void *clientPtr)
 		while ( recv_request_header( client->sock, &request ) ) {
 			if ( _shutdown ) break;
 			if ( likely ( request.cmd == CMD_GET_BLOCK ) ) {
-
+				// since the relayed count can only increase in this very loop, it is safe to check this here once
+				const bool lock = client->relayedCount > 0;
 				const uint64_t offset = request.offset_small; // Copy to full uint64 to prevent repeated masking
 				reply.handle = request.handle;
 				if ( unlikely( offset >= image->virtualFilesize ) ) {
@@ -338,7 +351,7 @@ void* net_handleNewConnection(void *clientPtr)
 					logadd( LOG_WARNING, "Client %s requested non-existent block", client->hostName );
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
-					send_reply( client->sock, &reply, NULL );
+					send_reply( client, &reply, NULL, lock );
 					continue;
 				}
 				if ( unlikely( offset + request.size > image->virtualFilesize ) ) {
@@ -346,7 +359,17 @@ void* net_handleNewConnection(void *clientPtr)
 					logadd( LOG_WARNING, "Client %s requested data block that extends beyond image size", client->hostName );
 					reply.size = 0;
 					reply.cmd = CMD_ERROR;
-					send_reply( client->sock, &reply, NULL );
+					send_reply( client, &reply, NULL, lock );
+					continue;
+				}
+				if ( unlikely( offset >= image->realFilesize ) ) {
+					// Shortcut - only virtual bytes (padding)
+					reply.cmd = CMD_GET_BLOCK;
+					reply.size = request.size;
+					if ( lock ) mutex_lock( &client->sendMutex );
+					send_reply( client, &reply, NULL, false );
+					sock_sendPadding( client->sock, request.size );
+					if ( lock ) mutex_unlock( &client->sendMutex );
 					continue;
 				}
 
@@ -384,7 +407,6 @@ void* net_handleNewConnection(void *clientPtr)
 				reply.size = request.size;
 
 				fixup_reply( reply );
-				const bool lock = image->uplinkref != NULL;
 				if ( lock ) mutex_lock( &client->sendMutex );
 				// Send reply header
 				if ( send( client->sock, &reply, sizeof(dnbd3_reply_t), (request.size == 0 ? 0 : MSG_MORE) ) != sizeof(dnbd3_reply_t) ) {
@@ -436,22 +458,18 @@ void* net_handleNewConnection(void *clientPtr)
 				num = altservers_getListForClient( client, server_list, NUMBER_SERVERS );
 				reply.cmd = CMD_GET_SERVERS;
 				reply.size = (uint32_t)( num * sizeof(dnbd3_server_entry_t) );
-				mutex_lock( &client->sendMutex );
-				send_reply( client->sock, &reply, server_list );
-				mutex_unlock( &client->sendMutex );
-				goto set_name;
+				if ( !send_reply( client, &reply, server_list, true ) ) {
+					logadd( LOG_DEBUG1, "Sending CMD_GET_SERVERS reply to %s failed.", client->hostName );
+					goto exit_client_cleanup;
+				}
 				break;
 
 			case CMD_KEEPALIVE:
 				reply.cmd = CMD_KEEPALIVE;
 				reply.size = 0;
-				mutex_lock( &client->sendMutex );
-				send_reply( client->sock, &reply, NULL );
-				mutex_unlock( &client->sendMutex );
-set_name: ;
-				if ( !hasName ) {
-					hasName = true;
-					setThreadName( client->hostName );
+				if ( !send_reply( client, &reply, NULL, true ) ) {
+					logadd( LOG_DEBUG1, "Sending CMD_KEEPALIVE reply to %s failed.", client->hostName );
+					goto exit_client_cleanup;
 				}
 				break;
 
@@ -464,14 +482,18 @@ set_name: ;
 				mutex_lock( &client->sendMutex );
 				if ( image->crc32 == NULL ) {
 					reply.size = 0;
-					send_reply( client->sock, &reply, NULL );
+					bOk = send_reply( client, &reply, NULL, false );
 				} else {
 					const uint32_t size = reply.size = (uint32_t)( (IMGSIZE_TO_HASHBLOCKS(image->realFilesize) + 1) * sizeof(uint32_t) );
-					send_reply( client->sock, &reply, NULL );
-					send( client->sock, &image->masterCrc32, sizeof(uint32_t), MSG_MORE );
-					send( client->sock, image->crc32, size - sizeof(uint32_t), 0 );
+					bOk = send_reply( client, &reply, NULL, false );
+					bOk = bOk && send( client->sock, &image->masterCrc32, sizeof(uint32_t), MSG_MORE ) == sizeof(uint32_t);
+					bOk = bOk && send( client->sock, image->crc32, size - sizeof(uint32_t), 0 ) == size - sizeof(uint32_t);
 				}
 				mutex_unlock( &client->sendMutex );
+				if ( !bOk ) {
+					logadd( LOG_DEBUG1, "Sending CMD_GET_CRC32 reply to %s failed.", client->hostName );
+					goto exit_client_cleanup;
+				}
 				break;
 
 			default:
@@ -479,6 +501,10 @@ set_name: ;
 				break;
 
 			} // end switch
+			if ( !hasName ) {
+				hasName = true;
+				setThreadName( client->hostName );
+			}
 		} // end loop
 	} // end bOk
 exit_client_cleanup: ;
@@ -721,11 +747,11 @@ static void uplinkCallback(void *data, uint64_t handle, uint64_t start UNUSED, u
 		.size = length,
 	};
 	mutex_lock( &client->sendMutex );
-	send_reply( client->sock, &reply, buffer );
+	send_reply( client, &reply, buffer, false );
 	if ( buffer == NULL ) {
 		shutdown( client->sock, SHUT_RDWR );
 	}
-	client->relayedCount--;
 	mutex_unlock( &client->sendMutex );
+	client->relayedCount--;
 }
 
