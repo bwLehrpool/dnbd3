@@ -41,6 +41,8 @@
 #include <stdatomic.h>
 #include <signal.h>
 
+#include <dnbd3/afl.h>
+
 static dnbd3_client_t *_clients[SERVER_MAX_CLIENTS];
 static int _num_clients = 0;
 static pthread_mutex_t _clients_lock;
@@ -56,9 +58,7 @@ static void uplinkCallback(void *data, uint64_t handle, uint64_t start, uint32_t
 static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 {
 	ssize_t ret, fails = 0;
-#ifdef DNBD3_SERVER_AFL
-	sock = 0;
-#endif
+
 	// Read request header from socket
 	while ( ( ret = recv( sock, request, sizeof(*request), MSG_WAITALL ) ) != sizeof(*request) ) {
 		if ( errno == EINTR && ++fails < 10 ) continue;
@@ -83,9 +83,6 @@ static inline bool recv_request_header(int sock, dnbd3_request_t *request)
 
 static inline bool recv_request_payload(int sock, uint32_t size, serialized_buffer_t *payload)
 {
-#ifdef DNBD3_SERVER_AFL
-	sock = 0;
-#endif
 	if ( size == 0 ) {
 		logadd( LOG_ERROR, "Called recv_request_payload() to receive 0 bytes" );
 		return false;
@@ -94,8 +91,9 @@ static inline bool recv_request_payload(int sock, uint32_t size, serialized_buff
 		logadd( LOG_ERROR, "Called recv_request_payload() for more bytes than the passed buffer could hold!" );
 		return false;
 	}
-	if ( sock_recv( sock, payload->buffer, size ) != (ssize_t)size ) {
-		logadd( LOG_DEBUG1, "Could not receive request payload of length %d\n", (int)size );
+	const ssize_t ret = sock_recv( sock, payload->buffer, size );
+	if ( ret != (ssize_t)size ) {
+		logadd( LOG_DEBUG1, "Could not receive request payload of length %d (got %d, errno %d)\n", (int)size, (int)ret, errno );
 		return false;
 	}
 	// Prepare payload buffer for reading
@@ -179,11 +177,7 @@ void* net_handleNewConnection(void *clientPtr)
 		}
 	}
 	do {
-#ifdef DNBD3_SERVER_AFL
-		const int ret = (int)recv( 0, &request, sizeof(request), MSG_WAITALL );
-#else
 		const int ret = (int)recv( client->sock, &request, sizeof(request), MSG_WAITALL );
-#endif
 		// It's expected to be a real dnbd3 client
 		// Check request for validity. This implicitly dictates that all HTTP requests are more than 24 bytes...
 		if ( ret != (int)sizeof(request) ) {

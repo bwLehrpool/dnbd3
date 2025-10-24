@@ -11,6 +11,11 @@ find_package(Libatomic REQUIRED)
 # add compile option to get POLLRDHUP support for signals
 add_definitions(-D_GNU_SOURCE)
 
+if(DNBD3_SERVER_AFL)
+    message(STATUS "Building dnbd3-shared with AFL support")
+    add_definitions(-DDNBD3_SERVER_AFL)
+endif(DNBD3_SERVER_AFL)
+
 set(DNBD3_SHARED_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/crc32.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/fdsignal.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/log.c

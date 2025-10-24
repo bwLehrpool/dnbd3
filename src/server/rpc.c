@@ -19,6 +19,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <dnbd3/afl.h>
+
 #if JANSSON_VERSION_HEX < 0x020600
 #define json_stringn_nocheck(a,b) json_string_nocheck(a)
 #endif

@@ -13,6 +13,8 @@
 
 #define MAXLISTEN 20
 
+#include <dnbd3/afl.h>
+
 struct _poll_list {
 	int count;
 	struct pollfd entry[MAXLISTEN];

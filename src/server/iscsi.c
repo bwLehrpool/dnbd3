@@ -52,6 +52,8 @@
 #define ISCSI_DEFAULT_DEVICE_ID 1
 #define ISCSI_DEFAULT_QUEUE_DEPTH 16
 
+#include <dnbd3/afl.h>
+
 /**
  * @file iscsi.c
  * @author Sebastian Vater
@@ -512,7 +514,6 @@ static int iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, iscsi_task *task
 		res_cnt  = (pos - xfer_len);
 		flags   |= ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_RES_OVERFLOW;
 	}
-	logadd( LOG_DEBUG1, "iscsi_task_xfer_scsi_data_in: pos=%lu, xfer_len=%lu, seg_len=%lu", pos, xfer_len, seg_len );
 	if ( xfer_len == 0UL )
 		return 0;
 

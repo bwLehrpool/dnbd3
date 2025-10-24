@@ -71,11 +71,6 @@
 #include <netinet/in.h>
 #endif
 
-#ifdef DNBD3_SERVER_AFL
-#define send(a,b,c,d) write(a,b,c)
-#define recv(a,b,c,d) read(a,b,c)
-#endif
-
 
 // ioctl
 #define DNBD3_MAGIC     'd'
@@ -161,7 +156,7 @@ typedef struct __attribute__((packed))
 	uint16_t cmd;             // 2byte
 	uint32_t size;            // 4byte
 	union {
-		struct {
+		struct __attribute__((packed)) {
 #ifdef DNBD3_LITTLE_ENDIAN
 			uint64_t offset_small:56;  // 7byte
 			uint8_t  hops;            // 1byte
