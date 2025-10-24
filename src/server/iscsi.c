@@ -441,8 +441,6 @@ static uint32_t iscsi_scsi_data_in_send(iscsi_connection *conn, iscsi_task *task
 
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->buf_offset, pos );
 
-	//memcpy( response_pdu->ds_cmd_data, (task->scsi_task.buf + pos), len );
-
 	iscsi_connection_pdu_write( conn, response_pdu );
 
 	if ( task->scsi_task.buf != NULL ) {
@@ -3310,9 +3308,6 @@ static int iscsi_connection_pdu_header_handle_scsi_cmd(iscsi_connection *conn, i
 
 	uint32_t exp_xfer_len = iscsi_get_be32(scsi_cmd_pkt->exp_xfer_len);
 
-	//task->scsi_task.buf         = (uint8_t *) pdu->ds_cmd_data;
-	//logadd( LOG_DEBUG1, "ds_Cmd_data gets assigned: %d", task->scsi_task.must_free );
-	//task->scsi_task.must_free   = false;
 	task->scsi_task.len         = (uint) (((uint8_t *) pdu->ds_cmd_data) - ((uint8_t *) pdu->bhs_pkt));
 	task->scsi_task.cdb         = &scsi_cmd_pkt->scsi_cdb;
 	task->scsi_task.xfer_len    = exp_xfer_len;
