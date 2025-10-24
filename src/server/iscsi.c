@@ -448,6 +448,13 @@ static uint32_t iscsi_scsi_data_in_send(iscsi_connection *conn, iscsi_task *task
 			// Set error
 			return data_sn;
 		}
+		if ( len % ISCSI_ALIGN_SIZE != 0 ) {
+			const size_t padding = ISCSI_ALIGN_SIZE - (len % ISCSI_ALIGN_SIZE);
+			if ( !sock_sendPadding( conn->client->sock, padding ) ) {
+				// Set error
+				return data_sn;
+			}
+		}
 	} else {
 		const off_t off = task->scsi_task.file_offset + pos;
 		size_t padding = 0;
