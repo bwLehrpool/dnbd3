@@ -6094,9 +6094,6 @@ typedef struct iscsi_pdu iscsi_pdu;
 #define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER_XCHG_NOT_ONCE (-4)
 
 
-/// iSCSI connection flags: Stopped.
-#define ISCSI_CONNECT_FLAGS_STOPPED         (1 << 0)
-
 /// iSCSI connection flags: Rejected.
 #define ISCSI_CONNECT_FLAGS_REJECTED        (1 << 1)
 

@@ -4211,7 +4211,7 @@ static int iscsi_connection_pdu_read(iscsi_connection *conn)
 				break;
 			}
 		}
-		if ( conn->state == ISCSI_CONNECT_STATE_EXITING ) {
+		if ( conn->state == ISCSI_CONNECT_STATE_EXITING || _shutdown ) {
 			return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 		}
 	} while ( prev_recv_state != conn->pdu_recv_state );
@@ -4264,8 +4264,6 @@ void iscsi_connection_handle(dnbd3_client_t *client, const dnbd3_request_t *requ
 	conn->id = ++CONN_ID;
 
 	while ( iscsi_connection_pdu_read( conn ) >= ISCSI_CONNECT_PDU_READ_OK ) {
-		if ( (conn->flags & ISCSI_CONNECT_FLAGS_STOPPED) != 0 )
-			break;
 	}
 
 	iscsi_connection_destroy( conn );
