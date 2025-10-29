@@ -627,7 +627,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_10 {
 	iscsi_scsi_cdb cdb;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Logical Block Address (LBA).
 	uint32_t lba;
@@ -653,7 +653,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_12 {
 	iscsi_scsi_cdb cdb;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Logical Block Address (LBA).
 	uint32_t lba;
@@ -679,7 +679,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_16 {
 	iscsi_scsi_cdb cdb;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Logical Block Address (LBA).
 	uint64_t lba;
@@ -842,7 +842,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_sense_6 {
 	iscsi_scsi_cdb cdb;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Page code and page control.
 	uint8_t page_code_control;
@@ -918,7 +918,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_sense_10 {
 	iscsi_scsi_cdb cdb;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Page code and page control.
 	uint8_t page_code_control;
@@ -1266,7 +1266,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_std_inquiry_data_packet {
 	int8_t services_flags;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Vendor identification.
 	uint8_t vendor_id[8];
@@ -1311,7 +1311,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_ext_inquiry_data_packet {
 	uint8_t vendor_spec[20];
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Reserved for future usage (always MUST be 0).
 	uint8_t reserved;
@@ -1591,7 +1591,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_inquiry_d
 	uint8_t protocol_id_code_set;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Reserved for future usage (always MUST be 0).
 	uint8_t reserved;
@@ -1897,7 +1897,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_ext_inquiry_data_pack
  */
 typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_block_limits_inquiry_data_packet {
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Maximum COMPARE AND WRITE length in logical blocks.
 	uint8_t max_cmp_write_len;
@@ -2036,7 +2036,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_block_dev_chars_inqui
 	uint8_t product_type;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Support flags.
 	uint8_t support_flags;
@@ -2297,7 +2297,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_service_action_in_16_parameter
 	uint32_t block_len;
 
 	/// Flags: RC_BASIS, P_TYPE and PROT_EN.
-	int8_t flags;
+	uint8_t flags;
 
 	/// P_I_EXPONENT and logical blocks per physical block exponent.
 	uint8_t exponents;
@@ -2380,7 +2380,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_6_parameter_header_
 	uint8_t medium_type;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Block descriptor length in bytes.
 	uint8_t block_desc_len;
@@ -2412,7 +2412,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_10_parameter_header
 	uint8_t medium_type;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Long Logical Block Address (LONGLBA).
 	uint8_t long_lba;
@@ -2739,7 +2739,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_read_write_err_reco
 	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Read retry count.
 	uint8_t read_retry_cnt;
@@ -2806,7 +2806,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_verify_err_recovery
 	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Verify retry count.
 	uint8_t verify_retry_cnt;
@@ -2869,7 +2869,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_caching_mode_page_d
 	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Retention priority.
 	uint8_t retention_pri;
@@ -2913,7 +2913,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_mode_page_d
 	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Queue flags.
 	int8_t queue_flags;
@@ -2945,7 +2945,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_ext_mode_pa
 	iscsi_scsi_mode_sense_mode_sub_page_data_packet mode_sub_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Initial command priority.
 	uint8_t init_cmd_pri;
@@ -2971,7 +2971,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_xor_ext_mode_page_d
 	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Reserved for future usage (always MUST be 0 for now).
 	uint8_t reserved;
@@ -3006,7 +3006,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_power_cond_mode_pag
 	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Idle and standby flags.
 	int8_t idle_standby_flags;
@@ -3053,7 +3053,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_info_exceptions_con
 	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Method Of Reporting Informational Exceptions (MRIE) flags.
 	uint8_t mrie;
@@ -3296,7 +3296,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cmd_packet {
 	uint8_t opcode;
 
 	/// Flags and Task Attributes.
-	int8_t flags_task;
+	uint8_t flags_task;
 
 	/// Reserved for future usage, MUST always be 0.
 	uint16_t reserved;
@@ -3570,7 +3570,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_response_packet {
 	uint8_t opcode;
 
 	/// Flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// This field contains the iSCSI service response.
 	uint8_t response;
@@ -3794,7 +3794,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_data_in_response_packet {
 	uint8_t opcode;
 
 	/// Incoming data flags. The fields StatSN, Status, and Residual Count only have meaningful content if the S bit is set to 1.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Rserved for future usage, always MUST be 0.
 	uint8_t reserved;
@@ -3937,7 +3937,7 @@ typedef struct __attribute__((packed)) iscsi_text_req_packet {
 	uint8_t opcode;
 
 	/// Text request flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Reserved for future usage, always MUST be 0.
 	uint16_t reserved;
@@ -4072,7 +4072,7 @@ typedef struct __attribute__((packed)) iscsi_text_response_packet {
 	uint8_t opcode;
 
 	/// Text response flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/// Reserved for future usage, always MUST be 0.
 	uint16_t reserved;
@@ -4359,7 +4359,7 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
 	uint8_t opcode;
 
 	/// Login request flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/**
 	 * @brief Version-max indicates the maximum version number supported.
@@ -4459,17 +4459,8 @@ typedef struct __attribute__((packed)) iscsi_login_req_packet {
 
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved2[2];
-
-	/**
-	 * @brief Data segment - Login Parameters in Text Request Format.
-	 *
-	 * The initiator MUST provide some basic parameters in order
-	 * to enable the target to determine if the initiator may use
-	 * the target's resources and the initial text parameters for the security exchange
-	 */
-	iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_login_req_packet;
-
+ASSERT_IS_BHS( iscsi_login_req_packet );
 
 /// Login response Next Stage (NSG) flags: SecurityNegotiation.
 #define ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_SECURITY_NEGOTIATION          0x0
@@ -4718,7 +4709,7 @@ typedef struct __attribute__((packed)) iscsi_login_response_packet {
 	uint8_t opcode;
 
 	/// Login response flags.
-	int8_t flags;
+	uint8_t flags;
 
 	/**
 	 * @brief This is the highest version number supported by the target.
@@ -5025,7 +5016,7 @@ typedef struct __attribute__((packed)) iscsi_logout_response_packet {
 	uint8_t opcode;
 
 	/// Reserved for future usage (must be always 0x80 for now).
-	int8_t flags;
+	uint8_t flags;
 
 	/// Response.
 	uint8_t response;
@@ -5175,7 +5166,7 @@ typedef struct __attribute__((packed)) iscsi_reject_packet {
 	uint8_t opcode;
 
 	/// Reserved for future usage (must be always 0x80 for now).
-	int8_t flags;
+	uint8_t flags;
 
 	/**
 	 * @brief Reject reason.
@@ -5284,7 +5275,7 @@ typedef struct __attribute__((packed)) iscsi_nop_out_packet {
 	uint8_t opcode;
 
 	/// Reserved for future usage (must be always 0x80 for now).
-	int8_t flags;
+	uint8_t flags;
 
 	/// Reserved for future usage, always MUST be 0.
 	uint16_t reserved;
@@ -5382,7 +5373,7 @@ typedef struct __attribute__((packed)) iscsi_nop_in_packet {
 	uint8_t opcode;
 
 	/// Reserved for future usage (must be always 0x80 for now).
-	int8_t flags;
+	uint8_t flags;
 
 	/// Reserved for future usage, always MUST be 0.
 	uint16_t reserved;
@@ -6064,9 +6055,6 @@ typedef struct iscsi_session {
 	/// MaxCmdSN.
 	uint32_t max_cmd_sn;
 
-	/// Current text Initiator Task Tag (ITT).
-	uint32_t current_text_init_task_tag;
-
 	/// Session options client sent in login request.
 	iscsi_session_options opts;
 } iscsi_session;
@@ -6094,26 +6082,8 @@ typedef struct iscsi_pdu iscsi_pdu;
 #define ISCSI_CONNECT_PDU_READ_ERR_LOGIN_PARAMETER_XCHG_NOT_ONCE (-4)
 
 
-/// iSCSI connection flags: Rejected.
-#define ISCSI_CONNECT_FLAGS_REJECTED        (1 << 1)
-
-/// iSCSI connection flags: Logged out.
-#define ISCSI_CONNECT_FLAGS_LOGGED_OUT      (1 << 2)
-
 /// iSCSI connection flags: Full feature.
 #define ISCSI_CONNECT_FLAGS_FULL_FEATURE    (1 << 3)
-
-/// iSCSI connection flags: CHAP authentication is disabled.
-#define ISCSI_CONNECT_FLAGS_CHAP_DISABLE    (1 << 4)
-
-/// iSCSI connection flags: CHAP authentication is required.
-#define ISCSI_CONNECT_FLAGS_CHAP_REQUIRE    (1 << 5)
-
-/// iSCSI connection flags: CHAP authentication is mutual.
-#define ISCSI_CONNECT_FLAGS_CHAP_MUTUAL     (1 << 6)
-
-/// iSCSI connection flags: Authenticated.
-#define ISCSI_CONNECT_FLAGS_AUTH            (1 << 7)
 
 /// iSCSI connection flags: Oustanding NOP.
 #define ISCSI_CONNECT_FLAGS_NOP_OUTSTANDING (1 << 8)
@@ -6132,13 +6102,13 @@ typedef struct iscsi_pdu iscsi_pdu;
 #define ISCSI_CONNECT_PDU_RECV_STATE_ERR            3
 
 
-/// iSCSI connection state: Invalid.
-#define ISCSI_CONNECT_STATE_INVALID 0
+/// iSCSI connection state: Fresh connection, no login yet.
+#define ISCSI_CONNECT_STATE_NEW 0
 
-/// iSCSI connection state: Running.
-#define ISCSI_CONNECT_STATE_RUNNING 1
+/// iSCSI connection state: Running as session type "normal".
+#define ISCSI_CONNECT_STATE_NORMAL_SESSION 1
 
-/// iSCSI connection state: Exiting.
+/// iSCSI connection state: Exiting, teardown of connection imminent.
 #define ISCSI_CONNECT_STATE_EXITING 2
 
 
@@ -6161,17 +6131,8 @@ typedef struct iscsi_connection {
 	/// Associated dnbd3 client
 	dnbd3_client_t *client;
 
-	/// Current PDU being processed.
-	iscsi_pdu *pdu_processing;
-
-	/// Login response PDU.
-	iscsi_pdu *login_response_pdu;
-
 	/// Internal connection identifier
 	int id;
-
-	/// iSCSI connection receiving state.
-	int pdu_recv_state;
 
 	/// iSCSI connection flags.
 	int flags;
@@ -6214,6 +6175,8 @@ typedef struct iscsi_task iscsi_task;
 /// iSCSI PDU flags: Rejected.
 #define ISCSI_PDU_FLAGS_REJECTED (1 << 0)
 
+/// iSCSI PDU will contain a small buffer for sending/receiving trivial PDUs with no/very small DS, and small AH
+#define ISCSI_INTERNAL_BUFFER_SIZE (2 * ISCSI_BHS_SIZE)
 
 /**
  * @brief This structure is used to partially read PDU data.
@@ -6232,9 +6195,6 @@ typedef struct iscsi_pdu {
 	/// iSCSI DataSegment (DS) packet data for fast access and is straight after BHS, AHS and header digest packet in memory.
 	iscsi_scsi_ds_cmd_data *ds_cmd_data;
 
-	/// iSCSI task handling this PDU.
-	iscsi_task *task;
-
 	/// Flags.
 	int flags;
 
@@ -6250,11 +6210,14 @@ typedef struct iscsi_pdu {
 	/// DS Buffer write pos when filling buffer for sending.
 	uint32_t ds_write_pos;
 
-	/// Read position in AHS + DS buffer (recv).
-	uint32_t recv_pos;
-
 	/// CmdSN.
 	uint32_t cmd_sn;
+
+	/// If we need a larger area than internal_buffer
+	void *big_alloc;
+
+	/// Used for smaller PDUs to avoid extra malloc/free
+	char internal_buffer[ISCSI_INTERNAL_BUFFER_SIZE];
 } iscsi_pdu;
 
 

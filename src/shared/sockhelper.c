@@ -440,7 +440,7 @@ ssize_t sock_recv(const int sock, void *buffer, const size_t len)
 	return (ssize_t)done;
 }
 
-bool sock_sendPadding(const int fd, uint32_t bytes)
+bool sock_sendPadding(const int fd, size_t bytes)
 {
 	static char nullbytes[512] = {0};
 

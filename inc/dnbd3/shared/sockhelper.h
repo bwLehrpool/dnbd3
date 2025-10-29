@@ -120,6 +120,6 @@ ssize_t sock_recv(const int sock, void *buffer, const size_t len);
 /**
  * Send a desired number of nullbytes to socket.
  */
-bool sock_sendPadding(int fd, uint32_t bytes);
+bool sock_sendPadding(int fd, size_t bytes);
 
 #endif /* SOCKHELPER_H_ */
