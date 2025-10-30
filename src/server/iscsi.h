@@ -314,20 +314,10 @@ static inline bool iscsi_is_pow2(const uint32_t value)
 
 
 /// iSCSI Default receive DataSegment (DS) size in bytes.
-#define ISCSI_DEFAULT_RECV_DS_LEN 131072UL
+#define ISCSI_DEFAULT_RECV_DS_LEN 16384UL
 
 /// iSCSI default maximum DataSegment receive length in bytes.
 #define ISCSI_DEFAULT_MAX_RECV_DS_LEN 524288UL
-
-
-/// iSCSI default maximum Ready To Transfer (R2T) active tasks.
-#define ISCSI_DEFAULT_MAX_R2T_PER_CONNECTION 4UL
-
-/// iSCSI default maximum DataSegment receive length in bytes.
-#define ISCSI_DEFAULT_MAX_DATA_IN_PER_CONNECTION 64UL
-
-/// iSCSI default maximum DataSegment send length in bytes.
-#define ISCSI_DEFAULT_MAX_DATA_OUT_PER_CONNECTION 16UL
 
 
 /// Current minimum iSCSI protocol version supported by this implementation.
@@ -2323,18 +2313,6 @@ typedef struct __attribute__((packed)) iscsi_scsi_report_luns_parameter_data_lun
 	/// Reserved for future usage (always MUST be 0 for now).
 	uint32_t reserved;
 } iscsi_scsi_report_luns_parameter_data_lun_list_packet;
-
-
-/**
- * @brief iSCSI SCSI command REPORT LUNS parameter data LUN entry packet data.
- *
- * This returns a single LUN entry of the
- * LUN list.
- */
-typedef struct __attribute__((packed)) iscsi_scsi_report_luns_parameter_data_lun_entry_packet {
-	/// Logical Unit Number (LUN).
-	uint64_t lun;
-} iscsi_scsi_report_luns_parameter_data_lun_entry_packet;
 
 
 /**
@@ -5326,9 +5304,6 @@ typedef struct __attribute__((packed)) iscsi_nop_out_packet {
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved2[2];
 
-	/// Optional header digest.
-	uint32_t hdr_digest;
-
 	/**
 	 * @brief DataSegment - Ping Data (optional).
 	 *
@@ -5338,9 +5313,6 @@ typedef struct __attribute__((packed)) iscsi_nop_out_packet {
 	 * for the DataSegmentLength and indicates the absence of ping data.
 	 */
 	iscsi_scsi_ds_cmd_data ds_ping_data;
-
-	/// Optional data digest.
-	uint32_t data_digest;
 } iscsi_nop_out_packet;
 
 
@@ -5425,73 +5397,9 @@ typedef struct __attribute__((packed)) iscsi_nop_in_packet {
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved3;
 
-	/// Optional header digest.
-	uint32_t hdr_digest;
-
 	/// DataSegment - Return Ping Data.
 	iscsi_scsi_ds_cmd_data ds_ping_data;
-
-	/// Optional data digest.
-	uint32_t data_digest;
 } iscsi_nop_in_packet;
-
-
-/// iSCSI SCSI transport ID protocol identifier: iSCSI.
-#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_ISCSI     0x05
-
-/// iSCSI SCSI transport ID protocol identifier: First bit of the four bits.
-#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT 0
-
-/// iSCSI SCSI transport ID protocol identifier: Last bit of the four bits.
-#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT  ((ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT) + 4 - 1)
-
-/// iSCSI SCSI transport ID protocol identifier: Bit mask.
-#define ISCSI_TRANSPORT_ID_PROTOCOL_ID_MASK      (ISCSI_BITS_GET_MASK(ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT, ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT))
-
-/// iSCSI SCSI transport ID protocol identifier: Extracts the protocol identifier bits.
-#define ISCSI_TRANSPORT_ID_GET_PROTOCOL_ID(x)    (ISCSI_BITS_GET((x), ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT, ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT))
-
-/// iSCSI SCSI transport ID protocol identifier: Stores into the protocol identifier bits.
-#define ISCSI_TRANSPORT_ID_PUT_PROTOCOL_ID(x)    (ISCSI_BITS_PUT((x), ISCSI_TRANSPORT_ID_PROTOCOL_ID_FIRST_BIT, ISCSI_TRANSPORT_ID_PROTOCOL_ID_LAST_BIT))
-
-/// iSCSI SCSI transport ID format.
-#define ISCSI_TRANSPORT_ID_FORMAT                0x01
-
-/// iSCSI SCSI transport ID format: First bit of the two bits.
-#define ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT      6
-
-/// iSCSI SCSI transport ID format: Last bit of the two bits.
-#define ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT       ((ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT) + 2 - 1)
-
-/// iSCSI SCSI transport ID format: Bit mask.
-#define ISCSI_TRANSPORT_ID_FORMAT_MASK           (ISCSI_BITS_GET_MASK(ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT, ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT))
-
-/// iSCSI SCSI transport ID format: Extracts the format bits.
-#define ISCSI_TRANSPORT_ID_GET_FORMAT(x)         (ISCSI_BITS_GET((x), ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT, ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT))
-
-/// iSCSI SCSI transport ID format: Stores into the format bits.
-#define ISCSI_TRANSPORT_ID_PUT_FORMAT(x)         (ISCSI_BITS_PUT((x), ISCSI_TRANSPORT_ID_FORMAT_FIRST_BIT, ISCSI_TRANSPORT_ID_FORMAT_LAST_BIT))
-
-
-/**
- * @brief iSCSI SCSI Transport ID structure.
- *
- * This structure handles the iSCSI SCSI transport
- * identifier data.
- */
-typedef struct __attribute__((packed)) iscsi_transport_id {
-	/// First 4 bits are protocol ID and last 2 bits are format.
-	uint8_t id;
-
-	/// Reserved for future usage (always MUST be 0).
-	uint8_t reserved;
-
-	/// Additional length of name.
-	uint16_t add_len;
-
-	/// Name.
-	uint8_t name[0];
-} iscsi_transport_id;
 
 
 /// Maximum length of a key according to iSCSI specifications.
@@ -5502,65 +5410,6 @@ typedef struct __attribute__((packed)) iscsi_transport_id {
 
 /// Maximum length of value for a normal key.
 #define ISCSI_TEXT_VALUE_MAX_LEN        8192U
-
-/// Value data shift value for key value alignment enforcement.
-#define ISCSI_TEXT_VALUE_ALIGN_SHIFT    4UL
-
-/// Value alignment size is a multiple of 16 bytes for a key value for having work space when changing string representation of integer values.
-#define ISCSI_TEXT_VALUE_ALIGN          (1UL << (ISCSI_TEXT_VALUE_ALIGN_SHIFT))
-
-
-/// iSCSI text key=value pair type: Invalid.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_INVALID         -1
-
-/// iSCSI text key=value pair type: Unspecified type.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_UNSPECIFIED      0
-
-/// iSCSI text key=value pair type: List.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_LIST             1
-
-/// iSCSI text key=value pair type: Numerical minimum.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_MIN          2
-
-/// iSCSI text key=value pair type: Numerical maximum.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_MAX          3
-
-/// iSCSI text key=value pair type: Numerical declarative.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_NUM_DECLARATIVE  4
-
-/// iSCSI text key=value pair type: Declarative.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_DECLARATIVE      5
-
-/// iSCSI text key=value pair type: Boolean OR.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_BOOL_OR          6
-
-/// iSCSI text key=value pair type: Boolean AND.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_TYPE_BOOL_AND         7
-
-
-/// iSCSI key value pair flags: Discovery ignored.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_DISCOVERY_IGNORE    (1 << 0)
-
-/// iSCSI key value pair flags: Multi negotiation.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_MULTI_NEGOTIATION   (1 << 1)
-
-/// iSCSI key value pair flags: Target declarative.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_TARGET_DECLARATIVE  (1 << 2)
-
-/// iSCSI key value pair flags: CHAP type.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_CHAP_TYPE           (1 << 3)
-
-/// iSCSI key value pair flags: Requires special handling.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_SPECIAL_HANDLING    (1 << 4)
-
-/// iSCSI key value pair flags: Use previous default value.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_PREVIOUS_VALUE  (1 << 5)
-
-/// iSCSI key value pair flags: Override with default value.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_OVERRIDE_DEFAULT    (1 << 6)
-
-/// iSCSI key value pair flags: Uses maximum value depending on secondary key.
-#define ISCSI_TEXT_KEY_VALUE_PAIR_FLAGS_USE_OTHER_MAX_VALUE (1 << 7)
 
 
 /**
@@ -5635,18 +5484,6 @@ typedef struct iscsi_key_value_pair_packet {
 	/// Discovery mode.
 	int discovery;
 } iscsi_key_value_pair_packet;
-
-/// iSCSI main global data flags: Allow duplicate ISIDs.
-#define ISCSI_GLOBALS_FLAGS_ISID_ALLOW_DUPLICATES (1 << 0)
-
-/// iSCSI main global data flags: CHAP authentication is disabled.
-#define ISCSI_GLOBALS_FLAGS_CHAP_DISABLE          (1 << 1)
-
-/// iSCSI main global data flags: CHAP authentication is required.
-#define ISCSI_GLOBALS_FLAGS_CHAP_REQUIRE          (1 << 2)
-
-/// iSCSI main global data flags: CHAP authentication is mutual.
-#define ISCSI_GLOBALS_FLAGS_CHAP_MUTUAL           (1 << 3)
 
 
 /// Read/write lock for iSCSI global vector. MUST be initialized with iscsi_create before any iSCSI functions are used.
@@ -5826,28 +5663,6 @@ typedef struct iscsi_key_value_pair_packet {
 
 
 
-/// iSCSI SCSI Persistent Reservation (PR) reservation type: Write exclusive.
-#define ISCSI_SCSI_PR_RESERVATION_TYPE_WRITE_EXCLUSIVE            0x01
-
-/// iSCSI SCSI Persistent Reservation (PR) reservation type: Exclusive access.
-#define ISCSI_SCSI_PR_RESERVATION_TYPE_EXCLUSIVE_ACCESS           0x03
-
-/// iSCSI SCSI Persistent Reservation (PR) reservation type: Write exclusive - registrants only.
-#define ISCSI_SCSI_PR_RESERVATION_TYPE_WRITE_EXCLUSIVE_REGS_ONLY  0x05
-
-/// iSCSI SCSI Persistent Reservation (PR) reservation type: Exclusive access - registrants only.
-#define ISCSI_SCSI_PR_RESERVATION_TYPE_EXCLUSIVE_ACCESS_REGS_ONLY 0x06
-
-/// iSCSI SCSI Persistent Reservation (PR) reservation type: Write exclusive - all registrants.
-#define ISCSI_SCSI_PR_RESERVATION_TYPE_WRITE_EXCLUSIVE_ALL_REGS   0x07
-
-/// iSCSI SCSI Persistent Reservation (PR) reservation type: Exclusive access - all registrants.
-#define ISCSI_SCSI_PR_RESERVATION_TYPE_EXCLUSIVE_ACCESS_ALL_REGS  0x08
-
-
-/// iSCSI SCSI Persistent Reservation (PR) reservation flags: SPC2 reserve.
-#define ISCSI_SCSI_PR_RESERVATION_FLAGS_SPC2_RESERVE (1L << 0L)
-
 
 /// iSCSI SCSI task run: Unknown.
 #define ISCSI_SCSI_TASK_RUN_UNKNOWN  -1
@@ -5855,18 +5670,9 @@ typedef struct iscsi_key_value_pair_packet {
 /// iSCSI SCSI task run: Completed.
 #define ISCSI_SCSI_TASK_RUN_COMPLETE  0
 
-/// iSCSI SCSI task run: Pending.
-#define ISCSI_SCSI_TASK_RUN_PENDING   1
-
 
 typedef struct iscsi_scsi_task iscsi_scsi_task;
 typedef struct iscsi_scsi_lun iscsi_scsi_lun;
-
-/// iSCSI SCSI task flags: Read.
-#define ISCSI_SCSI_TASK_FLAGS_XFER_READ  (1 << 0)
-
-/// iSCSI SCSI task flags: Write.
-#define ISCSI_SCSI_TASK_FLAGS_XFER_WRITE (1 << 1)
 
 
 /**
@@ -5897,17 +5703,17 @@ typedef struct iscsi_scsi_task {
 	/// Length of buffer in bytes.
 	uint32_t len;
 
+	/// Expected data transfer length (from iSCSI PDU field)
+	uint32_t exp_xfer_len;
+
 	/// Unique identifier for this task.
 	uint64_t id;
 
-	/// Flags.
-	int flags;
+	/// Whether the R bit was set in the iSCSI request (BHS).
+	bool is_read;
 
-	/// Transfer position in bytes.
-	uint32_t xfer_pos;
-
-	/// Transfer length in bytes.
-	uint32_t xfer_len;
+	/// Whether the W bit was set in the iSCSI request (BHS).
+	bool is_write;
 
 	/// Sense data length.
 	uint8_t sense_data_len;
@@ -6172,9 +5978,6 @@ typedef struct iscsi_connection {
 typedef struct iscsi_task iscsi_task;
 
 
-/// iSCSI PDU flags: Rejected.
-#define ISCSI_PDU_FLAGS_REJECTED (1 << 0)
-
 /// iSCSI PDU will contain a small buffer for sending/receiving trivial PDUs with no/very small DS, and small AH
 #define ISCSI_INTERNAL_BUFFER_SIZE (2 * ISCSI_BHS_SIZE)
 
@@ -6221,13 +6024,6 @@ typedef struct iscsi_pdu {
 } iscsi_pdu;
 
 
-/// iSCSI task flags: Ready To Transfer is active.
-#define ISCSI_TASK_FLAGS_R2T_ACTIVE (1 << 0)
-
-/// iSCSI task flags: Task is enqueued in SCSI layer.
-#define ISCSI_TASK_FLAGS_QUEUED     (1 << 1)
-
-
 /**
  * @brief This structure is used for iSCSI task management.
  *
@@ -6250,9 +6046,6 @@ typedef struct iscsi_task {
 	/// Unique identifier for this task.
 	uint64_t id;
 
-	/// Flags.
-	int flags;
-
 	/// LUN identifier associated with this task (always MUST be between 0 and 7), used for hot removal tracking.
 	int lun_id;
 
@@ -6261,12 +6054,6 @@ typedef struct iscsi_task {
 
 	/// Target Transfer Tag (TTT).
 	uint32_t target_xfer_tag;
-
-	/// Desired number of bytes completed.
-	uint32_t des_data_xfer_pos;
-
-	/// Desired data transfer length.
-	uint32_t des_data_xfer_len;
 
 	/// SCSI Data In Data Sequence Number (DataSN).
 	uint32_t data_sn;
