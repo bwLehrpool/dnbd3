@@ -38,10 +38,8 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <dnbd3/types.h>
-#include <pthread.h>
 
 #include "globals.h"
-#include "image.h"
 
 #if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 	 // GCC-compatible compiler, targeting x86/x86-64
@@ -216,26 +214,6 @@ static inline void iscsi_put_le64(uint8_t *data, const uint64_t value)
 #else
 #error "Unknown CPU endianness"
 #endif
-
-
-/**
- * @brief Checks whether a specified 32-bit integer value is a power of two.
- *
- * This function is used to determine
- * if shift operations can be used for
- * calculating instead of very slow
- * multiplication, division and modulo
- * operations.
- *
- * @param[in] value Value to check for a power of two.
- * @retval true Value is a power of two.
- * @retval false Value is NOT a power of two,
- * hence slow division is required.
- */
-static inline bool iscsi_is_pow2(const uint32_t value)
-{
-	return ((value & (value - 1UL)) == 0UL);
-}
 
 
 /// Determines the next offset after member b of struct a.
@@ -495,9 +473,6 @@ typedef struct __attribute__((packed)) iscsi_ahs_packet {
 
 	/// AHS-Specific.
 	uint8_t specific;
-
-	/// AHS-Specific data.
-	uint8_t data[0];
 } iscsi_ahs_packet;
 
 /**
@@ -553,7 +528,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb {
 	uint8_t opcode;
 
 	/// Additional op-code specific data.
-	uint8_t data[0];
+	uint8_t data[15];
 } iscsi_scsi_cdb;
 
 
@@ -571,7 +546,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_inquiry {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Logical Unit Number (LUN), CMMDT and EVPD.
 	uint8_t lun_flags;
@@ -594,7 +569,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_inquiry {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_6 {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Logical Block Address (LBA).
 	uint8_t lba[3];
@@ -614,7 +589,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_6 {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_10 {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Flags.
 	uint8_t flags;
@@ -640,7 +615,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_10 {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_12 {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Flags.
 	uint8_t flags;
@@ -666,7 +641,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_12 {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_16 {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Flags.
 	uint8_t flags;
@@ -702,7 +677,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_16 {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_report_luns {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Reserved for future usage (always MUST be 0 for now).
 	uint8_t reserved;
@@ -756,7 +731,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_report_luns {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_service_action_in_16 {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Service action.
 	uint8_t action;
@@ -829,7 +804,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_service_action_in_16 {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_sense_6 {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Flags.
 	uint8_t flags;
@@ -905,7 +880,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_sense_6 {
  */
 typedef struct __attribute__((packed)) iscsi_scsi_cdb_mode_sense_10 {
 	/// SCSI opcode.
-	iscsi_scsi_cdb cdb;
+	uint8_t opcode;
 
 	/// Flags.
 	uint8_t flags;
@@ -946,10 +921,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_ds_cmd_data {
 	uint16_t len;
 
 	/// The Sense Data contains detailed information about a CHECK CONDITION. SPC3 specifies the format and content of the Sense Data.
-	uint8_t sense_data[0];
-
-	/// Response Data.
-	uint8_t res_data[0];
+	uint8_t sense_data[];
 } iscsi_scsi_ds_cmd_data;
 
 
@@ -1452,7 +1424,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_inquiry_data_packet {
 	uint16_t alloc_len;
 
 	/// Parameters.
-	uint8_t params[0];
+	uint8_t params[];
 } iscsi_scsi_vpd_page_inquiry_data_packet;
 
 
@@ -1590,7 +1562,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_design_desc_inquiry_d
 	uint8_t len;
 
 	/// Designation descriptor.
-	uint8_t desc[0];
+	uint8_t desc[];
 } iscsi_scsi_vpd_page_design_desc_inquiry_data_packet;
 
 
@@ -2675,16 +2647,13 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_long_lba_parameter_
  *
  * This returns mode page specific data.
  */
-typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_page_data_packet {
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_page_data_header {
 	/// Page code and flags.
-	int8_t page_code_flags;
+	uint8_t page_code_flags;
 
 	/// Page length in bytes.
 	uint8_t page_len;
-
-	/// Mode parameters.
-	uint8_t params[0];
-} iscsi_scsi_mode_sense_mode_page_data_packet;
+} iscsi_scsi_mode_sense_mode_page_data_header;
 
 
 /**
@@ -2692,19 +2661,16 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_page_data_pack
  *
  * This returns mode sub page specific data.
  */
-typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_sub_page_data_packet {
+typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_sub_page_data_header {
 	/// Page code and flags.
-	int8_t page_code_flags;
+	uint8_t page_code_flags;
 
 	/// Sub page code.
 	uint8_t sub_page_code;
 
 	/// Page length in bytes.
 	uint16_t page_len;
-
-	/// Mode parameters.
-	uint8_t params[0];
-} iscsi_scsi_mode_sense_mode_sub_page_data_packet;
+} iscsi_scsi_mode_sense_mode_sub_page_data_header;
 
 
 /**
@@ -2714,7 +2680,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_mode_sub_page_data_
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_read_write_err_recovery_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -2746,7 +2712,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_read_write_err_reco
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_disconnect_reconnect_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Reserved for future usage (always MUST be 0 for now).
 	uint16_t reserved;
@@ -2781,7 +2747,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_disconnect_reconnec
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_verify_err_recovery_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -2844,7 +2810,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_verify_err_recovery
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_caching_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -2888,7 +2854,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_caching_mode_page_d
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -2920,7 +2886,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_mode_page_d
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_ext_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_sub_page_data_packet mode_sub_page;
+	iscsi_scsi_mode_sense_mode_sub_page_data_header mode_sub_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -2946,7 +2912,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_ext_mode_pa
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_xor_ext_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -2981,7 +2947,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_xor_ext_mode_page_d
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_power_cond_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -3028,7 +2994,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_power_cond_mode_pag
  */
 typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_info_exceptions_control_mode_page_data_packet {
 	/// Mode page.
-	iscsi_scsi_mode_sense_mode_page_data_packet mode_page;
+	iscsi_scsi_mode_sense_mode_page_data_header mode_page;
 
 	/// Flags.
 	uint8_t flags;
@@ -3338,12 +3304,6 @@ typedef struct __attribute__((packed)) iscsi_scsi_cmd_packet {
 	 * MUST be used to contain the CDB spillover.
 	 */
 	iscsi_scsi_cdb scsi_cdb;
-
-	/// Optional AHS packet data.
-	iscsi_ahs_packet ahs;
-
-	/// Optional data segment, command data.
-	iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_scsi_cmd_packet;
 
 
@@ -3662,9 +3622,6 @@ typedef struct __attribute__((packed)) iscsi_scsi_response_packet {
 	 * transferred.
 	 */
 	uint32_t res_cnt;
-
-	/// Optional data segment, command data.
-	iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_scsi_response_packet;
 
 /// SCSI data out / in flags: Immediately process transfer.
@@ -3871,9 +3828,6 @@ typedef struct __attribute__((packed)) iscsi_scsi_data_in_response_packet {
 
 	/// Residual Count or Reserved.
 	uint32_t res_cnt;
-
-	/// Data segment.
-	iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_scsi_data_in_response_packet;
 
 /**
@@ -3985,26 +3939,6 @@ typedef struct __attribute__((packed)) iscsi_text_req_packet {
 
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved2[2];
-
-	/**
-	 * @brief Data segment.
-	 *
-	 * The data lengths of a Text Request MUST NOT exceed the iSCSI target
-	 * MaxRecvDataSegmentLength (a parameter that is negotiated per
-	 * connection and per direction).\n
-	 * A key=value pair can span Text Request or Text Response boundaries.
-	 * A key=value pair can start in one PDU and continue on the next. In
-	 * other words, the end of a PDU does not necessarily signal the end of
-	 * a key=value pair.\n
-	 * The target responds by sending its response back to the initiator.
-	 * The response text format is similar to the request text format. The
-	 * Text Response MAY refer to key=value pairs presented in an earlier
-	 * Text Request, and the text in the request may refer to earlier
-	 * responses.\n
-	 * Text operations are usually meant for parameter setting/negotiations
-	 * but can also be used to perform some long-lasting operations.
-	 */
-	iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_text_req_packet;
 
 
@@ -4106,21 +4040,6 @@ typedef struct __attribute__((packed)) iscsi_text_response_packet {
 
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved2[2];
-
-	/**
-	 * @brief Data segment.
-	 *
-	 * The data lengths of a Text Response MUST NOT exceed the iSCSI
-	 * initiator MaxRecvDataSegmentLength (a parameter that is negotiated
-	 * per connection and per direction).\n
-	 * The text in the Text Response Data is governed by the same rules as
-	 * the text in the Text Request Data.\n
-	 * Although the initiator is the requesting party and controls the
-	 * request-response initiation and termination, the target can offer
-	 * key=value pairs of its own as part of a sequence and not only in
-	 * response to the initiator.
-	 */
-	iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_text_response_packet;
 
 
@@ -4773,17 +4692,6 @@ typedef struct __attribute__((packed)) iscsi_login_response_packet {
 
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved3;
-
-	/**
-	 * @brief Data segment - Login Parameters in Text Request Format.
-	 *
-	 * The target MUST provide some basic parameters in order to enable the
-	 * initiator to determine if it is connected to the correct port and the
-	 * initial text parameters for the security exchange.\n
-	 * All the rules specified for Text Responses also hold for Login
-	 * Responses.
-	 */
-	iscsi_scsi_ds_cmd_data ds_cmd_data;
 } iscsi_login_response_packet;
 
 
@@ -5303,16 +5211,6 @@ typedef struct __attribute__((packed)) iscsi_nop_out_packet {
 
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved2[2];
-
-	/**
-	 * @brief DataSegment - Ping Data (optional).
-	 *
-	 * Ping data is reflected in the NOP-In Response. The length of the
-	 * reflected data is limited to MaxRecvDataSegmentLength. The length of
-	 * ping data is indicated by the DataSegmentLength. 0 is a valid value
-	 * for the DataSegmentLength and indicates the absence of ping data.
-	 */
-	iscsi_scsi_ds_cmd_data ds_ping_data;
 } iscsi_nop_out_packet;
 
 
@@ -5396,9 +5294,6 @@ typedef struct __attribute__((packed)) iscsi_nop_in_packet {
 
 	/// Reserved for future usage, always MUST be 0.
 	uint64_t reserved3;
-
-	/// DataSegment - Return Ping Data.
-	iscsi_scsi_ds_cmd_data ds_ping_data;
 } iscsi_nop_in_packet;
 
 
@@ -5461,29 +5356,6 @@ typedef struct iscsi_key_value_pair {
 } iscsi_key_value_pair;
 
 typedef struct iscsi_connection iscsi_connection;
-
-/**
- * @brief iSCSI Text / Login key=value packet data construction helper.
- *
- * This structure is used to store the key=value plus NUL terminator
- * pairs for sending as DataSegment packet data to the client.
- */
-typedef struct iscsi_key_value_pair_packet {
-	/// Associated iSCSI connection.
-	iscsi_connection *conn;
-
-	/// Current text buffer containing multiple key=value + NUL terminator pairs.
-	uint8_t *buf;
-
-	/// Position of output buffer for next write.
-	uint32_t pos;
-
-	/// Current length of buffer including final NUL terminator without iSCSI zero padding.
-	uint32_t len;
-
-	/// Discovery mode.
-	int discovery;
-} iscsi_key_value_pair_packet;
 
 
 /// Read/write lock for iSCSI global vector. MUST be initialized with iscsi_create before any iSCSI functions are used.
@@ -5665,7 +5537,7 @@ typedef struct iscsi_key_value_pair_packet {
 
 
 /// iSCSI SCSI task run: Unknown.
-#define ISCSI_SCSI_TASK_RUN_UNKNOWN  -1
+#define ISCSI_SCSI_TASK_RUN_UNKNOWN  (-1)
 
 /// iSCSI SCSI task run: Completed.
 #define ISCSI_SCSI_TASK_RUN_COMPLETE  0
@@ -5737,6 +5609,9 @@ typedef struct iscsi_scsi_task {
 
 /// Block shift difference between dnbd3 (4k) and iSCSI (512b)
 #define ISCSI_SCSI_EMU_BLOCK_DIFF_SHIFT     (3)
+
+_Static_assert( (ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE << ISCSI_SCSI_EMU_BLOCK_DIFF_SHIFT) == ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE,
+	"Block size parameters are inconsistent" );
 
 /// iSCSI SCSI emulation I/O type: Removable.
 #define ISCSI_SCSI_EMU_IO_TYPE_REMOVABLE          (1 << 0)
@@ -5996,7 +5871,7 @@ typedef struct iscsi_pdu {
 	iscsi_ahs_packet *ahs_pkt;
 
 	/// iSCSI DataSegment (DS) packet data for fast access and is straight after BHS, AHS and header digest packet in memory.
-	iscsi_scsi_ds_cmd_data *ds_cmd_data;
+	void *ds_cmd_data;
 
 	/// Flags.
 	int flags;
@@ -6034,17 +5909,8 @@ typedef struct iscsi_task {
 	/// Underlying SCSI task structure.
 	iscsi_scsi_task scsi_task;
 
-	/// Associated iSCSI connection.
-	iscsi_connection *conn;
-
-	/// Buffer position in bytes.
-	uint32_t pos;
-
 	/// Buffer length in bytes.
 	uint32_t len;
-
-	/// Unique identifier for this task.
-	uint64_t id;
 
 	/// LUN identifier associated with this task (always MUST be between 0 and 7), used for hot removal tracking.
 	int lun_id;
@@ -6054,9 +5920,6 @@ typedef struct iscsi_task {
 
 	/// Target Transfer Tag (TTT).
 	uint32_t target_xfer_tag;
-
-	/// SCSI Data In Data Sequence Number (DataSN).
-	uint32_t data_sn;
 } iscsi_task;
 
 void iscsi_connection_handle(dnbd3_client_t *client, const dnbd3_request_t *request, const int len); // Handles an iSCSI connection until connection is closed

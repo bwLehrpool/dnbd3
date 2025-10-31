@@ -45,8 +45,6 @@
 #include "uplink.h"
 #include "reference.h"
 
-#include <assert.h>
-
 #define ISCSI_DEFAULT_LUN 0
 #define ISCSI_DEFAULT_PROTOCOL_ID 1
 #define ISCSI_DEFAULT_DEVICE_ID 1
@@ -79,7 +77,7 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task);
 
 static void iscsi_scsi_task_init(iscsi_scsi_task *scsi_task); // Initializes a SCSI task
 
-static void iscsi_scsi_task_xfer_complete(iscsi_scsi_task *scsi_task, iscsi_pdu *request_pdu); // Callback function when an iSCSI SCSI task completed the data transfer
+static void iscsi_scsi_task_xfer_complete(iscsi_connection *conn, iscsi_scsi_task *scsi_task, iscsi_pdu *request_pdu); // Callback function when an iSCSI SCSI task completed the data transfer
 
 static void iscsi_scsi_task_lun_process_none(iscsi_scsi_task *scsi_task); // Processes a iSCSI SCSI task with no LUN identifier
 
@@ -356,14 +354,10 @@ static iscsi_task *iscsi_task_create(iscsi_connection *conn)
 		return NULL;
 	}
 
-	task->conn              = conn;
-	task->pos               = 0UL;
 	task->len               = 0UL;
-	task->id                = 0ULL;
 	task->lun_id            = 0;
 	task->init_task_tag     = 0UL;
 	task->target_xfer_tag   = 0UL;
-	task->data_sn           = 0UL;
 
 	iscsi_scsi_task_init( &task->scsi_task );
 	task->scsi_task.connection = conn;
@@ -528,7 +522,7 @@ static int iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, iscsi_task *task
 	if ( xfer_len == 0UL )
 		return 0;
 
-	uint32_t data_sn                 = task->data_sn;
+	uint32_t data_sn                 = 0;
 	uint32_t max_burst_offset        = 0UL;
 	// Max burst length = total length of payload in all PDUs
 	const uint32_t max_burst_len     = conn->session->opts.MaxBurstLength;
@@ -569,8 +563,6 @@ static int iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, iscsi_task *task
 		max_burst_offset += max_burst_len;
 	}
 
-	task->data_sn = data_sn;
-
 	return (status & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS);
 }
 
@@ -606,10 +598,9 @@ static void iscsi_scsi_task_init(iscsi_scsi_task *scsi_task)
  * so be careful.
  * @param request_pdu
  */
-static void iscsi_scsi_task_xfer_complete(iscsi_scsi_task *scsi_task, iscsi_pdu *request_pdu)
+static void iscsi_scsi_task_xfer_complete(iscsi_connection *conn, iscsi_scsi_task *scsi_task, iscsi_pdu *request_pdu)
 {
 	iscsi_task *task = container_of( scsi_task, iscsi_task, scsi_task );
-	iscsi_connection *conn   = task->conn;
 
 	iscsi_scsi_cmd_packet *scsi_cmd_pkt = (iscsi_scsi_cmd_packet *) request_pdu->bhs_pkt;
 
@@ -845,31 +836,6 @@ static inline uint64_t iscsi_scsi_emu_block_get_count(const dnbd3_image_t *image
 	return (image->virtualFilesize / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
 }
 
-/**
- * @brief Converts offset and length in bytes to block number and length specified by a block size.
- *
- * This function uses bit shifting if
- * the block size is a power of two.
- *
- * @param[out] offset_blocks Pointer where to store the block
- * number. May NOT be NULL, so be
- * careful.
- * @param[out] num_blocks Pointer where to store the number of
- * blocks. NULL is NOT allowed here,
- * so take caution.
- * @param[in] offset_bytes Offset in bytes.
- * @param[in] num_bytes Number of bytes.
- * @return 0 if specified offset and number of
- * bytes is aligned to block size or a
- * positive value if unaligned.
- */
-static uint64_t iscsi_scsi_emu_bytes_to_blocks(uint64_t *offset_blocks, uint64_t *num_blocks, const uint64_t offset_bytes, const uint64_t num_bytes)
-{
-	*offset_blocks = (offset_bytes / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
-	*num_blocks    = (num_bytes / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
-
-	return ((offset_bytes % ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE) | (num_bytes % ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE));
-}
 
 /**
  * @brief Converts offset and length specified by a block size to offset and length in bytes.
@@ -934,7 +900,6 @@ static void iscsi_uplink_callback(void *data, uint64_t handle UNUSED, uint64_t s
  * be careful.
  * @param[in] offset_blocks Offset in blocks to start reading from.
  * @param[in] num_blocks Number of blocks to read.
- * @param[in] block_size Block size in bytes.
  * @return 0 on successful operation, a negative
  * error code otherwise.
  */
@@ -1105,7 +1070,7 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			return iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
 		}
 		case ISCSI_SCSI_OPCODE_READCAPACITY10 : {
-			iscsi_scsi_read_capacity_10_parameter_data_packet *buf = (iscsi_scsi_read_capacity_10_parameter_data_packet *) malloc( sizeof(struct iscsi_scsi_read_capacity_10_parameter_data_packet) );
+			iscsi_scsi_read_capacity_10_parameter_data_packet *buf = malloc( sizeof(struct iscsi_scsi_read_capacity_10_parameter_data_packet) );
 
 			if ( buf == NULL ) {
 				iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NOT_READY, ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY, ISCSI_SCSI_ASCQ_BECOMING_READY );
@@ -1190,32 +1155,6 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 	}
 
 	return ISCSI_SCSI_TASK_RUN_COMPLETE;
-}
-
-/**
- * @brief Checks whether provided SCSI CDB allocation length is large enough.
- *
- * This function also sets the SCSI
- * status result code if the allocation
- * size is insufficent.
- *
- * @param[in] scsi_task Pointer to iSCSI SCSI task to set
- * the iSCSI status result code for and
- * may NOT be NULL, so be careful.
- * @param[in] len Actual length in bytes passed to check.
- * @param[in] min_len Minimum length in bytes required.
- * @retval 0 Allocation length is sufficent.
- * @retval -1 Allocation length is insufficent, SCSI status
- * code set.
- */
-static int iscsi_scsi_emu_check_len(iscsi_scsi_task *scsi_task, const uint len, const uint min_len)
-{
-	if ( len >= min_len )
-		return 0;
-
-	iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
-
-	return -1;
 }
 
 /**
@@ -1691,32 +1630,33 @@ static int iscsi_scsi_emu_primary_report_luns( iscsi_scsi_report_luns_parameter_
  * is initialized, the sub page code
  * will also be set.
  *
- * @param[in] mode_sense_mode_page_pkt Pointer to mode sense parameter
+ * @param[in] buffer Pointer to mode sense parameter
  * mode page or sub page data packet
  * to initialize. If this is NULL,
  * this function does nothing.
- * @param[in] len Length in bytes to initialize with zeroes.
+ * @param[in] len Length in bytes to initialize. Any padding will be zeroed.
  * @param[in] page Page code.
  * @param[in] sub_page Sub page code.
  */
-static void iscsi_scsi_emu_primary_mode_sense_page_init(iscsi_scsi_mode_sense_mode_page_data_packet *mode_sense_mode_page_pkt, const uint len, const uint page, const uint sub_page)
+static void iscsi_scsi_emu_primary_mode_sense_page_init(uint8_t *buffer, const uint len, const uint page, const uint sub_page)
 {
-	if ( mode_sense_mode_page_pkt == NULL )
+	if ( buffer == NULL )
 		return;
 
 	if ( sub_page == 0U ) {
+		iscsi_scsi_mode_sense_mode_page_data_header *mode_sense_mode_page_pkt = (iscsi_scsi_mode_sense_mode_page_data_header *) buffer;
 		mode_sense_mode_page_pkt->page_code_flags = (uint8_t) ISCSI_SCSI_MODE_SENSE_MODE_PAGE_PUT_PAGE_CODE(page);
-		mode_sense_mode_page_pkt->page_len        = (uint8_t) (len - sizeof(struct iscsi_scsi_mode_sense_mode_page_data_packet));
+		mode_sense_mode_page_pkt->page_len        = (uint8_t) (len - sizeof(*mode_sense_mode_page_pkt));
 
-		memset( mode_sense_mode_page_pkt->params, 0, (len - offsetof(struct iscsi_scsi_mode_sense_mode_page_data_packet, params)) );
+		memset( mode_sense_mode_page_pkt + 1, 0, (len - sizeof(*mode_sense_mode_page_pkt)) );
 	} else {
-		iscsi_scsi_mode_sense_mode_sub_page_data_packet *mode_sense_mode_sub_page_pkt = (iscsi_scsi_mode_sense_mode_sub_page_data_packet *) mode_sense_mode_page_pkt;
+		iscsi_scsi_mode_sense_mode_sub_page_data_header *mode_sense_mode_sub_page_pkt = (iscsi_scsi_mode_sense_mode_sub_page_data_header *) buffer;
 
 		mode_sense_mode_sub_page_pkt->page_code_flags = (uint8_t) (ISCSI_SCSI_MODE_SENSE_MODE_PAGE_PUT_PAGE_CODE(page) | ISCSI_SCSI_MODE_SENSE_MODE_PAGE_FLAGS_SPF);
 		mode_sense_mode_sub_page_pkt->sub_page_code   = (uint8_t) sub_page;
-		iscsi_put_be16( (uint8_t *) &mode_sense_mode_sub_page_pkt->page_len, (uint16_t) (len - sizeof(struct iscsi_scsi_mode_sense_mode_sub_page_data_packet)) );
+		iscsi_put_be16( (uint8_t *) &mode_sense_mode_sub_page_pkt->page_len, (uint16_t) (len - sizeof(*mode_sense_mode_sub_page_pkt)) );
 
-		memset( mode_sense_mode_sub_page_pkt->params, 0, (len - offsetof(struct iscsi_scsi_mode_sense_mode_sub_page_data_packet, params)) );
+		memset( mode_sense_mode_sub_page_pkt + 1, 0, (len - sizeof(*mode_sense_mode_sub_page_pkt)) );
 	}
 }
 
@@ -1733,7 +1673,7 @@ static void iscsi_scsi_emu_primary_mode_sense_page_init(iscsi_scsi_mode_sense_mo
  * responsible for this mode sense
  * task. NULL is NOT allowed here,
  * take caution.
- * @param[in] mode_sense_mode_page_pkt Pointer to mode sense parameter
+ * @param[in] buffer Pointer to mode sense parameter
  * mode page or sub page data packet
  * to process. If this is NULL, only
  * the length of page is calculated.
@@ -1743,10 +1683,10 @@ static void iscsi_scsi_emu_primary_mode_sense_page_init(iscsi_scsi_mode_sense_mo
  * @return Number of bytes occupied or a
  * negative error code otherwise.
  */
-static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_scsi_task *scsi_task, iscsi_scsi_mode_sense_mode_page_data_packet *mode_sense_mode_page_pkt, const uint pc, const uint page, const uint sub_page)
+static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_scsi_task *scsi_task, uint8_t *buffer, const uint pc, const uint page, const uint sub_page)
 {
 	uint page_len;
-	int len = 0;
+	uint len = 0;
 	int tmplen;
 
 	switch ( pc ) {
@@ -1827,9 +1767,9 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 			if ( sub_page != 0U )
 				break;
 
-			page_len = sizeof(struct iscsi_scsi_mode_sense_read_write_err_recovery_mode_page_data_packet);
+			page_len = sizeof(iscsi_scsi_mode_sense_read_write_err_recovery_mode_page_data_packet);
 
-			iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 			len += page_len;
 
@@ -1839,9 +1779,9 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 			if ( sub_page != 0U )
 				break;
 
-			page_len = sizeof(struct iscsi_scsi_mode_sense_disconnect_reconnect_mode_page_data_packet);
+			page_len = sizeof(iscsi_scsi_mode_sense_disconnect_reconnect_mode_page_data_packet);
 
-			iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 			len += page_len;
 
@@ -1851,9 +1791,9 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 			if ( sub_page != 0U )
 				break;
 
-			page_len = sizeof(struct iscsi_scsi_mode_sense_verify_err_recovery_mode_page_data_packet);
+			page_len = sizeof(iscsi_scsi_mode_sense_verify_err_recovery_mode_page_data_packet);
 
-			iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 			len += page_len;
 
@@ -1863,13 +1803,13 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 			if ( sub_page != 0U )
 				break;
 
-			iscsi_scsi_mode_sense_caching_mode_page_data_packet *mode_sense_caching_mode_page_pkt = (iscsi_scsi_mode_sense_caching_mode_page_data_packet *) mode_sense_mode_page_pkt;
+			iscsi_scsi_mode_sense_caching_mode_page_data_packet *mode_sense_caching_mode_page_pkt = (iscsi_scsi_mode_sense_caching_mode_page_data_packet *) buffer;
 
-			page_len = sizeof(struct iscsi_scsi_mode_sense_caching_mode_page_data_packet);
+			page_len = sizeof(iscsi_scsi_mode_sense_caching_mode_page_data_packet);
 
-			iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
-			if ( (mode_sense_mode_page_pkt != NULL) && (pc != ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_CHG_VALUES) )
+			if ( (buffer != NULL) && (pc != ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_CHG_VALUES) )
 				mode_sense_caching_mode_page_pkt->flags |= ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_RCD;
 
 			len += page_len;
@@ -1879,9 +1819,9 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 		case ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_CONTROL : {
 			switch ( sub_page ) {
 				case ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL : {
-					page_len = sizeof(struct iscsi_scsi_mode_sense_control_mode_page_data_packet);
+					page_len = sizeof(iscsi_scsi_mode_sense_control_mode_page_data_packet);
 
-					iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+					iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 					len += page_len;
 
@@ -1892,18 +1832,18 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 
 					page_len = sizeof(struct iscsi_scsi_mode_sense_control_ext_mode_page_data_packet);
 
-					iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+					iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 					len += page_len;
 
 					break;
 				}
 				case ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL_ALL : {
-					tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((mode_sense_mode_page_pkt != NULL) ? (iscsi_scsi_mode_sense_mode_page_data_packet *) (((uint8_t *) mode_sense_mode_page_pkt) + len) : NULL), pc, page, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL );
+					tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((buffer != NULL) ? (buffer + len) : NULL), pc, page, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL );
 					if ( tmplen == -1 )
 						return -1;
 					len += tmplen;
-					tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((mode_sense_mode_page_pkt != NULL) ? (iscsi_scsi_mode_sense_mode_page_data_packet *) (((uint8_t *) mode_sense_mode_page_pkt) + len) : NULL), pc, page, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL_EXT );
+					tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((buffer != NULL) ? (buffer + len) : NULL), pc, page, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_CONTROL_EXT );
 					if ( tmplen == -1 )
 						return -1;
 					len += tmplen;
@@ -1923,7 +1863,7 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 
 			page_len = sizeof(struct iscsi_scsi_mode_sense_xor_ext_mode_page_data_packet);
 
-			iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 			len += page_len;
 
@@ -1935,7 +1875,7 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 
 			page_len = sizeof(struct iscsi_scsi_mode_sense_power_cond_mode_page_data_packet);
 
-			iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 			len += page_len;
 
@@ -1947,19 +1887,17 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 
 			page_len = sizeof(struct iscsi_scsi_mode_sense_info_exceptions_control_mode_page_data_packet);
 
-			iscsi_scsi_emu_primary_mode_sense_page_init( mode_sense_mode_page_pkt, page_len, page, sub_page );
+			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
 			len += page_len;
 
 			break;
 		}
 		case ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES : {
-			uint i;
-
 			switch ( sub_page ) {
 				case ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_PAGES : {
-					for ( i = ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC; i < ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES; i++ ) {
-						tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((mode_sense_mode_page_pkt != NULL) ? (iscsi_scsi_mode_sense_mode_page_data_packet *) (((uint8_t *) mode_sense_mode_page_pkt) + len) : NULL), pc, i, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_PAGES );
+					for ( uint i = ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC; i < ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES; i++ ) {
+						tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((buffer != NULL) ? (buffer + len) : NULL), pc, i, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_PAGES );
 						if ( tmplen == -1 )
 							return -1;
 						len += tmplen;
@@ -1968,15 +1906,15 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 					break;
 				}
 				case ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_SUB_PAGES : {
-					for ( i = ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC; i < ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES; i++ ) {
-						tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((mode_sense_mode_page_pkt != NULL) ? (iscsi_scsi_mode_sense_mode_page_data_packet *) (((uint8_t *) mode_sense_mode_page_pkt) + len) : NULL), pc, i, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_PAGES );
+					for ( uint i = ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC; i < ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES; i++ ) {
+						tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((buffer != NULL) ? (buffer + len) : NULL), pc, i, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_PAGES );
 						if ( tmplen == -1 )
 							return -1;
 						len += tmplen;
 					}
 
-					for ( i = ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC; i < ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES; i++ ) {
-						tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((mode_sense_mode_page_pkt != NULL) ? (iscsi_scsi_mode_sense_mode_page_data_packet *) (((uint8_t *) mode_sense_mode_page_pkt) + len) : NULL), pc, i, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_SUB_PAGES );
+					for ( uint i = ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_VENDOR_SPEC; i < ISCSI_SCSI_MODE_SENSE_MODE_PAGE_CODE_REPORT_ALL_MODE_PAGES; i++ ) {
+						tmplen = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, ((buffer != NULL) ? (buffer + len) : NULL), pc, i, ISCSI_SCSI_MODE_SENSE_MODE_SUB_PAGE_CODE_REPORT_ALL_MODE_SUB_PAGES );
 						if ( tmplen == -1 )
 							return -1;
 						len += tmplen;
@@ -1996,7 +1934,7 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 		}
 	}
 
-	return len;
+	return (int)len;
 }
 
 /**
@@ -2012,7 +1950,7 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
  * responsible for this mode sense
  * task. NULL is NOT allowed here,
  * take caution.
- * @param[in] mode_sense_6_parameter_hdr_data_pkt Pointer to mode sense parameter
+ * @param[in] buffer Pointer to mode sense parameter
  * header data packet to fill the
  * mode sense data with. If this is
  * NULL, only the length of sense
@@ -2028,26 +1966,29 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
  * operation, a negative error code
  * otherwise.
  */
-static int iscsi_scsi_emu_primary_mode_sense(dnbd3_image_t *image, iscsi_scsi_task *scsi_task, iscsi_scsi_mode_sense_6_parameter_header_data_packet *mode_sense_6_parameter_hdr_data_pkt, const uint hdr_len, const uint block_desc_len, const uint long_lba, const uint pc, const uint page_code, const uint sub_page_code)
+static int iscsi_scsi_emu_primary_mode_sense(dnbd3_image_t *image, iscsi_scsi_task *scsi_task, uint8_t *buffer,
+		const uint hdr_len, const uint block_desc_len, const uint long_lba, const uint pc, const uint page_code, const uint sub_page_code)
 {
-	iscsi_scsi_mode_sense_mode_page_data_packet *mode_sense_mode_page_pkt = (iscsi_scsi_mode_sense_mode_page_data_packet *) ((mode_sense_6_parameter_hdr_data_pkt != NULL) ? (((uint8_t *) mode_sense_6_parameter_hdr_data_pkt) + hdr_len + block_desc_len) : NULL);
-	const int page_len = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, mode_sense_mode_page_pkt, pc, page_code, sub_page_code );
+	// Pointer to right after header and LBA block description; where the pages go
+	uint8_t *mode_sense_payload = (buffer != NULL) ? (buffer + hdr_len + block_desc_len) : NULL;
+	const int page_len = iscsi_scsi_emu_primary_mode_sense_page( image, scsi_task, mode_sense_payload, pc, page_code, sub_page_code );
 
 	if ( page_len < 0 )
 		return -1;
 
 	const uint alloc_len = (hdr_len + block_desc_len + page_len);
 
-	if ( mode_sense_6_parameter_hdr_data_pkt == NULL )
-		return alloc_len;
+	if ( buffer == NULL )
+		return (int)alloc_len;
 
-	if ( hdr_len == sizeof(struct iscsi_scsi_mode_sense_6_parameter_header_data_packet) ) {
+	if ( hdr_len == sizeof(iscsi_scsi_mode_sense_6_parameter_header_data_packet) ) {
+		iscsi_scsi_mode_sense_6_parameter_header_data_packet *mode_sense_6_parameter_hdr_data_pkt = (iscsi_scsi_mode_sense_6_parameter_header_data_packet *) buffer;
 		mode_sense_6_parameter_hdr_data_pkt->mode_data_len  = (uint8_t) (alloc_len - sizeof(uint8_t));
 		mode_sense_6_parameter_hdr_data_pkt->medium_type    = 0U;
 		mode_sense_6_parameter_hdr_data_pkt->flags          = ISCSI_SCSI_MODE_SENSE_6_PARAM_HDR_DATA_FLAGS_WP;
 		mode_sense_6_parameter_hdr_data_pkt->block_desc_len = (uint8_t) block_desc_len;
-	} else if ( hdr_len == sizeof(struct iscsi_scsi_mode_sense_10_parameter_header_data_packet) ) {
-		iscsi_scsi_mode_sense_10_parameter_header_data_packet *mode_sense_10_parameter_hdr_data_pkt = (iscsi_scsi_mode_sense_10_parameter_header_data_packet *) mode_sense_6_parameter_hdr_data_pkt;
+	} else if ( hdr_len == sizeof(iscsi_scsi_mode_sense_10_parameter_header_data_packet) ) {
+		iscsi_scsi_mode_sense_10_parameter_header_data_packet *mode_sense_10_parameter_hdr_data_pkt = (iscsi_scsi_mode_sense_10_parameter_header_data_packet *) buffer;
 
 		iscsi_put_be16( (uint8_t *) &mode_sense_10_parameter_hdr_data_pkt->mode_data_len, (uint16_t) (alloc_len - sizeof(uint16_t)) );
 		mode_sense_10_parameter_hdr_data_pkt->medium_type    = 0U;
@@ -2063,8 +2004,8 @@ static int iscsi_scsi_emu_primary_mode_sense(dnbd3_image_t *image, iscsi_scsi_ta
 	const uint64_t num_blocks = iscsi_scsi_emu_block_get_count( image );
 	const uint32_t block_size = ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE;
 
-	if ( block_desc_len == sizeof(struct iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet) ) {
-		iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *lba_parameter_block_desc = (iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *) (((uint8_t *) mode_sense_6_parameter_hdr_data_pkt) + hdr_len);
+	if ( block_desc_len == sizeof(iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet) ) {
+		iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *lba_parameter_block_desc = (iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *) (buffer + hdr_len);
 
 		if ( num_blocks > 0xFFFFFFFFULL )
 			lba_parameter_block_desc->num_blocks = 0xFFFFFFFFUL; // Minus one does not require endianess conversion
@@ -2073,15 +2014,15 @@ static int iscsi_scsi_emu_primary_mode_sense(dnbd3_image_t *image, iscsi_scsi_ta
 
 		lba_parameter_block_desc->reserved = 0U;
 		iscsi_put_be24( (uint8_t *) &lba_parameter_block_desc->block_len, block_size );
-	} else if ( block_desc_len == sizeof(struct iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet) ) {
-		iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet *long_lba_parameter_block_desc = (iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet *) (((uint8_t *) mode_sense_6_parameter_hdr_data_pkt) + hdr_len);
+	} else if ( block_desc_len == sizeof(iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet) ) {
+		iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet *long_lba_parameter_block_desc = (iscsi_scsi_mode_sense_long_lba_parameter_block_desc_data_packet *) (buffer + hdr_len);
 
 		iscsi_put_be64( (uint8_t *) &long_lba_parameter_block_desc->num_blocks, num_blocks );
 		long_lba_parameter_block_desc->reserved = 0UL;
 		iscsi_put_be32( (uint8_t *) &long_lba_parameter_block_desc->block_len, block_size );
 	}
 
-	return alloc_len;
+	return (int)alloc_len;
 }
 
 /**
@@ -2158,7 +2099,7 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 
 			if ( rc >= 0 ) {
 				scsi_task->buf    = (uint8_t *) std_inquiry_data_pkt;
-				scsi_task->len    = MIN( rc, alloc_len );
+				scsi_task->len    = MIN( (uint)rc, alloc_len );
 				scsi_task->status = ISCSI_SCSI_STATUS_GOOD;
 			} else {
 				free( std_inquiry_data_pkt );
@@ -2187,7 +2128,7 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 
 			if ( rc >= 0 ) {
 				scsi_task->buf    = (uint8_t *) report_luns_parameter_data_pkt;
-				scsi_task->len    = MIN( rc, alloc_len );
+				scsi_task->len    = MIN( (uint)rc, alloc_len );
 				scsi_task->status = ISCSI_SCSI_STATUS_GOOD;
 			} else {
 				free( report_luns_parameter_data_pkt );
@@ -2213,7 +2154,7 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 
 			len = rc;
 
-			iscsi_scsi_mode_sense_6_parameter_header_data_packet *mode_sense_6_parameter_hdr_data_pkt = (iscsi_scsi_mode_sense_6_parameter_header_data_packet *) malloc( len );
+			uint8_t *mode_sense_6_parameter_hdr_data_pkt = malloc( len );
 
 			if ( mode_sense_6_parameter_hdr_data_pkt == NULL ) {
 				iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NOT_READY, ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY, ISCSI_SCSI_ASCQ_BECOMING_READY );
@@ -2224,8 +2165,8 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 			rc = iscsi_scsi_emu_primary_mode_sense( scsi_task->connection->client->image, scsi_task, mode_sense_6_parameter_hdr_data_pkt, sizeof(struct iscsi_scsi_mode_sense_6_parameter_header_data_packet), block_desc_len, 0U, pc, page, sub_page );
 
 			if ( rc >= 0 ) {
-				scsi_task->buf    = (uint8_t *) mode_sense_6_parameter_hdr_data_pkt;
-				scsi_task->len    = MIN( rc, alloc_len );
+				scsi_task->buf    = mode_sense_6_parameter_hdr_data_pkt;
+				scsi_task->len    = MIN( (uint)rc, alloc_len );
 				scsi_task->status = ISCSI_SCSI_STATUS_GOOD;
 			} else {
 				free( mode_sense_6_parameter_hdr_data_pkt );
@@ -2245,14 +2186,14 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 			const uint page10         = ISCSI_SCSI_CDB_MODE_SENSE_10_GET_PAGE_CODE(cdb_mode_sense_10->page_code_control);
 			const uint sub_page10     = cdb_mode_sense_10->sub_page_code;
 
-			rc = iscsi_scsi_emu_primary_mode_sense( scsi_task->connection->client->image, scsi_task, NULL, sizeof(struct iscsi_scsi_mode_sense_10_parameter_header_data_packet), block_desc_len, long_lba, pc10, page10, sub_page10 );
+			rc = iscsi_scsi_emu_primary_mode_sense( scsi_task->connection->client->image, scsi_task, NULL, sizeof(iscsi_scsi_mode_sense_10_parameter_header_data_packet), block_desc_len, long_lba, pc10, page10, sub_page10 );
 
 			if ( rc < 0 )
 				break;
 
 			len = rc;
 
-			iscsi_scsi_mode_sense_10_parameter_header_data_packet *mode_sense_10_parameter_hdr_data_pkt = (iscsi_scsi_mode_sense_10_parameter_header_data_packet *) malloc( len );
+			uint8_t *mode_sense_10_parameter_hdr_data_pkt = malloc( len );
 
 			if ( mode_sense_10_parameter_hdr_data_pkt == NULL ) {
 				iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NOT_READY, ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY, ISCSI_SCSI_ASCQ_BECOMING_READY );
@@ -2260,11 +2201,11 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 				break;
 			}
 
-			rc = iscsi_scsi_emu_primary_mode_sense( scsi_task->connection->client->image, scsi_task, (iscsi_scsi_mode_sense_6_parameter_header_data_packet *) mode_sense_10_parameter_hdr_data_pkt, sizeof(struct iscsi_scsi_mode_sense_10_parameter_header_data_packet), block_desc_len, long_lba, pc10, page10, sub_page10 );
+			rc = iscsi_scsi_emu_primary_mode_sense( scsi_task->connection->client->image, scsi_task, mode_sense_10_parameter_hdr_data_pkt, sizeof(struct iscsi_scsi_mode_sense_10_parameter_header_data_packet), block_desc_len, long_lba, pc10, page10, sub_page10 );
 
 			if ( rc >= 0 ) {
-				scsi_task->buf    = (uint8_t *) mode_sense_10_parameter_hdr_data_pkt;
-				scsi_task->len    = MIN( rc, alloc_len );
+				scsi_task->buf    = mode_sense_10_parameter_hdr_data_pkt;
+				scsi_task->len    = MIN( (uint)rc, alloc_len );
 				scsi_task->status = ISCSI_SCSI_STATUS_GOOD;
 			} else {
 				free( mode_sense_10_parameter_hdr_data_pkt );
@@ -2274,11 +2215,7 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 
 			break;
 		}
-		case ISCSI_SCSI_OPCODE_TESTUNITREADY : {
-			scsi_task->status   = ISCSI_SCSI_STATUS_GOOD;
-
-			break;
-		}
+		case ISCSI_SCSI_OPCODE_TESTUNITREADY :
 		case ISCSI_SCSI_OPCODE_STARTSTOPUNIT : {
 			scsi_task->status   = ISCSI_SCSI_STATUS_GOOD;
 
@@ -3278,7 +3215,7 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, iscsi_pdu *r
 	}
 
 	if ( rc == ISCSI_SCSI_TASK_RUN_COMPLETE ) {
-		iscsi_scsi_task_xfer_complete( &task->scsi_task, request_pdu );
+		iscsi_scsi_task_xfer_complete( conn, &task->scsi_task, request_pdu );
 	}
 
 	iscsi_task_destroy( task );
@@ -3298,7 +3235,6 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, iscsi_pdu *r
  * NULL is not allowed here, so take caution.
  * @param[in] kvpairs Pointer to key and value pairs.
  * which may NOT be NULL, so take caution.
- * @param[in] cid Connection ID (CID).
  * @return 0 on success, a negative error code otherwise.
  */
 static int iscsi_connection_handle_login_phase_none(iscsi_connection *conn, iscsi_pdu *login_response_pdu, iscsi_negotiation_kvp *kvpairs)
@@ -3327,7 +3263,6 @@ static int iscsi_connection_handle_login_phase_none(iscsi_connection *conn, iscs
 		return rc;
 
 	if ( conn->session == NULL ) {
-		iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
 		conn->session = iscsi_session_create( type );
 
 		if ( conn->session == NULL ) {
