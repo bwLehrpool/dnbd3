@@ -1010,14 +1010,10 @@ static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			buf->reserved[0] = 0ULL;
 			buf->reserved[1] = 0ULL;
 
-			uint len = cdb_servce_in_action_16->alloc_len;
-
-			if ( len > sizeof(struct iscsi_scsi_service_action_in_16_parameter_data_packet) ) {
-				len = sizeof(struct iscsi_scsi_service_action_in_16_parameter_data_packet); // TODO: Check whether scatter data is required
-			}
+			const uint alloc_len = iscsi_get_be32( cdb_servce_in_action_16->alloc_len );
 
 			scsi_task->buf      = (uint8_t *) buf;
-			scsi_task->len      = len;
+			scsi_task->len      = MIN( alloc_len, sizeof(*buf) );
 			scsi_task->status   = ISCSI_SCSI_STATUS_GOOD;
 
 			break;
@@ -1358,7 +1354,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				break;
 			}
 			case ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PAGE_CODE_BLOCK_DEV_CHARS : {
-				iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet *vpd_page_block_dev_chars_inquiry_data_pkt = (iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet *) vpd_page_inquiry_data_pkt->params;
+				iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet *chars_resp = (iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet *) vpd_page_inquiry_data_pkt->params;
 
 				if ( len < (sizeof(iscsi_scsi_vpd_page_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet)) ) {
 					iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
@@ -1366,21 +1362,21 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 					return -1;
 				}
 
-				alloc_len = sizeof(iscsi_scsi_vpd_page_block_dev_chars_inquiry_data_packet);
+				alloc_len = sizeof(*chars_resp);
 
-				vpd_page_block_dev_chars_inquiry_data_pkt->medium_rotation_rate = ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_MEDIUM_ROTATION_RATE_NONE;
-				vpd_page_block_dev_chars_inquiry_data_pkt->product_type         = ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_PRODUCT_TYPE_NOT_INDICATED;
-				vpd_page_block_dev_chars_inquiry_data_pkt->flags                = ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_PUT_NOMINAL_FORM_FACTOR(ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_NOT_REPORTED);
-				vpd_page_block_dev_chars_inquiry_data_pkt->support_flags        = 0U;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved[0]          = 0ULL;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved[1]          = 0ULL;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved[2]          = 0ULL;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved[3]          = 0ULL;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved[4]          = 0ULL;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved[5]          = 0ULL;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved2            = 0UL;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved3            = 0U;
-				vpd_page_block_dev_chars_inquiry_data_pkt->reserved4            = 0U;
+				iscsi_put_be16( (uint8_t *)&chars_resp->medium_rotation_rate, ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_MEDIUM_ROTATION_RATE_NONE );
+				chars_resp->product_type         = ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_PRODUCT_TYPE_NOT_INDICATED;
+				chars_resp->flags                = ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_PUT_NOMINAL_FORM_FACTOR(ISCSI_SCSI_VPD_PAGE_BLOCK_DEV_CHARS_INQUIRY_DATA_FLAGS_NOMINAL_FORM_FACTOR_NOT_REPORTED);
+				chars_resp->support_flags        = 0U;
+				chars_resp->reserved[0]          = 0ULL;
+				chars_resp->reserved[1]          = 0ULL;
+				chars_resp->reserved[2]          = 0ULL;
+				chars_resp->reserved[3]          = 0ULL;
+				chars_resp->reserved[4]          = 0ULL;
+				chars_resp->reserved[5]          = 0ULL;
+				chars_resp->reserved2            = 0UL;
+				chars_resp->reserved3            = 0U;
+				chars_resp->reserved4            = 0U;
 
 				iscsi_put_be16( (uint8_t *) &vpd_page_inquiry_data_pkt->alloc_len, (uint16_t) alloc_len );
 
