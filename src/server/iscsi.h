@@ -5733,7 +5733,7 @@ typedef struct iscsi_scsi_task {
 #define ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE      DNBD3_BLOCK_SIZE
 
 /// iSCSI SCSI emulation logical block size in bytes.
-#define ISCSI_SCSI_EMU_BLOCK_SIZE      (512)
+#define ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE      (512)
 
 /// Block shift difference between dnbd3 (4k) and iSCSI (512b)
 #define ISCSI_SCSI_EMU_BLOCK_DIFF_SHIFT     (3)

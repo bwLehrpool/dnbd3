@@ -842,7 +842,7 @@ static int iscsi_scsi_lun_get_from_iscsi(const uint64_t lun)
  */
 static inline uint64_t iscsi_scsi_emu_block_get_count(const dnbd3_image_t *image)
 {
-	return (image->virtualFilesize / ISCSI_SCSI_EMU_BLOCK_SIZE);
+	return (image->virtualFilesize / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
 }
 
 /**
@@ -865,10 +865,10 @@ static inline uint64_t iscsi_scsi_emu_block_get_count(const dnbd3_image_t *image
  */
 static uint64_t iscsi_scsi_emu_bytes_to_blocks(uint64_t *offset_blocks, uint64_t *num_blocks, const uint64_t offset_bytes, const uint64_t num_bytes)
 {
-	*offset_blocks = (offset_bytes / ISCSI_SCSI_EMU_BLOCK_SIZE);
-	*num_blocks    = (num_bytes / ISCSI_SCSI_EMU_BLOCK_SIZE);
+	*offset_blocks = (offset_bytes / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
+	*num_blocks    = (num_bytes / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
 
-	return ((offset_bytes % ISCSI_SCSI_EMU_BLOCK_SIZE) | (num_bytes % ISCSI_SCSI_EMU_BLOCK_SIZE));
+	return ((offset_bytes % ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE) | (num_bytes % ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE));
 }
 
 /**
@@ -886,9 +886,9 @@ static uint64_t iscsi_scsi_emu_bytes_to_blocks(uint64_t *offset_blocks, uint64_t
  */
 static uint64_t iscsi_scsi_emu_blocks_to_bytes(uint64_t *offset_bytes, const uint64_t offset_blocks, const uint64_t num_blocks)
 {
-	*offset_bytes = (offset_blocks * ISCSI_SCSI_EMU_BLOCK_SIZE);
+	*offset_bytes = (offset_blocks * ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
 
-	return (num_blocks * ISCSI_SCSI_EMU_BLOCK_SIZE);
+	return (num_blocks * ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
 }
 
 /**
@@ -1016,7 +1016,7 @@ static int iscsi_scsi_emu_block_read(dnbd3_image_t *image, iscsi_scsi_task *scsi
 		return ISCSI_SCSI_TASK_RUN_COMPLETE;
 	}
 
-	const uint32_t max_xfer_len = ISCSI_MAX_DS_SIZE / ISCSI_SCSI_EMU_BLOCK_SIZE;
+	const uint32_t max_xfer_len = ISCSI_MAX_DS_SIZE / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE;
 
 	if ( xfer_len > max_xfer_len || !scsi_task->is_read || scsi_task->is_write ) {
 		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
@@ -1120,16 +1120,10 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			else
 				iscsi_put_be32( (uint8_t *) &buf->lba, (uint32_t) lba );
 
-			iscsi_put_be32( (uint8_t *) &buf->block_len, ISCSI_SCSI_EMU_BLOCK_SIZE );
-
-			uint len = scsi_task->len;
-
-			if ( len > sizeof(struct iscsi_scsi_read_capacity_10_parameter_data_packet) ) {
-				len = sizeof(struct iscsi_scsi_read_capacity_10_parameter_data_packet); // TODO: Check whether scatter data is required
-			}
+			iscsi_put_be32( (uint8_t *) &buf->block_len, ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE );
 
 			scsi_task->buf      = (uint8_t *) buf;
-			scsi_task->len      = len;
+			scsi_task->len      = sizeof(*buf);
 			scsi_task->status   = ISCSI_SCSI_STATUS_GOOD;
 
 			break;
@@ -1150,10 +1144,10 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 				return ISCSI_SCSI_TASK_RUN_COMPLETE;
 			}
 
-			lba      = iscsi_scsi_emu_block_get_count( image ) - 1ULL;
+			lba = iscsi_scsi_emu_block_get_count( image ) - 1ULL;
 
 			iscsi_put_be64( (uint8_t *) &buf->lba, lba );
-			iscsi_put_be32( (uint8_t *) &buf->block_len, ISCSI_SCSI_EMU_BLOCK_SIZE );
+			iscsi_put_be32( (uint8_t *) &buf->block_len, ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE );
 
 			buf->flags = 0;
 
@@ -1310,6 +1304,7 @@ static int iscsi_scsi_emu_primary_inquiry(dnbd3_image_t *image, iscsi_scsi_task 
 	}
 
 	if ( evpd != 0 ) {
+		// VPD requested
 		iscsi_scsi_vpd_page_inquiry_data_packet *vpd_page_inquiry_data_pkt = (iscsi_scsi_vpd_page_inquiry_data_packet *) std_inquiry_data_pkt;
 		uint alloc_len;
 		const uint8_t pti = ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PUT_PERIPHERAL_TYPE(ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_TYPE_DIRECT) | ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PUT_PERIPHERAL_ID(ISCSI_SCSI_VPD_PAGE_INQUIRY_DATA_PERIPHERAL_ID_POSSIBLE);
@@ -1497,11 +1492,15 @@ static int iscsi_scsi_emu_primary_inquiry(dnbd3_image_t *image, iscsi_scsi_task 
 
 				vpd_page_block_limits_inquiry_data_pkt->flags = 0;
 
-				uint32_t blocks = (ISCSI_MAX_DS_SIZE  / ISCSI_SCSI_EMU_BLOCK_SIZE);
+				// Calculate maximum number of logical blocks that would fit into a maximum-size transfer (16MiB),
+				// but make sure it is a multiple of the physical block size
+				const uint32_t blocks = ((ISCSI_MAX_DS_SIZE  / ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE)
+					* ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE) / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE;
 
 				vpd_page_block_limits_inquiry_data_pkt->max_cmp_write_len = (uint8_t) blocks;
 
-				iscsi_put_be16( (uint8_t *) &vpd_page_block_limits_inquiry_data_pkt->optimal_granularity_xfer_len, (uint16_t) blocks );
+				iscsi_put_be16( (uint8_t *) &vpd_page_block_limits_inquiry_data_pkt->optimal_granularity_xfer_len,
+					(uint16_t) ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE );
 				iscsi_put_be32( (uint8_t *) &vpd_page_block_limits_inquiry_data_pkt->max_xfer_len, blocks );
 				iscsi_put_be32( (uint8_t *) &vpd_page_block_limits_inquiry_data_pkt->optimal_xfer_len, blocks );
 				vpd_page_block_limits_inquiry_data_pkt->max_prefetch_len = 0UL;
@@ -1560,6 +1559,8 @@ static int iscsi_scsi_emu_primary_inquiry(dnbd3_image_t *image, iscsi_scsi_task 
 
 		return (int) (alloc_len + sizeof(struct iscsi_scsi_vpd_page_inquiry_data_packet));
 	}
+
+	// Normal INQUIRY, no VPD
 
 	const uint8_t pti = ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_PERIPHERAL_TYPE(ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_TYPE_DIRECT) | ISCSI_SCSI_BASIC_INQUIRY_DATA_PUT_PERIPHERAL_ID(ISCSI_SCSI_BASIC_INQUIRY_DATA_PERIPHERAL_ID_POSSIBLE);
 
@@ -2060,7 +2061,7 @@ static int iscsi_scsi_emu_primary_mode_sense(dnbd3_image_t *image, iscsi_scsi_ta
 	}
 
 	const uint64_t num_blocks = iscsi_scsi_emu_block_get_count( image );
-	const uint32_t block_size = ISCSI_SCSI_EMU_BLOCK_SIZE;
+	const uint32_t block_size = ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE;
 
 	if ( block_desc_len == sizeof(struct iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet) ) {
 		iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *lba_parameter_block_desc = (iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *) (((uint8_t *) mode_sense_6_parameter_hdr_data_pkt) + hdr_len);
