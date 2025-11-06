@@ -5759,10 +5759,10 @@ typedef struct iscsi_scsi_task {
 	/// SCSI Command Descriptor Block (CDB).
 	iscsi_scsi_cdb *cdb;
 
-	/// SCSI sense data.
+	/// SCSI sense data. If set, owned by this struct.
 	iscsi_scsi_sense_data_packet *sense_data;
 
-	/// Output buffer.
+	/// Output buffer. If set, owned by this struct.
 	uint8_t *buf;
 
 	/// Offset in bytes in image for DATA-in command.

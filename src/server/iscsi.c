@@ -84,9 +84,6 @@ static int iscsi_scsi_emu_io_blocks_read(iscsi_scsi_task *scsi_task,  dnbd3_imag
 
 static void iscsi_strcpy_pad(char *dst, const char *src, size_t size, int pad); // Copies a string with additional padding character to fill in a specified size
 
-static iscsi_task *iscsi_task_create(iscsi_connection *conn); // Allocates and initializes an iSCSI task structure
-static void iscsi_task_destroy(iscsi_task *task); // Deallocates resources acquired by iscsi_task_create
-
 static uint64_t iscsi_target_node_wwn_get(const uint8_t *name); // Calculates the WWN using 64-bit IEEE Extended NAA for a name
 
 static iscsi_session *iscsi_session_create(int type); // Creates and initializes an iSCSI session
@@ -323,67 +320,6 @@ static int iscsi_parse_login_key_value_pairs(iscsi_negotiation_kvp *pairs, const
 	}
 
 	return 0;
-}
-
-/**
- * @brief Allocates and initializes an iSCSI task structure.
- *
- * This function also initializes the underlying
- * SCSI task structure.\n
- *
- * @param[in] conn Pointer to iSCSI connection to associate
- * the task with. May NOT be NULL, so take
- * caution.
- * @return Pointer to iSCSI task structure or NULL
- * in case of an error (memory exhaustion).
- */
-static iscsi_task *iscsi_task_create(iscsi_connection *conn)
-{
-	iscsi_task *task = malloc( sizeof(iscsi_task) );
-
-	if ( task == NULL ) {
-		logadd( LOG_ERROR, "iscsi_task_create: Out of memory while allocating iSCSI task" );
-
-		return NULL;
-	}
-
-	task->len               = 0UL;
-	task->lun_id            = 0;
-	task->init_task_tag     = 0UL;
-	task->target_xfer_tag   = 0UL;
-
-	task->scsi_task.cdb            = NULL;
-	task->scsi_task.sense_data     = NULL;
-	task->scsi_task.buf            = NULL;
-	task->scsi_task.len            = 0UL;
-	task->scsi_task.id             = 0ULL;
-	task->scsi_task.is_read        = false;
-	task->scsi_task.is_write       = false;
-	task->scsi_task.exp_xfer_len   = 0UL;
-	task->scsi_task.sense_data_len = 0U;
-	task->scsi_task.status         = ISCSI_SCSI_STATUS_GOOD;
-	
-	task->scsi_task.connection = conn;
-
-	return task;
-}
-
-/**
- * @brief Deallocates resources acquired by iscsi_task_create.
- *
- * This function also frees the embedded SCSI task.
- *
- * @param[in] task Pointer to iSCSI task to deallocate. If
- * set to NULL, this function does nothing.
- */
-static void iscsi_task_destroy(iscsi_task *task)
-{
-	if ( task == NULL )
-		return;
-
-	free( task->scsi_task.buf );
-	free( task->scsi_task.sense_data );
-	free( task );
 }
 
 /**
@@ -972,7 +908,7 @@ static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 {
 	uint64_t lba;
 	uint32_t xfer_len;
-	const dnbd3_image_t *image = scsi_task->connection->client->image;
+	dnbd3_image_t *image = scsi_task->connection->client->image;
 
 	switch ( scsi_task->cdb->opcode ) {
 		case ISCSI_SCSI_OPCODE_READ6 : {
@@ -3042,56 +2978,54 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, const iscsi_
 {
 	bool handled = false;
 	iscsi_scsi_cmd_packet *scsi_cmd_pkt = (iscsi_scsi_cmd_packet *) request_pdu->bhs_pkt;
-	iscsi_task *task = iscsi_task_create( conn );
-
-	if ( task == NULL ) {
-		return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_OUT_OF_RESOURCES );
-	}
-
 	uint32_t exp_xfer_len = iscsi_get_be32(scsi_cmd_pkt->exp_xfer_len);
+	iscsi_task task = {
+		.lun_id        = iscsi_scsi_lun_get_from_iscsi( iscsi_get_be64(scsi_cmd_pkt->lun) ),
+		.init_task_tag = iscsi_get_be32(scsi_cmd_pkt->init_task_tag),
 
-	task->scsi_task.cdb          = &scsi_cmd_pkt->scsi_cdb;
-	task->scsi_task.exp_xfer_len = exp_xfer_len;
-	task->init_task_tag          = iscsi_get_be32(scsi_cmd_pkt->init_task_tag);
-
-	const uint64_t lun = iscsi_get_be64(scsi_cmd_pkt->lun);
-	task->lun_id       = iscsi_scsi_lun_get_from_iscsi( lun );
+		.scsi_task.cdb          = &scsi_cmd_pkt->scsi_cdb,
+		.scsi_task.exp_xfer_len = exp_xfer_len,
+		.scsi_task.status       = ISCSI_SCSI_STATUS_GOOD,
+		.scsi_task.connection   = conn,
+	};
 
 	if ( (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_READ) != 0 ) {
-		task->scsi_task.is_read = true;
+		task.scsi_task.is_read = true;
 	} else {
 		if ( exp_xfer_len != 0UL ) {
 			// Not a read request, but expecting data - not valid
-			iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
+			iscsi_scsi_task_status_set( &task.scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
 				ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 			handled = true;
 		}
 	}
 
 	if ( !handled ) {
-		task->scsi_task.is_write = (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_WRITE) != 0;
+		task.scsi_task.is_write = (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_WRITE) != 0;
 
-		if ( task->lun_id != ISCSI_DEFAULT_LUN ) {
-			logadd( LOG_WARNING, "Received SCSI command for unknown LUN %d", task->lun_id );
-			iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
+		if ( task.lun_id != ISCSI_DEFAULT_LUN ) {
+			logadd( LOG_WARNING, "Received SCSI command for unknown LUN %d", task.lun_id );
+			iscsi_scsi_task_status_set( &task.scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
 					ISCSI_SCSI_ASC_LU_NOT_SUPPORTED, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 			handled = true;
 		} else {
-			task->scsi_task.status = ISCSI_SCSI_STATUS_GOOD;
+			task.scsi_task.status = ISCSI_SCSI_STATUS_GOOD;
 
-			handled = iscsi_scsi_emu_block_process( &task->scsi_task )
-					|| iscsi_scsi_emu_primary_process( &task->scsi_task );
+			handled = iscsi_scsi_emu_block_process( &task.scsi_task )
+					|| iscsi_scsi_emu_primary_process( &task.scsi_task );
 
 			if ( !handled ) {
-				iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND,
+				iscsi_scsi_task_status_set( &task.scsi_task, ISCSI_SCSI_STATUS_CHECK_COND,
 					ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_COMMAND_OPERATION_CODE,
 					ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 			}
 		}
 	}
 
-	iscsi_scsi_task_send_reply( conn, &task->scsi_task, request_pdu );
-	iscsi_task_destroy( task );
+	iscsi_scsi_task_send_reply( conn, &task.scsi_task, request_pdu );
+	// Free any buffers that were allocated for this task
+	free( task.scsi_task.buf );
+	free( task.scsi_task.sense_data );
 
 	return ISCSI_CONNECT_PDU_READ_OK;
 }
