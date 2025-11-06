@@ -109,6 +109,8 @@ static iscsi_bhs_packet *iscsi_connection_pdu_resize(iscsi_pdu *pdu, const uint 
 
 static bool iscsi_connection_pdu_write(iscsi_connection *conn, iscsi_pdu *pdu);
 
+static int iscsi_connection_handle_reject(iscsi_connection *conn, iscsi_pdu *pdu, int reason_code);
+
 
 /**
  * @brief Copies a string with additional padding character to fill in a specified size.
@@ -3067,6 +3069,38 @@ static int iscsi_connection_handle_logout_req(iscsi_connection *conn, iscsi_pdu 
 }
 
 /**
+ * @brief Handles an iSCSI task management function request and generates an appropriate response.
+ *
+ * This function processes an incoming iSCSI task management function request PDU,
+ * constructs a corresponding response PDU, and sends it back to the initiator.
+ *
+ * @param[in] conn Pointer to the iSCSI connection structure. Must not be NULL.
+ * This represents the connection for which the request is being handled.
+ * @param[in] request_pdu Pointer to the incoming iSCSI task management function
+ * request PDU. Must not be NULL.
+ *
+ * @return 0 on successful PDU write, or -1 on failure.
+ */
+static int iscsi_connection_handle_task_func_req(iscsi_connection *conn, iscsi_pdu *request_pdu)
+{
+	iscsi_pdu CLEANUP_PDU response_pdu;
+	if ( !iscsi_connection_pdu_init( &response_pdu, 0, false ) )
+		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	iscsi_task_mgmt_func_response_packet *mgmt_resp = (iscsi_task_mgmt_func_response_packet *) response_pdu.bhs_pkt;
+	iscsi_task_mgmt_func_req_packet *mgmt_req = (iscsi_task_mgmt_func_req_packet *) request_pdu->bhs_pkt;
+
+	mgmt_resp->opcode        = ISCSI_OPCODE_SERVER_TASK_FUNC_RES;
+	mgmt_resp->response      = ISCSI_TASK_MGMT_FUNC_RESPONSE_FUNC_COMPLETE;
+	mgmt_resp->flags         = 0x80;
+	mgmt_resp->init_task_tag = mgmt_req->init_task_tag; // Copying over doesn't change endianess.
+	iscsi_put_be32( (uint8_t *) &mgmt_resp->stat_sn, conn->stat_sn++ );
+	iscsi_put_be32( (uint8_t *) &mgmt_resp->exp_cmd_sn, conn->session->exp_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &mgmt_resp->max_cmd_sn, conn->session->max_cmd_sn );
+
+	return iscsi_connection_pdu_write( conn, &response_pdu ) ? 0 : -1;
+}
+
+/**
  * @brief Handles an incoming iSCSI payload data NOP-Out request PDU.
  *
  * This function handles NOP-Out request payload
@@ -3624,7 +3658,8 @@ static int iscsi_connection_pdu_handle(iscsi_connection *conn, iscsi_pdu *reques
 				break;
 			}
 			case ISCSI_OPCODE_CLIENT_TASK_FUNC_REQ : {
-				// TODO: Send OK if a task is requested to be cancelled
+				rc = iscsi_connection_handle_task_func_req( conn, request_pdu );
+
 				break;
 			}
 			default : {

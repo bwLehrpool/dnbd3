@@ -3624,6 +3624,205 @@ typedef struct __attribute__((packed)) iscsi_scsi_response_packet {
 	uint32_t res_cnt;
 } iscsi_scsi_response_packet;
 
+
+/**
+ * @brief iSCSI Task Management Function Request packet data.
+ *
+ * This structure is used to explicity control the execution of one
+ * or more tasks (iSCSI and SCSI).
+ */
+typedef struct __attribute__((packed)) iscsi_task_mgmt_func_req_packet {
+    /// Always 2 according to iSCSI specification.
+    uint8_t opcode;
+
+    /**
+     * @brief Function.
+     *
+     * The task management functions provide an initiator with a way to
+     * explicitly control the execution of one or more tasks (SCSI and iSCSI
+     * tasks). The task management function codes are listed below. For a
+     * more detailed description of SCSI task management, see SAM2.
+     */
+    int8_t func;
+
+    /// Reserved fot future usage, always MUST be 0.
+    uint16_t reserved;
+
+    /// TotalAHSLength (MUST be 0 for this PDU).
+    uint8_t total_ahs_len;
+
+    /// DataSegmentLength (MUST be 0 for this PDU).
+    uint8_t ds_len[3];
+
+    /**
+     * @brief Logical Unit Number (LUN) or Reserved.
+     *
+     * This field is required for functions that address a specific LU
+     * (ABORT TASK, CLEAR TASK SET, ABORT TASK SET, CLEAR ACA, LOGICAL UNIT
+     * RESET) and is reserved in all others
+     */
+    uint64_t lun;
+
+    /**
+     * @brief Initiator Task Tag (ITT).
+     *
+     * This is the Initiator Task Tag of the task to be aborted for the
+     * ABORT TASK function or reassigned for the TASK REASSIGN function.
+     * For all the other functions, this field MUST be set to the reserved
+     * value 0xFFFFFFFF.
+     */
+    uint32_t init_task_tag;
+
+    /// Referenced task tag or 0xFFFFFFFF.
+    uint32_t ref_task_tag;
+
+    /// CmdSN.
+    uint32_t cmd_sn;
+
+    /// ExpStatSN
+    uint32_t exp_stat_sn;
+
+    /**
+     * @brief RefCmdSN or Reserved.
+     *
+     * If an ABORT TASK is issued for a task created by an immediate
+     * command, then the RefCmdSN MUST be that of the task management
+     * request itself (i.e., the CmdSN and RefCmdSN are equal).\n
+     * For an ABORT TASK of a task created by a non-immediate command, the
+     * RefCmdSN MUST be set to the CmdSN of the task identified by the
+     * Referenced Task Tag field. Targets must use this field when the task
+     * identified by the Referenced Task Tag field is not with the target.
+     * Otherwise, this field is reserved.
+     */
+    uint32_t ref_cmd_sn;
+
+    /**
+     * @brief ExpDataSN or Reserved.
+     *
+     * For recovery purposes, the iSCSI target and initiator maintain a data
+     * acknowledgment reference number - the first input DataSN number
+     * unacknowledged by the initiator. When issuing a new command, this
+     * number is set to 0. If the function is TASK REASSIGN, which
+     * establishes a new connection allegiance for a previously issued read
+     * or bidirectional command, the ExpDataSN will contain an updated data
+     * acknowledgment reference number or the value 0; the latter indicates
+     * that the data acknowledgment reference number is unchanged. The
+     * initiator MUST discard any data PDUs from the previous execution that
+     * it did not acknowledge, and the target MUST transmit all Data-In PDUs
+     * (if any) starting with the data acknowledgment reference number. The
+     * number of retransmitted PDUs may or may not be the same as the
+     * original transmission, depending on if there was a change in
+     * MaxRecvDataSegmentLength in the reassignment. The target MAY also
+     * send no more Data-In PDUs if all data has been acknowledged.
+     * The value of ExpDataSN MUST be 0 or higher than the DataSN of the
+     * last acknowledged Data-In PDU, but not larger than DataSN + 1 of the
+     * last Data-IN PDU sent by the target. Any other value MUST be ignored
+     * by the target.
+     * For other functions, this field is reserved
+     */
+    uint32_t exp_data_sn;
+
+    /// Reserved for future usage, always MUST be 0.
+    uint64_t reserved2;
+} iscsi_task_mgmt_func_req_packet;
+
+
+/// Task management function response: Function complete.
+#define ISCSI_TASK_MGMT_FUNC_RESPONSE_FUNC_COMPLETE               0x00
+
+/**
+ * @brief iSCSI Task Management Function Response packet data.
+ *
+ * For the functions ABORT TASK, ABORT TASK SET, CLEAR ACA, CLEAR TASK
+ * SET, LOGICAL UNIT RESET, TARGET COLD RESET, TARGET WARM RESET, and
+ * TASK REASSIGN, the target performs the requested task management
+ * function and sends a task management response back to the initiator.
+ * For TASK REASSIGN, the new connection allegiance MUST ONLY become
+ * effective at the target after the target issues the task management
+ * response.
+ */
+typedef struct __attribute__((packed)) iscsi_task_mgmt_func_response_packet {
+    /// Always 0x22 according to specification.
+    uint8_t opcode;
+
+    /// Reserved for future usage (always MUST be 0x80 for now).
+    uint8_t flags;
+
+    /**
+     * @brief Function response.
+     *
+     * For the TARGET COLD RESET and TARGET WARM RESET functions, the target
+     * cancels all pending operations across all LUs known to the issuing
+     * initiator. For the TARGET COLD RESET function, the target MUST then
+     * close all of its TCP connections to all initiators (terminates all
+     * sessions).\n
+     * The mapping of the response code into a SCSI service response code
+     * value, if needed, is outside the scope of this document. However, in
+     * symbolic terms, Response values 0 and 1 map to the SCSI service
+     * response of FUNCTION COMPLETE. Response value 2 maps to the SCSI
+     * service response of INCORRECT LOGICAL UNIT NUMBER. All other
+     * Response values map to the SCSI service response of FUNCTION
+     * REJECTED. If a Task Management Function Response PDU does not arrive
+     * before the session is terminated, the SCSI service response is
+     * SERVICE DELIVERY OR TARGET FAILURE.\n
+     * The response to ABORT TASK SET and CLEAR TASK SET MUST only be issued
+     * by the target after all of the commands affected have been received
+     * by the target, the corresponding task management functions have been
+     * executed by the SCSI target, and the delivery of all responses
+     * delivered until the task management function completion has been
+     * confirmed (acknowledged through the ExpStatSN) by the initiator on
+     * all connections of this session.\n
+     * For the ABORT TASK function,\n
+     * -# if the Referenced Task Tag identifies a valid task leading to a
+     *    successful termination, then targets must return the "Function
+     *    complete" response.
+     * -# if the Referenced Task Tag does not identify an existing task
+     *    but the CmdSN indicated by the RefCmdSN field in the Task
+     *    Management Function Request is within the valid CmdSN window
+     *    and less than the CmdSN of the Task Management Function Request
+     *    itself, then targets must consider the CmdSN as received and
+     *    return the "Function complete" response.
+     * -# if the Referenced Task Tag does not identify an existing task
+     *    and the CmdSN indicated by the RefCmdSN field in the Task
+     *    Management Function Request is outside the valid CmdSN window,
+     *    then targets must return the "Task does not exist" response
+     */
+    uint8_t response;
+
+    /// Reserved for future usage, always MUST be 0.
+    uint8_t reserved;
+
+    /// TotalAHSLength (MUST be 0 for this PDU).
+    uint8_t total_ahs_len;
+
+    /// DataSegmentLength (MUST be 0 for this PDU).
+    uint8_t ds_len[3];
+
+    /// Reserved for future usage, always MUST be 0.
+    uint64_t reserved2;
+
+    /// Initiator Task Tag (ITT).
+    uint32_t init_task_tag;
+
+    /// Reserved for future usage, always MUST be 0.
+    uint32_t reserved3;
+
+    /// StatSN.
+    uint32_t stat_sn;
+
+    /// ExpCmdSN.
+    uint32_t exp_cmd_sn;
+
+    /// MaxCmdSN.
+    uint32_t max_cmd_sn;
+
+    /// Reserved for future usage, always MUST be 0.
+    uint32_t reserved4;
+
+    /// Reserved for future usage, always MUST be 0.
+    uint64_t reserved5;
+} iscsi_task_mgmt_func_response_packet;
+
 /// SCSI data out / in flags: Immediately process transfer.
 #define ISCSI_SCSI_DATA_OUT_DATA_IN_FLAGS_IMMEDIATE (1 << 7)
 
