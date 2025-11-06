@@ -5765,9 +5765,6 @@ typedef struct iscsi_scsi_task {
 	/// Output buffer.
 	uint8_t *buf;
 
-	/// Whether output buffer os owned by this struct and must be freed on destroy
-	bool must_free;
-
 	/// Offset in bytes in image for DATA-in command.
 	size_t file_offset;
 

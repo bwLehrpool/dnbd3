@@ -36,6 +36,7 @@
 #include <dnbd3/types.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "sendfile.h"
 #include "globals.h"
@@ -70,14 +71,11 @@
 /// Use for stack-allocated iscsi_pdu
 #define CLEANUP_PDU __attribute__((cleanup(iscsi_connection_pdu_destroy)))
 
-static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task);
+static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task);
 
-static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task);
+static bool iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task);
 
-
-static void iscsi_scsi_task_init(iscsi_scsi_task *scsi_task); // Initializes a SCSI task
-
-static void iscsi_scsi_task_xfer_complete(iscsi_connection *conn, iscsi_scsi_task *scsi_task, const iscsi_pdu *request_pdu); // Callback function when an iSCSI SCSI task completed the data transfer
+static void iscsi_scsi_task_send_reply(iscsi_connection *conn, iscsi_scsi_task *scsi_task, const iscsi_pdu *request_pdu);
 
 static uint64_t iscsi_scsi_lun_get_from_scsi(int lun_id); // Converts an internal representation of a LUN identifier to an iSCSI LUN required for packet data
 static int iscsi_scsi_lun_get_from_iscsi(uint64_t lun); // Converts an iSCSI LUN from packet data to internal SCSI LUN identifier
@@ -331,10 +329,7 @@ static int iscsi_parse_login_key_value_pairs(iscsi_negotiation_kvp *pairs, const
  * @brief Allocates and initializes an iSCSI task structure.
  *
  * This function also initializes the underlying
- * SCSI task structure with the transfer complete
- * callback function.\n
- * If a parent task is specified, SCSI data
- * is copied over from it.
+ * SCSI task structure.\n
  *
  * @param[in] conn Pointer to iSCSI connection to associate
  * the task with. May NOT be NULL, so take
@@ -357,7 +352,17 @@ static iscsi_task *iscsi_task_create(iscsi_connection *conn)
 	task->init_task_tag     = 0UL;
 	task->target_xfer_tag   = 0UL;
 
-	iscsi_scsi_task_init( &task->scsi_task );
+	task->scsi_task.cdb            = NULL;
+	task->scsi_task.sense_data     = NULL;
+	task->scsi_task.buf            = NULL;
+	task->scsi_task.len            = 0UL;
+	task->scsi_task.id             = 0ULL;
+	task->scsi_task.is_read        = false;
+	task->scsi_task.is_write       = false;
+	task->scsi_task.exp_xfer_len   = 0UL;
+	task->scsi_task.sense_data_len = 0U;
+	task->scsi_task.status         = ISCSI_SCSI_STATUS_GOOD;
+	
 	task->scsi_task.connection = conn;
 
 	return task;
@@ -376,9 +381,7 @@ static void iscsi_task_destroy(iscsi_task *task)
 	if ( task == NULL )
 		return;
 
-	if ( task->scsi_task.must_free ) {
-		free( task->scsi_task.buf );
-	}
+	free( task->scsi_task.buf );
 	free( task->scsi_task.sense_data );
 	free( task );
 }
@@ -414,32 +417,25 @@ static bool iscsi_scsi_data_in_send(iscsi_connection *conn, const iscsi_task *ta
 	iscsi_scsi_data_in_response_packet *scsi_data_in_pkt = (iscsi_scsi_data_in_response_packet *) response_pdu.bhs_pkt;
 
 	scsi_data_in_pkt->opcode   = ISCSI_OPCODE_SERVER_SCSI_DATA_IN;
-	scsi_data_in_pkt->flags    = (flags & ~(ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_RES_UNDERFLOW | ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_RES_OVERFLOW));
+	scsi_data_in_pkt->flags    = flags;
 	scsi_data_in_pkt->reserved = 0U;
 
 	if ( (flags & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS) != 0 ) {
-		if ( (flags & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL) != 0 ) {
-			scsi_data_in_pkt->flags |= (flags & (ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_RES_UNDERFLOW | ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_RES_OVERFLOW));
-
-			if ( !immediate ) {
-				conn->session->max_cmd_sn++;
-			}
-
-			iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->res_cnt, res_cnt );
-		} else {
-			scsi_data_in_pkt->res_cnt = 0UL;
+		if ( (flags & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL) != 0 && !immediate ) {
+			conn->session->max_cmd_sn++;
 		}
-
 		scsi_data_in_pkt->status = task->scsi_task.status;
 		iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->stat_sn, conn->stat_sn++ );
+		iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->res_cnt, res_cnt );
 	} else {
+		// these don't carry any meaning if S bit is unset - saves us from doing the endian-conversion
 		scsi_data_in_pkt->status  = 0U;
 		scsi_data_in_pkt->stat_sn = 0UL;
 		scsi_data_in_pkt->res_cnt = 0UL;
 	}
 
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->total_ahs_len, len ); // TotalAHSLength is always 0 and DataSegmentLength is 24-bit, so write in one step.
-	scsi_data_in_pkt->lun             = 0ULL;
+	scsi_data_in_pkt->lun = 0ULL; // Not used if we don't set the A bit (we never do)
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->init_task_tag, task->init_task_tag );
 	scsi_data_in_pkt->target_xfer_tag = 0xFFFFFFFFUL; // Minus one does not require endianess conversion
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
@@ -448,19 +444,19 @@ static bool iscsi_scsi_data_in_send(iscsi_connection *conn, const iscsi_task *ta
 
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->buf_offset, pos );
 
-	iscsi_connection_pdu_write( conn, &response_pdu );
+	if ( !iscsi_connection_pdu_write( conn, &response_pdu ) )
+		return false;
 
+	size_t padding;
 	if ( task->scsi_task.buf != NULL ) {
 		if ( !sock_sendAll( conn->client->sock, (task->scsi_task.buf + pos), len, ISCSI_CONNECT_SOCKET_WRITE_RETRIES ) )
 			return false;
-		const size_t padding = ISCSI_ALIGN( len, ISCSI_ALIGN_SIZE ) - len;
-		if ( padding != 0 ) {
-			if ( !sock_sendPadding( conn->client->sock, padding ) )
-				return false;
-		}
+		padding = ISCSI_ALIGN( len, ISCSI_ALIGN_SIZE ) - len;
 	} else {
+		// sendfile - it must be a DATA-In, in which case len should be a multiple of 4, as it was given in number of
+		// blocks, which is not just a multiple of 4 but usually a power of two.
+		assert( len % 4 == 0 );
 		const uint64_t off = task->scsi_task.file_offset + pos;
-		size_t padding = 0;
 		size_t realBytes = len;
 		if ( off >= conn->client->image->realFilesize ) {
 			padding = len;
@@ -468,15 +464,17 @@ static bool iscsi_scsi_data_in_send(iscsi_connection *conn, const iscsi_task *ta
 		} else if ( off + len > conn->client->image->realFilesize ) {
 			padding = ( off + len ) - conn->client->image->realFilesize;
 			realBytes -= padding;
+		} else {
+			padding = 0;
 		}
 		bool ret = sendfile_all( conn->client->image->readFd, conn->client->sock,
 			(off_t)off, realBytes );
 		if ( !ret )
 			return false;
-		if ( padding > 0 ) {
-			if ( !sock_sendPadding( conn->client->sock, padding ) )
-				return false;
-		}
+	}
+	if ( padding != 0 ) {
+		if ( !sock_sendPadding( conn->client->sock, padding ) )
+			return false;
 	}
 
 	return true;
@@ -496,14 +494,10 @@ static bool iscsi_scsi_data_in_send(iscsi_connection *conn, const iscsi_task *ta
  * the incoming data. NULL is NOT allowed here,
  * take caution.
  * @param immediate
- * @return 0 on successful incoming transfer handling,
- * a negative error code otherwise.
+ * @return true on success, false on error
  */
-static int iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, const iscsi_task *task, bool immediate)
+static bool iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, const iscsi_task *task, bool immediate)
 {
-	if ( task->scsi_task.status != ISCSI_SCSI_STATUS_GOOD )
-		return 0;
-
 	const uint32_t expected_len = task->scsi_task.exp_xfer_len;
 	uint32_t xfer_len           = task->scsi_task.len;
 	uint32_t res_cnt            = 0UL;
@@ -517,99 +511,68 @@ static int iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, const iscsi_task
 		res_cnt  = (expected_len - xfer_len);
 		flags   |= ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_RES_UNDERFLOW;
 	}
-	if ( xfer_len == 0UL )
-		return 0;
+	if ( xfer_len == 0UL ) {
+		// Can this even happen? Send empty data-in response...
+		flags |= ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL | ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS;
+		return iscsi_scsi_data_in_send( conn, task, 0, 0, res_cnt, 0, flags, immediate );
+	}
 
 	uint32_t data_sn                 = 0;
-	uint32_t max_burst_offset        = 0UL;
-	// Max burst length = total length of payload in all PDUs
+	// Max burst length = total cobined length of payload in all PDUs of one sequence
 	const uint32_t max_burst_len     = conn->session->opts.MaxBurstLength;
 	// Max recv segment length = total length of one individual PDU
-	const uint32_t seg_len      = conn->session->opts.MaxRecvDataSegmentLength;
-	const uint32_t data_in_seq_count = ((xfer_len - 1) / max_burst_len) + 1;
-	uint8_t status                    = 0;
+	const uint32_t max_seg_len       = conn->session->opts.MaxRecvDataSegmentLength;
 
-	for ( uint32_t i = 0UL; i < data_in_seq_count; i++ ) {
-		uint32_t seq_end = (max_burst_offset + max_burst_len);
+	for ( uint32_t current_burst_start = 0; current_burst_start < xfer_len; current_burst_start += max_burst_len ) {
+		const uint32_t current_burst_end = MIN(xfer_len, current_burst_start + max_burst_len);
 
-		if ( seq_end > xfer_len )
-			seq_end = xfer_len;
+		for ( uint32_t offset = current_burst_start; offset < current_burst_end; offset += max_seg_len ) {
+			const uint32_t current_seg_len = MIN(max_seg_len, current_burst_end - offset);
 
-		for ( uint32_t offset = max_burst_offset; offset < seq_end; offset += seg_len ) {
-			uint32_t len = (seq_end - offset);
+			flags &= ~(ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS | ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL);
 
-			if ( len > seg_len )
-				len = seg_len;
+			if ( (offset + current_seg_len) == current_burst_end ) {
+				// This segment ends the current sequence - set F bit
+				flags |= ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL;
 
-			flags &= (int8_t) ~(ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS | ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL);
-
-			if ( (offset + len) == seq_end ) {
-				flags |= (int8_t) ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL;
-
-				if ( (task->scsi_task.sense_data_len == 0U) && ((offset + len) == xfer_len) ) {
-					flags  |= (int8_t) ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS;
-					status |= flags;
+				if ( (offset + current_seg_len) == xfer_len ) {
+					// This segment ends the entire transfer - set S bit and include status
+					flags  |= ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS;
 				}
 			}
 
-			if ( !iscsi_scsi_data_in_send( conn, task, offset, len, res_cnt, data_sn, flags, immediate ) )
-				return -1;
+			if ( !iscsi_scsi_data_in_send( conn, task, offset, current_seg_len, res_cnt, data_sn, flags, immediate ) )
+				return false;
 
 			data_sn++;
 		}
-
-		max_burst_offset += max_burst_len;
 	}
 
 	conn->client->bytesSent += xfer_len;
 
-	return (status & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS);
+	return true;
 }
 
 /**
- * @brief Initializes a SCSI task.
- *
- * @param[in] scsi_task Pointer to SCSI task. This
- * may NOT be NULL, so be careful.
- */
-static void iscsi_scsi_task_init(iscsi_scsi_task *scsi_task)
-{
-	scsi_task->cdb                    = NULL;
-	scsi_task->sense_data             = NULL;
-	scsi_task->buf                    = NULL;
-	scsi_task->must_free              = true;
-	scsi_task->len                    = 0UL;
-	scsi_task->id                     = 0ULL;
-	scsi_task->is_read                = false;
-	scsi_task->is_write               = false;
-	scsi_task->exp_xfer_len           = 0UL;
-	scsi_task->sense_data_len         = 0U;
-	scsi_task->status                 = ISCSI_SCSI_STATUS_GOOD;
-}
-
-/**
- * @brief Callback function when an iSCSI SCSI task completed the data transfer.
- *
- * This function post-processes a task upon
- * finish of data transfer.
+ * @brief Send reply to a n iSCSI SCSI op.
+ * Called when the request has been handled and the task is set up properly
+ * with the according data to reply with. This is either payload data, for
+ * a transfer, or sense data.
  *
  * @param[in] conn Current connection
- * @param[in] scsi_task Pointer to iSCSI SCSI task which finished
- * the data transfer and may NOT be NULL,
- * so be careful.
- * @param request_pdu
+ * @param[in] scsi_task Pointer to iSCSI SCSI task to send out a response for
+ * @param request_pdu The request belonging to the response to send
  */
-static void iscsi_scsi_task_xfer_complete(iscsi_connection *conn, iscsi_scsi_task *scsi_task, const iscsi_pdu *request_pdu)
+static void iscsi_scsi_task_send_reply(iscsi_connection *conn, iscsi_scsi_task *scsi_task, const iscsi_pdu *request_pdu)
 {
 	iscsi_task *task = container_of( scsi_task, iscsi_task, scsi_task );
 
 	iscsi_scsi_cmd_packet *scsi_cmd_pkt = (iscsi_scsi_cmd_packet *) request_pdu->bhs_pkt;
 
-	if ( (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_READ) != 0 ) {
-		const int rc = iscsi_task_xfer_scsi_data_in( conn, task, (scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) != 0 );
+	if ( task->scsi_task.status == ISCSI_SCSI_STATUS_GOOD && scsi_task->sense_data_len == 0 && scsi_task->is_read ) {
+		iscsi_task_xfer_scsi_data_in( conn, task, (scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) != 0 );
 
-		if ( rc > 0 )
-			return;
+		return;
 	}
 
 	const uint32_t ds_len   = (scsi_task->sense_data_len != 0U)
@@ -634,9 +597,9 @@ static void iscsi_scsi_task_xfer_complete(iscsi_connection *conn, iscsi_scsi_tas
 	}
 
 	scsi_response_pkt->opcode   = ISCSI_OPCODE_SERVER_SCSI_RESPONSE;
-	scsi_response_pkt->flags    = -0x80;
+	scsi_response_pkt->flags    = 0x80;
 	scsi_response_pkt->response = ISCSI_SCSI_RESPONSE_CODE_OK;
-	const uint32_t exp_xfer_len             = scsi_task->exp_xfer_len;
+	const uint32_t exp_xfer_len = scsi_task->exp_xfer_len;
 
 	if ( (exp_xfer_len != 0UL) && (scsi_task->status == ISCSI_SCSI_STATUS_GOOD) ) {
 		const uint32_t resp_len             = ds_len;
@@ -953,49 +916,45 @@ static int iscsi_scsi_emu_io_blocks_read(iscsi_scsi_task *scsi_task,  dnbd3_imag
  * @param[in] lba Logical Block Address (LBA) to start
  * reading from or writing to.
  * @param[in] xfer_len Transfer length in logical blocks.
- * @return 0 on successful operation, a negative
- * error code otherwise.
  */
-static int iscsi_scsi_emu_block_read(dnbd3_image_t *image, iscsi_scsi_task *scsi_task, const uint64_t lba, const uint32_t xfer_len)
+static void iscsi_scsi_emu_block_read(dnbd3_image_t *image, iscsi_scsi_task *scsi_task, const uint64_t lba, const uint32_t xfer_len)
 {
-	if ( xfer_len == 0UL ) {
-		scsi_task->status   = ISCSI_SCSI_STATUS_GOOD;
-
-		return ISCSI_SCSI_TASK_RUN_COMPLETE;
-	}
-
 	const uint32_t max_xfer_len = ISCSI_MAX_DS_SIZE / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE;
 
 	if ( xfer_len > max_xfer_len || !scsi_task->is_read || scsi_task->is_write ) {
 		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
 			ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 
-		return ISCSI_SCSI_TASK_RUN_COMPLETE;
+		return;
+	}
+
+	if ( xfer_len == 0UL ) {
+		scsi_task->status = ISCSI_SCSI_STATUS_GOOD;
+
+		return;
 	}
 
 	int rc = iscsi_scsi_emu_io_blocks_read( scsi_task, image, lba, xfer_len );
 
 	if ( rc == 0 )
-		return ISCSI_SCSI_TASK_RUN_COMPLETE;
+		return;
 
 	if ( rc == -ENOMEM ) {
 		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_HARDWARE_ERR,
 			ISCSI_SCSI_ASC_INTERNAL_TARGET_FAIL, ISCSI_SCSI_ASC_NO_ADDITIONAL_SENSE );
 
-		return ISCSI_SCSI_TASK_RUN_COMPLETE;
+		return;
 	}
 
 	if ( rc == -ERANGE ) {
 		iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
 			ISCSI_SCSI_ASC_LOGICAL_BLOCK_ADDRESS_OUT_OF_RANGE, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 
-		return ISCSI_SCSI_TASK_RUN_COMPLETE;
+		return;
 	}
 
 	iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NO_SENSE,
 		ISCSI_SCSI_ASC_NO_ADDITIONAL_SENSE, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
-
-	return ISCSI_SCSI_TASK_RUN_COMPLETE;
 }
 
 /**
@@ -1007,14 +966,13 @@ static int iscsi_scsi_emu_block_read(dnbd3_image_t *image, iscsi_scsi_task *scsi
  * @param[in] scsi_task Pointer to iSCSI SCSI task
  * to process the SCSI block operation
  * for and may NOT be NULL, be careful.
- * @return 0 on successful operation, a negative
- * error code otherwise.
+ * @return true on successful operation, false otherwise.
  */
-static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
+static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 {
 	uint64_t lba;
 	uint32_t xfer_len;
-	dnbd3_image_t *image = scsi_task->connection->client->image;
+	const dnbd3_image_t *image = scsi_task->connection->client->image;
 
 	switch ( scsi_task->cdb->opcode ) {
 		case ISCSI_SCSI_OPCODE_READ6 : {
@@ -1026,7 +984,9 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			if ( xfer_len == 0UL )
 				xfer_len = 256UL;
 
-			return iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+			iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+
+			break;
 		}
 		case ISCSI_SCSI_OPCODE_READ10 : {
 			const iscsi_scsi_cdb_read_write_10 *cdb_read_write_10 = (iscsi_scsi_cdb_read_write_10 *) scsi_task->cdb;
@@ -1034,7 +994,9 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			lba      = iscsi_get_be32(cdb_read_write_10->lba);
 			xfer_len = iscsi_get_be16(cdb_read_write_10->xfer_len);
 
-			return iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+			iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+
+			break;
 		}
 		case ISCSI_SCSI_OPCODE_READ12 : {
 			const iscsi_scsi_cdb_read_write_12 *cdb_read_write_12 = (iscsi_scsi_cdb_read_write_12 *) scsi_task->cdb;
@@ -1042,7 +1004,9 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			lba      = iscsi_get_be32(cdb_read_write_12->lba);
 			xfer_len = iscsi_get_be32(cdb_read_write_12->xfer_len);
 
-			return iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+			iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+
+			break;
 		}
 		case ISCSI_SCSI_OPCODE_READ16 : {
 			const iscsi_scsi_cdb_read_write_16 *cdb_read_write_16 = (iscsi_scsi_cdb_read_write_16 *) scsi_task->cdb;
@@ -1050,15 +1014,18 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			lba      = iscsi_get_be64(cdb_read_write_16->lba);
 			xfer_len = iscsi_get_be32(cdb_read_write_16->xfer_len);
 
-			return iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+			iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
+
+			break;
 		}
 		case ISCSI_SCSI_OPCODE_READCAPACITY10 : {
 			iscsi_scsi_read_capacity_10_parameter_data_packet *buf = malloc( sizeof(iscsi_scsi_read_capacity_10_parameter_data_packet) );
 
 			if ( buf == NULL ) {
-				iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NOT_READY, ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY, ISCSI_SCSI_ASCQ_BECOMING_READY );
+				iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NOT_READY,
+					ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY, ISCSI_SCSI_ASCQ_BECOMING_READY );
 
-				return ISCSI_SCSI_TASK_RUN_COMPLETE;
+				break;
 			}
 
 			lba = iscsi_scsi_emu_block_get_count( image ) - 1ULL;
@@ -1081,7 +1048,7 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 
 			if ( ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_GET_ACTION(cdb_servce_in_action_16->action)
 						!= ISCSI_SCSI_CDB_SERVICE_ACTION_IN_16_ACTION_READ_CAPACITY_16 ) {
-				return ISCSI_SCSI_TASK_RUN_UNKNOWN;
+				return false;
 			}
 			iscsi_scsi_service_action_in_16_parameter_data_packet *buf = malloc( sizeof(iscsi_scsi_service_action_in_16_parameter_data_packet) );
 
@@ -1089,7 +1056,7 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 				iscsi_scsi_task_status_set( scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_NOT_READY,
 					ISCSI_SCSI_ASC_LOGICAL_UNIT_NOT_READY, ISCSI_SCSI_ASCQ_BECOMING_READY );
 
-				return ISCSI_SCSI_TASK_RUN_COMPLETE;
+				break;
 			}
 
 			lba = iscsi_scsi_emu_block_get_count( image ) - 1ULL;
@@ -1131,13 +1098,11 @@ static int iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			break;
 		}
 		default : {
-			return ISCSI_SCSI_TASK_RUN_UNKNOWN;
-
-			break;
+			return false;
 		}
 	}
 
-	return ISCSI_SCSI_TASK_RUN_COMPLETE;
+	return true;
 }
 
 /**
@@ -1995,10 +1960,9 @@ static uint32_t iscsi_get_temporary_allocation_size(iscsi_scsi_task *scsi_task, 
  * to process the SCSI non-block
  * operation for and may NOT be NULL,
  * be careful.
- * @return 0 on successful operation, a negative
- * error code otherwise.
+ * @return true on successful operation, false otherwise.
  */
-static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
+static bool iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 {
 	uint len;
 	int rc;
@@ -2148,13 +2112,11 @@ static int iscsi_scsi_emu_primary_process(iscsi_scsi_task *scsi_task)
 			break;
 		}
 		default : {
-			return ISCSI_SCSI_TASK_RUN_UNKNOWN;
-
-			break;
+			return false;
 		}
 	}
 
-	return ISCSI_SCSI_TASK_RUN_COMPLETE;
+	return true;
 }
 
 /**
@@ -3078,15 +3040,8 @@ static int iscsi_connection_handle_nop_out(iscsi_connection *conn, const iscsi_p
  */
 static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, const iscsi_pdu *request_pdu)
 {
+	bool handled = false;
 	iscsi_scsi_cmd_packet *scsi_cmd_pkt = (iscsi_scsi_cmd_packet *) request_pdu->bhs_pkt;
-
-	if ( (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_WRITE) != 0 ) { // Bidirectional transfer is not supported
-		logadd( LOG_DEBUG1, "Received SCSI write command from %s", conn->client->hostName );
-		// Should really return a write protect error on SCSI layer, but a well-behaving client shouldn't ever
-		// send a write command anyways, since we declare the device read only.
-		return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_COMMAND_NOT_SUPPORTED );
-	}
-
 	iscsi_task *task = iscsi_task_create( conn );
 
 	if ( task == NULL ) {
@@ -3102,45 +3057,40 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, const iscsi_
 	const uint64_t lun = iscsi_get_be64(scsi_cmd_pkt->lun);
 	task->lun_id       = iscsi_scsi_lun_get_from_iscsi( lun );
 
-	if ( (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_READ) == 0 ) {
+	if ( (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_READ) != 0 ) {
+		task->scsi_task.is_read = true;
+	} else {
 		if ( exp_xfer_len != 0UL ) {
 			// Not a read request, but expecting data - not valid
-			iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
-			iscsi_task_destroy( task );
-
-			return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_INVALID_PDU_FIELD );
+			iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
+				ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
+			handled = true;
 		}
-	} else {
-		task->scsi_task.is_read = true;
 	}
-	task->scsi_task.is_write = (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_WRITE) != 0;
 
-	int rc;
+	if ( !handled ) {
+		task->scsi_task.is_write = (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_WRITE) != 0;
 
-	if ( task->lun_id != ISCSI_DEFAULT_LUN ) {
-		logadd( LOG_WARNING, "Received SCSI command for unknown LUN %d", task->lun_id );
-		iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
-				ISCSI_SCSI_ASC_LU_NOT_SUPPORTED, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
-		rc = ISCSI_SCSI_TASK_RUN_COMPLETE;
-	} else {
-		task->scsi_task.status = ISCSI_SCSI_STATUS_GOOD;
+		if ( task->lun_id != ISCSI_DEFAULT_LUN ) {
+			logadd( LOG_WARNING, "Received SCSI command for unknown LUN %d", task->lun_id );
+			iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
+					ISCSI_SCSI_ASC_LU_NOT_SUPPORTED, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
+			handled = true;
+		} else {
+			task->scsi_task.status = ISCSI_SCSI_STATUS_GOOD;
 
-		rc = iscsi_scsi_emu_block_process( &task->scsi_task );
+			handled = iscsi_scsi_emu_block_process( &task->scsi_task )
+					|| iscsi_scsi_emu_primary_process( &task->scsi_task );
 
-		if ( rc == ISCSI_SCSI_TASK_RUN_UNKNOWN ) {
-			rc = iscsi_scsi_emu_primary_process( &task->scsi_task );
-
-			if ( rc == ISCSI_SCSI_TASK_RUN_UNKNOWN ) {
-				iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_COMMAND_OPERATION_CODE, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
-				rc = ISCSI_SCSI_TASK_RUN_COMPLETE;
+			if ( !handled ) {
+				iscsi_scsi_task_status_set( &task->scsi_task, ISCSI_SCSI_STATUS_CHECK_COND,
+					ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_COMMAND_OPERATION_CODE,
+					ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 			}
 		}
 	}
 
-	if ( rc == ISCSI_SCSI_TASK_RUN_COMPLETE ) {
-		iscsi_scsi_task_xfer_complete( conn, &task->scsi_task, request_pdu );
-	}
-
+	iscsi_scsi_task_send_reply( conn, &task->scsi_task, request_pdu );
 	iscsi_task_destroy( task );
 
 	return ISCSI_CONNECT_PDU_READ_OK;
