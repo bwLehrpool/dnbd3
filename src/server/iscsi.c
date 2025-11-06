@@ -561,6 +561,8 @@ static int iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, const iscsi_task
 		max_burst_offset += max_burst_len;
 	}
 
+	conn->client->bytesSent += xfer_len;
+
 	return (status & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS);
 }
 
@@ -3327,6 +3329,9 @@ static int iscsi_connecction_handle_login_response(iscsi_connection *conn, iscsi
 
 				return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
 			}
+			char tname[50];
+			snprintf( tname, sizeof(tname), "i%s", conn->client->hostName );
+			setThreadName( tname );
 
 			break;
 		}
