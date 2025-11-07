@@ -1315,12 +1315,27 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 
 				vpd_page_block_limits_inquiry_data_pkt->flags = 0;
 
-				// Calculate maximum number of logical blocks that would fit into a maximum-size transfer (16MiB),
-				// but make sure it is a multiple of the physical block size
-				const uint32_t blocks = ((ISCSI_MAX_DS_SIZE  / ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE)
-					* ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE) / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE;
+				// So, this has caused some headache, nice. With the kernel's iscsi implementation, we have to limit our
+				// reported maximum supported transfer length to the client's maximum supported DS size. If you just do
+				// ISCSI_MAX_DS_SIZE / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE
+				// the kernel will complain that the maximum transfer size is not a multiple of the physical block size,
+				// so you might be tempted to use
+				// ((ISCSI_MAX_DS_SIZE  / ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE)
+				//	    * ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE) / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE
+				// to make sure it is. But then *surprise*, maximum transfer speeds drop from ~1.5GB/s to ~250MB/s.
+				// OK, then you revert back to the simple formula and accept that annoying warning in dmesg, only to
+				// realize that while "pv < /dev/sda > /dev/null" and dd with bs=256k are fast, a dd with bs=1M ends up
+				// at about 25MB/s (!!!!)
+				// So what finally, hopefully, seems to work properly is limiting the reported maximum transfer length to
+				// the client's MaxRecvDataSegmentLength, which coincidentally is the same as its FirstBurstLength, so
+				// let's hope picking MaxRecvDataSegmentLength is the right choice here. You'd think the client would
+				// automatically pick a suitable transfer length that it can handle efficiently; the kernel however just
+				// goes for the maximum supported by the server. Even just lowering the reported *optimal* length is not
+				// sufficient. But maybe I'm just not good with computers.
+				const uint32_t blocks = (scsi_task->connection->session->opts.MaxRecvDataSegmentLength
+					/ ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
 
-				vpd_page_block_limits_inquiry_data_pkt->max_cmp_write_len = (uint8_t) blocks;
+				vpd_page_block_limits_inquiry_data_pkt->max_cmp_write_len = 0;
 
 				iscsi_put_be16( (uint8_t *) &vpd_page_block_limits_inquiry_data_pkt->optimal_granularity_xfer_len,
 					(uint16_t) ISCSI_SCSI_EMU_PHYSICAL_BLOCK_SIZE / ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE );
@@ -1333,7 +1348,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 
 				vpd_page_block_limits_inquiry_data_pkt->optimal_unmap_granularity        = 0UL;
 				vpd_page_block_limits_inquiry_data_pkt->unmap_granularity_align_ugavalid = 0UL;
-				iscsi_put_be64( (uint8_t *) &vpd_page_block_limits_inquiry_data_pkt->max_write_same_len, blocks );
+				vpd_page_block_limits_inquiry_data_pkt->max_write_same_len               = 0;
 				vpd_page_block_limits_inquiry_data_pkt->reserved[0]                      = 0ULL;
 				vpd_page_block_limits_inquiry_data_pkt->reserved[1]                      = 0ULL;
 				vpd_page_block_limits_inquiry_data_pkt->reserved2                        = 0UL;
