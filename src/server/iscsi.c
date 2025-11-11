@@ -1641,14 +1641,20 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
 			if ( sub_page != 0U )
 				break;
 
-			iscsi_scsi_mode_sense_caching_mode_page_data_packet *mode_sense_caching_mode_page_pkt = (iscsi_scsi_mode_sense_caching_mode_page_data_packet *) buffer;
+			iscsi_scsi_mode_sense_caching_mode_page_data_packet *cache_page = (iscsi_scsi_mode_sense_caching_mode_page_data_packet *) buffer;
 
-			page_len = sizeof(iscsi_scsi_mode_sense_caching_mode_page_data_packet);
+			page_len = sizeof(*cache_page);
 
 			iscsi_scsi_emu_primary_mode_sense_page_init( buffer, page_len, page, sub_page );
 
-			if ( (buffer != NULL) && (pc != ISCSI_SCSI_CDB_MODE_SENSE_6_PAGE_CONTROL_CHG_VALUES) )
-				mode_sense_caching_mode_page_pkt->flags |= ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_RCD;
+			if ( cache_page != NULL ) {
+				cache_page->flags |= ISCSI_SCSI_MODE_SENSE_CACHING_MODE_PAGE_FLAGS_DISC;
+				// 0xffff is endian-agnostic, don't need to convert
+				cache_page->disable_prefetch_xfer_len = 0xffff;
+				cache_page->min_prefetch = 0xffff;
+				cache_page->max_prefetch = 0xffff;
+				cache_page->max_prefetch_ceil = 0xffff;
+			}
 
 			len += page_len;
 
