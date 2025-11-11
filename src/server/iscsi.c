@@ -3107,7 +3107,7 @@ if ( pairs->key != NULL ) ADD_KV_INTERNAL( false, #key, value ); \
  * @param[in] pairs Readily parsed key-value-pairs from according request
  * @return 0 on success, a negative error code otherwise.
  */
-static int iscsi_connecction_handle_login_response(iscsi_connection *conn, iscsi_pdu *login_response_pdu,  const iscsi_negotiation_kvp *pairs)
+static int iscsi_connection_handle_login_response(iscsi_connection *conn, iscsi_pdu *login_response_pdu,  const iscsi_negotiation_kvp *pairs)
 {
 	if ( iscsi_connection_pdu_resize( login_response_pdu, 0, ISCSI_DEFAULT_RECV_DS_LEN ) == NULL ) {
 		return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
@@ -3232,7 +3232,7 @@ static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *
 		return iscsi_send_login_response_pdu( conn, &login_response_pdu );
 	}
 
-	iscsi_connecction_handle_login_response( conn, &login_response_pdu, &pairs );
+	iscsi_connection_handle_login_response( conn, &login_response_pdu, &pairs );
 	if ( conn->state == ISCSI_CONNECT_STATE_NORMAL_SESSION ) {
 		conn->cid = iscsi_get_be16(login_req_pkt->cid);
 	}
