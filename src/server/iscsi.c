@@ -86,10 +86,6 @@ static void iscsi_strcpy_pad(char *dst, const char *src, size_t size, int pad); 
 
 static uint64_t iscsi_target_node_wwn_get(const uint8_t *name); // Calculates the WWN using 64-bit IEEE Extended NAA for a name
 
-static iscsi_session *iscsi_session_create(int type); // Creates and initializes an iSCSI session
-static void iscsi_session_destroy(iscsi_session *session); // Deallocates all resources acquired by iscsi_session_create
-
-
 static iscsi_connection *iscsi_connection_create(dnbd3_client_t *client); // Creates data structure for an iSCSI connection from iSCSI portal and TCP/IP socket
 static void iscsi_connection_destroy(iscsi_connection *conn); // Deallocates all resources acquired by iscsi_connection_create
 
@@ -358,7 +354,7 @@ static bool iscsi_scsi_data_in_send(iscsi_connection *conn, const iscsi_task *ta
 
 	if ( (flags & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_STATUS) != 0 ) {
 		if ( (flags & ISCSI_SCSI_DATA_IN_RESPONSE_FLAGS_FINAL) != 0 && !immediate ) {
-			conn->session->max_cmd_sn++;
+			conn->max_cmd_sn++;
 		}
 		scsi_data_in_pkt->status = task->scsi_task.status;
 		iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->stat_sn, conn->stat_sn++ );
@@ -374,8 +370,8 @@ static bool iscsi_scsi_data_in_send(iscsi_connection *conn, const iscsi_task *ta
 	scsi_data_in_pkt->lun = 0ULL; // Not used if we don't set the A bit (we never do)
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->init_task_tag, task->init_task_tag );
 	scsi_data_in_pkt->target_xfer_tag = 0xFFFFFFFFUL; // Minus one does not require endianess conversion
-	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
-	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->exp_cmd_sn, conn->exp_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->max_cmd_sn, conn->max_cmd_sn );
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->data_sn, data_sn );
 
 	iscsi_put_be32( (uint8_t *) &scsi_data_in_pkt->buf_offset, pos );
@@ -455,9 +451,9 @@ static bool iscsi_task_xfer_scsi_data_in(iscsi_connection *conn, const iscsi_tas
 
 	uint32_t data_sn                 = 0;
 	// Max burst length = total cobined length of payload in all PDUs of one sequence
-	const uint32_t max_burst_len     = conn->session->opts.MaxBurstLength;
+	const uint32_t max_burst_len     = conn->opts.MaxBurstLength;
 	// Max recv segment length = total length of one individual PDU
-	const uint32_t max_seg_len       = conn->session->opts.MaxRecvDataSegmentLength;
+	const uint32_t max_seg_len       = conn->opts.MaxRecvDataSegmentLength;
 
 	for ( uint32_t current_burst_start = 0; current_burst_start < xfer_len; current_burst_start += max_burst_len ) {
 		const uint32_t current_burst_end = MIN(xfer_len, current_burst_start + max_burst_len);
@@ -564,10 +560,10 @@ static void iscsi_scsi_task_send_reply(iscsi_connection *conn, iscsi_scsi_task *
 	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->stat_sn, conn->stat_sn++ );
 
 	if ( (scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
-		conn->session->max_cmd_sn++;
+		conn->max_cmd_sn++;
 
-	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
-	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->exp_cmd_sn, conn->exp_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->max_cmd_sn, conn->max_cmd_sn );
 	scsi_response_pkt->exp_data_sn       = 0UL;
 	scsi_response_pkt->bidi_read_res_cnt = 0UL;
 
@@ -1328,7 +1324,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				// automatically pick a suitable transfer length that it can handle efficiently; the kernel however just
 				// goes for the maximum supported by the server. Even just lowering the reported *optimal* length is not
 				// sufficient. But maybe I'm just not good with computers.
-				const uint32_t blocks = (scsi_task->connection->session->opts.MaxRecvDataSegmentLength
+				const uint32_t blocks = (scsi_task->connection->opts.MaxRecvDataSegmentLength
 					/ ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE);
 
 				vpd_page_block_limits_inquiry_data_pkt->max_cmp_write_len = 0;
@@ -2097,52 +2093,6 @@ static uint64_t iscsi_target_node_wwn_get(const uint8_t *name)
 }
 
 /**
- * @brief Creates and initializes an iSCSI session.
- *
- * This function creates and initializes all relevant
- * data structures of an ISCSI session.\n
- * Default key and value pairs are created and
- * assigned before they are negotiated at the
- * login phase.
- *
- * @param[in] type Session type to initialize the session with.
- * @return Pointer to initialized iSCSI session or NULL in case an error
- * occured (usually due to memory exhaustion).
- */
-static iscsi_session *iscsi_session_create(const int type)
-{
-	iscsi_session *session = malloc( sizeof(iscsi_session) );
-
-	if ( session == NULL ) {
-		logadd( LOG_ERROR, "iscsi_session_create: Out of memory allocating iSCSI session" );
-
-		return NULL;
-	}
-
-	session->tsih                       = 0ULL;
-	session->type                       = type;
-	session->exp_cmd_sn                 = 0UL;
-	session->max_cmd_sn                 = 0UL;
-
-	return session;
-}
-
-/**
- * @brief Deallocates all resources acquired by iscsi_session_create.
- *
- * This function also frees the associated key and value pairs,
- * the attached connections as well as frees the initiator
- * port.
- *
- * @param[in] session Pointer to iSCSI session to be freed.
- * May be NULL in which case this function does nothing at all.
- */
-static void iscsi_session_destroy(iscsi_session *session)
-{
-	free( session );
-}
-
-/**
  * @brief Creates data structure for an iSCSI connection from iSCSI portal and TCP/IP socket.
  *
  * Creates a data structure for incoming iSCSI connection
@@ -2162,19 +2112,15 @@ static iscsi_connection *iscsi_connection_create(dnbd3_client_t *client)
 		return NULL;
 	}
 
-	conn->session                  = NULL;
 	conn->id                       = 0;
 	conn->client                   = client;
 	conn->flags                    = 0;
 	conn->state                    = ISCSI_CONNECT_STATE_NEW;
 	conn->login_phase              = ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_SECURITY_NEGOTIATION;
-	conn->tsih                     = 0U;
 	conn->cid                      = 0U;
-	conn->state_negotiated         = 0U;
-	conn->session_state_negotiated = 0UL;
-	conn->init_task_tag            = 0UL;
-	conn->target_xfer_tag          = 0UL;
 	conn->stat_sn                  = 0UL;
+	conn->exp_cmd_sn               = 0UL;
+	conn->max_cmd_sn               = 0UL;
 
 	return conn;
 }
@@ -2194,10 +2140,7 @@ static iscsi_connection *iscsi_connection_create(dnbd3_client_t *client)
  */
 static void iscsi_connection_destroy(iscsi_connection *conn)
 {
-	if ( conn != NULL ) {
-		iscsi_session_destroy( conn->session );
-		free( conn );
-	}
+	free( conn );
 }
 
 /**
@@ -2253,11 +2196,11 @@ static int iscsi_append_key_value_pair_packet(const bool number, const char *key
  * be updated.
  @param[in] pairs Set of readily parsed key-value-pairs to handle
  */
-static void iscsi_connection_update_key_value_pairs(const iscsi_connection *conn, const iscsi_negotiation_kvp *pairs)
+static void iscsi_connection_update_key_value_pairs(iscsi_connection *conn, const iscsi_negotiation_kvp *pairs)
 {
-	conn->session->opts.MaxBurstLength = CLAMP(pairs->MaxBurstLength, 512, ISCSI_MAX_DS_SIZE);
-	conn->session->opts.FirstBurstLength = CLAMP(pairs->FirstBurstLength, 512, pairs->MaxBurstLength);
-	conn->session->opts.MaxRecvDataSegmentLength = CLAMP(pairs->MaxRecvDataSegmentLength, 512, ISCSI_MAX_DS_SIZE);
+	conn->opts.MaxBurstLength = CLAMP(pairs->MaxBurstLength, 512, ISCSI_MAX_DS_SIZE);
+	conn->opts.FirstBurstLength = CLAMP(pairs->FirstBurstLength, 512, pairs->MaxBurstLength);
+	conn->opts.MaxRecvDataSegmentLength = CLAMP(pairs->MaxRecvDataSegmentLength, 512, ISCSI_MAX_DS_SIZE);
 }
 
 /**
@@ -2286,9 +2229,9 @@ static int iscsi_send_login_response_pdu(iscsi_connection *conn, iscsi_pdu *resp
 	iscsi_put_be32( (uint8_t *) &login_response_pkt->total_ahs_len, resp_pdu->ds_len ); // TotalAHSLength is always 0 and DataSegmentLength is 24-bit, so write in one step.
 	iscsi_put_be32( (uint8_t *) &login_response_pkt->stat_sn, conn->stat_sn++ );
 
-	if ( conn->session != NULL ) { // TODO: Needed? MC/S?
-		iscsi_put_be32( (uint8_t *) &login_response_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
-		iscsi_put_be32( (uint8_t *) &login_response_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	if ( conn->state != ISCSI_CONNECT_STATE_NEW ) {
+		iscsi_put_be32( (uint8_t *) &login_response_pkt->exp_cmd_sn, conn->exp_cmd_sn );
+		iscsi_put_be32( (uint8_t *) &login_response_pkt->max_cmd_sn, conn->max_cmd_sn );
 	} else {
 		iscsi_put_be32( (uint8_t *) &login_response_pkt->exp_cmd_sn, resp_pdu->cmd_sn );
 		iscsi_put_be32( (uint8_t *) &login_response_pkt->max_cmd_sn, resp_pdu->cmd_sn );
@@ -2383,11 +2326,11 @@ static int iscsi_login_parse_session_type(const iscsi_pdu *login_response_pdu, c
 	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu->bhs_pkt;
 
 	if ( type_str != NULL && strcasecmp( type_str, "Normal" ) == 0 ) {
-		*type = ISCSI_SESSION_TYPE_NORMAL;
+		*type = ISCSI_CONNECT_STATE_NORMAL_SESSION;
 		return ISCSI_CONNECT_PDU_READ_OK;
 	}
 
-	*type = ISCSI_SESSION_TYPE_INVALID;
+	*type = ISCSI_CONNECT_STATE_INVALID;
 	logadd( LOG_DEBUG1, "Unsupported session type: %s", type_str );
 	login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
 	login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_MISSING_PARAMETER;
@@ -2742,9 +2685,9 @@ static int iscsi_connection_handle_reject(iscsi_connection *conn, const iscsi_pd
 	reject_pkt->reserved3 = 0UL;
 	iscsi_put_be32( (uint8_t *) &reject_pkt->stat_sn, conn->stat_sn++ );
 
-	if ( conn->session != NULL ) {
-		iscsi_put_be32( (uint8_t *) &reject_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
-		iscsi_put_be32( (uint8_t *) &reject_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	if ( conn->state != ISCSI_CONNECT_STATE_NEW ) {
+		iscsi_put_be32( (uint8_t *) &reject_pkt->exp_cmd_sn, conn->exp_cmd_sn );
+		iscsi_put_be32( (uint8_t *) &reject_pkt->max_cmd_sn, conn->max_cmd_sn );
 	} else {
 		iscsi_put_be32( (uint8_t *) &reject_pkt->exp_cmd_sn, 1UL );
 		iscsi_put_be32( (uint8_t *) &reject_pkt->max_cmd_sn, 1UL );
@@ -2772,11 +2715,9 @@ static int iscsi_connection_handle_reject(iscsi_connection *conn, const iscsi_pd
  * @return Returns `ISCSI_CONNECT_PDU_READ_OK` (0) on success or
  *         `ISCSI_CONNECT_PDU_READ_ERR_FATAL` (-1) if sequence numbers or other data are invalid.
  */
-static int iscsi_connection_handle_cmd_sn(const iscsi_connection *conn, iscsi_pdu *request_pdu)
+static int iscsi_connection_handle_cmd_sn(iscsi_connection *conn, iscsi_pdu *request_pdu)
 {
-	iscsi_session *session = conn->session;
-
-	if ( session == NULL )
+	if ( conn->state == ISCSI_CONNECT_STATE_NEW )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 
 	iscsi_scsi_cmd_packet *scsi_cmd_pkt = (iscsi_scsi_cmd_packet *) request_pdu->bhs_pkt;
@@ -2785,21 +2726,21 @@ static int iscsi_connection_handle_cmd_sn(const iscsi_connection *conn, iscsi_pd
 	request_pdu->cmd_sn = iscsi_get_be32(scsi_cmd_pkt->cmd_sn);
 
 	if ( (scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 ) {
-		if ( (iscsi_seq_num_cmp_lt( request_pdu->cmd_sn, session->exp_cmd_sn )
-				|| iscsi_seq_num_cmp_gt( request_pdu->cmd_sn, session->max_cmd_sn ))
-				&& ((session->type == ISCSI_SESSION_TYPE_NORMAL) && (opcode != ISCSI_OPCODE_CLIENT_SCSI_DATA_OUT)) ) {
+		if ( (iscsi_seq_num_cmp_lt( request_pdu->cmd_sn, conn->exp_cmd_sn )
+				|| iscsi_seq_num_cmp_gt( request_pdu->cmd_sn, conn->max_cmd_sn ))
+				&& ((conn->state == ISCSI_CONNECT_STATE_NORMAL_SESSION) && (opcode != ISCSI_OPCODE_CLIENT_SCSI_DATA_OUT)) ) {
 			logadd( LOG_WARNING, "Seqnum messup. Is: %u, want >= %u, < %u",
-				request_pdu->cmd_sn, session->exp_cmd_sn, session->max_cmd_sn );
+				request_pdu->cmd_sn, conn->exp_cmd_sn, conn->max_cmd_sn );
 			return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 		}
-	} else if ( (request_pdu->cmd_sn != session->exp_cmd_sn) && (opcode != ISCSI_OPCODE_CLIENT_NOP_OUT) ) {
+	} else if ( (request_pdu->cmd_sn != conn->exp_cmd_sn) && (opcode != ISCSI_OPCODE_CLIENT_NOP_OUT) ) {
 		logadd( LOG_WARNING, "Seqnum messup. Is: %u, want: %u",
-			request_pdu->cmd_sn, session->exp_cmd_sn );
+			request_pdu->cmd_sn, conn->exp_cmd_sn );
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 	}
 
 	if ( ((scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0) && (opcode != ISCSI_OPCODE_CLIENT_SCSI_DATA_OUT) )
-		session->exp_cmd_sn++;
+		conn->exp_cmd_sn++;
 
 	return ISCSI_CONNECT_PDU_READ_OK;
 }
@@ -2823,7 +2764,7 @@ static int iscsi_connection_handle_logout_req(iscsi_connection *conn, const iscs
 {
 	iscsi_logout_req_packet *logout_req_pkt = (iscsi_logout_req_packet *) request_pdu->bhs_pkt;
 
-	if ( (conn->session != NULL) && (conn->session->type == ISCSI_SESSION_TYPE_DISCOVERY) && (logout_req_pkt->reason_code != ISCSI_LOGOUT_REQ_REASON_CODE_CLOSE_SESSION) )
+	if ( (conn->state == ISCSI_CONNECT_STATE_NEW) || (logout_req_pkt->reason_code != ISCSI_LOGOUT_REQ_REASON_CODE_CLOSE_SESSION) )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 
 	iscsi_pdu CLEANUP_PDU response_pdu;
@@ -2850,11 +2791,11 @@ static int iscsi_connection_handle_logout_req(iscsi_connection *conn, const iscs
 	logout_response_pkt->reserved3                    = 0UL;
 	iscsi_put_be32( (uint8_t *) &logout_response_pkt->stat_sn, conn->stat_sn++ );
 
-	if ( conn->session != NULL ) {
-		conn->session->max_cmd_sn++;
+	if ( conn->state != ISCSI_CONNECT_STATE_NEW ) {
+		conn->max_cmd_sn++;
 
-		iscsi_put_be32( (uint8_t *) &logout_response_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
-		iscsi_put_be32( (uint8_t *) &logout_response_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+		iscsi_put_be32( (uint8_t *) &logout_response_pkt->exp_cmd_sn, conn->exp_cmd_sn );
+		iscsi_put_be32( (uint8_t *) &logout_response_pkt->max_cmd_sn, conn->max_cmd_sn );
 	} else {
 		iscsi_put_be32( (uint8_t *) &logout_response_pkt->exp_cmd_sn, request_pdu->cmd_sn );
 		iscsi_put_be32( (uint8_t *) &logout_response_pkt->max_cmd_sn, request_pdu->cmd_sn );
@@ -2900,8 +2841,8 @@ static int iscsi_connection_handle_task_func_req(iscsi_connection *conn, const i
 	mgmt_resp->flags         = 0x80;
 	mgmt_resp->init_task_tag = mgmt_req->init_task_tag; // Copying over doesn't change endianess.
 	iscsi_put_be32( (uint8_t *) &mgmt_resp->stat_sn, conn->stat_sn++ );
-	iscsi_put_be32( (uint8_t *) &mgmt_resp->exp_cmd_sn, conn->session->exp_cmd_sn );
-	iscsi_put_be32( (uint8_t *) &mgmt_resp->max_cmd_sn, conn->session->max_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &mgmt_resp->exp_cmd_sn, conn->exp_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &mgmt_resp->max_cmd_sn, conn->max_cmd_sn );
 
 	return iscsi_connection_pdu_write( conn, &response_pdu ) ? 0 : -1;
 }
@@ -2923,7 +2864,7 @@ static int iscsi_connection_handle_task_func_req(iscsi_connection *conn, const i
  */
 static int iscsi_connection_handle_nop_out(iscsi_connection *conn, const iscsi_pdu *request_pdu)
 {
-	if ( conn->session->type == ISCSI_SESSION_TYPE_DISCOVERY )
+	if ( conn->state != ISCSI_CONNECT_STATE_NORMAL_SESSION )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 
 	if ( request_pdu->ds_len > ISCSI_DEFAULT_MAX_RECV_DS_LEN )
@@ -2943,8 +2884,8 @@ static int iscsi_connection_handle_nop_out(iscsi_connection *conn, const iscsi_p
 	if ( (nop_out_pkt->init_task_tag == 0xFFFFFFFFUL) && (nop_out_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 
-	if ( ds_len > (uint32_t)conn->session->opts.MaxRecvDataSegmentLength )
-		ds_len = conn->session->opts.MaxRecvDataSegmentLength;
+	if ( ds_len > (uint32_t)conn->opts.MaxRecvDataSegmentLength )
+		ds_len = conn->opts.MaxRecvDataSegmentLength;
 
 	iscsi_pdu CLEANUP_PDU response_pdu;
 	if ( !iscsi_connection_pdu_init( &response_pdu, ds_len, false ) )
@@ -2962,10 +2903,10 @@ static int iscsi_connection_handle_nop_out(iscsi_connection *conn, const iscsi_p
 	iscsi_put_be32( (uint8_t *) &nop_in_pkt->stat_sn, conn->stat_sn++ );
 
 	if ( (nop_out_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
-		conn->session->max_cmd_sn++;
+		conn->max_cmd_sn++;
 
-	iscsi_put_be32( (uint8_t *) &nop_in_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
-	iscsi_put_be32( (uint8_t *) &nop_in_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &nop_in_pkt->exp_cmd_sn, conn->exp_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &nop_in_pkt->max_cmd_sn, conn->max_cmd_sn );
 	nop_in_pkt->reserved2 = 0UL;
 	nop_in_pkt->reserved3 = 0ULL;
 
@@ -3070,7 +3011,7 @@ static int iscsi_connection_handle_login_phase_none(iscsi_connection *conn, cons
 	if ( rc < 0 )
 		return rc;
 
-	if ( type != ISCSI_SESSION_TYPE_NORMAL ) {
+	if ( type != ISCSI_CONNECT_STATE_NORMAL_SESSION ) {
 		login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_CLIENT_ERR;
 		login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_CLIENT_ERR_SESSION_NO_SUPPORT;
 		rc = ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
@@ -3085,20 +3026,11 @@ static int iscsi_connection_handle_login_phase_none(iscsi_connection *conn, cons
 	if ( rc < 0 )
 		return rc;
 
-	if ( conn->session == NULL ) {
-		conn->session = iscsi_session_create( type );
-
-		if ( conn->session == NULL ) {
-			login_response_pkt->status_class  = ISCSI_LOGIN_RESPONSE_STATUS_CLASS_SERVER_ERR;
-			login_response_pkt->status_detail = ISCSI_LOGIN_RESPONSE_STATUS_DETAILS_SERVER_ERR_OUT_OF_RESOURCES;
-
-			return ISCSI_CONNECT_PDU_READ_ERR_LOGIN_RESPONSE;
-		}
-
+	if ( conn->state == ISCSI_CONNECT_STATE_NEW ) {
 		conn->stat_sn            = iscsi_get_be32(login_response_pkt->stat_sn);
 
-		conn->session->exp_cmd_sn  = login_response_pdu->cmd_sn;
-		conn->session->max_cmd_sn  = (uint32_t) (login_response_pdu->cmd_sn + ISCSI_DEFAULT_QUEUE_DEPTH - 1UL);
+		conn->exp_cmd_sn  = login_response_pdu->cmd_sn;
+		conn->max_cmd_sn  = (uint32_t) (login_response_pdu->cmd_sn + ISCSI_DEFAULT_QUEUE_DEPTH - 1UL);
 	}
 
 	return ISCSI_CONNECT_PDU_READ_OK;
@@ -3132,10 +3064,10 @@ if ( rc < 0 ) return -1; \
 payload_len += rc; \
 } while (0)
 #	define ADD_KV_OPTION_INT(key) do { \
-if ( pairs->key != -1 ) ADD_KV_INTERNAL( true, #key, (const char *)(size_t)conn->session->opts.key ); \
+if ( pairs->key != -1 ) ADD_KV_INTERNAL( true, #key, (const char *)(size_t)conn->opts.key ); \
 } while (0)
 #	define ADD_KV_OPTION_STR(key) do { \
-if ( pairs->key != NULL ) ADD_KV_INTERNAL( false, #key, conn->session->opts.key ); \
+if ( pairs->key != NULL ) ADD_KV_INTERNAL( false, #key, conn->opts.key ); \
 } while (0)
 #	define ADD_KV_PLAIN_INT(key, value) do { \
 if ( pairs->key != -1 ) ADD_KV_INTERNAL( true, #key, (const char *)(size_t)(value) ); \
@@ -3301,6 +3233,9 @@ static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *
 	}
 
 	iscsi_connecction_handle_login_response( conn, &login_response_pdu, &pairs );
+	if ( conn->state == ISCSI_CONNECT_STATE_NORMAL_SESSION ) {
+		conn->cid = iscsi_get_be16(login_req_pkt->cid);
+	}
 	return iscsi_send_login_response_pdu( conn, &login_response_pdu );
 }
 
@@ -3353,7 +3288,7 @@ static int iscsi_connection_handle_text_req(iscsi_connection *conn, const iscsi_
 	}
 
 	iscsi_pdu CLEANUP_PDU response_pdu;
-	if ( !iscsi_connection_pdu_init( &response_pdu, MIN( 8192, conn->session->opts.MaxRecvDataSegmentLength ), false ) )
+	if ( !iscsi_connection_pdu_init( &response_pdu, MIN( 8192, conn->opts.MaxRecvDataSegmentLength ), false ) )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 
 	iscsi_connection_update_key_value_pairs( conn, &pairs );
@@ -3381,10 +3316,10 @@ static int iscsi_connection_handle_text_req(iscsi_connection *conn, const iscsi_
 
 	iscsi_put_be32( (uint8_t *) &text_response_pkt->stat_sn, conn->stat_sn++ );
 
-	conn->session->max_cmd_sn++;
+	conn->max_cmd_sn++;
 
-	iscsi_put_be32( (uint8_t *) &text_response_pkt->exp_cmd_sn, conn->session->exp_cmd_sn );
-	iscsi_put_be32( (uint8_t *) &text_response_pkt->max_cmd_sn, conn->session->max_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &text_response_pkt->exp_cmd_sn, conn->exp_cmd_sn );
+	iscsi_put_be32( (uint8_t *) &text_response_pkt->max_cmd_sn, conn->max_cmd_sn );
 	text_response_pkt->reserved2[0] = 0ULL;
 	text_response_pkt->reserved2[1] = 0ULL;
 
