@@ -2116,7 +2116,6 @@ static iscsi_connection *iscsi_connection_create(dnbd3_client_t *client)
 	conn->client                   = client;
 	conn->flags                    = 0;
 	conn->state                    = ISCSI_CONNECT_STATE_NEW;
-	conn->login_phase              = ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_SECURITY_NEGOTIATION;
 	conn->cid                      = 0U;
 	conn->stat_sn                  = 0UL;
 	conn->exp_cmd_sn               = 0UL;
@@ -2676,7 +2675,7 @@ static int iscsi_connection_handle_reject(iscsi_connection *conn, const iscsi_pd
 	iscsi_reject_packet *reject_pkt = (iscsi_reject_packet *) response_pdu.bhs_pkt;
 
 	reject_pkt->opcode    = ISCSI_OPCODE_SERVER_REJECT;
-	reject_pkt->flags     = -0x80;
+	reject_pkt->flags     = 0x80;
 	reject_pkt->reason    = (uint8_t) reason_code;
 	reject_pkt->reserved  = 0U;
 	iscsi_put_be32( (uint8_t *) &reject_pkt->total_ahs_len, ds_len ); // TotalAHSLength is always 0 and DataSegmentLength is 24-bit, so write in one step.
@@ -2777,7 +2776,7 @@ static int iscsi_connection_handle_logout_req(iscsi_connection *conn, const iscs
 	iscsi_logout_response_packet *logout_response_pkt = (iscsi_logout_response_packet *) response_pdu.bhs_pkt;
 
 	logout_response_pkt->opcode = ISCSI_OPCODE_SERVER_LOGOUT_RES;
-	logout_response_pkt->flags  = -0x80;
+	logout_response_pkt->flags  = 0x80;
 
 	const uint16_t cid = iscsi_get_be16(logout_req_pkt->cid);
 
@@ -3155,7 +3154,6 @@ static int iscsi_connection_handle_login_response(iscsi_connection *conn, iscsi_
 		// Client set the transition bit - requests to move on to next stage
 		switch ( ISCSI_LOGIN_RESPONSE_FLAGS_GET_NEXT_STAGE(login_response_pkt->flags) ) {
 		case ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FULL_FEATURE_PHASE : {
-			conn->login_phase = ISCSI_LOGIN_RESPONSE_FLAGS_NEXT_STAGE_FULL_FEATURE_PHASE;
 
 			iscsi_put_be16( (uint8_t *) &login_response_pkt->tsih, 42 );
 

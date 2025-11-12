@@ -436,7 +436,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_10 {
 	uint32_t lba;
 
 	/// Group number.
-	int8_t group_num;
+	uint8_t group_num;
 
 	/// Transfer length in bytes.
 	uint16_t xfer_len;
@@ -465,7 +465,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_12 {
 	uint32_t xfer_len;
 
 	/// Restricted for MMC-6 and group number.
-	int8_t restrict_group_num;
+	uint8_t restrict_group_num;
 
 	/// Control.
 	uint8_t control;
@@ -491,7 +491,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_cdb_read_write_16 {
 	uint32_t xfer_len;
 
 	/// Restricted for MMC-6 and group number.
-	int8_t restrict_group_num;
+	uint8_t restrict_group_num;
 
 	/// Control.
 	uint8_t control;
@@ -911,13 +911,13 @@ typedef struct __attribute__((packed)) iscsi_scsi_basic_inquiry_data_packet {
 	uint8_t peripheral_type_id;
 
 	/// Peripheral device type modifier and removable media bit.
-	int8_t peripheral_type_mod_flags;
+	uint8_t peripheral_type_mod_flags;
 
 	/// ANSI-Approved, ECMA and ISO version.
 	uint8_t version;
 
 	/// Response data format, HISUP, NORMACA, AENC and TrmIOP flags.
-	int8_t response_data_fmt_flags;
+	uint8_t response_data_fmt_flags;
 
 	/// Additional length in bytes.
 	uint8_t add_len;
@@ -975,7 +975,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_std_inquiry_data_packet {
 	uint8_t tpgs_flags;
 
 	/// MULTIP, VS and ENCSERV.
-	int8_t services_flags;
+	uint8_t services_flags;
 
 	/// Flags.
 	uint8_t flags;
@@ -1390,13 +1390,13 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_ext_inquiry_data_pack
 	uint8_t page_len;
 
 	/// Check flags.
-	int8_t check_flags;
+	uint8_t check_flags;
 
 	/// Support flags.
-	int8_t support_flags;
+	uint8_t support_flags;
 
 	/// More support flags.
-	int8_t support_flags_2;
+	uint8_t support_flags_2;
 
 	/// LUICLR.
 	uint8_t luiclr;
@@ -1591,13 +1591,13 @@ typedef struct __attribute__((packed)) iscsi_scsi_vpd_page_block_dev_chars_inqui
  */
 typedef struct __attribute__((packed)) iscsi_scsi_sense_data_packet {
 	/// Response code.
-	int8_t response_code;
+	uint8_t response_code;
 
 	/// Reserved for future usage (always MUST be 0).
 	uint8_t reserved;
 
 	/// Sense key and flags.
-	int8_t sense_key_flags;
+	uint8_t sense_key_flags;
 
 	/// Information.
 	uint32_t info;
@@ -2097,7 +2097,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_caching_mode_page_d
 	uint16_t max_prefetch_ceil;
 
 	/// Cache flags.
-	int8_t cache_flags;
+	uint8_t cache_flags;
 
 	/// Number of cache segments.
 	uint8_t num_cache_segs;
@@ -2126,13 +2126,13 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_control_mode_page_d
 	uint8_t flags;
 
 	/// Queue flags.
-	int8_t queue_flags;
+	uint8_t queue_flags;
 
 	/// Control flags.
-	int8_t control_flags;
+	uint8_t control_flags;
 
 	/// Application task flags.
-	int8_t app_task_flags;
+	uint8_t app_task_flags;
 
 	/// Ready AER holdoff period.
 	uint16_t ready_aer_holdoff_period;
@@ -2219,7 +2219,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_power_cond_mode_pag
 	uint8_t flags;
 
 	/// Idle and standby flags.
-	int8_t idle_standby_flags;
+	uint8_t idle_standby_flags;
 
 	/// idle_a condition timer.
 	uint32_t idle_a_cond_timer;
@@ -2249,7 +2249,7 @@ typedef struct __attribute__((packed)) iscsi_scsi_mode_sense_power_cond_mode_pag
 	uint8_t reserved4;
 
 	/// Check Condition From (CCF) flags.
-	int8_t ccf_flags;
+	uint8_t ccf_flags;
 } iscsi_scsi_mode_sense_power_cond_mode_page_data_packet;
 
 
@@ -2894,7 +2894,7 @@ typedef struct __attribute__((packed)) iscsi_task_mgmt_func_req_packet {
      * tasks). The task management function codes are listed below. For a
      * more detailed description of SCSI task management, see SAM2.
      */
-    int8_t func;
+    uint8_t func;
 
     /// Reserved fot future usage, always MUST be 0.
     uint16_t reserved;
@@ -3534,15 +3534,6 @@ typedef struct __attribute__((packed)) iscsi_isid {
 } iscsi_isid;
 
 
-/// Login request Next Stage (NSG) flags: SecurityNegotiation.
-#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_SECURITY_NEGOTIATION          0x0
-
-/// Login request Next Stage (NSG) flags: LoginOperationalNegotiation.
-#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LOGIN_OPERATIONAL_NEGOTIATION 0x1
-
-/// Login request Next Stage (NSG) flags: FullFeaturePhase.
-#define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FULL_FEATURE_PHASE            0x3
-
 /**
  * @brief Login request flags: Next Stage (NSG): First bit of the two bits.
  *
@@ -3568,24 +3559,6 @@ typedef struct __attribute__((packed)) iscsi_isid {
 /// Login request flags: Next Stage (NSG): Bit mask.
 #define ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_MASK                          (ISCSI_BITS_GET_MASK(ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LAST_BIT))
 
-/// Login request flags: Extracts the Next Stage (NSG) bits.
-#define ISCSI_LOGIN_REQ_FLAGS_GET_NEXT_STAGE(x)                        (ISCSI_BITS_GET((x), ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LAST_BIT))
-
-/// Login request flags: Stores into the Next Stage (NSG) bits.
-#define ISCSI_LOGIN_REQ_FLAGS_PUT_NEXT_STAGE(x)                        (ISCSI_BITS_PUT((x), ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_LAST_BIT))
-
-
-/// Login request Current Stage (CSG) flags: SecurityNegotiation.
-#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_SECURITY_NEGOTIATION          0x0
-
-/// Login request Current Stage (CSG) flags: LoginOperationalNegotiation.
-#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LOGIN_OPERATIONAL_NEGOTIATION 0x1
-
-/// Login request Current Stage (CSG) flags: Reserved for future usage, may NOT be used.
-#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_RESERVED                      0x2
-
-/// Login request Current Stage (CSG) flags: FullFeaturePhase.
-#define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FULL_FEATURE_PHASE            0x3
 
 /**
  * @brief Login request flags: Current Stage (CSG): First bit of the two bits.
@@ -3609,12 +3582,6 @@ typedef struct __attribute__((packed)) iscsi_isid {
 
 /// Login request flags: Current Stage (CSG): Bit mask.
 #define ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_MASK                          (ISCSI_BITS_GET_MASK(ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LAST_BIT))
-
-/// Login request flags: Extracts the Current Stage (CSG) bits.
-#define ISCSI_LOGIN_REQ_FLAGS_GET_CURRENT_STAGE(x)                        (ISCSI_BITS_GET((x), ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LAST_BIT))
-
-/// Login request flags: Stores into the Current Stage (CSG) bits.
-#define ISCSI_LOGIN_REQ_FLAGS_PUT_CURRENT_STAGE(x)                        (ISCSI_BITS_PUT((x), ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_FIRST_BIT, ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_LAST_BIT))
 
 
 /**
@@ -5084,9 +5051,6 @@ typedef struct iscsi_connection {
 
 	/// iSCSI connection state.
 	int state;
-
-	/// iSCSI connection login phase.
-	int login_phase;
 
 	/// Initiator Session ID (ISID).
 	iscsi_isid isid;
