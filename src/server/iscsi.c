@@ -2851,41 +2851,40 @@ static int iscsi_connection_handle_task_func_req(iscsi_connection *conn, const i
 }
 
 /**
- * @brief Handles an incoming iSCSI payload data NOP-Out request PDU.
+ * @brief Handles receiving and sending of NOP in/out packets.
  *
- * This function handles NOP-Out request payload
- * data sent by the client.\n
- * If a response needs to be sent, this will
- * be done as well.
+ * This method can handle a received NOP-Out request and send
+ * an according NOP-In response if applicable, i.e. the NOP-Out
+ * wasn't sent as a reply to a NOP-In by us.\n
+ * This method can also send an unsolicited NOP-In to the client
+ * if we want to check whether the connection is still good.
  *
  * @param[in] conn Pointer to iSCSI connection to handle. May
  * NOT be NULL, so take caution.
- * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
- * May be NULL in which case an error is returned.
+ * @param[in] request_pdu Pointer to iSCSI client request PDU to handle,
+ * or NULL for sending a connection alive check.
  * @return 0 on success. A negative value indicates
- * an error. A positive value a warning.
+ * an error.
  */
-static int iscsi_connection_handle_nop_out(iscsi_connection *conn, const iscsi_pdu *request_pdu)
+static int iscsi_connection_handle_nop(iscsi_connection *conn, const iscsi_pdu *request_pdu)
 {
 	if ( conn->state != ISCSI_CONNECT_STATE_NORMAL_SESSION )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 
-	if ( request_pdu->ds_len > ISCSI_DEFAULT_MAX_RECV_DS_LEN )
+	if ( request_pdu != NULL && request_pdu->ds_len > ISCSI_DEFAULT_MAX_RECV_DS_LEN )
 		return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
 
-	iscsi_nop_out_packet *nop_out_pkt = (iscsi_nop_out_packet *) request_pdu->bhs_pkt;
-	const uint32_t target_xfer_tag    = iscsi_get_be32(nop_out_pkt->target_xfer_tag);
-	uint32_t ds_len                   = request_pdu->ds_len;
-	const uint64_t lun                = iscsi_get_be64(nop_out_pkt->lun);
+	iscsi_nop_out_packet *nop_out_pkt = request_pdu == NULL ? NULL : (iscsi_nop_out_packet *) request_pdu->bhs_pkt;
+	const uint32_t target_xfer_tag    = nop_out_pkt == NULL ? 0xFFFFFFFFUL : iscsi_get_be32(nop_out_pkt->target_xfer_tag);
+	const uint32_t init_task_tag      = nop_out_pkt == NULL ? 0 : iscsi_get_be32(nop_out_pkt->init_task_tag);
+	uint32_t ds_len                   = request_pdu == NULL ? 0 : request_pdu->ds_len;
+	const uint64_t lun                = nop_out_pkt == NULL ? 0 : iscsi_get_be64(nop_out_pkt->lun);
 
-	if ( nop_out_pkt->init_task_tag == 0xFFFFFFFFUL ) // Was response to a NOP by us - do not reply
+	if ( init_task_tag == 0xFFFFFFFFUL ) // Was response to a NOP by us, or no response desired - do not reply
 		return ISCSI_CONNECT_PDU_READ_OK;
 
-	if ( (target_xfer_tag != 0xFFFFFFFFUL) && (target_xfer_tag != (uint32_t) conn->id) )
-		return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_INVALID_PDU_FIELD ); // TODO: Check if this is the correct error code.
-
-	if ( (nop_out_pkt->init_task_tag == 0xFFFFFFFFUL) && (nop_out_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
-		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	if ( target_xfer_tag != 0xFFFFFFFFUL ) // If the initiator tag is not the special value, the target tag has to be.
+		return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_INVALID_PDU_FIELD );
 
 	if ( ds_len > (uint32_t)conn->opts.MaxRecvDataSegmentLength )
 		ds_len = conn->opts.MaxRecvDataSegmentLength;
@@ -2897,15 +2896,23 @@ static int iscsi_connection_handle_nop_out(iscsi_connection *conn, const iscsi_p
 	iscsi_nop_in_packet *nop_in_pkt = (iscsi_nop_in_packet *) response_pdu.bhs_pkt;
 
 	nop_in_pkt->opcode          = ISCSI_OPCODE_SERVER_NOP_IN;
-	nop_in_pkt->flags           = -0x80;
+	nop_in_pkt->flags           = 0x80;
 	nop_in_pkt->reserved        = 0U;
 	iscsi_put_be32( (uint8_t *) &nop_in_pkt->total_ahs_len, ds_len ); // TotalAHSLength is always 0 and DataSegmentLength is 24-bit, so write in one step.
 	iscsi_put_be64( (uint8_t *) &nop_in_pkt->lun, lun );
-	nop_in_pkt->target_xfer_tag = 0xFFFFFFFFUL; // Minus one does not require endianess conversion
-	nop_in_pkt->init_task_tag = nop_out_pkt->init_task_tag; // Copyed from request packet, no endian conversion required
-	iscsi_put_be32( (uint8_t *) &nop_in_pkt->stat_sn, conn->stat_sn++ );
+	if ( nop_out_pkt == NULL ) {
+		// Send a request which needs a reply, set target tag to anything but the special value
+		nop_in_pkt->init_task_tag   = 0xFFFFFFFFUL;
+		nop_in_pkt->target_xfer_tag = 0;
+		iscsi_put_be32( (uint8_t *) &nop_in_pkt->stat_sn, conn->stat_sn ); // Don't inc
+	} else {
+		// This is a reply, set target tag to special value to indicate we don't want a NOP-Out in response
+		iscsi_put_be32( (uint8_t *) &nop_in_pkt->init_task_tag, init_task_tag );
+		nop_in_pkt->target_xfer_tag = 0xFFFFFFFFUL;
+		iscsi_put_be32( (uint8_t *) &nop_in_pkt->stat_sn, conn->stat_sn++ ); // Inc
+	}
 
-	if ( (nop_out_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
+	if ( nop_out_pkt == NULL || (nop_out_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
 		conn->max_cmd_sn++;
 
 	iscsi_put_be32( (uint8_t *) &nop_in_pkt->exp_cmd_sn, conn->exp_cmd_sn );
@@ -3366,7 +3373,7 @@ static int iscsi_connection_pdu_handle(iscsi_connection *conn, iscsi_pdu *reques
 
 		switch ( opcode ) {
 			case ISCSI_OPCODE_CLIENT_NOP_OUT : {
-				rc = iscsi_connection_handle_nop_out( conn, request_pdu );
+				rc = iscsi_connection_handle_nop( conn, request_pdu );
 
 				break;
 			}
@@ -3422,6 +3429,7 @@ static int iscsi_connection_pdu_handle(iscsi_connection *conn, iscsi_pdu *reques
  */
 static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_request_t *request, const int len)
 {
+	ssize_t ret;
 	iscsi_pdu CLEANUP_PDU request_pdu;
 
 	if ( !iscsi_connection_pdu_init( &request_pdu, 0, false ) )
@@ -3483,8 +3491,17 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 		// header before the loop - this saves us from accounting for this within the mainloop
 
 		// 1) Receive entire BHS
-		if ( sock_recv( conn->client->sock, request_pdu.bhs_pkt, sizeof(iscsi_bhs_packet) ) != sizeof(iscsi_bhs_packet) ) {
-			logadd( LOG_INFO, "Cannot receive BHS for client %s", conn->client->hostName );
+		ret = sock_recv( conn->client->sock, request_pdu.bhs_pkt, sizeof(iscsi_bhs_packet) );
+		if ( ret == -1 && errno == EAGAIN ) {
+			// Receive timeout - send a NOP-In and try recv one more time
+			if ( iscsi_connection_handle_nop( conn, NULL ) != ISCSI_CONNECT_PDU_READ_OK ) {
+				logadd( LOG_DEBUG1, "Cannot send NOP-In to idle client %s - connection dead", conn->client->hostName );
+				break;
+			}
+			ret = sock_recv( conn->client->sock, request_pdu.bhs_pkt, sizeof(iscsi_bhs_packet) );
+		}
+		if ( ret != sizeof(iscsi_bhs_packet) ) {
+			logadd( LOG_DEBUG1, "Cannot receive BHS for client %s (%d/%d)", conn->client->hostName, (int)ret, (int)errno );
 			break;
 		}
 	} while ( !_shutdown );
@@ -3508,7 +3525,6 @@ void iscsi_connection_handle(dnbd3_client_t *client, const dnbd3_request_t *requ
 {
 	_Static_assert( sizeof(dnbd3_request_t) <= sizeof(iscsi_bhs_packet),
 		"DNBD3 request size larger than iSCSI BHS packet data size - Manual intervention required!" );
-	sock_setTimeout( client->sock, 1000L * 3600L ); // TODO: Remove after finishing iSCSI implementation
 
 	iscsi_connection *conn = iscsi_connection_create( client );
 
