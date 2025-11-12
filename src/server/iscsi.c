@@ -107,7 +107,7 @@ static int iscsi_connection_handle_reject(iscsi_connection *conn, const iscsi_pd
  * larger than the maximum allowed size.
  *
  * @param[in] dst Pointer to destination string to copy
- * with padding and may NOT be NULL, so be
+ * with padding and must NOT be NULL, so be
  * careful.
  * @param[in] src Pointer to string for copying. NULL
  * is NOT allowed here, take caution.
@@ -205,7 +205,7 @@ static void iscsi_copy_kvp_str(const char *name, const char **dest, const char *
  * the iSCSI implementation.
  *
  * @param[in] key_value_pairs Pointer to hash map containing all related keys and pairs.
- * May NOT be NULL, so take caution.
+ * Must NOT be NULL, so take caution.
  * @param[in] packet_data Pointer to key / value pair to be parsed. NULL is
  * an illegal value, so be careful.
  * @param[in] len Length of the remaining packet data.
@@ -282,7 +282,7 @@ static int iscsi_parse_text_key_value_pair(iscsi_negotiation_kvp *key_value_pair
  * the iSCSI implementation.
  *
  * @param[in] pairs struct to write all key-value-pair options from packet to
- * extracted keys and pairs. May NOT be NULL, so take caution.
+ * extracted keys and pairs. Must NOT be NULL, so take caution.
  * @param[in] packet_data Pointer to first key and value pair to
  * be parsed. NULL is an illegal value here, so be careful.
  * @param[in] len Length of the remaining packet data.
@@ -326,7 +326,7 @@ static int iscsi_parse_login_key_value_pairs(iscsi_negotiation_kvp *pairs, const
  * it to the initiator.
  *
  * @param[in] conn Pointer to iSCSI connection for which the
- * packet should be sent for. May NOT be
+ * packet should be sent for. Must NOT be
  * NULL, so be careful.
  * @param[in] task Pointer to iSCSI task which handles the
  * actual SCSI packet data. NULL is NOT
@@ -420,7 +420,7 @@ static bool iscsi_scsi_data_in_send(iscsi_connection *conn, const iscsi_task *ta
  * unprocessed tasks.
  *
  * @param[in] conn Pointer to iSCSI connection of which the
- * incoming data should be handled, may NOT be
+ * incoming data should be handled, must NOT be
  * NULL, so be careful.
  * @param[in] task Pointer to iSCSI task for handling
  * the incoming data. NULL is NOT allowed here,
@@ -580,7 +580,7 @@ static void iscsi_scsi_task_send_reply(iscsi_connection *conn, iscsi_scsi_task *
  *
  * @param[in] scsi_task Pointer to iSCSI SCSI task to allocate
  * and assign the SCSI check condition status
- * code sense data for. May NOT be NULL, so
+ * code sense data for. Must NOT be NULL, so
  * be careful.
  * @param[in] sense_key Sense Key (SK).
  * @param[in] asc Additional Sense Code (ASC).
@@ -627,7 +627,7 @@ static void iscsi_scsi_task_sense_data_build(iscsi_scsi_task *scsi_task, const u
  * status code.
  *
  * @param[in] scsi_task Pointer to iSCSI SCSI task to set the
- * SCSI status and additional details for. May
+ * SCSI status and additional details for. Must
  * NOT be NULL, so be careful.
  * @param[in] status SCSI status code to be set.
  * @param[in] sense_key Sense Key (SK).
@@ -705,7 +705,7 @@ static int iscsi_scsi_lun_get_from_iscsi(const uint64_t lun)
  * properties.
  *
  * @param[in] image Pointer to DNBD3 image to retrieve
- * the logical size from. May NOT be NULL,
+ * the logical size from. Must NOT be NULL,
  * so be careful.
  * @return The number of total logical blocks.
  */
@@ -722,7 +722,7 @@ static inline uint64_t iscsi_scsi_emu_block_get_count(const dnbd3_image_t *image
  * the block size is a power of two.
  *
  * @param[out] offset_bytes Pointer where to store the block
- * in bytes. May NOT be NULL, so be
+ * in bytes. Must NOT be NULL, so be
  * careful.
  * @param[in] offset_blocks Offset in blocks.
  * @param[in] num_blocks Number of blocks.
@@ -742,7 +742,7 @@ static uint64_t iscsi_scsi_emu_blocks_to_bytes(uint64_t *offset_bytes, const uin
  * block data which is NOT locally
  * available.
  *
- * @param[in] data Pointer to related scsi_task. May NOT
+ * @param[in] data Pointer to related scsi_task. Must NOT
  * be NULL, so be careful.
  * @param[in] handle Pointer to destination buffer, as passed to
  * iscsi_scsi_emu_io_block_read().
@@ -771,10 +771,10 @@ static void iscsi_uplink_callback(void *data, uint64_t handle UNUSED, uint64_t s
  * been finished.
  *
  * @param[in] scsi_task Pointer to iSCSI SCSI task which
- * executes the I/O read operation, may
+ * executes the I/O read operation, must
  * NOT be NULL, so be careful.
  * @param[in] image Pointer to DNBD3 image to read
- * data from and may NOT be NULL, so
+ * data from and must NOT be NULL, so
  * be careful.
  * @param[in] offset_blocks Offset in blocks to start reading from.
  * @param[in] num_blocks Number of blocks to read.
@@ -897,7 +897,7 @@ static void iscsi_scsi_emu_block_read(dnbd3_image_t *image, iscsi_scsi_task *scs
  *
  * @param[in] scsi_task Pointer to iSCSI SCSI task
  * to process the SCSI block operation
- * for and may NOT be NULL, be careful.
+ * for and must NOT be NULL, be careful.
  * @return true on successful operation, false otherwise.
  */
 static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
@@ -1037,7 +1037,7 @@ static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
  * @brief Calculates the 64-bit IEEE Extended NAA for a name.
  *
  * @param[out] buf Pointer to 64-bit output buffer for
- * storing the IEEE Extended NAA. May
+ * storing the IEEE Extended NAA. Must
  * NOT be NULL, so be careful.
  * @param[in] name Pointer to string containing the
  * name to calculate the IEEE Extended
@@ -1055,7 +1055,7 @@ static inline void iscsi_scsi_emu_naa_ieee_ext_set(uint64_t *buf, const uint8_t 
  * @brief Copies a SCSI name string and zero pads until total string length is aligned to DWORD boundary.
  *
  * @param[out] buf Pointer to copy the aligned SCSI
- * string to. May NOT be NULL, so be
+ * string to. Must NOT be NULL, so be
  * careful.
  * @param[in] name Pointer to string containing the
  * SCSI name to be copied. NULL is NOT
@@ -1082,14 +1082,14 @@ static size_t iscsi_scsi_emu_pad_scsi_name(uint8_t *buf, const uint8_t *name)
  * status result code accordingly.
  *
  * @param[in] image Pointer to DNBD3 image to get
- * the inquiry data from. May NOT be
+ * the inquiry data from. Must NOT be
  * NULL, so be careful.
  * @param[in] scsi_task Pointer to iSCSI SCSI task
  * responsible for this inqueiry
  * request. NULL is NOT allowed here,
  * take caution.
  * @param[in] cdb_inquiry Pointer to Command Descriptor
- * Block (CDB) and may NOT be NULL, be
+ * Block (CDB) and must NOT be NULL, be
  * careful.
  * @param[in] std_inquiry_data_pkt Pointer to standard inquiry
  * data packet to fill the inquiry
@@ -1558,7 +1558,7 @@ static void iscsi_scsi_emu_primary_mode_sense_page_init(uint8_t *buffer, const u
  * status result code accordingly.
  *
  * @param[in] image Pointer to DNBD3 image to get
- * the mode sense data from. May NOT be
+ * the mode sense data from. Must NOT be
  * NULL, so be careful.
  * @param[in] scsi_task Pointer to iSCSI SCSI task
  * responsible for this mode sense
@@ -1784,7 +1784,7 @@ static int iscsi_scsi_emu_primary_mode_sense_page(dnbd3_image_t *image, iscsi_sc
  * status result code accordingly.
  *
  * @param[in] image Pointer to DNBD3 image to get
- * the mode sense data from. May
+ * the mode sense data from. Must
  * NOT be NULL, so be careful.
  * @param[in] scsi_task Pointer to iSCSI SCSI task
  * responsible for this mode sense
@@ -1907,7 +1907,7 @@ static uint32_t iscsi_get_temporary_allocation_size(iscsi_scsi_task *scsi_task, 
  *
  * @param[in] scsi_task Pointer to iSCSI SCSI task
  * to process the SCSI non-block
- * operation for and may NOT be NULL,
+ * operation for and must NOT be NULL,
  * be careful.
  * @return true on successful operation, false otherwise.
  */
@@ -2153,7 +2153,7 @@ static void iscsi_connection_destroy(iscsi_connection *conn)
  * @param[in] key Pointer to key to be written to output
  * buffer. NULL is NOT allowed, take caution.
  * @param[in] value Pointer to value of the key that should
- * be written to output buffer which may
+ * be written to output buffer which must
  * NOT be NULL, so take caution.
  * @param[in] buf Pointer to output buffer to write the
  * key and value pair to. NULL is
@@ -2209,7 +2209,7 @@ static void iscsi_connection_update_key_value_pairs(iscsi_connection *conn, cons
  * to be sent via TCP/IP.
  *
  * @param[in] conn Pointer to ISCSI connection to send the TCP/IP
- * packet with. May NOT be NULL, so be
+ * packet with. Must NOT be NULL, so be
  * careful.
  * @param[in] resp_pdu Pointer to login response PDU to
  * be sent via TCP/IP. NULL is NOT
@@ -2253,7 +2253,7 @@ static int iscsi_send_login_response_pdu(iscsi_connection *conn, iscsi_pdu *resp
  * @param[in] login_response_pdu Pointer to login response PDU, NULL
  * is not an allowed value here, so take caution.
  * @param[in] pdu Pointer to login request PDU from client,
- * may NOT be NULL, so be careful.
+ * must NOT be NULL, so be careful.
  * @return 0 if initialization was successful, a negative error
  * code otherwise.
  */
@@ -2313,7 +2313,7 @@ static int iscsi_connection_pdu_login_response_init(iscsi_pdu *login_response_pd
  * NULL is not allowed, so take caution.
  * @param[in] type_str Pointer to key and value pairs which
  * contain the session type parameter to be evaluated,
- * which may NOT be NULL, so take caution.
+ * which must NOT be NULL, so take caution.
  * @param[in] type Write session type constant to this int.
  * Must not be null.
  * @return 0 on successful operation, a negative error code
@@ -2347,12 +2347,12 @@ static int iscsi_login_parse_session_type(const iscsi_pdu *login_response_pdu, c
  * THe accessibility of the target node is
  * also checked.
  *
- * @param[in] conn Pointer to iSCSI connection which may NOT be
+ * @param[in] conn Pointer to iSCSI connection which must NOT be
  * NULL, so be careful.
  * @param[in] login_response_pdu Pointer to login response PDU
  * to set the parameters for. NULL is NOT allowed
  * here, so take caution.
- * @param[in] target_name Pointer to target node name and may
+ * @param[in] target_name Pointer to target node name and must
  * NOT be NULL, be careful.
  * @return 0 if the check was successful or a negative
  * error code otherwise.
@@ -2506,7 +2506,7 @@ static void iscsi_connection_pdu_destroy(const iscsi_pdu *pdu)
  * extended.
  *
  * @param[in] pdu Pointer to iSCSI PDU where to append
- * the packet data to. May NOT be NULL, so
+ * the packet data to. Must NOT be NULL, so
  * be careful.
  * @param[in] ahs_len Length of AHS packet data to be appended.
  * @param[in] ds_len Length of DataSegment packet data to be appended.
@@ -2587,11 +2587,11 @@ static iscsi_bhs_packet *iscsi_connection_pdu_resize(iscsi_pdu *pdu, const uint 
  * If a header or data digest (CRC32C) needs to
  * be calculated, this is done as well.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. May
+ * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution. Will be freed after sending,
  * so don't access afterwards.
  * @param[in] pdu Pointer to iSCSI server response PDU to send.
- * May NOT be NULL, so be careful.
+ * Must NOT be NULL, so be careful.
  */
 static bool iscsi_connection_pdu_write(iscsi_connection *conn, const iscsi_pdu *pdu)
 {
@@ -2752,7 +2752,7 @@ static int iscsi_connection_handle_cmd_sn(iscsi_connection *conn, iscsi_pdu *req
  * If a response needs to be sent, this will
  * be done as well.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. May
+ * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
  * May be NULL in which case an error is returned.
@@ -2858,7 +2858,7 @@ static int iscsi_connection_handle_task_func_req(iscsi_connection *conn, const i
  * This method can also send an unsolicited NOP-In to the client
  * if we want to check whether the connection is still good.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. May
+ * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle,
  * or NULL for sending a connection alive check.
@@ -2934,7 +2934,7 @@ static int iscsi_connection_handle_nop(iscsi_connection *conn, const iscsi_pdu *
  * If a response needs to be sent, this will
  * be done as well.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. May
+ * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
  * May be NULL in which case an error is returned.
@@ -3004,11 +3004,11 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, const iscsi_
  * without a session.
  *
  * @param[in] conn Pointer to iSCSI connection,
- * may NOT be NULL, so be careful.
+ * must NOT be NULL, so be careful.
  * @param[in] login_response_pdu Pointer to login response PDU.
  * NULL is not allowed here, so take caution.
  * @param[in] kvpairs Pointer to key and value pairs.
- * which may NOT be NULL, so take caution.
+ * which must NOT be NULL, so take caution.
  * @return 0 on success, a negative error code otherwise.
  */
 static int iscsi_connection_handle_login_phase_none(iscsi_connection *conn, const iscsi_pdu *login_response_pdu, const iscsi_negotiation_kvp *kvpairs)
@@ -3110,7 +3110,7 @@ if ( pairs->key != NULL ) ADD_KV_INTERNAL( false, #key, value ); \
  * and determines the authentication method.
  *
  * @param[in] conn Pointer to iSCSI connection,
- * may NOT be NULL, so be careful.
+ * must NOT be NULL, so be careful.
  * @param[in] login_response_pdu Pointer to login response PDU.
  * NULL is not allowed here, so take caution.
  * @param[in] pairs Readily parsed key-value-pairs from according request
@@ -3196,7 +3196,7 @@ static int iscsi_connection_handle_login_response(iscsi_connection *conn, iscsi_
  * If a response needs to be sent, this will
  * be done as well.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. May
+ * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
  * May be NULL in which case an error is returned.
@@ -3255,7 +3255,7 @@ static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *
  * If a response needs to be sent, this will
  * be done as well.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. May
+ * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
  * May be NULL in which case an error is returned.
@@ -3340,7 +3340,7 @@ static int iscsi_connection_handle_text_req(iscsi_connection *conn, const iscsi_
  * If a response needs to be sent, this will
  * be done as well.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. May
+ * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
  * May be NULL in which case an error is returned.
@@ -3514,7 +3514,7 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
  * request data.
  *
  * @param[in] client Pointer to DNBD3 client structure,
- * may NOT be NULL, so be careful.
+ * must NOT be NULL, so be careful.
  * @param[in] request Pointer to DNBD3 request packet data.
  * NULL is not allowed here, take caution.
  * @param[in] len Length of already read DNBD3 request data.
