@@ -2764,8 +2764,11 @@ static int iscsi_connection_handle_logout_req(iscsi_connection *conn, const iscs
 {
 	iscsi_logout_req_packet *logout_req_pkt = (iscsi_logout_req_packet *) request_pdu->bhs_pkt;
 
-	if ( (conn->state == ISCSI_CONNECT_STATE_NEW) || (logout_req_pkt->reason_code != ISCSI_LOGOUT_REQ_REASON_CODE_CLOSE_SESSION) )
+	if ( (conn->state == ISCSI_CONNECT_STATE_NEW)
+			|| ((logout_req_pkt->reason_code & ISCSI_LOGOUT_REQ_REASON_CODE_MASK) != ISCSI_LOGOUT_REQ_REASON_CODE_CLOSE_SESSION) ) {
+		logadd( LOG_DEBUG1, "Invalid logout request in state %d, reason_code %d", conn->state, logout_req_pkt->reason_code );
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
+	}
 
 	iscsi_pdu CLEANUP_PDU response_pdu;
 	if ( !iscsi_connection_pdu_init( &response_pdu, 0, false ) )

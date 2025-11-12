@@ -4105,6 +4105,8 @@ typedef struct __attribute__((packed)) iscsi_login_response_packet {
 /// Logout request reason code: Remove the connection for recovery. The connection is closed, and all commands associated with it, if any, are to be prepared for a new allegiance.
 #define ISCSI_LOGOUT_REQ_REASON_CODE_REMOVE_CONNECTION_RECOVERY 0x02
 
+/// Mask to get the logout reason from the reason_code field (lower 7 bits)
+#define ISCSI_LOGOUT_REQ_REASON_CODE_MASK                       0x7f
 
 /**
  * @brief Logout request implicit reason code: Session reinstatement.
@@ -4236,7 +4238,7 @@ typedef struct __attribute__((packed)) iscsi_logout_req_packet {
 	 * I_T_L nexus with the status of CHECK CONDITION, the ASC/ASCQ value
 	 * of 0x47 / 0x7F ("SOME COMMANDS CLEARED BY ISCSI PROTOCOL EVENT"), etc.
 	 */
-	int8_t reason_code;
+	uint8_t reason_code;
 
 	/// Reserved for future usage, always MUST be 0.
 	uint16_t reserved;
