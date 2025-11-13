@@ -2128,19 +2128,14 @@ static int iscsi_append_key_value_pair_packet(const bool number, const char *key
 #define CLAMP(val, min, max) ((val) < (min) ? (min) : ((val) > (max) ? (max) : (val)))
 
 /**
- * @brief Updates iSCSI connection and session values after being retrieved from the client.
+ * @brief Updates selected iSCSI connection options from negotiated key-value pairs.
  *
- * This function copies the key and value pairs into the
- * internal connection and session structure and checks
- * them for consistency.\n
- * The TCP receive buffer will be adjusted to the new
- * updated value but is never lower than 4KiB and never
- * higher than 8KiB plus header overhead and a factor of
- * 16 for receiving 16 packets at once.
+ * Copies and clamps a subset of negotiated options (MaxBurstLength,
+ * FirstBurstLength, MaxRecvDataSegmentLength) into the connection's
+ * options.
  *
- * @param[in] conn Pointer to ISCSI connection which should
- * be updated.
- @param[in] pairs Set of readily parsed key-value-pairs to handle
+ * @param[in] conn Pointer to ISCSI connection which should be updated.
+ * @param[in] pairs Set of readily parsed key-value pairs to apply.
  */
 static void iscsi_connection_update_key_value_pairs(iscsi_connection *conn, const iscsi_negotiation_kvp *pairs)
 {
@@ -2529,16 +2524,19 @@ static iscsi_bhs_packet *iscsi_connection_pdu_resize(iscsi_pdu *pdu, const uint 
 /**
  * @brief Writes and sends a response PDU to the client.
  *
- * This function sends a response PDU to the
- * client after being processed by the server.\n
- * If a header or data digest (CRC32C) needs to
- * be calculated, this is done as well.
+ * Sends the provided response PDU over the TCP connection. On send failure,
+ * the connection state is set to ISCSI_CONNECT_STATE_EXITING.
+ *
+ * If a header or data segment is present, its size is rounded up to the iSCSI
+ * alignment before transmission, so the underlying buffer MUST include padding
+ * if neccesary.
  *
  * @param[in] conn Pointer to iSCSI connection to handle. Must
- * NOT be NULL, so take caution. Will be freed after sending,
- * so don't access afterwards.
+ * NOT be NULL, so take caution.
  * @param[in] pdu Pointer to iSCSI server response PDU to send.
  * Must NOT be NULL, so be careful.
+ * @retval true if the entire PDU was sent successfully.
+ * @retval false on failure (connection state will be set to EXITING).
  */
 static bool iscsi_connection_pdu_write(iscsi_connection *conn, const iscsi_pdu *pdu)
 {
@@ -3136,19 +3134,18 @@ static int iscsi_connection_handle_login_response(iscsi_connection *conn, iscsi_
 }
 
 /**
- * @brief Handles an incoming iSCSI payload data login request PDU.
+ * @brief Handles an incoming iSCSI login request PDU.
  *
- * This function handles login request payload
- * data sent by the client.\n
- * If a response needs to be sent, this will
- * be done as well.
+ * Parses the login request, builds a corresponding login response PDU and
+ * sends it. Performs basic validation (e.g., MaxRecvDataSegmentLength and
+ * login phase/state). On certain errors, a reject or error response is sent.
  *
  * @param[in] conn Pointer to iSCSI connection to handle. Must
  * NOT be NULL, so take caution.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
- * May be NULL in which case an error is returned.
- * @return 0 on success. A negative value indicates
- * an error. A positive value a warning.
+ * Must NOT be NULL.
+ * @return ISCSI_CONNECT_PDU_READ_OK on success; a negative
+ * ISCSI_CONNECT_PDU_READ_ERR_* code on error.
  */
 static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *request_pdu)
 {
@@ -3195,19 +3192,17 @@ static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *
 }
 
 /**
- * @brief Handles an incoming iSCSI payload data text request PDU.
+ * @brief Handles an incoming iSCSI text request PDU.
  *
- * This function handles text request payload
- * data sent by the client.\n
- * If a response needs to be sent, this will
- * be done as well.
+ * Parses the key-value pairs in the text request and responds with a text
+ * response PDU containing the negotiated values. Multi-PDU continuation of
+ * text requests is not supported.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. Must
- * NOT be NULL, so take caution.
+ * @param[in] conn Pointer to iSCSI connection to handle. Must NOT be NULL.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
- * May be NULL in which case an error is returned.
- * @return 0 on success. A negative value indicates
- * an error. A positive value a warning.
+ * Must NOT be NULL.
+ * @return ISCSI_CONNECT_PDU_READ_OK on success; a negative
+ * ISCSI_CONNECT_PDU_READ_ERR_* code on error or when a reject is sent.
  */
 static int iscsi_connection_handle_text_req(iscsi_connection *conn, const iscsi_pdu *request_pdu)
 {
@@ -3282,17 +3277,17 @@ static int iscsi_connection_handle_text_req(iscsi_connection *conn, const iscsi_
 }
 
 /**
- * @brief Handles an incoming iSCSI PDU.
+ * @brief Dispatches and handles a single incoming iSCSI request PDU.
  *
- * If a response needs to be sent, this will
- * be done as well.
+ * Parses the opcode from the request PDU and invokes the corresponding
+ * handler. On protocol errors, a REJECT may be sent. Fatal errors set the
+ * connection to exiting state via lower-level helpers.
  *
- * @param[in] conn Pointer to iSCSI connection to handle. Must
- * NOT be NULL, so take caution.
+ * @param[in] conn Pointer to iSCSI connection to handle. Must NOT be NULL.
  * @param[in] request_pdu Pointer to iSCSI client request PDU to handle.
- * May be NULL in which case an error is returned.
- * @return 0 on success. A negative value indicates
- * an error. A positive value a warning.
+ * Must NOT be NULL.
+ * @return ISCSI_CONNECT_PDU_READ_OK on success; a negative
+ * ISCSI_CONNECT_PDU_READ_ERR_* code on error.
  */
 static int iscsi_connection_pdu_handle(iscsi_connection *conn, iscsi_pdu *request_pdu)
 {
@@ -3453,18 +3448,18 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 }
 
 /**
- * @brief Handles an iSCSI connection until connection is closed.
+ * @brief Handles an iSCSI connection until it is closed.
  *
- * This function creates an iSCSI portal group
- * and iSCSI portal with connection data
- * delivered from the DNBD3 client and
- * request data.
+ * Initializes a per-connection state object, processes incoming PDUs by
+ * delegating to the PDU read loop (which continues until an error, shutdown,
+ * or explicit exit state), and finally shuts down the write side of the socket
+ * while draining any remaining incoming data.
  *
- * @param[in] client Pointer to DNBD3 client structure,
- * must NOT be NULL, so be careful.
- * @param[in] request Pointer to DNBD3 request packet data.
- * NULL is not allowed here, take caution.
- * @param[in] len Length of already read DNBD3 request data.
+ * @param[in] client Pointer to DNBD3 client structure.
+ * Must NOT be NULL.
+ * @param[in] request Pointer to the already-received initial bytes (partial
+ * Basic Header Segment) of the first iSCSI PDU. Must NOT be NULL.
+ * @param[in] len Length in bytes of the initial data in 'request'.
  */
 void iscsi_connection_handle(dnbd3_client_t *client, const dnbd3_request_t *request, const int len)
 {
