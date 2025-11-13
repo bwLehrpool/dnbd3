@@ -86,9 +86,6 @@ static void iscsi_strcpy_pad(char *dst, const char *src, size_t size, int pad); 
 
 static uint64_t iscsi_target_node_wwn_get(const uint8_t *name); // Calculates the WWN using 64-bit IEEE Extended NAA for a name
 
-static iscsi_connection *iscsi_connection_create(dnbd3_client_t *client); // Creates data structure for an iSCSI connection from iSCSI portal and TCP/IP socket
-static void iscsi_connection_destroy(iscsi_connection *conn); // Deallocates all resources acquired by iscsi_connection_create
-
 static bool iscsi_connection_pdu_init(iscsi_pdu *pdu, uint32_t ds_len, bool no_ds_alloc);
 static void iscsi_connection_pdu_destroy(const iscsi_pdu *pdu);
 
@@ -2093,56 +2090,6 @@ static uint64_t iscsi_target_node_wwn_get(const uint8_t *name)
 }
 
 /**
- * @brief Creates data structure for an iSCSI connection from iSCSI portal and TCP/IP socket.
- *
- * Creates a data structure for incoming iSCSI connection
- * requests from iSCSI packet data.
- *
- * @param[in] client dnbd3 client to associate the connection with.
- * @return Pointer to initialized iSCSI connection structure or NULL in
- * case of an error (invalid iSCSI packet data or memory exhaustion).
- */
-static iscsi_connection *iscsi_connection_create(dnbd3_client_t *client)
-{
-	iscsi_connection *conn = malloc( sizeof(iscsi_connection) );
-
-	if ( conn == NULL ) {
-		logadd( LOG_ERROR, "iscsi_create_connection: Out of memory while allocating iSCSI connection" );
-
-		return NULL;
-	}
-
-	conn->id                       = 0;
-	conn->client                   = client;
-	conn->flags                    = 0;
-	conn->state                    = ISCSI_CONNECT_STATE_NEW;
-	conn->cid                      = 0U;
-	conn->stat_sn                  = 0UL;
-	conn->exp_cmd_sn               = 0UL;
-	conn->max_cmd_sn               = 0UL;
-
-	return conn;
-}
-
-/**
- * @brief Deallocates all resources acquired by iscsi_connection_create.
- *
- * Deallocates a data structure of an iSCSI connection
- * request and all allocated hash maps which don't
- * require closing of external resources like closing
- * TCP/IP socket connections.
- *
- * @param[in] conn Pointer to iSCSI connection structure to be
- * deallocated, TCP/IP connections are NOT closed by this
- * function, use iscsi_connection_close for this. This may be
- * NULL in which case this function does nothing.
- */
-static void iscsi_connection_destroy(iscsi_connection *conn)
-{
-	free( conn );
-}
-
-/**
  * @brief Appends a key and value pair to DataSegment packet data.
  *
  * This function adds any non-declarative key
@@ -3524,23 +3471,18 @@ void iscsi_connection_handle(dnbd3_client_t *client, const dnbd3_request_t *requ
 	_Static_assert( sizeof(dnbd3_request_t) <= sizeof(iscsi_bhs_packet),
 		"DNBD3 request size larger than iSCSI BHS packet data size - Manual intervention required!" );
 
-	iscsi_connection *conn = iscsi_connection_create( client );
-
-	if ( conn == NULL ) {
-		logadd( LOG_ERROR, "iscsi_connection_handle: Out of memory while allocating iSCSI connection" );
-
-		return;
-	}
+	iscsi_connection conn = {
+		.state =  ISCSI_CONNECT_STATE_NEW,
+		.client = client,
+	};
 
 	static atomic_int CONN_ID = 0;
-	conn->id = ++CONN_ID;
+	conn.id = ++CONN_ID;
 
-	iscsi_connection_pdu_read_loop( conn, request, len );
+	iscsi_connection_pdu_read_loop( &conn, request, len );
 
 	// Wait for the client to receive any pending outgoing PDUs
 	shutdown( client->sock, SHUT_WR );
 	sock_setTimeout( client->sock, 100 );
 	while ( recv( client->sock, (void *)request, len, 0 ) > 0 ) {}
-
-	iscsi_connection_destroy( conn );
 }
