@@ -30,7 +30,6 @@
 static int dnbd3_close_device(dnbd3_device_t *dev)
 {
 	int result;
-	unsigned int mf;
 
 	if (dev->imgname)
 		dev_info(dnbd3_device_to_dev(dev), "closing down device.\n");
@@ -47,9 +46,13 @@ static int dnbd3_close_device(dnbd3_device_t *dev)
 	set_capacity(dev->disk, 0);
 	blk_mq_unfreeze_queue(dev->queue);
 #else
-	mf = blk_mq_freeze_queue(dev->queue);
-	set_capacity(dev->disk, 0);
-	blk_mq_unfreeze_queue(dev->queue, mf);
+	{
+		unsigned int mf;
+
+		mf = blk_mq_freeze_queue(dev->queue);
+		set_capacity(dev->disk, 0);
+		blk_mq_unfreeze_queue(dev->queue, mf);
+	}
 #endif
 	return result;
 }

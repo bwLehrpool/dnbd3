@@ -53,6 +53,7 @@ set(CHECKPATCH_IGNORE_WARNINGS "NEW_TYPEDEFS"
                                "PREFER_PR_LEVEL"
                                "LINUX_VERSION_CODE"
                                "JIFFIES_COMPARISON"
+                               "MACRO_ARG_UNUSED"
                                "KREALLOC_ARG_REUSE")
 
 add_kernel_linter(dnbd3-lint "${CHECKPATCH_IGNORE_WARNINGS}"
