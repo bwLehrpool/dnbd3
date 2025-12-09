@@ -99,9 +99,10 @@ static int iscsi_connection_handle_reject(iscsi_connection *conn, const iscsi_pd
 /**
  * @brief Copies a string with additional padding character to fill in a specified size.
  *
- * This function does NOT pad, but truncates
- * instead if the string length equals or is
- * larger than the maximum allowed size.
+ * If the src string is shorter than the destination buffer,
+ * it will be padded with the given character. Otherwise,
+ * the string will be copied and truncated if necessary.
+ * In any case, the resulting string will NOT be null terminated.
  *
  * @param[in] dst Pointer to destination string to copy
  * with padding and must NOT be NULL, so be
@@ -556,8 +557,9 @@ static void iscsi_scsi_task_send_reply(iscsi_connection *conn, iscsi_scsi_task *
 	scsi_response_pkt->snack_tag = 0UL;
 	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->stat_sn, conn->stat_sn++ );
 
-	if ( (scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
+	if ( (scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 ) {
 		conn->max_cmd_sn++;
+	}
 
 	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->exp_cmd_sn, conn->exp_cmd_sn );
 	iscsi_put_be32( (uint8_t *) &scsi_response_pkt->max_cmd_sn, conn->max_cmd_sn );
@@ -633,8 +635,9 @@ static void iscsi_scsi_task_sense_data_build(iscsi_scsi_task *scsi_task, const u
  */
 static void iscsi_scsi_task_status_set(iscsi_scsi_task *scsi_task, const uint8_t status, const uint8_t sense_key, const uint8_t asc, const uint8_t ascq)
 {
-	if ( status == ISCSI_SCSI_STATUS_CHECK_COND )
+	if ( status == ISCSI_SCSI_STATUS_CHECK_COND ) {
 		iscsi_scsi_task_sense_data_build( scsi_task, sense_key, asc, ascq );
+	}
 
 	scsi_task->status = status;
 }
@@ -656,12 +659,13 @@ static uint64_t iscsi_scsi_lun_get_from_scsi(const int lun_id)
 {
 	uint64_t iscsi_scsi_lun;
 
-	if ( lun_id < 0x100 )
+	if ( lun_id < 0x100 ) {
 		iscsi_scsi_lun = (uint64_t) (lun_id & 0xFF) << 48ULL;
-	else if ( lun_id < 0x4000 )
+	} else if ( lun_id < 0x4000 ) {
 		iscsi_scsi_lun = (1ULL << 62ULL) | (uint64_t) (lun_id & 0x3FFF) << 48ULL;
-	else
+	} else {
 		iscsi_scsi_lun = 0ULL;
+	}
 
 	return iscsi_scsi_lun;
 }
@@ -685,12 +689,13 @@ static int iscsi_scsi_lun_get_from_iscsi(const uint64_t lun)
 {
 	int lun_id = (int) (lun >> 62ULL) & 0x03;
 
-	if ( lun_id == 0x00 )
+	if ( lun_id == 0x00 ) {
 		lun_id = (int) (lun >> 48ULL) & 0xFF;
-	else if ( lun_id == 0x01 )
+	} else if ( lun_id == 0x01 ) {
 		lun_id = (int) (lun >> 48ULL) & 0x3FFF;
-	else
+	} else {
 		lun_id = 0xFFFF;
+	}
 
 	return lun_id;
 }
@@ -910,8 +915,9 @@ static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 			lba      = iscsi_get_be24(cdb_read_write_6->lba);
 			xfer_len = cdb_read_write_6->xfer_len;
 
-			if ( xfer_len == 0UL )
+			if ( xfer_len == 0UL ) {
 				xfer_len = 256UL;
+			}
 
 			iscsi_scsi_emu_block_read( image, scsi_task, lba, xfer_len );
 
@@ -959,10 +965,11 @@ static bool iscsi_scsi_emu_block_process(iscsi_scsi_task *scsi_task)
 
 			lba = iscsi_scsi_emu_block_get_count( image ) - 1ULL;
 
-			if ( lba > 0xFFFFFFFFULL )
+			if ( lba > 0xFFFFFFFFULL ) {
 				buf->lba = 0xFFFFFFFFUL; // Minus one does not require endianess conversion
-			else
+			} else {
 				iscsi_put_be32( (uint8_t *) &buf->lba, (uint32_t) lba );
+			}
 
 			iscsi_put_be32( (uint8_t *) &buf->block_len, ISCSI_SCSI_EMU_LOGICAL_BLOCK_SIZE );
 
@@ -1144,8 +1151,9 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 
 				alloc_len = (uint) strlen( name );
 
-				if ( alloc_len >= (len - sizeof(iscsi_scsi_vpd_page_inquiry_data_packet)) )
+				if ( alloc_len >= (len - sizeof(iscsi_scsi_vpd_page_inquiry_data_packet)) ) {
 					alloc_len = (uint) ((len - sizeof(iscsi_scsi_vpd_page_inquiry_data_packet)) - 1U);
+				}
 
 				memcpy( vpd_page_inquiry_data_pkt->params, name, alloc_len );
 				memset( (vpd_page_inquiry_data_pkt->params + alloc_len), '\0', (len - alloc_len - sizeof(iscsi_scsi_vpd_page_inquiry_data_packet)) );
@@ -1456,8 +1464,9 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 	if ( len >= ISCSI_NEXT_OFFSET(iscsi_scsi_ext_inquiry_data_packet, version_desc[4]) ) {
 		uint alloc_len = (uint) (len - offsetof(iscsi_scsi_ext_inquiry_data_packet, version_desc[4]));
 
-		if ( alloc_len > (sizeof(iscsi_scsi_ext_inquiry_data_packet) - offsetof(iscsi_scsi_ext_inquiry_data_packet, version_desc[4])) )
+		if ( alloc_len > (sizeof(iscsi_scsi_ext_inquiry_data_packet) - offsetof(iscsi_scsi_ext_inquiry_data_packet, version_desc[4])) ) {
 			alloc_len = (sizeof(iscsi_scsi_ext_inquiry_data_packet) - offsetof(iscsi_scsi_ext_inquiry_data_packet, version_desc[4]));
+		}
 
 		memset( &ext_inquiry_data_pkt->version_desc[4], 0, alloc_len );
 		add_len += alloc_len;
@@ -1844,10 +1853,11 @@ static int iscsi_scsi_emu_primary_mode_sense(dnbd3_image_t *image, iscsi_scsi_ta
 	if ( block_desc_len == sizeof(iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet) ) {
 		iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *lba_parameter_block_desc = (iscsi_scsi_mode_sense_lba_parameter_block_desc_data_packet *) (buffer + hdr_len);
 
-		if ( num_blocks > 0xFFFFFFFFULL )
+		if ( num_blocks > 0xFFFFFFFFULL ) {
 			lba_parameter_block_desc->num_blocks = 0xFFFFFFFFUL; // Minus one does not require endianess conversion
-		else
+		} else {
 			iscsi_put_be32( (uint8_t *) &lba_parameter_block_desc->num_blocks, (uint32_t) num_blocks );
+		}
 
 		lba_parameter_block_desc->reserved = 0U;
 		iscsi_put_be24( (uint8_t *) &lba_parameter_block_desc->block_len, block_size );
@@ -2207,8 +2217,9 @@ static int iscsi_connection_pdu_login_response_init(iscsi_pdu *login_response_pd
 	login_response_pkt->opcode = ISCSI_OPCODE_SERVER_LOGIN_RES;
 	login_response_pkt->flags  = (int8_t) (login_req_pkt->flags & (ISCSI_LOGIN_REQ_FLAGS_TRANSIT | ISCSI_LOGIN_REQ_FLAGS_CONTINUE | ISCSI_LOGIN_REQ_FLAGS_CURRENT_STAGE_MASK));
 
-	if ( (login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_TRANSIT) != 0 )
+	if ( (login_response_pkt->flags & ISCSI_LOGIN_RESPONSE_FLAGS_TRANSIT) != 0 ) {
 		login_response_pkt->flags |= (login_req_pkt->flags & ISCSI_LOGIN_REQ_FLAGS_NEXT_STAGE_MASK);
+	}
 
 	login_response_pkt->isid          = login_req_pkt->isid;
 	login_response_pkt->tsih          = 0;
@@ -2683,8 +2694,9 @@ static int iscsi_connection_handle_cmd_sn(iscsi_connection *conn, iscsi_pdu *req
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
 	}
 
-	if ( ((scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0) && (opcode != ISCSI_OPCODE_CLIENT_SCSI_DATA_OUT) )
+	if ( ((scsi_cmd_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0) && (opcode != ISCSI_OPCODE_CLIENT_SCSI_DATA_OUT) ) {
 		conn->exp_cmd_sn++;
+	}
 
 	return ISCSI_CONNECT_PDU_READ_OK;
 }
@@ -2830,8 +2842,9 @@ static int iscsi_connection_handle_nop(iscsi_connection *conn, const iscsi_pdu *
 	if ( target_xfer_tag != 0xFFFFFFFFUL ) // If the initiator tag is not the special value, the target tag has to be.
 		return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_INVALID_PDU_FIELD );
 
-	if ( ds_len > (uint32_t)conn->opts.MaxRecvDataSegmentLength )
+	if ( ds_len > (uint32_t)conn->opts.MaxRecvDataSegmentLength ) {
 		ds_len = conn->opts.MaxRecvDataSegmentLength;
+	}
 
 	iscsi_pdu CLEANUP_PDU response_pdu;
 	if ( !iscsi_connection_pdu_init( &response_pdu, ds_len, false ) )
@@ -2856,8 +2869,9 @@ static int iscsi_connection_handle_nop(iscsi_connection *conn, const iscsi_pdu *
 		iscsi_put_be32( (uint8_t *) &nop_in_pkt->stat_sn, conn->stat_sn++ ); // Inc
 	}
 
-	if ( nop_out_pkt == NULL || (nop_out_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 )
+	if ( nop_out_pkt == NULL || (nop_out_pkt->opcode & ISCSI_OPCODE_FLAGS_IMMEDIATE) == 0 ) {
 		conn->max_cmd_sn++;
+	}
 
 	iscsi_put_be32( (uint8_t *) &nop_in_pkt->exp_cmd_sn, conn->exp_cmd_sn );
 	iscsi_put_be32( (uint8_t *) &nop_in_pkt->max_cmd_sn, conn->max_cmd_sn );
@@ -3029,9 +3043,11 @@ if ( pairs->key != -1 ) ADD_KV_INTERNAL( true, #key, (const char *)(size_t)(valu
 #	define ADD_KV_PLAIN_STR(key, value) do { \
 if ( pairs->key != NULL ) ADD_KV_INTERNAL( false, #key, value ); \
 } while (0)
+	// Reply with these settings with actually negotiated values
 	ADD_KV_OPTION_INT( MaxRecvDataSegmentLength );
 	ADD_KV_OPTION_INT( MaxBurstLength );
 	ADD_KV_OPTION_INT( FirstBurstLength );
+	// These are always hard-coded to specific value, we don't support anything else
 	ADD_KV_PLAIN_INT( MaxConnections, 1 );
 	ADD_KV_PLAIN_INT( ErrorRecoveryLevel, 0 );
 	ADD_KV_PLAIN_STR( HeaderDigest, "None" );
