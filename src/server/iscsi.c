@@ -1169,6 +1169,14 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				const uint dev_name_len  = (uint) (strlen( image->name ) + 1U);
 				const uint port_name_len = (uint) (strlen( port_name ) + 1U);
 
+				// Calculate total length required for all design descriptors we are about to add:
+				// 1. IEEE NAA Extended
+				// 2. T10 Vendor ID
+				// 3. SCSI Device Name
+				// 4. SCSI Target Port Name
+				// 5. Relative Target Port
+				// 6. Target Port Group
+				// 7. Logical Unit Group
 				alloc_len  = (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_ieee_naa_ext_inquiry_data_packet)); // 64-bit IEEE NAA Extended
 				alloc_len += (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_t10_vendor_id_inquiry_data_packet)); // T10 Vendor ID
 				alloc_len += (uint) (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + ISCSI_ALIGN(dev_name_len, ISCSI_ALIGN_SIZE)); // SCSI Device Name
@@ -1185,6 +1193,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 
 				iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *vpd_page_design_desc_inquiry_data_pkt = (iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *) vpd_page_inquiry_data_pkt->params;
 
+				// 1. Descriptor: IEEE NAA Extended
 				vpd_page_design_desc_inquiry_data_pkt->protocol_id_code_set = ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_BINARY) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(ISCSI_DEFAULT_PROTOCOL_ID);
 				vpd_page_design_desc_inquiry_data_pkt->flags                = (int8_t) (ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_NAA) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LOGICAL_UNIT) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV);
 				vpd_page_design_desc_inquiry_data_pkt->reserved             = 0U;
@@ -1195,6 +1204,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				alloc_len = (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_ieee_naa_ext_inquiry_data_packet));
 
 				vpd_page_design_desc_inquiry_data_pkt = (iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *) (((uint8_t *) vpd_page_design_desc_inquiry_data_pkt) + alloc_len);
+				// 2. Descriptor: T10 Vendor ID
 				vpd_page_design_desc_inquiry_data_pkt->protocol_id_code_set = ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_ASCII) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(ISCSI_DEFAULT_PROTOCOL_ID);
 				vpd_page_design_desc_inquiry_data_pkt->flags                = (int8_t) (ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_T10_VENDOR_ID) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LOGICAL_UNIT) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV);
 				vpd_page_design_desc_inquiry_data_pkt->reserved             = 0U;
@@ -1209,6 +1219,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				alloc_len += (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_t10_vendor_id_inquiry_data_packet));
 
 				vpd_page_design_desc_inquiry_data_pkt = (iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *) (((uint8_t *) vpd_page_design_desc_inquiry_data_pkt) + (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_t10_vendor_id_inquiry_data_packet)));
+				// 3. Descriptor: SCSI Device Name
 				vpd_page_design_desc_inquiry_data_pkt->protocol_id_code_set = ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_UTF8) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(ISCSI_DEFAULT_PROTOCOL_ID);
 				vpd_page_design_desc_inquiry_data_pkt->flags                = (int8_t) (ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_SCSI_NAME) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_DEVICE) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV);
 				vpd_page_design_desc_inquiry_data_pkt->reserved             = 0U;
@@ -1217,6 +1228,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				alloc_len += (uint) (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + vpd_page_design_desc_inquiry_data_pkt->len);
 
 				vpd_page_design_desc_inquiry_data_pkt = (iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *) (((uint8_t *) vpd_page_design_desc_inquiry_data_pkt) + (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + vpd_page_design_desc_inquiry_data_pkt->len));
+				// 4. Descriptor: SCSI Target Port Name
 				vpd_page_design_desc_inquiry_data_pkt->protocol_id_code_set = ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_UTF8) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(ISCSI_DEFAULT_PROTOCOL_ID);
 				vpd_page_design_desc_inquiry_data_pkt->flags                = (int8_t) (ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_SCSI_NAME) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_PORT) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV);
 				vpd_page_design_desc_inquiry_data_pkt->reserved             = 0U;
@@ -1225,6 +1237,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				alloc_len += (uint) (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + vpd_page_design_desc_inquiry_data_pkt->len);
 
 				vpd_page_design_desc_inquiry_data_pkt = (iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *) (((uint8_t *) vpd_page_design_desc_inquiry_data_pkt) + (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + vpd_page_design_desc_inquiry_data_pkt->len));
+				// 5. Descriptor: Relative Target Port
 				vpd_page_design_desc_inquiry_data_pkt->protocol_id_code_set = ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_BINARY) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(ISCSI_DEFAULT_PROTOCOL_ID);
 				vpd_page_design_desc_inquiry_data_pkt->flags                = (int8_t) (ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_REL_TARGET_PORT) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_PORT) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV);
 				vpd_page_design_desc_inquiry_data_pkt->reserved             = 0U;
@@ -1238,6 +1251,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				alloc_len += (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_rel_target_port_inquiry_data_packet));
 
 				vpd_page_design_desc_inquiry_data_pkt = (iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *) (((uint8_t *) vpd_page_design_desc_inquiry_data_pkt) +  (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_rel_target_port_inquiry_data_packet)));
+				// 6. Descriptor: Target Port Group
 				vpd_page_design_desc_inquiry_data_pkt->protocol_id_code_set = ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_BINARY) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(ISCSI_DEFAULT_PROTOCOL_ID);
 				vpd_page_design_desc_inquiry_data_pkt->flags                = (int8_t) (ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_TARGET_PORT_GROUP) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_TARGET_PORT) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV);
 				vpd_page_design_desc_inquiry_data_pkt->reserved             = 0U;
@@ -1251,6 +1265,7 @@ static int iscsi_scsi_emu_primary_inquiry(const dnbd3_image_t *image, iscsi_scsi
 				alloc_len += (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_target_port_group_inquiry_data_packet));
 
 				vpd_page_design_desc_inquiry_data_pkt = (iscsi_scsi_vpd_page_design_desc_inquiry_data_packet *) (((uint8_t *) vpd_page_design_desc_inquiry_data_pkt) +  (sizeof(iscsi_scsi_vpd_page_design_desc_inquiry_data_packet) + sizeof(iscsi_scsi_vpd_page_design_desc_target_port_group_inquiry_data_packet)));
+				// 7. Descriptor: Logical Unit Group
 				vpd_page_design_desc_inquiry_data_pkt->protocol_id_code_set = ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_CODE_SET(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_CODE_SET_BINARY) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_PUT_PROTOCOL_ID(ISCSI_DEFAULT_PROTOCOL_ID);
 				vpd_page_design_desc_inquiry_data_pkt->flags                = (int8_t) (ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_TYPE(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_TYPE_LOGICAL_UNIT_GROUP) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PUT_ASSOC(ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_ASSOC_LOGICAL_UNIT) | ISCSI_SCSI_VPD_PAGE_DESIGN_DESC_INQUIRY_DATA_FLAGS_PIV);
 				vpd_page_design_desc_inquiry_data_pkt->reserved             = 0U;
@@ -2505,16 +2520,17 @@ static iscsi_bhs_packet *iscsi_connection_pdu_resize(iscsi_pdu *pdu, const uint 
 					return NULL;
 				}
 				if ( !old_alloced ) {
-					// Old was in internal buffer, copy contents
+					// Old was in internal buffer, copy contents to the new heap buffer
 					memcpy( bhs_pkt, pdu->internal_buffer, MIN(new_len, old_len) );
 				}
 				// Update PDU's BHS pointer
 				pdu->big_alloc = bhs_pkt;
 				pdu->bhs_pkt = bhs_pkt;
 			} else {
-				// New block fits into internal buffer - ignore for now and keep in big buffer
-				// to avoid needless overhead - PDUs are short-lived anyways.
-				// Keep using old BHS pointer
+				// New block fits into internal buffer.
+				// If we are already using big_alloc, we keep it to avoid realloc/free overhead,
+				// as PDUs are short-lived.
+				// Keep using old BHS pointer (which might be big_alloc or internal_buffer)
 				bhs_pkt = pdu->bhs_pkt;
 			}
 		}
@@ -2915,13 +2931,14 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, const iscsi_
 		.scsi_task.connection   = conn,
 	};
 
+	// Per iSCSI, READ/WRITE bits in flags_task indicate data direction for this CDB
 	if ( (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_READ) != 0 ) {
 		task.scsi_task.is_read = true;
 	} else {
 		if ( exp_xfer_len != 0UL ) {
 			// Not a read request, but expecting data - not valid
 			iscsi_scsi_task_status_set( &task.scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
-				ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
+					ISCSI_SCSI_ASC_INVALID_FIELD_IN_CDB, ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 			handled = true;
 		}
 	}
@@ -2929,6 +2946,7 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, const iscsi_
 	if ( !handled ) {
 		task.scsi_task.is_write = (scsi_cmd_pkt->flags_task & ISCSI_SCSI_CMD_FLAGS_TASK_WRITE) != 0;
 
+		// Single-LUN target for now, reject unknown LUNs with ILLEGAL REQUEST
 		if ( task.lun_id != ISCSI_DEFAULT_LUN ) {
 			logadd( LOG_WARNING, "Received SCSI command for unknown LUN %d", task.lun_id );
 			iscsi_scsi_task_status_set( &task.scsi_task, ISCSI_SCSI_STATUS_CHECK_COND, ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ,
@@ -2937,13 +2955,13 @@ static int iscsi_connection_handle_scsi_cmd(iscsi_connection *conn, const iscsi_
 		} else {
 			task.scsi_task.status = ISCSI_SCSI_STATUS_GOOD;
 
-			handled = iscsi_scsi_emu_block_process( &task.scsi_task )
-					|| iscsi_scsi_emu_primary_process( &task.scsi_task );
+			// Try block commands first (READ/WRITE family), then primary (INQUIRY, MODE SENSE, etc.)
+			handled = iscsi_scsi_emu_block_process( &task.scsi_task ) || iscsi_scsi_emu_primary_process( &task.scsi_task );
 
 			if ( !handled ) {
 				iscsi_scsi_task_status_set( &task.scsi_task, ISCSI_SCSI_STATUS_CHECK_COND,
-					ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_COMMAND_OPERATION_CODE,
-					ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
+						ISCSI_SCSI_SENSE_KEY_ILLEGAL_REQ, ISCSI_SCSI_ASC_INVALID_COMMAND_OPERATION_CODE,
+						ISCSI_SCSI_ASCQ_CAUSE_NOT_REPORTABLE );
 			}
 		}
 	}
@@ -3165,6 +3183,9 @@ static int iscsi_connection_handle_login_response(iscsi_connection *conn, iscsi_
  */
 static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *request_pdu)
 {
+	// Reject malformed login PDUs:
+	// - DataSegmentLength must fit our initial receive buffer (we don't support multi-PDU login here)
+	// - Login is only valid in NEW state (before full feature phase)
 	if ( request_pdu->ds_len > ISCSI_DEFAULT_RECV_DS_LEN || conn->state != ISCSI_CONNECT_STATE_NEW )
 		return iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
 
@@ -3172,6 +3193,7 @@ static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *
 
 	request_pdu->cmd_sn = iscsi_get_be32(login_req_pkt->cmd_sn);
 
+	// Prepare a response PDU; helper will size DS as needed later
 	iscsi_pdu CLEANUP_PDU login_response_pdu;
 	if ( !iscsi_connection_pdu_init( &login_response_pdu, 0, false ) )
 		return ISCSI_CONNECT_PDU_READ_ERR_FATAL;
@@ -3179,12 +3201,13 @@ static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *
 	int rc = iscsi_connection_pdu_login_response_init( &login_response_pdu, request_pdu );
 
 	if ( rc < 0 ) {
-		// response_init set an error code in the response pdu, send it right away and bail out
+		// response_init already encoded an error in the response PDU - send and bail
 		return iscsi_send_login_response_pdu( conn, &login_response_pdu );
 	}
 
 	iscsi_negotiation_kvp pairs;
 	iscsi_login_response_packet *login_response_pkt = (iscsi_login_response_packet *) login_response_pdu.bhs_pkt;
+	// Parse key=value pairs from the login text payload
 	rc = iscsi_parse_login_key_value_pairs( &pairs, (uint8_t *) request_pdu->ds_cmd_data, request_pdu->ds_len );
 
 	if ( rc < 0 ) {
@@ -3194,14 +3217,17 @@ static int iscsi_connection_handle_login_req(iscsi_connection *conn, iscsi_pdu *
 		return iscsi_send_login_response_pdu( conn, &login_response_pdu );
 	}
 
+	// Handle security/operational negotiation for this stage
 	rc = iscsi_connection_handle_login_phase_none( conn, &login_response_pdu, &pairs );
 
 	if ( rc != ISCSI_CONNECT_PDU_READ_OK ) {
 		return iscsi_send_login_response_pdu( conn, &login_response_pdu );
 	}
 
+	// Possibly transition to next stage depending on flags
 	iscsi_connection_handle_login_response( conn, &login_response_pdu, &pairs );
 	if ( conn->state == ISCSI_CONNECT_STATE_NORMAL_SESSION ) {
+		// Record ConnectionID from request once we enter full feature phase
 		conn->cid = iscsi_get_be16(login_req_pkt->cid);
 	}
 	return iscsi_send_login_response_pdu( conn, &login_response_pdu );
@@ -3312,48 +3338,55 @@ static int iscsi_connection_pdu_handle(iscsi_connection *conn, iscsi_pdu *reques
 	const uint8_t opcode = ISCSI_GET_OPCODE(request_pdu->bhs_pkt->opcode);
 
 	if ( conn->state == ISCSI_CONNECT_STATE_NEW ) {
-		// Fresh connection, not logged in yet - we only support LOGIN in this state
+		// Fresh connection, not logged in yet - per RFC7143 only LOGIN PDUs are valid here.
 		if ( opcode == ISCSI_OPCODE_CLIENT_LOGIN_REQ ) {
 			rc = iscsi_connection_handle_login_req( conn, request_pdu );
 		} else {
 			rc = iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
 		}
 	} else if ( conn->state == ISCSI_CONNECT_STATE_EXITING ) {
-		// Exiting, nothing to do
+		// Already transitioning to close: ignore further work but report OK so caller can unwind.
 		rc = ISCSI_CONNECT_PDU_READ_OK;
 	} else if ( conn->state == ISCSI_CONNECT_STATE_NORMAL_SESSION ) {
-		// Normal operation
+		// Normal full-feature phase operation.
+		// First validate/advance CmdSN window semantics (ExpCmdSN/MaxCmdSN handling).
 		rc = iscsi_connection_handle_cmd_sn( conn, request_pdu );
 		if ( rc != 0 )
 			return rc;
 
 		switch ( opcode ) {
 			case ISCSI_OPCODE_CLIENT_NOP_OUT : {
+				// Keep-alive ping from initiator or response to our NOP-In
 				rc = iscsi_connection_handle_nop( conn, request_pdu );
 
 				break;
 			}
 			case ISCSI_OPCODE_CLIENT_SCSI_CMD : {
+				// SCSI CDB request - may entail data-in or data-out depending on flags
 				rc = iscsi_connection_handle_scsi_cmd( conn, request_pdu );
 
 				break;
 			}
 			case ISCSI_OPCODE_CLIENT_TEXT_REQ : {
+				// Text negotiation/SendTargets style key=value exchange
 				rc = iscsi_connection_handle_text_req( conn, request_pdu );
 
 				break;
 			}
 			case ISCSI_OPCODE_CLIENT_LOGOUT_REQ : {
+				// Session/connection logout (transition to exiting handled in callee)
 				rc = iscsi_connection_handle_logout_req( conn, request_pdu );
 
 				break;
 			}
 			case ISCSI_OPCODE_CLIENT_TASK_FUNC_REQ : {
+				// Task management functions (ABORT TASK, CLEAR TASK SET, etc.)
 				rc = iscsi_connection_handle_task_func_req( conn, request_pdu );
 
 				break;
 			}
 			default : {
+				// Unknown/unsupported opcode - protocol error
 				rc = iscsi_connection_handle_reject( conn, request_pdu, ISCSI_REJECT_REASON_PROTOCOL_ERR );
 
 				break;
@@ -3395,12 +3428,13 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 	memcpy( request_pdu.bhs_pkt, request, len );
 	if ( (size_t)sock_recv( conn->client->sock, ((uint8_t *)request_pdu.bhs_pkt) + len, sizeof(iscsi_bhs_packet) - len )
 			!= sizeof(iscsi_bhs_packet) - len ) {
-		logadd( LOG_INFO, "Cannot receive first BHS for client %s", conn->client->hostName );
+		logadd( LOG_INFO, "Cannot receive first BHS from client %s", conn->client->hostName );
 		return;
 	}
 
 	do {
 		// 2) Evaluate BHS regarding length of AHS and DS
+		// total_ahs_len is encoded in 4-byte units per RFC; ds_len is 24-bit big-endian.
 		iscsi_bhs_packet *bhs_pkt = request_pdu.bhs_pkt;
 		const uint ahs_len        = ((uint) bhs_pkt->total_ahs_len * ISCSI_ALIGN_SIZE);
 		const uint32_t ds_len     = iscsi_get_be24(bhs_pkt->ds_len);
@@ -3408,13 +3442,14 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 		bhs_pkt = iscsi_connection_pdu_resize( &request_pdu, ahs_len, ds_len );
 
 		if ( bhs_pkt == NULL ) {
+			// Allocation/size sanity failed; cannot proceed with this PDU
 			logadd( LOG_WARNING, "Cannot resize PDU for client %s", conn->client->hostName );
 			break;
 		}
 
 		// 3) Receive the optional AHS
 		if ( ahs_len != 0 && sock_recv( conn->client->sock, request_pdu.ahs_pkt, ahs_len ) != ahs_len ) {
-			logadd( LOG_DEBUG1, "Could not receive AHS for client %s", conn->client->hostName );
+			logadd( LOG_DEBUG1, "Could not receive AHS from client %s", conn->client->hostName );
 			break;
 		}
 
@@ -3423,7 +3458,7 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 			const uint32_t padded_ds_len = ISCSI_ALIGN( request_pdu.ds_len, ISCSI_ALIGN_SIZE );
 
 			if ( sock_recv( conn->client->sock, request_pdu.ds_cmd_data, padded_ds_len ) != padded_ds_len ) {
-				logadd( LOG_DEBUG1, "Could not receive DS for client %s", conn->client->hostName );
+				logadd( LOG_DEBUG1, "Could not receive DS from client %s", conn->client->hostName );
 				break;
 			}
 		}
@@ -3431,6 +3466,7 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 		// 5) Handle PDU
 		if ( iscsi_connection_pdu_handle( conn, &request_pdu ) != ISCSI_CONNECT_PDU_READ_OK
 				|| conn->state == ISCSI_CONNECT_STATE_EXITING ) {
+			// Either handler reported a fatal/terminal condition or connection is shutting down
 			break;
 		}
 
@@ -3449,7 +3485,7 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 		// 1) Receive entire BHS
 		ret = sock_recv( conn->client->sock, request_pdu.bhs_pkt, sizeof(iscsi_bhs_packet) );
 		if ( ret == -1 && errno == EAGAIN ) {
-			// Receive timeout - send a NOP-In and try recv one more time
+			// Receive timeout - send a NOP-In and try recv one more time; a healthy initiator should reply NOP-Out
 			if ( iscsi_connection_handle_nop( conn, NULL ) != ISCSI_CONNECT_PDU_READ_OK ) {
 				logadd( LOG_DEBUG1, "Cannot send NOP-In to idle client %s - connection dead", conn->client->hostName );
 				break;
@@ -3457,7 +3493,7 @@ static void iscsi_connection_pdu_read_loop(iscsi_connection *conn, const dnbd3_r
 			ret = sock_recv( conn->client->sock, request_pdu.bhs_pkt, sizeof(iscsi_bhs_packet) );
 		}
 		if ( ret != sizeof(iscsi_bhs_packet) ) {
-			logadd( LOG_DEBUG1, "Cannot receive BHS for client %s (%d/%d)", conn->client->hostName, (int)ret, (int)errno );
+			logadd( LOG_DEBUG1, "Cannot receive BHS from client %s (%d/%d)", conn->client->hostName, (int)ret, (int)errno );
 			break;
 		}
 	} while ( !_shutdown );
