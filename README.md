@@ -67,6 +67,7 @@ apt-get install git \
                 linux-headers-generic \
                 libfuse-dev \
                 libjansson-dev \
+                libcurl4-openssl-dev \
                 rpm
 ```
 
@@ -82,6 +83,7 @@ apt-get install git \
                 linux-headers-generic \
                 libfuse-dev \
                 libjansson-dev \
+                libcurl4-openssl-dev \
                 afl \
                 rpm
 ```
@@ -455,3 +457,23 @@ if (clientA)
 if (clientB)
     unlock(clientB.lock);
 ```
+
+
+## iSCSI server
+DNBD3 partially supports the _Internet Small Computer Systems Interface (iSCSI)_ protocol based on [RFC 7143](https://www.rfc-editor.org/rfc/rfc7143) and the [Storage Performance Development Kit (SPDK)](https://spdk.io) implementation.
+
+The iSCSI server can be enabled in the configuration file _server.conf_ by:
+
+```ini
+[dnbd3]
+; Specifies whether the server will also speak the iSCSI protocol
+iScsiServer=true
+```
+
+
+The valid configuration options of _iscsi.conf_ (see below) can be used in _server.conf_ as well, but _iscsi.conf_ will override any present settings. It is recommended to use _server.conf_ for default settings and _iscsi.conf_ for specific settings.
+
+
+### _World Wide Name (WWN)_ to DNBD3 image mapping for standard compliance.
+As the iSCSI target node name supports only a very restricted number of allowed characters, DNBD3 images also can be specified either using the _Network Address Authority (NAA) IEEE Extended_ name identifier, the _64-bit extended unique identifier (EUI-64)_ or _iSCSI Qualified Name (IQN)_ using the _wwn-0x_ prefix. The revision of the DNBD3 image is specified with a _:_ (colon) after the DNBD3 image name.
+

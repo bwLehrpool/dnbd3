@@ -314,10 +314,8 @@ int main(int argc, char *argv[])
 		exit( 3 );
 	}
 	{
-		struct sockaddr_storage client;
-		memset( &client, 0, sizeof client );
-		client.ss_family = AF_INET;
-		dnbd3_client_t *dnbd3_client = dnbd3_prepareClient( &client, 1 );
+		struct sockaddr_storage client = { .ss_family = AF_INET };
+		dnbd3_client_t *dnbd3_client = dnbd3_prepareClient( &client, 0 );
 		if ( dnbd3_client == NULL ) {
 			fprintf( stderr, "New client failed\n" );
 			exit( 1 );
@@ -365,6 +363,7 @@ int main(int argc, char *argv[])
 	altservers_init();
 	integrity_init();
 	net_init();
+
 	uplink_globalsInit();
 	rpc_init();
 	if ( mountDir != NULL && !dfuse_init( "-oallow_other", mountDir ) ) {

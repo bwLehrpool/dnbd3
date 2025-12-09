@@ -18,27 +18,8 @@ find_package(Libatomic REQUIRED)
 add_definitions(-D_GNU_SOURCE)
 
 if(DNBD3_SERVER_AFL)
-    # check if DNBD3_RELEASE_HARDEN is disabled
-    if(DNBD3_RELEASE_HARDEN)
-        message(FATAL_ERROR "DNBD3_SERVER_AFL can only be enabled if DNBD3_RELEASE_HARDEN is disabled")
-    endif(DNBD3_RELEASE_HARDEN)
-
-    # build dnbd3-server with AFL support
     message(STATUS "Building dnbd3-server with AFL support")
     add_definitions(-DDNBD3_SERVER_AFL)
-
-    # change compiler for dnbd3-server sources if AFL enabled
-    include(CheckAFLCCompiler)
-    check_afl_c_compiler(AFL_C_COMPILER AFL_C_COMPILER_NAME ${CMAKE_C_COMPILER} ${CMAKE_C_COMPILER_ID})
-    if(AFL_C_COMPILER)
-        message(STATUS "Check for working AFL C compiler: ${AFL_C_COMPILER} - done")
-        # change C compiler to a corresponding AFL C compiler
-        set(CMAKE_C_COMPILER "${AFL_C_COMPILER}")
-    else(AFL_C_COMPILER)
-        # no corresponding AFL C compiler found
-        message(STATUS "Check for working AFL C compiler: ${AFL_C_COMPILER_NAME} - failed")
-        message(FATAL_ERROR "No corresponding AFL C compiler ${AFL_C_COMPILER_NAME} was found for the C compiler ${CMAKE_C_COMPILER}!")
-    endif(AFL_C_COMPILER)
 endif(DNBD3_SERVER_AFL)
 
 set(DNBD3_SERVER_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c
@@ -49,10 +30,12 @@ set(DNBD3_SERVER_SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/image.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/ini.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/integrity.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/iscsi.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/locks.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/net.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/reference.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/rpc.c
+                              ${CMAKE_CURRENT_SOURCE_DIR}/sendfile.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/server.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/threadpool.c
                               ${CMAKE_CURRENT_SOURCE_DIR}/uplink.c
@@ -65,11 +48,13 @@ set(DNBD3_SERVER_HEADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/altservers.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/image.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/ini.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/integrity.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/iscsi.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/locks.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/net.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/reference.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/reftypes.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/rpc.h
+                              ${CMAKE_CURRENT_SOURCE_DIR}/sendfile.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/server.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/threadpool.h
                               ${CMAKE_CURRENT_SOURCE_DIR}/uplink.h

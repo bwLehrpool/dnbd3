@@ -1,0 +1,27 @@
+default:
+  image: debian:trixie-slim
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+
+build:
+  stage: build
+  script:
+    - apt-get update
+    - apt-get install -y git doxygen graphviz gcc cmake make libjansson-dev libfuse-dev
+    - doxygen
+  artifacts:
+    paths:
+      - docs
+
+pages:
+  stage: deploy
+#  only:
+#    variables:
+#      - $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+  script:
+    - rm -rf -- public
+    - mv -- docs/html public
+  artifacts:
+    paths:
+      - public

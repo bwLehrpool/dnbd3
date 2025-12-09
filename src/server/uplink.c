@@ -228,12 +228,12 @@ static void freeUplinkStruct(ref *ref)
  * Remove given client from uplink request queue
  * Locks on: uplink.queueLock
  */
-void uplink_removeEntry(dnbd3_uplink_t *uplink, void *data, uplink_callback callback)
+void uplink_removeEntry(dnbd3_uplink_t *uplink, void *data)
 {
 	mutex_lock( &uplink->queueLock );
 	for ( dnbd3_queue_entry_t *it = uplink->queue; it != NULL; it = it->next ) {
 		for ( dnbd3_queue_client_t **cit = &it->clients; *cit != NULL; ) {
-			if ( (**cit).data == data && (**cit).callback == callback ) {
+			if ( (**cit).data == data ) {
 				(*(**cit).callback)( (**cit).data, (**cit).handle, 0, 0, NULL );
 				dnbd3_queue_client_t *entry = *cit;
 				*cit = (**cit).next;

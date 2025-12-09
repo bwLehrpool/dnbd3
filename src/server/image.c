@@ -55,12 +55,14 @@ static dnbd3_cache_map_t* image_loadCacheMap(const char * const imagePath, const
 static uint32_t* image_loadCrcList(const char * const imagePath, const int64_t fileSize, uint32_t *masterCrc);
 static bool image_checkRandomBlocks(dnbd3_image_t *image, const int count, int fromFd);
 static void* closeUnusedFds(void*);
+static dnbd3_image_t* runEnsureOpenCheck(dnbd3_image_t *candidate);
 static bool isImageFromUpstream(dnbd3_image_t *image);
 static void* saveLoadAllCacheMaps(void*);
 static void saveCacheMap(dnbd3_image_t *image);
 static void allocCacheMap(dnbd3_image_t *image, bool complete);
 static void saveMetaData(dnbd3_image_t *image, ticks *now, time_t walltime);
 static void loadImageMeta(dnbd3_image_t *image);
+static void calculateImageWwn(dnbd3_image_t *image);
 
 static void cmfree(ref *ref)
 {
@@ -334,6 +336,38 @@ dnbd3_image_t* image_byId(int imgId)
 }
 
 /**
+ * Get image by its wwn and revision id.
+ * Locks on imageListLock.
+ */
+dnbd3_image_t* image_getByWwn(uint64_t wwn, uint16_t revision, bool ensureFdOpen)
+{
+	int i;
+	dnbd3_image_t *candidate = NULL;
+
+	mutex_lock( &imageListLock );
+	for ( i = 0; i < _num_images; ++i ) {
+		dnbd3_image_t * const image = _images[i];
+		if ( image == NULL || wwn != image->wwn )
+			continue;
+		if ( revision == image->rid ) {
+			candidate = image;
+			break;
+		} else if ( revision == 0 && (candidate == NULL || candidate->rid < image->rid) ) {
+			candidate = image;
+		}
+	}
+	if ( candidate != NULL ) {
+		candidate->users++;
+	}
+	mutex_unlock( &imageListLock );
+
+	if ( candidate != NULL && ensureFdOpen ) {
+		candidate = runEnsureOpenCheck( candidate );
+	}
+	return candidate;
+}
+
+/**
  * Get an image by name+rid. This function increases a reference counter,
  * so you HAVE TO CALL image_release for every image_get() call at some
  * point...
@@ -358,19 +392,19 @@ dnbd3_image_t* image_get(const char *name, uint16_t revision, bool ensureFdOpen)
 			candidate = image;
 		}
 	}
-
-	// Not found
-	if ( candidate == NULL ) {
-		mutex_unlock( &imageListLock );
-		return NULL ;
+	if ( candidate != NULL ) {
+		candidate->users++;
 	}
-
-	candidate->users++;
 	mutex_unlock( &imageListLock );
 
-	if ( !ensureFdOpen ) // Don't want to re-check
-		return candidate;
+	if ( candidate != NULL && ensureFdOpen ) {
+		candidate = runEnsureOpenCheck( candidate );
+	}
+	return candidate;
+}
 
+static dnbd3_image_t* runEnsureOpenCheck(dnbd3_image_t *candidate)
+{
 	if ( image_ensureOpen( candidate ) && !candidate->problem.read )
 		return candidate; // We have a read fd and no read or changed problems
 
@@ -386,7 +420,7 @@ dnbd3_image_t* image_get(const char *name, uint16_t revision, bool ensureFdOpen)
 		// make a copy of the image struct but keep the old one around. If/When it's not being used
 		// anymore, it will be freed automatically.
 		logadd( LOG_DEBUG1, "Reloading image file %s because of read problem/changed", candidate->path );
-		dnbd3_image_t *img = calloc( sizeof(dnbd3_image_t), 1 );
+		dnbd3_image_t *img = calloc( 1, sizeof(dnbd3_image_t) );
 		img->path = strdup( candidate->path );
 		img->name = strdup( candidate->name );
 		img->virtualFilesize = candidate->virtualFilesize;
@@ -399,6 +433,7 @@ dnbd3_image_t* image_get(const char *name, uint16_t revision, bool ensureFdOpen)
 		img->problem.read = true;
 		img->problem.changed = candidate->problem.changed;
 		img->ref_cacheMap = NULL;
+		calculateImageWwn( candidate );
 		mutex_init( &img->lock, LOCK_IMAGE );
 		if ( candidate->crc32 != NULL ) {
 			const size_t mb = IMGSIZE_TO_HASHBLOCKS( candidate->virtualFilesize ) * sizeof(uint32_t);
@@ -426,7 +461,8 @@ dnbd3_image_t* image_get(const char *name, uint16_t revision, bool ensureFdOpen)
 		// readFd == -1 and problem.read == true
 	}
 
-	return candidate; // We did all we can, hopefully it's working
+	// We did all we can, hopefully it's working
+	return candidate;
 }
 
 /**
@@ -908,6 +944,7 @@ static bool image_load(char *base, char *path, bool withUplink)
 	image->completenessEstimate = -1;
 	mutex_init( &image->lock, LOCK_IMAGE );
 	loadImageMeta( image );
+	calculateImageWwn( image );
 
 	// Prevent freeing in cleanup
 	cache = NULL;
@@ -1324,7 +1361,7 @@ server_fail: ;
 		image_release( image );
 	}
 	// If everything worked out, this call should now actually return the image
-	image = image_get( name, acceptedRemoteRid, false );
+	image = image_get( name, revision == 0 ? acceptedRemoteRid : revision, false );
 	if ( image != NULL && uplinkSock != -1 ) {
 		// If so, init the uplink and pass it the socket
 		if ( !uplink_init( image, uplinkSock, &uplinkServer, remoteProtocolVersion ) ) {
@@ -1609,9 +1646,10 @@ json_t* image_getListAsJson()
 		addproblem(uplink, 3);
 		addproblem(queue, 4);
 
-		jsonImage = json_pack( "{sisssisisisisIsi}",
+		jsonImage = json_pack( "{sisssIsisisisisIsi}",
 				"id", image->id, // id, name, rid never change, so access them without locking
 				"name", image->name,
+				"wwn", (json_int_t)image->wwn,
 				"rid", (int) image->rid,
 				"users", image->users,
 				"complete",  completeness,
@@ -2123,6 +2161,18 @@ static void loadImageMeta(dnbd3_image_t *image)
 		offset = 0;
 	}
 	timing_gets( &image->atime, offset );
+}
+
+static void calculateImageWwn(dnbd3_image_t *image)
+{
+	uint64_t value      = 0ULL;
+	const char *name = image->name;
+
+	while ( *name != '\0' ) {
+		value = (value * 131ULL) + *name++;
+	}
+	const uint64_t id_a = (value & 0xFFF000000ULL) << 24ULL;
+	image->wwn = (value & 0xFFFFFFULL) | 0x2000000347000000ULL | id_a;
 }
 
 void image_checkForNextFullCheck(void)

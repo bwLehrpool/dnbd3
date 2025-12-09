@@ -13,6 +13,8 @@
 
 #define MAXLISTEN 20
 
+#include <dnbd3/afl.h>
+
 struct _poll_list {
 	int count;
 	struct pollfd entry[MAXLISTEN];
@@ -435,6 +437,18 @@ ssize_t sock_recv(const int sock, void *buffer, const size_t len)
 		done += ret;
 	}
 	if ( done == 0 ) return ret;
-	return done;
+	return (ssize_t)done;
 }
 
+bool sock_sendPadding(const int fd, size_t bytes)
+{
+	static char nullbytes[512] = {0};
+
+	while ( bytes >= sizeof(nullbytes) ) {
+		ssize_t ret = sock_sendAll( fd, nullbytes, sizeof(nullbytes), 2 );
+		if ( ret <= 0 )
+			return false;
+		bytes -= (uint32_t)ret;
+	}
+	return sock_sendAll( fd, nullbytes, bytes, 2 ) == (ssize_t)bytes;
+}
