@@ -13,6 +13,9 @@ build:
   artifacts:
     paths:
       - docs
+  only:
+    refs:
+      - master
 
 pages:
   stage: deploy
@@ -25,3 +28,6 @@ pages:
   artifacts:
     paths:
       - public
+  only:
+    refs:
+      - master
