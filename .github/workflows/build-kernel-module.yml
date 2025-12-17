@@ -36,7 +36,7 @@ jobs:
             build-os: ubuntu-22.04
             kernel-type: centos-rpm
             kernel-source: https://dl.rockylinux.org/vault/rocky/10.0/BaseOS/source/tree/Packages/k/kernel-6.12.0-55.41.1.el10_0.src.rpm
-          - name: Rocky 10.1 [6.12.0-55]
+          - name: Rocky 10.1 [6.12.0-124]
             build-os: ubuntu-22.04
             kernel-type: centos-rpm
             kernel-source: https://dl.rockylinux.org/pub/rocky/10.1/BaseOS/source/tree/Packages/k/kernel-6.12.0-124.20.1.el10_1.src.rpm
