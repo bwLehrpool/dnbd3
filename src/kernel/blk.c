@@ -42,7 +42,7 @@ static int dnbd3_close_device(dnbd3_device_t *dev)
 	/* new requests might have been queued up, */
 	/* but now that imgname is NULL no new ones can show up */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) \
-				&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 7))
+				&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 7) && RHEL_RELEASE_CODE != RHEL_RELEASE_VERSION(10, 0))
 	blk_mq_freeze_queue(dev->queue);
 	set_capacity(dev->disk, 0);
 	blk_mq_unfreeze_queue(dev->queue);
@@ -432,7 +432,8 @@ int dnbd3_blk_add_device(dnbd3_device_t *dev, int minor)
 	dev->tag_set.queue_depth = 128;
 	dev->tag_set.numa_node = NUMA_NO_NODE;
 	dev->tag_set.cmd_size = sizeof(struct dnbd3_cmd);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) \
+				&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 7) && RHEL_RELEASE_CODE != RHEL_RELEASE_VERSION(10, 0))
 	dev->tag_set.flags = BLK_MQ_F_SHOULD_MERGE;
 #endif
 	dev->tag_set.driver_data = dev;
