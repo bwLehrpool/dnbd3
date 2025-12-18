@@ -42,7 +42,7 @@ static int dnbd3_close_device(dnbd3_device_t *dev)
 	/* new requests might have been queued up, */
 	/* but now that imgname is NULL no new ones can show up */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0) \
-				|| RHEL_CHECK_VERSION(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 7))
+				&& !RHEL_CHECK_VERSION(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 7))
 	blk_mq_freeze_queue(dev->queue);
 	set_capacity(dev->disk, 0);
 	blk_mq_unfreeze_queue(dev->queue);
