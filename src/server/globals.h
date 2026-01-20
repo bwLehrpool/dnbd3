@@ -92,6 +92,8 @@ struct _dnbd3_uplink
 	pthread_t thread;           // thread holding the connection
 	pthread_mutex_t sendMutex;  // For locking socket while sending
 	pthread_mutex_t queueLock;  // lock for synchronization on request queue etc.
+	pthread_mutex_t asyncHandleMutex; // async handling of received reply
+	pthread_cond_t asyncHandleCond; // condition for async receive handler
 	dnbd3_image_t *image;       // image that this uplink is used for; do not call get/release for this pointer
 	pthread_mutex_t rttLock;    // When accessing rttTestResult, betterFd or betterServer
 	atomic_int rttTestResult;   // RTT_*
@@ -105,7 +107,7 @@ struct _dnbd3_uplink
 	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
 	atomic_uint_fast64_t bytesReceivedLastSave; // Number of bytes received when we last saved the cache map
-	int queueLen;               // length of queue
+	int queueLen;               // length of queue (slots; either BGR (no client at all) or one or more clients)
 	int idleTime;               // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queue_entry_t *queue;
 	atomic_uint_fast32_t queueId;
@@ -169,15 +171,15 @@ struct _dnbd3_client
 {
 #define HOSTNAMELEN (48)
 	atomic_uint_fast64_t bytesSent;   // Byte counter for this client.
-	dnbd3_image_t * _Atomic image;    // Image in use by this client, or NULL during handshake
+	_Atomic(dnbd3_image_t *) image;    // Image in use by this client, or NULL during handshake
+	pthread_t thread;
 	int sock;
-	_Atomic uint8_t relayedCount;     // How many requests are in-flight to the uplink server
+	_Atomic(uint8_t) relayedCount;     // How many requests are in-flight to the uplink server
 	bool isServer;                    // true if a server in proxy mode, false if real client
 	dnbd3_host_t host;
 	char hostName[HOSTNAMELEN];       // inet_ntop version of host
 	pthread_mutex_t sendMutex;        // Held while writing to sock if image is incomplete (since uplink uses socket too)
 	pthread_mutex_t lock;
-	pthread_t thread;
 };
 
 // #######################################################
