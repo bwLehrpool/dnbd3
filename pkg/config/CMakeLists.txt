@@ -11,5 +11,5 @@ set(DNBD3_CONFIG_FILES ${CMAKE_CURRENT_SOURCE_DIR}/alt-servers
 
 # install configuration files into sample directory
 install(FILES ${DNBD3_CONFIG_FILES}
-        DESTINATION /etc/dnbd3-server/sample
+        DESTINATION etc/dnbd3-server/sample
         COMPONENT server)
