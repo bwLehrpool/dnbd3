@@ -89,7 +89,7 @@ jobs:
         run: git fetch --prune --unshallow
       - name: Checkout Vanilla kernel version [git]
         if: matrix.config.kernel-type == 'vanilla'
-        run: git clone --depth 1  --branch "linux-${{ matrix.config.kernel-version }}" "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git" "../kernel"
+        run: git clone --depth 1  --branch "linux-${{ matrix.config.kernel-version }}" "https://github.com/gregkh/linux.git" "../kernel"
       - name: Checkout CentOS kernel version [rpm]
         if: matrix.config.kernel-type == 'centos-rpm'
         run: |

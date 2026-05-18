@@ -680,15 +680,9 @@ static dnbd3_client_t* freeClientStruct(dnbd3_client_t *client)
 			}
 			ref_put( &uplink->reference );
 		}
-		if ( client->relayedCount != 0 ) {
+		while ( client->relayedCount != 0 ) {
 			logadd( LOG_DEBUG1, "Client has relayedCount == %"PRIu8" on disconnect..", client->relayedCount );
-			int i;
-			for ( i = 0; i < 1000 && client->relayedCount != 0; ++i ) {
-				usleep( 10000 );
-			}
-			if ( client->relayedCount != 0 ) {
-				logadd( LOG_WARNING, "Client relayedCount still %"PRIu8" after sleeping!", client->relayedCount );
-			}
+			sleep( 1 );
 		}
 	}
 	mutex_lock( &client->sendMutex );
@@ -748,4 +742,3 @@ static void uplinkCallback(void *data, uint64_t handle, uint64_t start UNUSED, u
 	mutex_unlock( &client->sendMutex );
 	client->relayedCount--;
 }
-
