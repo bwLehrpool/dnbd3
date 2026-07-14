@@ -545,7 +545,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 #endif
 				if (bvec->bv_len > remaining) {
 					dnbd3_dev_dbg_cur(
-						dev, "request has more data remaining than is left in reply (want: %u, have: %u)\n",
+						dev, "request has more wanted data remaining than is left in reply (want: %u, have: %u)\n",
 						bvec->bv_len, remaining);
 					ret = -1;
 				} else {
@@ -569,6 +569,7 @@ static void dnbd3_recv_workfn(struct work_struct *work)
 							dnbd3_dev_err_cur(dev,
 								"receiving from net to block layer (%d bytes)\n", ret);
 					}
+					ret = -1; // Suppress bogus "payload left" message
 					goto segment_loop_end;
 				}
 				remaining -= ret;
