@@ -276,6 +276,7 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 				test_size = blk_rq_bytes(blk_request);
 			}
 			spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
+			dnbd3_dev_info_host(dev, &host_compare, "testing with request: %llu %u\n", test_start, test_size);
 		}
 
 		// actual rtt measurement is just the first block request and reply
