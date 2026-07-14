@@ -100,8 +100,6 @@ static bool dnbd3_request_test_block(dnbd3_device_t *dev, struct sockaddr_storag
 
 static bool dnbd3_send_empty_request(dnbd3_device_t *dev, u16 cmd);
 
-static void dnbd3_start_discover(dnbd3_device_t *dev, bool panic);
-
 static void dnbd3_discover(dnbd3_device_t *dev);
 
 static void dnbd3_internal_discover(dnbd3_device_t *dev);
@@ -141,7 +139,7 @@ static void dnbd3_discover_workfn(struct work_struct *work)
 /**
  * For manually triggering an immediate discovery
  */
-static void dnbd3_start_discover(dnbd3_device_t *dev, bool panic)
+void dnbd3_start_discover(dnbd3_device_t *dev, bool panic)
 {
 	unsigned long irqflags;
 
@@ -274,7 +272,7 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 			spin_lock_irqsave(&dev->send_queue_lock, irqflags);
 			if (!list_empty(&dev->send_queue)) {
 				blk_request = list_entry(dev->send_queue.next, struct request, queuelist);
-				test_start = blk_rq_pos(blk_request) << 9; /* sectors to bytes */
+				test_start = blk_rq_pos(blk_request) << SECTOR_SHIFT; /* sectors to bytes */
 				test_size = blk_rq_bytes(blk_request);
 			}
 			spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);

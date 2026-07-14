@@ -359,7 +359,10 @@ static enum blk_eh_timer_return dnbd3_rq_timeout(struct request *req
 	struct request *rq_iter;
 	bool found = false;
 	dnbd3_device_t *dev = req->q->queuedata;
+	u64 req_start;
+	unsigned int req_len;
 
+	// If either in send or receive queue, reset timer and trigger panic mode
 	spin_lock_irqsave(&dev->send_queue_lock, irqflags);
 	list_for_each_entry(rq_iter, &dev->send_queue, queuelist) {
 		if (rq_iter == req) {
@@ -368,26 +371,25 @@ static enum blk_eh_timer_return dnbd3_rq_timeout(struct request *req
 		}
 	}
 	spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
-	// If still in send queue, do nothing
-	if (found)
-		return BLK_EH_RESET_TIMER;
-
-	spin_lock_irqsave(&dev->recv_queue_lock, irqflags);
-	list_for_each_entry(rq_iter, &dev->recv_queue, queuelist) {
-		if (rq_iter == req) {
-			found = true;
-			list_del_init(&req->queuelist);
-			break;
+	if (!found) {
+		spin_lock_irqsave(&dev->recv_queue_lock, irqflags);
+		list_for_each_entry(rq_iter, &dev->recv_queue, queuelist) {
+			if (rq_iter == req) {
+				found = true;
+				break;
+			}
+		}
+		spin_unlock_irqrestore(&dev->recv_queue_lock, irqflags);
+		if (!found) {
+			dev_err(dnbd3_device_to_dev(dev), "timeout request neither found in send nor recv queue, ignoring\n");
+			// Assume it was finished concurrently
+			return BLK_EH_DONE;
 		}
 	}
-	spin_unlock_irqrestore(&dev->recv_queue_lock, irqflags);
-	if (!found) {
-		dev_err(dnbd3_device_to_dev(dev), "timeout request neither found in send nor recv queue, ignoring\n");
-		// Assume it was fnished concurrently
-		return BLK_EH_DONE;
-	}
-	// Add to send queue again and trigger work, reset timeout
-	dnbd3_add_queue(dev, req);
+	req_start = ((u64)blk_rq_pos(req)) << SECTOR_SHIFT;
+	req_len = blk_rq_bytes(req);
+	dev_err(dnbd3_device_to_dev(dev), "request %llu %u block layer timeout\n", req_start, req_len);
+	dnbd3_start_discover(dev, true);
 	return BLK_EH_RESET_TIMER;
 }
 

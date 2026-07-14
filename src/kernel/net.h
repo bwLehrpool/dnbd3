@@ -24,6 +24,8 @@
 
 #include "dnbd3_main.h"
 
+void dnbd3_start_discover(dnbd3_device_t *dev, bool panic);
+
 void dnbd3_net_work_init(dnbd3_device_t *dev);
 
 int dnbd3_new_connection(dnbd3_device_t *dev, struct sockaddr_storage *addr, bool init);
