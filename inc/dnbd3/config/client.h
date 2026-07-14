@@ -18,7 +18,7 @@
 #define SOCKET_TIMEOUT_DISCOVERY 1
 
 // IO timeout for block layer
-#define BLOCK_LAYER_TIMEOUT 10
+#define BLOCK_LAYER_TIMEOUT 7
 
 #define RTT_THRESHOLD_FACTOR(us) (((us) * 3) / 4) // 3/4 = current to best must be 25% worse
 #define RTT_ABSOLUTE_THRESHOLD (80000) // Or 80ms worse
