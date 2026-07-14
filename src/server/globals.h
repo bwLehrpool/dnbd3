@@ -103,12 +103,12 @@ struct _dnbd3_uplink
 	atomic_bool shutdown;       // signal this thread to stop, must only be set from uplink_shutdown() or cleanup in uplink_mainloop()
 	bool replicatedLastBlock;   // bool telling if the last block has been replicated yet
 	bool cycleDetected;         // connection cycle between proxies detected for current remote server
-	int nextReplicationIndex;   // Which index in the cache map we should start looking for incomplete blocks at
+	atomic_int nextReplicationIndex; // Which index in the cache map we should start looking for incomplete blocks at
 	                            // If BGR == BGR_HASHBLOCK, -1 means "currently no incomplete block"
 	atomic_uint_fast64_t bytesReceived; // Number of bytes received by the uplink since startup.
 	atomic_uint_fast64_t bytesReceivedLastSave; // Number of bytes received when we last saved the cache map
 	int queueLen;               // length of queue (slots; either BGR (no client at all) or one or more clients)
-	int idleTime;               // How many seconds the uplink was idle (apart from keep-alives)
+	atomic_int idleTime;        // How many seconds the uplink was idle (apart from keep-alives)
 	dnbd3_queue_entry_t *queue;
 	atomic_uint_fast32_t queueId;
 	dnbd3_alt_local_t altData[SERVER_MAX_ALTS];

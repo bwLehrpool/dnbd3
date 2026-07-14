@@ -854,7 +854,7 @@ static void switchToNewServer(dnbd3_uplink_t *uplink)
  */
 static int sendReplicationRequest(dnbd3_uplink_t *uplink)
 {
-	assert_uplink_thread();
+	assert_uplink_thread(); // Make sure we're not called from any other thread
 	if ( uplink->current.fd == -1 )
 		return -1; // Should never be called in this state, consider send error
 	if ( _backgroundReplication == BGR_DISABLED || uplink->cacheFd == -1 )
@@ -1079,8 +1079,6 @@ static void handleReceive(dnbd3_uplink_t *uplink)
 			uplink->image->problem.queue = false;
 		}
 		mutex_unlock( &uplink->queueLock );
-		// We don't remove the entry from the list here yet, to slightly increase the chance of other
-		// clients attaching to this request while we write the data to disk
 		if ( entry->to - entry->from != inReply.size ) {
 			logadd( LOG_WARNING, "Received payload length does not match! (is: %"PRIu32", expect: %u, %s:%d)",
 					inReply.size, (unsigned int)( entry->to - entry->from ), PIMG(uplink->image) );
@@ -1092,12 +1090,16 @@ static void handleReceive(dnbd3_uplink_t *uplink)
 		}
 		if ( likely( uplink->cacheFd != -1 ) ) {
 			tparams.jobs++;
-			threadpool_run( &handleReceiveSaveToDisk, &tparams, NULL );
+			if ( !threadpool_run( &handleReceiveSaveToDisk, &tparams, NULL ) ) {
+				handleReceiveSaveToDisk( &tparams );
+			}
 		}
 		// 2) Send to any waiting clients
 		if ( entry->clients != NULL ) {
 			tparams.jobs++;
-			threadpool_run( &handleReceiveSendToClients, &tparams, NULL );
+			if ( !threadpool_run( &handleReceiveSendToClients, &tparams, NULL ) ) {
+				handleReceiveSendToClients( &tparams );
+			}
 		}
 		// 3) Trigger more background replication if applicable
 		if ( sendReplicationRequest( uplink ) == -1 ) {
