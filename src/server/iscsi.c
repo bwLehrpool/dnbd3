@@ -824,7 +824,7 @@ static int iscsi_scsi_emu_io_blocks_read(iscsi_scsi_task *scsi_task,  dnbd3_imag
 				rc = -EIO;
 			} else {
 				// Wait sync (Maybe use pthread_cond_timedwait to detect unavailable uplink instead of hanging...)
-				mutex_cond_wait( &scsi_task->uplink_cond, &scsi_task->uplink_mutex );
+				pthread_cond_wait( &scsi_task->uplink_cond, &scsi_task->uplink_mutex );
 				pthread_mutex_unlock( &scsi_task->uplink_mutex );
 				scsi_task->file_offset = (size_t)-1;
 			}
