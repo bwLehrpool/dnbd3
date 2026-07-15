@@ -1108,7 +1108,7 @@ static void handleReceive(dnbd3_uplink_t *uplink)
 		// 4) Wait for both jobs
 		mutex_lock( &uplink->asyncHandleMutex );
 		while (tparams.jobs > 0) {
-			pthread_cond_wait( &uplink->asyncHandleCond, &uplink->asyncHandleMutex );
+			mutex_cond_wait( &uplink->asyncHandleCond, &uplink->asyncHandleMutex );
 		}
 		mutex_unlock( &uplink->asyncHandleMutex );
 		free( entry );
