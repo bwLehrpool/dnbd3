@@ -276,6 +276,16 @@ static void dnbd3_internal_discover(dnbd3_device_t *dev)
 				test_size = blk_rq_bytes(blk_request);
 			}
 			spin_unlock_irqrestore(&dev->send_queue_lock, irqflags);
+			if (test_start == 0) {
+				// Was probably empty, so try recv queue, as it will be re-queued after switch
+				spin_lock_irqsave(&dev->recv_queue_lock, irqflags);
+				if (!list_empty(&dev->recv_queue)) {
+					blk_request = list_entry(dev->recv_queue.next, struct request, queuelist);
+					test_start = blk_rq_pos(blk_request) << SECTOR_SHIFT; /* sectors to bytes */
+					test_size = blk_rq_bytes(blk_request);
+				}
+				spin_unlock_irqrestore(&dev->recv_queue_lock, irqflags);
+			}
 			dnbd3_dev_info_host(dev, &host_compare, "testing with request: %llu %u\n", test_start, test_size);
 		}
 
