@@ -268,7 +268,7 @@ static size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb,
 	// Check if we're still in the bitfield
 	if ( uploadBlock->position < COW_BITFIELD_SIZE ) {
 		size_t lenCpy = MIN( COW_BITFIELD_SIZE - uploadBlock->position, size * nmemb );
-		memcpy( ptr + uploadBlock->position, uploadBlock->bitfield + uploadBlock->position,
+		memcpy( ptr + len, uploadBlock->bitfield + uploadBlock->position,
 				lenCpy );
 		uploadBlock->position += lenCpy;
 		len += lenCpy;
@@ -294,12 +294,23 @@ static size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb,
 				readSize = DNBD3_BLOCK_SIZE;
 			}
 			readSize -= blockOffset;
-			if ( (ssize_t)readSize > spaceLeft ) {
-				readSize = spaceLeft;
-			}
 			// If handling single block, check bits in our copy, as global bitfield could change
 			// If uploading 8 blocks at once, check already happened above
 			if ( readSize > DNBD3_BLOCK_SIZE || checkBit( uploadBlock->bitfield, bitNumber ) ) {
+				if ( (ssize_t)readSize > spaceLeft ) {
+					// Trim readSize to buffer space only if the block is dirty and to be included
+					// in the payload.
+					// Otherwise, we leave at the actual remaining size from that block, so we
+					// properly skip through the cluster ending up on block boundaries, and
+					// eventually find the dirty data we need to send. Otherwise we might skip
+					// through the cluster in too small steps, ending up misaligned in the last
+					// dirty block, hand over partia data to curl but skip over the entire
+					// block, and then curl calls us again with whatever amount of bytes we skipped
+					// over. But we already skipped over the last dirty block, so this loop will
+					// not find anything, return 0, and curl ends the upload. This process will then
+					// repeat indefinitely.
+					readSize = spaceLeft;
+				}
 				ssize_t lengthRead = pread( cow.fdData, ( ptr + len ), readSize,
 						uploadBlock->cluster->offset + inClusterOffset );
 				if ( lengthRead == -1 ) {
@@ -320,6 +331,10 @@ static size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb,
 			uploadBlock->position += readSize;
 		}
 	}
+	if ( len == 0 ) {
+		logadd( LOG_ERROR, "len == 0 at end of read callback" );
+	}
+
 	return len;
 }
 
