@@ -742,7 +742,7 @@ bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 			if ( !ignoreMinUploadDelay && ( now - cluster->timeChanged < COW_MIN_UPLOAD_DELAY ) ) {
 				continue; // Last change not old enough
 			}
-			// Run curl mainloop at least one, but keep doing so while max concurrent uploads is reached
+			// Run curl mainloop at least once, but keep doing so while max concurrent uploads is reached
 			int minUploads = ignoreMinUploadDelay
 					? COW_MAX_PARALLEL_UPLOADS
 					: COW_MAX_PARALLEL_BACKGROUND_UPLOADS;
@@ -752,6 +752,7 @@ bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 			// Maybe one of the uploads was rejected by the server asking us to slow down a bit.
 			// Check for that case and don't trigger a new upload.
 			if ( uploadLoopThrottle > 0 ) {
+				success = false;
 				goto DONE;
 			}
 			cow_curl_read_upload_t *b = malloc( sizeof( cow_curl_read_upload_t ) );
@@ -882,17 +883,29 @@ static void *uploaderThreadMain( UNUSED void *something )
 		uploadLoopDone = true;
 		logadd( LOG_INFO, "Not uploading remaining clusters, SIGQUIT received" );
 	} else {
+		bool ret;
 		// force the upload of all remaining blocks because the user dismounted the image
 		logadd( LOG_INFO, "Start uploading the remaining clusters." );
-		if ( !uploadModifiedClusters( true, cm ) ) {
-			uploadLoopDone = true;
+		uploadLoopThrottle = MIN( 5, uploadLoopThrottle );
+		for ( int numTry = 0; numTry < 5; ++numTry ) {
+			if ( uploadLoopThrottle > 0 ) {
+				logadd( LOG_INFO, "Waiting %d seconds...", uploadLoopThrottle );
+				sleep( uploadLoopThrottle );
+				uploadLoopThrottle = 0;
+			}
+			ret = uploadModifiedClusters( true, cm );
+			if ( ret )
+				break;
+			uploadLoopThrottle = MAX( 20, uploadLoopThrottle );
+		}
+		uploadLoopDone = true;
+		if ( !ret ) {
 			logadd( LOG_ERROR, "One or more clusters failed to upload" );
 		} else {
-			uploadLoopDone = true;
-			logadd( LOG_DEBUG1, "All clusters uploaded" );
+			logadd( LOG_INFO, "All clusters uploaded" );
 			if ( cow_merge_after_upload ) {
 				requestRemoteMerge();
-				logadd( LOG_DEBUG1, "Requesting merge" );
+				logadd( LOG_INFO, "Requesting merge" );
 			}
 		}
 	}
