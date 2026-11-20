@@ -716,10 +716,10 @@ static bool curlMultiLoop( CURLM *cm, int minNumberUploads )
  * @param ignoreMinUploadDelay If true uploads all blocks that have changes while
  * ignoring COW_MIN_UPLOAD_DELAY
  * @param cm Curl_multi
- * @return true if all blocks uploaded successful
+ * @return true if all blocks uploaded successfully
  * @return false if one ore more blocks failed to upload
  */
-bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
+static bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 {
 	bool success = true;
 	const time_t now = time( NULL );
@@ -884,19 +884,27 @@ static void *uploaderThreadMain( UNUSED void *something )
 		logadd( LOG_INFO, "Not uploading remaining clusters, SIGQUIT received" );
 	} else {
 		bool ret;
+		uint64_t lastTotal;
 		// force the upload of all remaining blocks because the user dismounted the image
 		logadd( LOG_INFO, "Start uploading the remaining clusters." );
-		uploadLoopThrottle = MIN( 5, uploadLoopThrottle );
-		for ( int numTry = 0; numTry < 5; ++numTry ) {
+		uploadLoopThrottle = MIN( 15, uploadLoopThrottle );
+		for ( int numTry = 10; numTry >= 0; --numTry ) {
 			if ( uploadLoopThrottle > 0 ) {
-				logadd( LOG_INFO, "Waiting %d seconds...", uploadLoopThrottle );
+				logadd( LOG_INFO, "Waiting %d seconds... (%d retires remaining)", uploadLoopThrottle, numTry );
 				sleep( uploadLoopThrottle );
 				uploadLoopThrottle = 0;
 			}
+			lastTotal = totalBlocksUploaded;
 			ret = uploadModifiedClusters( true, cm );
+			logadd( LOG_INFO, "%" PRIu64 " blocks uploaded.", totalBlocksUploaded - lastTotal );
 			if ( ret )
 				break;
-			uploadLoopThrottle = MAX( 20, uploadLoopThrottle );
+			if ( totalBlocksUploaded > lastTotal ) {
+				numTry++; // As long as we make progress, keep looping
+			} else {
+				uploadLoopThrottle = MAX( 15, uploadLoopThrottle ); // Make sure we delay enough
+			}
+			uploadLoopThrottle = MIN( 180, uploadLoopThrottle );
 		}
 		uploadLoopDone = true;
 		if ( !ret ) {
