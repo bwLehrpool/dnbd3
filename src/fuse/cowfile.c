@@ -52,20 +52,6 @@ static struct cow
 
 static size_t curlHeaderCallbackUploadBlock( char *buffer, size_t size, size_t nitems, void *userdata );
 
-static int countOneBits( atomic_uchar *bf, int numBytes )
-{
-	int bitCount = 0;
-	for ( int i = 0; i < numBytes; ++i ) {
-		unsigned char value = bf[i];
-		while ( value > 0 ) {
-			if ( ( value & 1 ) == 1 ) {
-				bitCount++;
-			}
-			value >>= 1;
-		}
-	}
-	return bitCount;
-}
 
 #define IS_4K_ALIGNED(v) ( ( (uint64_t)(v) & DNBD3_BLOCK_MASK ) == 0 )
 
@@ -247,8 +233,9 @@ static bool createSession( const char *imageName, uint16_t rid )
 
 /**
  * @brief Implementation of CURLOPT_READFUNCTION, this function will first send the bit field and
- * then the block data in one bitstream. this function is usually called multiple times per block,
- * because the buffer is usually not large for one block and its bitfield.
+ * then the data of all dirty spans (precomputed in buildUploadSpans()) in one bitstream.
+ * This function is usually called multiple times per cluster, as the buffer is usually not
+ * large enough for the entire payload. Curl will call us again if there is more data to send.
  * for more details see: https://curl.se/libcurl/c/CURLOPT_READFUNCTION.html
  * 
  * @param ptr to the buffer
@@ -260,82 +247,97 @@ static bool createSession( const char *imageName, uint16_t rid )
 static size_t curlReadCallbackUploadBlock( char *ptr, size_t size, size_t nmemb, void *userdata )
 {
 	cow_curl_read_upload_t *uploadBlock = (cow_curl_read_upload_t *)userdata;
+	const size_t bufSize = size * nmemb;
 	size_t len = 0;
 
-	if ( size * nmemb < DNBD3_BLOCK_SIZE ) {
-		logadd( LOG_INFO, "Wow, curl read callback with %d bytes left", (int)( size * nmemb ) );
-	}
 	// Check if we're still in the bitfield
 	if ( uploadBlock->position < COW_BITFIELD_SIZE ) {
-		size_t lenCpy = MIN( COW_BITFIELD_SIZE - uploadBlock->position, size * nmemb );
-		memcpy( ptr + len, uploadBlock->bitfield + uploadBlock->position,
-				lenCpy );
+		size_t lenCpy = MIN( COW_BITFIELD_SIZE - uploadBlock->position, bufSize );
+		memcpy( ptr, uploadBlock->bitfield + uploadBlock->position, lenCpy );
 		uploadBlock->position += lenCpy;
 		len += lenCpy;
+		if ( uploadBlock->position < COW_BITFIELD_SIZE )
+			return len; // Buffer couldn't even hold bitfield, wait for another callback
 	}
-	// No elseif here, might just have crossed over...
-	if ( uploadBlock->position >= COW_BITFIELD_SIZE ) {
-		// Subtract the bitfield size from everything first
-		off_t inClusterOffset = uploadBlock->position - COW_BITFIELD_SIZE;
-		ssize_t spaceLeft = ( size * nmemb ) - len;
-		// Only read blocks that have been written to the cluster. Saves bandwidth. Not optimal since
-		// we do a lot of 4k/32k reads, but it's not that performance critical I guess...
-		while ( spaceLeft > 0 && inClusterOffset < (off_t)COW_DATA_CLUSTER_SIZE ) {
-			int bitNumber = (int)( inClusterOffset / DNBD3_BLOCK_SIZE );
-			uint32_t blockOffset = (uint32_t)( inClusterOffset % DNBD3_BLOCK_SIZE );
-			size_t readSize;
-			// Small performance hack: All bits one in a byte, do a 32k instead of 4k read
-			// TODO: preadv with a large iov, reading unchanged blocks into a trash-buffer
-			if ( spaceLeft >= (ssize_t)DNBD3_BLOCK_SIZE * 8
-					&& bitNumber % 8 == 0
-					&& uploadBlock->bitfield[bitNumber / 8] == 0xff ) {
-				readSize = DNBD3_BLOCK_SIZE * 8;
-			} else {
-				readSize = DNBD3_BLOCK_SIZE;
-			}
-			readSize -= blockOffset;
-			// If handling single block, check bits in our copy, as global bitfield could change
-			// If uploading 8 blocks at once, check already happened above
-			if ( readSize > DNBD3_BLOCK_SIZE || checkBit( uploadBlock->bitfield, bitNumber ) ) {
-				if ( (ssize_t)readSize > spaceLeft ) {
-					// Trim readSize to buffer space only if the block is dirty and to be included
-					// in the payload.
-					// Otherwise, we leave at the actual remaining size from that block, so we
-					// properly skip through the cluster ending up on block boundaries, and
-					// eventually find the dirty data we need to send. Otherwise we might skip
-					// through the cluster in too small steps, ending up misaligned in the last
-					// dirty block, hand over partia data to curl but skip over the entire
-					// block, and then curl calls us again with whatever amount of bytes we skipped
-					// over. But we already skipped over the last dirty block, so this loop will
-					// not find anything, return 0, and curl ends the upload. This process will then
-					// repeat indefinitely.
-					readSize = spaceLeft;
-				}
-				ssize_t lengthRead = pread( cow.fdData, ( ptr + len ), readSize,
-						uploadBlock->cluster->offset + inClusterOffset );
-				if ( lengthRead == -1 ) {
-					if ( errno == EAGAIN )
-						continue;
-					logadd( LOG_ERROR, "Upload: Reading from COW file failed with errno %d", errno );
-					return CURL_READFUNC_ABORT;
-				}
-				if ( lengthRead != (ssize_t)readSize ) {
-					logadd( LOG_ERROR, "Upload: Reading from COW file failed with short read (%d/%d)",
-							(int)lengthRead, (int)readSize );
-					return CURL_READFUNC_ABORT;
-				}
-				len += lengthRead;
-				spaceLeft -= lengthRead;
-			}
-			inClusterOffset += readSize;
-			uploadBlock->position += readSize;
+	// Then the dirty spans, as much as fits into curl's buffer
+	while ( len < bufSize && uploadBlock->currentSpan < COW_BLOCKS_PER_CLUSTER ) {
+		cow_upload_span_t *span = &uploadBlock->spans[uploadBlock->currentSpan];
+		if ( span->length == 0 )
+			break; // End marker
+		size_t readSize = MIN( span->length, bufSize - len );
+		ssize_t lengthRead = pread( cow.fdData, ptr + len, readSize, span->offset );
+		if ( lengthRead == -1 ) {
+			if ( errno == EINTR || errno == EAGAIN )
+				continue;
+			logadd( LOG_ERROR, "Upload: Reading from COW file failed with errno %d", errno );
+			return CURL_READFUNC_ABORT;
+		}
+		if ( lengthRead == 0 ) {
+			logadd( LOG_ERROR, "Upload: Unexpected EOF reading COW file at %"PRIu64,
+					(uint64_t)span->offset );
+			return CURL_READFUNC_ABORT;
+		}
+		len += lengthRead;
+		uploadBlock->position += lengthRead;
+		if ( (size_t)lengthRead == span->length ) {
+			uploadBlock->currentSpan++;
+		} else {
+			span->offset += lengthRead;
+			span->length -= lengthRead;
 		}
 	}
-	if ( len == 0 ) {
-		logadd( LOG_ERROR, "len == 0 at end of read callback" );
+
+	if ( uploadBlock->currentSpan >= COW_BLOCKS_PER_CLUSTER
+			|| uploadBlock->spans[uploadBlock->currentSpan].length == 0 ) {
+		// All spans processed, sanity check
+		if ( uploadBlock->position != uploadBlock->uploadSize ) {
+			logadd( LOG_ERROR, "BUG: position %"PRIu64" != uploadSize %"PRIu64" after last span",
+					(uint64_t)uploadBlock->position, (uint64_t)uploadBlock->uploadSize );
+			return CURL_READFUNC_ABORT;
+		}
+	} else if ( len == 0 ) {
+		logadd( LOG_ERROR, "len == 0 at end of read callback, but data left to upload" );
+		return CURL_READFUNC_ABORT;
 	}
 
 	return len;
+}
+
+/**
+ * @brief Snapshot the cluster's bitfield and build the list of dirty spans
+ * that need to be uploaded. Consecutive dirty blocks are coalesced into one span.
+ * Also computes the total upload size (bitfield + data).
+ */
+static void buildUploadSpans( cow_curl_read_upload_t *b )
+{
+	const off_t clusterOffset = b->cluster->offset;
+	int numSpans = 0;
+	size_t dataSize = 0;
+	bool prevDirty = false;
+
+	for ( int i = 0; i < COW_BITFIELD_SIZE; ++i ) {
+		b->bitfield[i] = b->cluster->bitfield[i];
+	}
+	for ( int bit = 0; bit < COW_BLOCKS_PER_CLUSTER; ++bit ) {
+		bool dirty = ( b->bitfield[bit / 8] >> ( bit % 8 ) ) & 1;
+		if ( dirty ) {
+			if ( prevDirty ) {
+				b->spans[numSpans - 1].length += DNBD3_BLOCK_SIZE;
+			} else {
+				b->spans[numSpans].offset = clusterOffset + (off_t)bit * DNBD3_BLOCK_SIZE;
+				b->spans[numSpans].length = DNBD3_BLOCK_SIZE;
+				numSpans++;
+			}
+			dataSize += DNBD3_BLOCK_SIZE;
+		}
+		prevDirty = dirty;
+	}
+	if ( numSpans < COW_BLOCKS_PER_CLUSTER ) {
+		b->spans[numSpans].length = 0;
+	}
+	b->currentSpan = 0;
+	b->position = 0;
+	b->uploadSize = COW_BITFIELD_SIZE + dataSize;
 }
 
 
@@ -546,10 +548,7 @@ static bool addUpload( CURLM *cm, cow_curl_read_upload_t *uploadingCluster )
 	curl_easy_setopt( eh, CURLOPT_LOW_SPEED_TIME, 10L );
 	curl_easy_setopt( eh, CURLOPT_LOW_SPEED_LIMIT, 1000L );
 
-	curl_easy_setopt( eh, CURLOPT_POSTFIELDSIZE_LARGE,
-			(long)( COW_BITFIELD_SIZE
-				+ DNBD3_BLOCK_SIZE * countOneBits( uploadingCluster->bitfield, COW_BITFIELD_SIZE ) )
-			);
+	curl_easy_setopt( eh, CURLOPT_POSTFIELDSIZE_LARGE, (curl_off_t)uploadingCluster->uploadSize );
 
 	if ( COW_SHOW_UL_SPEED ) {
 		uploadingCluster->ulLast = 0;
@@ -758,15 +757,12 @@ static bool uploadModifiedClusters( bool ignoreMinUploadDelay, CURLM *cm )
 			cow_curl_read_upload_t *b = malloc( sizeof( cow_curl_read_upload_t ) );
 			b->cluster = cluster;
 			b->clusterNumber = ( l1Index * COW_L2_TABLE_SIZE + l2Index );
-			b->position = 0;
 			b->retryTime = 0;
 			b->time = cluster->timeChanged;
 			b->replyBuffer[0] = '\0';
-			// Copy, so it doesn't change during upload
+			// Snapshot bitfield and precompute dirty spans, so it doesn't change during upload
 			// when we assemble the data in curlReadCallbackUploadBlock()
-			for ( int i = 0; i < COW_BITFIELD_SIZE; ++i ) {
-				b->bitfield[i] = cluster->bitfield[i];
-			}
+			buildUploadSpans( b );
 			addUpload( cm, b );
 			if ( !ignoreMinUploadDelay && !uploadLoop ) {
 				goto DONE;

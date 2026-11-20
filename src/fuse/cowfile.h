@@ -102,15 +102,31 @@ typedef struct cow_sub_request
 	char writeBuffer[]; // buffer for a padding write request, gets filled from a remote read, then the writeSrc data gets copied into it.
 } cow_sub_request_t;
 
+// Max number of blocks in one cluster
+#define COW_BLOCKS_PER_CLUSTER ( COW_BITFIELD_SIZE * 8 )
+
+/**
+ * A contiguous span of dirty data in the data file that needs to be uploaded.
+ * length == 0 marks the end of the span list.
+ */
+typedef struct cow_upload_span
+{
+	off_t offset; // Absolute offset in data file
+	size_t length; // Multiple of DNBD3_BLOCK_SIZE initially, shrinks on partial reads
+} cow_upload_span_t;
+
 typedef struct cow_curl_read_upload
 {
 	atomic_uint_least64_t time;
 	cow_l2_entry_t *cluster;
-	size_t position;
+	size_t position; // Number of bytes of payload (bitfield + data) handed to curl so far
+	size_t uploadSize; // Total payload size (bitfield + data)
 	uint64_t clusterNumber;
 	int64_t ulLast;
 	int retryTime;
-	atomic_uchar bitfield[COW_BITFIELD_SIZE];
+	int currentSpan; // Index into spans that is currently being uploaded
+	unsigned char bitfield[COW_BITFIELD_SIZE]; // Snapshot of bitfield spans were built from, sent as header
+	cow_upload_span_t spans[COW_BLOCKS_PER_CLUSTER];
 	char replyBuffer[500];
 } cow_curl_read_upload_t;
 
