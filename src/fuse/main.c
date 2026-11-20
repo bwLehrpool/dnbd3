@@ -340,20 +340,17 @@ static struct fuse_lowlevel_ops image_oper_cow = {
 
 static void printVersion()
 {
-	char *arg[] = { "foo", "-V" };
 	printf( "dnbd3-fuse version: %s\n", DNBD3_VERSION_LONG );
 	printf( "Built: %s\n", DNBD3_BUILD_DATE );
 	printf( "Protocol version: %d\n", (int)PROTOCOL_VERSION );
-	struct fuse_args args = FUSE_ARGS_INIT( 2, arg );
-	fuse_parse_cmdline( &args, NULL, NULL, NULL );
+	fuse_lowlevel_version();
 	exit( 0 );
 }
 
 static void printUsage( char *argv0, int exitCode )
 {
-	char *arg[] = { argv0, "-h" };
-	struct fuse_args args = FUSE_ARGS_INIT( 2, arg );
-	fuse_parse_cmdline( &args, NULL, NULL, NULL );
+	fuse_cmdline_help();
+	fuse_lowlevel_help();
 	printf( "\n" );
 	printf( "Usage:   %s [--debug] [--option mountOpts] --host <serverAddress(es)> --image <imageName> [--rid revision] <mountPoint>\n", argv0 );
 	printf( "Or:      %s [-d] [-o mountOpts] -h <serverAddress(es)> -i <imageName> [-r revision] <mountPoint>\n", argv0 );
@@ -410,8 +407,6 @@ int main( int argc, char *argv[] )
 	int opt, lidx;
 	bool learnNewServers = true;
 	bool single_thread = false;
-	struct fuse_chan *ch;
-	char *mountpoint;
 	int foreground = 0;
 	char *cow_file_path = NULL;
 	bool loadCow = false;
@@ -598,21 +593,18 @@ int main( int argc, char *argv[] )
 
 	// Fuse lowlevel loop
 	struct fuse_args args = FUSE_ARGS_INIT( newArgc, newArgv );
+	struct fuse_cmdline_opts opts = { 0 };
 	int fuse_err = 1;
-	if ( fuse_parse_cmdline( &args, &mountpoint, NULL, NULL ) == -1 ) {
+	if ( fuse_parse_cmdline( &args, &opts ) == -1 ) {
 		logadd( LOG_ERROR, "FUSE: Parsing command line failed" );
-	} else if ( ( ch = fuse_mount( mountpoint, &args ) ) == NULL ) {
-		logadd( LOG_ERROR, "Mounting file system failed" );
 	} else {
-		if(useCow){
-			_fuseSession = fuse_lowlevel_new( &args, &image_oper_cow, sizeof( image_oper_cow ), NULL );
-		} else{
-			_fuseSession = fuse_lowlevel_new( &args, &image_oper, sizeof( image_oper ), NULL );
-		}
+		const struct fuse_lowlevel_ops *ops = useCow ? &image_oper_cow : &image_oper;
+		_fuseSession = fuse_session_new( &args, ops, sizeof( struct fuse_lowlevel_ops ), NULL );
 		if ( _fuseSession == NULL ) {
 			logadd( LOG_ERROR, "Could not initialize fuse session" );
+		} else if ( fuse_session_mount( _fuseSession, opts.mountpoint ) != 0 ) {
+			logadd( LOG_ERROR, "Mounting file system failed" );
 		} else {
-			fuse_session_add_chan( _fuseSession, ch );
 			// Do not spawn any threads before we daemonize, they'd die at this point
 			fuse_daemonize( foreground );
 			if ( fuse_set_signal_handlers( _fuseSession ) == -1 ) {
@@ -626,17 +618,19 @@ int main( int argc, char *argv[] )
 			if ( single_thread ) {
 				fuse_err = fuse_session_loop( _fuseSession );
 			} else {
-				fuse_err = fuse_session_loop_mt( _fuseSession ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
+				fuse_err = fuse_session_loop_mt( _fuseSession, opts.clone_fd ); //MT produces errors (race conditions) in libfuse and didnt improve speed at all
 			}
 			fuse_remove_signal_handlers( _fuseSession );
-			fuse_session_remove_chan( ch );
+			fuse_session_unmount( _fuseSession );
+		}
+		if ( _fuseSession != NULL ) {
 			fuse_session_destroy( _fuseSession );
 			_fuseSession = NULL;
 		}
-		fuse_unmount( mountpoint, ch );
-		if( useCow ) {
-			cowfile_close();
-		}
+	}
+	free( opts.mountpoint );
+	if ( useCow ) {
+		cowfile_close();
 	}
 	fuse_opt_free_args( &args );
 	free( newArgv );

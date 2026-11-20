@@ -21,7 +21,7 @@ void dfuse_shutdown()
 static char nullbytes[DNBD3_BLOCK_SIZE];
 
 // FUSE ENABLED
-#define FUSE_USE_VERSION 30
+#define FUSE_USE_VERSION 31
 //
 #include <dnbd3/config.h>
 #include "locks.h"
@@ -78,8 +78,7 @@ static pthread_mutex_t dirLock;
 #define INIT_INPROGRESS (3)
 
 static struct fuse_session *fuseSession = NULL;
-static struct fuse_chan *fuseChannel = NULL;
-static char *fuseMountPoint = NULL;
+static bool fuseMounted = false;
 static pthread_t fuseThreadId;
 static bool haveThread = false;
 static _Atomic(int) initState = INIT_NONE;
@@ -558,6 +557,7 @@ bool dfuse_init(const char *opts, const char *dir)
 	mutex_init( &dirLock, LOCK_FUSE_DIR );
 	clock_gettime( CLOCK_REALTIME, &startupTime );
 	struct fuse_args args = FUSE_ARGS_INIT( 0, NULL );
+	struct fuse_cmdline_opts fuseOpts = { 0 };
 	fuse_opt_add_arg( &args, "dnbd3fs" ); // argv[0]
 	if ( opts != NULL ) {
 		fuse_opt_add_arg( &args, opts );
@@ -565,31 +565,33 @@ bool dfuse_init(const char *opts, const char *dir)
 	fuse_opt_add_arg( &args, "-odefault_permissions" );
 	fuse_opt_add_arg( &args, dir ); // last param is mount point
 	//
-	if ( fuse_parse_cmdline( &args, &fuseMountPoint, NULL, NULL ) == -1 ) {
+	if ( fuse_parse_cmdline( &args, &fuseOpts ) == -1 ) {
 		logadd( LOG_ERROR, "FUSE: Error parsing command line" );
 		goto fail;
 	}
-	fuseChannel = fuse_mount( fuseMountPoint, &args );
-	if ( fuseChannel == NULL ) {
-		logadd( LOG_ERROR, "FUSE: Cannot mount to %s", dir );
-		goto fail;
-	}
-	fuseSession = fuse_lowlevel_new( &args, &fuseOps, sizeof( fuseOps ), NULL );
+	fuseSession = fuse_session_new( &args, &fuseOps, sizeof( fuseOps ), NULL );
 	if ( fuseSession == NULL ) {
 		logadd( LOG_ERROR, "FUSE: Error initializing fuse session" );
 		goto fail;
 	}
-	fuse_session_add_chan( fuseSession, fuseChannel );
+	if ( fuse_session_mount( fuseSession, fuseOpts.mountpoint ) != 0 ) {
+		logadd( LOG_ERROR, "FUSE: Cannot mount to %s", dir );
+		goto fail;
+	}
+	fuseMounted = true;
 	if ( 0 != thread_create( &fuseThreadId, NULL, &fuseMainLoop, (void *)NULL ) ) {
 		logadd( LOG_ERROR, "FUSE: Could not start thread" );
 		goto fail;
 	}
 	haveThread = true;
 	// Init OK
+	free( fuseOpts.mountpoint );
+	fuse_opt_free_args( &args );
 	mutex_unlock( &initLock );
 	return true;
 fail:
 	cleanupFuse();
+	free( fuseOpts.mountpoint );
 	fuse_opt_free_args( &args );
 	initState = INIT_SHUTDOWN;
 	mutex_unlock( &initLock );
@@ -635,7 +637,7 @@ static void* fuseMainLoop(void *data UNUSED)
 	}
 	setThreadName( "fuse" );
 	logadd( LOG_INFO, "FUSE: Starting mainloop" );
-	fuse_session_loop_mt( fuseSession );
+	fuse_session_loop_mt( fuseSession, 0 );
 	logadd( LOG_INFO, "FUSE: Left mainloop" );
 	mutex_lock( &initLock );
 	cleanupFuse();
@@ -645,17 +647,14 @@ static void* fuseMainLoop(void *data UNUSED)
 
 static void cleanupFuse()
 {
-	if ( fuseChannel != NULL ) {
-		fuse_session_remove_chan( fuseChannel );
-	}
 	if ( fuseSession != NULL ) {
+		if ( fuseMounted ) {
+			fuse_session_unmount( fuseSession );
+			fuseMounted = false;
+		}
 		fuse_session_destroy( fuseSession );
 		fuseSession = NULL;
 	}
-	if ( fuseMountPoint != NULL && fuseChannel != NULL ) {
-		fuse_unmount( fuseMountPoint, fuseChannel );
-	}
-	fuseChannel = NULL;
 }
 
 #endif  // DNBD3_SERVER_FUSE

@@ -1,7 +1,7 @@
 #ifndef _MAIN_H_
 #define _MAIN_H_
 
-#define FUSE_USE_VERSION 30
+#define FUSE_USE_VERSION 31
 #include <fuse_lowlevel.h>
 #include <stdbool.h>
 
