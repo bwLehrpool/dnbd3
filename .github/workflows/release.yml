@@ -16,7 +16,7 @@ jobs:
           sudo apt-get install -y -qq make \
                                       clang-format \
                                       linux-headers-generic \
-                                      libfuse-dev \
+                                      libfuse3-dev \
                                       libjansson-dev \
                                       libcurl4-openssl-dev \
                                       rpm

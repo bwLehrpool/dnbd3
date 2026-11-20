@@ -18,7 +18,7 @@ jobs:
           for i in 1 2 3 4; do sudo apt-get install -y -qq make \
                                       clang-format \
                                       linux-headers-generic \
-                                      libfuse-dev \
+                                      libfuse3-dev \
                                       libjansson-dev \
                                       libcurl4-openssl-dev && break; sleep 5; done
       - name: Configure dnbd3 build
