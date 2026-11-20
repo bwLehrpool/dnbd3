@@ -907,7 +907,7 @@ fail:
 		for ( int altIndex = 0; altIndex < MAX_ALTS_ACTIVE; ++altIndex ) {
 			alt_server_t * const srv = &altservers[altIndex];
 			// Decay liveRtt slowly...
-			if ( srv->liveRtt > current->liveRtt && srv->liveRtt > srv->rtt ) {
+			if ( current != NULL && srv->liveRtt > current->liveRtt && srv->liveRtt > srv->rtt ) {
 				srv->liveRtt -= ( ( srv->liveRtt / 100 ) + 1 );
 			}
 			if ( srv == best ) {
