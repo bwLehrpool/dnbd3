@@ -12,10 +12,6 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - name: Rocky 8.10 [4.18.0-553]
-            build-os: ubuntu-22.04
-            kernel-type: centos-rpm
-            kernel-source: https://dl.rockylinux.org/pub/rocky/8.10/BaseOS/source/tree/Packages/k/kernel-4.18.0-553.141.1.el8_10.src.rpm
           - name: Rocky 9.6 LTS [5.14.0-570]
             build-os: ubuntu-22.04
             kernel-type: centos-rpm
@@ -23,11 +19,11 @@ jobs:
           - name: Rocky 9.8 LTS [5.14.0-687]
             build-os: ubuntu-22.04
             kernel-type: centos-rpm
-            kernel-source: https://dl.rockylinux.org/pub/rocky/9.8/BaseOS/source/tree/Packages/k/kernel-5.14.0-687.24.1.el9_8.src.rpm
+            kernel-source: https://dl.rockylinux.org/vault/rocky/9.8/BaseOS/source/tree/Packages/k/kernel-5.14.0-687.66.1.el9_8.src.rpm
           - name: Rocky 10.2 LTS [6.12.0-211]
-            build-os: ubuntu-22.04
+            build-os: ubuntu-24.04
             kernel-type: centos-rpm
-            kernel-source: https://dl.rockylinux.org/pub/rocky/10.2/BaseOS/source/tree/Packages/k/kernel-6.12.0-211.32.1.el10_2.src.rpm
+            kernel-source: https://dl.rockylinux.org/vault/rocky/10.2/BaseOS/source/tree/Packages/k/kernel-6.12.0-211.74.1.el10_2.src.rpm
           - name: Vanilla [4.19.x]
             build-os: ubuntu-22.04
             kernel-type: vanilla
@@ -56,10 +52,14 @@ jobs:
             build-os: ubuntu-24.04
             kernel-type: vanilla
             kernel-version: 6.12.y
-          - name: Vanilla [6.17.x]
+          - name: Vanilla [6.18.x]
             build-os: ubuntu-24.04
             kernel-type: vanilla
-            kernel-version: 6.17.y
+            kernel-version: 6.18.y
+          - name: Vanilla [7.3.x]
+            build-os: ubuntu-26.04
+            kernel-type: vanilla
+            kernel-version: 7.3.y
     name: Build dnbd3 ${{ matrix.config.name }}
     runs-on: ${{ matrix.config.build-os }}
     steps:
