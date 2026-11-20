@@ -738,7 +738,11 @@ static int dnbd3_connect(dnbd3_device_t *dev, struct sockaddr_storage *addr, str
 	set_socket_timeout(sock, true, connect_time_ms); // send
 	start = ktime_get_real();
 	while (--retries > 0) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
+		ret = kernel_connect(sock, (struct sockaddr_unsized *)addr, addrlen, 0);
+#else
 		ret = kernel_connect(sock, (struct sockaddr *)addr, addrlen, 0);
+#endif
 		diff = (int)ktime_ms_delta(ktime_get_real(), start);
 		if (diff > 2 * connect_time_ms) {
 			/* Either I'm losing my mind or there was a specific build of kernel
